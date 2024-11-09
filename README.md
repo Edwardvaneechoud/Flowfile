@@ -10,13 +10,14 @@
   <a href="flowfile_worker/README.md">Worker</a>
   -
   <a href="flowfile_frontend/README.md">Frontend</a>
-  |
-  <a href="docs/user-guide.md">User Guide</a>
 </p>
+<p>
+FlowFile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
+</p>
+
 <div align="center">
   <img src=".github/images/group_by_screenshot.png" alt="FlowFile Interface" width="800"/>
 </div>
-FlowFile is a high-performance visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
 
 ## ⚡ Technical Design
 
@@ -31,10 +32,11 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 ## 🔥 Example Use Cases
 
 - **Data Cleaning & Transformation**
-  - Complex joins (fuzzy matching, cross joins)
+  - Complex joins (fuzzy matching)
   - Text to rows transformations
   - Advanced filtering and grouping
   - Custom formulas and expressions
+  - Filter data based on conditions
 
 - **Data Integration**
   - Combine data from multiple sources
@@ -44,9 +46,7 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 
 - **ETL Operations**
   - Excel to database pipelines
-  - Data warehouse loading
   - Data quality checks
-  - Automated reporting
 
 ## 🚀 Getting Started
 
@@ -121,6 +121,6 @@ npm run build:linux  # Linux
 
 [MIT License](LICENSE)
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 Built with Polars, Vue.js, FastAPI, and Electron.

@@ -2,8 +2,6 @@
 
 FlowFile Designer is a modern, electron-based desktop application for visual data transformation and ETL workflows. Built with Vue 3, TypeScript, and Element Plus, it provides an intuitive interface for building data pipelines using a drag-and-drop approach.
 
-![FlowFile Designer Screenshot](screenshot.png)
-
 ## 🚀 Features
 
 - Visual Flow Designer with drag-and-drop interface
