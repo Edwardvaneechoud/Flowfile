@@ -1,0 +1,6 @@
+.column-options {
+    max-height: 150px;
+    overflow-y: auto;
+    padding: 0;
+    margin: 0;
+  }

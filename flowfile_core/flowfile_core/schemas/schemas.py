@@ -1,0 +1,95 @@
+from pydantic import BaseModel, validator, ConfigDict
+from typing import List, Dict, Tuple, Iterable, Optional, Any, Literal
+
+
+ExecutionModeLiteral = Literal['debug', 'production']
+ExecutionLocationsLiteral = Literal['local', 'remote', 'auto']
+
+
+class FlowSettings(BaseModel):
+    flow_id: int
+    description: Optional[str] = None
+    save_location: Optional[str] = None
+    auto_save: bool = False
+    name: str = ''
+    modified_on: Optional[float] = None
+    path: str
+    execution_location: ExecutionLocationsLiteral = 'auto'
+    execution_mode: ExecutionModeLiteral = 'debug'
+
+
+class NodeTemplate(BaseModel):
+    name: str
+    item: str
+    input: int
+    output: int
+    image: str
+    multi: bool = False
+    node_group: str
+    prod_ready: bool = True
+
+
+class NodeInformation(BaseModel):
+    id: Optional[int] = None
+    type: Optional[str] = None
+    is_setup: Optional[bool] = None
+    description: Optional[str] = ''
+    x_position: Optional[int] = 0
+    y_position: Optional[int] = 0
+    left_input_id: Optional[int] = None
+    right_input_id: Optional[int] = None
+    input_ids: Optional[List[int]] = [-1]
+    outputs: Optional[List[int]] = [-1]
+    setting_input: Optional[Any] = None
+
+    @property
+    def data(self):
+        return self.setting_input
+
+    @property
+    def main_input_ids(self):
+        return self.input_ids
+
+
+class FlowInformation(BaseModel):
+    flow_id: int
+    flow_name: Optional[str] = ''
+    flow_settings: FlowSettings
+    data: Dict[int, NodeInformation] = {}
+    node_starts: List[int]
+    node_connections: List[Tuple[int, int]] = []
+
+    @validator('flow_name', pre=True, always=True)
+    def ensure_string(cls, v):
+        return str(v) if v is not None else ''
+
+
+class NodeInput(NodeTemplate):
+    id: int
+    pos_x: float
+    pos_y: float
+
+
+class NodeEdge(BaseModel):
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+    id: str
+    source: str
+    target: str
+    targetHandle: str
+    sourceHandle: str
+
+
+class VueFlowInput(BaseModel):
+    node_edges: List[NodeEdge]
+    node_inputs: List[NodeInput]
+
+
+NodeTypeLiteral = Literal['input', 'output', 'process']
+TransformTypeLiteral = Literal['narrow', 'wide', 'other']
+
+
+class NodeDefault(BaseModel):
+    node_name: str
+    node_type: NodeTypeLiteral
+    transform_type: TransformTypeLiteral
+    has_default_settings: Optional[Any] = None

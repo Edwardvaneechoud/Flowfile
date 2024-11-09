@@ -1,0 +1,4 @@
+.p-default {
+    margin: var(--spacing-xs);
+    margin-bottom: var(--spacing-sm);
+  }

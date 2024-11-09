@@ -1,0 +1,94 @@
+{
+  "appId": "com.flowfile.app",
+  "productName": "FlowFile",
+  "directories": {
+    "output": "dist",
+    "buildResources": "src/assets/icons"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "shortcutName": "FlowFile",
+    "installerIcon": "src/assets/icons/win/icon.ico",
+    "uninstallerIcon": "src/assets/icons/win/icon.ico",
+    "installerHeaderIcon": "src/assets/icons/win/icon.ico"
+  },
+  "win": {
+    "target": "nsis",
+    "icon": "src/assets/icons/win/icon.ico",
+    "extraFiles": [
+      {
+        "from": "../dist/flowfile_worker.exe",
+        "to": "resources/flowfile_worker.exe"
+      },
+      {
+        "from": "../dist/flowfile_core.exe",
+        "to": "resources/flowfile_core.exe"
+      }
+    ]
+  },
+  "linux": {
+    "target": ["snap"],
+    "icon": "src/assets/icons/png",
+    "category": "Utility",
+    "extraFiles": [
+      {
+        "from": "../dist/flowfile_worker",
+        "to": "resources/flowfile_worker"
+      },
+      {
+        "from": "../dist/flowfile_core",
+        "to": "resources/flowfile_core"
+      }
+    ]
+  },
+  "mac": {
+    "icon": "src/assets/icons/mac/icon.icns",
+    "extraFiles": [
+      {
+        "from": "../dist/flowfile_worker",
+        "to": "resources/flowfile_worker"
+      },
+      {
+        "from": "../dist/flowfile_core",
+        "to": "resources/flowfile_core"
+      }
+    ]
+  },
+  "files": [
+    {
+      "from": "build/main",
+      "to": "main",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "src/public",
+      "to": "public",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "build/renderer",
+      "to": "renderer",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "src/main/static",
+      "to": "static",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "node_modules",
+      "to": "node_modules",
+      "filter": [
+        "**/*",
+        "!**/{CHANGELOG.md,README.md,README,readme.md,readme}",
+        "!**/{test,__tests__,tests,powered-test,example,examples}",
+        "!**/*.d.ts",
+        "!**/.bin"
+      ]
+    },
+    "!**/*",
+    "package.json"
+  ]
+}

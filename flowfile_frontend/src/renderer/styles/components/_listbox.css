@@ -1,0 +1,114 @@
+/* Complete Modern Listbox Styles */
+.listbox-wrapper {
+  position: relative;
+  overflow-y: hidden;
+  overflow: visible;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  margin: 5px;
+  background-color: #fff;
+  padding: 6px;
+  z-index: 1;
+}
+.listbox-subtitle {
+  display: flex;
+  align-items: center;
+  padding: 4px 16px;
+  font-weight: 200;
+  color: #333;
+  background-color: #fafafa;
+  border-bottom: 1px solid #ddd;
+  width: 100%;
+  border-top-left-radius: 1px;
+  border-top-right-radius: 1px;
+  font-size: small;
+  height: 32px;
+  overflow: hidden;        /* Prevent overflow */
+  text-overflow: ellipsis; /* Add ellipsis for overflowing text */
+  white-space: nowrap;     /* Prevent text wrapping */
+  box-sizing: border-box;  /* Include padding in width calculation */
+}
+
+/* If the subtitle contains other elements */
+.listbox-subtitle > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;           /* Allow flex items to shrink below content size */
+}
+
+/* If you specifically need to handle long text in a span */
+.listbox-subtitle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;               /* Take up remaining space */
+  min-width: 0;          /* Allow text to shrink */
+}
+
+.listbox-title {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  font-weight: 600;
+  color: #333;
+  width: 100%;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  font-size: large;
+  height: 40px;
+}
+
+.listbox {
+  border: none;
+  padding: 0;
+  margin: 0;
+  list-style-type: none;
+  border-radius: 8px;
+  overflow: hidden;
+  overflow-y: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  max-height: 300px;
+  background-color: #fff;
+}
+
+.listbox li {
+  padding: 8px 16px;
+  cursor: pointer;
+  background-color: #fff;
+  user-select: none;
+  border-bottom: 1px solid #ddd;
+  transition: background-color 0.2s ease;
+  font-size: 12px;
+}
+
+.listbox li:not(:last-child) {
+  border-bottom: 1px solid #eee;
+}
+
+.listbox li:hover {
+  background-color: #f5f5f5;
+}
+
+.listbox li.is-selected {
+  background-color: #cbcbcb;
+  color: #0c254a;
+}
+
+/* Custom scrollbar */
+.listbox::-webkit-scrollbar {
+  width: 8px;
+}
+
+.listbox::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.listbox::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+}
+
+.listbox::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.2);
+}

@@ -1,0 +1,1060 @@
+import datetime
+import os
+import pickle
+import polars as pl
+import fastexcel
+from fastapi.exceptions import HTTPException
+from time import time
+from typing import List, Dict, Union, Callable, Any, Optional, Tuple
+from uuid import uuid1
+from pyarrow.parquet import ParquetFile
+from flowfile_core.configs import logger
+from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
+from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
+                                                                                     pre_calculate_pivot_schema)
+from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowFileTable
+from flowfile_core.flowfile.flowfile_table.read_excel_tables import get_open_xlsx_datatypes, \
+    get_calamine_xlsx_data_types
+from flowfile_core.flowfile.sources import external_sources
+from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
+from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
+from flowfile_core.flowfile.node_step.node_step import NodeStep, NodeResults
+from flowfile_core.utils.fl_executor import thread_executor
+from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
+from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
+
+
+@thread_executor(wait_on_completion=False, max_workers=1)
+def schema_future_xlsx(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
+                       end_row: int, end_column: int, has_headers: bool):
+    try:
+        logger.info('Starting to calculate the schema')
+        if engine == 'openpyxl':
+            max_col = end_column if end_column > 0 else None
+            return get_open_xlsx_datatypes(file_path=file_path,
+                                           sheet_name=sheet_name,
+                                           min_row=start_row + 1,
+                                           min_col=start_column + 1,
+                                           max_row=100,
+                                           max_col=max_col, has_headers=has_headers)
+        elif engine == 'calamine':
+            return get_calamine_xlsx_data_types(file_path=file_path,
+                                                sheet_name=sheet_name,
+                                                start_row=start_row,
+                                                end_row=end_row)
+        logger.info('done calculating the schema')
+    except Exception as e:
+        logger.error(e)
+        return []
+
+
+class EtlGraph:
+    """
+       EtlGraph is a class that enables Extract, Transform and Load (ETL) operations
+       on data. It allows you to create a Directed Acyclic Graph (DAG) where each
+       node represents a step in the ETL pipeline.
+
+       The class offers methods to add transformations and data sources, as well as
+       methods to run the transformations and generate results.
+
+       Attributes:
+           _input_cols (set): A set that stores the input columns for the transformations.
+           _output_cols (set): A set that stores the output columns from the transformations.
+       """
+    uuid: str
+    depends_on: Dict[int, Union[ParquetFile, FlowFileTable, "EtlGraph", pl.DataFrame,]]
+    _flow_id: int
+    _input_data: Union[ParquetFile, FlowFileTable, "EtlGraph"]
+    _input_cols: List[str]
+    _output_cols: List[str]
+    _node_db: Dict[Union[str, int], NodeStep]
+    _node_ids: List[Union[str, int]]
+    _results: Optional[FlowFileTable] = None
+    cache_results: bool = False
+    schema: Optional[List[FlowFileColumn]] = None
+    has_over_row_function: bool = False
+    _flow_starts: List[Union[int, str]] = None
+    is_running: bool = False
+    node_results: [List[NodeResults]] = None
+    latest_run_info: Optional[RunInformation] = None
+    start_datetime: datetime = None
+    end_datetime: datetime = None
+    nodes_completed: int = 0
+    flow_settings: schemas.FlowSettings = None
+
+    def __init__(self, flow_id: int,
+                 flow_settings: schemas.FlowSettings,
+                 name: str = None, input_cols: List[str] = None,
+                 output_cols: List[str] = None,
+                 path_ref: str = None,
+                 input_flow: Union[ParquetFile, FlowFileTable, "EtlGraph"] = None,
+                 cache_results: bool = False):
+        self.flow_settings = flow_settings
+        self.uuid = str(uuid1())
+        self.nodes_completed = 0
+        self.start_datetime = None
+        self.end_datetime = None
+        self.latest_run_info = None
+        self.node_results = []
+        self.is_running = False
+        self._flow_id = flow_id
+        self._flow_starts: List[NodeStep] = []
+        self._results = None
+        self.schema = None
+        self.has_over_row_function = False
+        self._input_cols = [] if input_cols is None else input_cols
+        self._output_cols = [] if output_cols is None else output_cols
+        self._node_ids = []
+        self._node_db = {}
+        self.cache_results = cache_results
+        self.__name__ = name if name else id(self)
+        self.depends_on = {}
+        if path_ref is not None:
+            self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
+        elif input_flow is not None:
+            self.add_datasource(input_file=input_flow)
+
+    def add_node_promise(self, node_promise: input_schema.NodePromise):
+
+        def placeholder(n: NodeStep = None):
+            if n is None:
+                return FlowFileTable()
+            return n
+
+        self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
+                           setting_input=node_promise)
+
+    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
+        sample_size = 10_000 if node_promise.node_type == 'explore_data' else 1000_000
+        node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
+
+        def analysis_preparation(flow_file: FlowFileTable):
+            number_of_records = flow_file.get_number_of_records()
+            if number_of_records > sample_size:
+                flow_file = flow_file.get_sample(sample_size, random=True)
+            return flow_file
+
+        def schema_callback():
+            node = self.get_node(node_analysis.node_id)
+            if len(node.all_inputs) == 1:
+                input_node = node.all_inputs[0]
+                return input_node.schema
+            else:
+                return [FlowFileColumn.from_input('col_1', 'na')]
+
+        self.add_node_step(node_id=node_analysis.node_id, node_type=node_promise.node_type,
+                           function=analysis_preparation,
+                           setting_input=node_analysis, schema_callback=schema_callback)
+
+    def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
+        sample_size: int = 10000
+
+        def analysis_preparation(flow_file: FlowFileTable):
+            number_of_records = flow_file.get_number_of_records()
+            if number_of_records > sample_size:
+                flow_file = flow_file.get_sample(sample_size, random=True)
+            return flow_file
+
+        def schema_callback():
+            node = self.get_node(node_analysis.node_id)
+            if len(node.all_inputs) == 1:
+                input_node = node.all_inputs[0]
+                return input_node.schema
+            else:
+                return [FlowFileColumn.from_input('col_1', 'na')]
+
+        self.add_node_step(node_id=node_analysis.node_id, node_type='explore_data',
+                           function=analysis_preparation,
+                           setting_input=node_analysis, schema_callback=schema_callback)
+
+    @property
+    def flow_id(self) -> int:
+        return self._flow_id
+
+    @flow_id.setter
+    def flow_id(self, new_id: int):
+        self._flow_id = new_id
+        for node in self.nodes:
+            if hasattr(node.setting_input, 'flow_id'):
+                node.setting_input.flow_id = new_id
+
+    def __repr__(self):
+        """
+        Official string representation of the EtlGraph class.
+        """
+        return (f"EtlGraph(\nNodes: {self._node_db}")
+
+    def get_nodes_overview(self):
+        output = []
+        for v in self._node_db.values():
+            output.append(v.get_repr())
+        return output
+
+    def remove_from_output_cols(self, columns: List[str]):
+        cols = set(columns)
+        self._output_cols = [c for c in self._output_cols if c not in cols]
+
+    def get_node(self, node_id: Union[int, str] = None) -> NodeStep:
+        if node_id is None:
+            node_id = self._node_ids[-1]
+        node = self._node_db.get(node_id)
+        if node is not None:
+            return node
+
+    def add_pivot(self, pivot_settings: input_schema.NodePivot):
+        def _func(fl: FlowFileTable):
+            return fl.do_pivot(pivot_settings.pivot_input)
+
+        self.add_node_step(node_id=pivot_settings.node_id,
+                           function=_func,
+                           node_type='pivot',
+                           setting_input=pivot_settings)
+
+        node = self.get_node(pivot_settings.node_id)
+
+        def schema_callback():
+            input_node = node.singular_main_input
+            input_data = input_node.get_resulting_data()
+            input_data.lazy = True
+            input_lf = input_data.data_frame
+            node_input_schema = input_node.schema
+            return pre_calculate_pivot_schema(node_input_schema, pivot_settings.pivot_input, input_lf=input_lf)
+
+        node.schema_callback = schema_callback
+
+    def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):
+
+        def _func(fl: FlowFileTable) -> FlowFileTable:
+            return fl.unpivot(unpivot_settings.unpivot_input)
+
+        self.add_node_step(node_id=unpivot_settings.node_id,
+                           function=_func,
+                           node_type='unpivot',
+                           setting_input=unpivot_settings)
+
+    def add_union(self, union_settings: input_schema.NodeUnion):
+        def _func(*flowfile_tables: FlowFileTable):
+            dfs: List[pl.LazyFrame] | List[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
+            return FlowFileTable(pl.concat(dfs, how='diagonal_relaxed'))
+
+        self.add_node_step(node_id=union_settings.node_id,
+                           function=_func,
+                           node_type=f'union',
+                           setting_input=union_settings)
+
+    def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
+
+        def _func(fl: FlowFileTable) -> FlowFileTable:
+            return fl.do_group_by(group_by_settings.groupby_input, False)
+
+        self.add_node_step(node_id=group_by_settings.node_id,
+                           function=_func,
+                           node_type=f'group_by',
+                           setting_input=group_by_settings)
+
+        node = self.get_node(group_by_settings.node_id)
+
+        def schema_callback():
+            output_columns = [(c.old_name, c.new_name, c.output_type) for c in group_by_settings.groupby_input.agg_cols]
+            depends_on = node.node_inputs.main_inputs[0]
+            input_schema_dict: Dict[str, str] = {s.name: s.data_type for s in depends_on.schema}
+            output_schema = []
+            for old_name, new_name, data_type in output_columns:
+                data_type = input_schema_dict[old_name] if data_type is None else data_type
+                output_schema.append(FlowFileColumn.from_input(data_type=data_type, column_name=new_name))
+            return output_schema
+
+        node.schema_callback = schema_callback
+
+    def add_or_update_column_func(self, col_name: str, pl_dtype: pl.DataType, depends_on: NodeStep):
+        col_output = FlowFileColumn.from_input(column_name=col_name, data_type=str(pl_dtype))
+        schema = depends_on.schema
+        col_exist = depends_on.get_flow_file_column_schema(col_name)
+        if col_exist is None:
+            new_schema = schema + [col_output]
+        else:
+            new_schema = []
+            for s in self.schema:
+                if s.name == col_name:
+                    new_schema.append(col_output)
+                else:
+                    new_schema.append(s)
+        return new_schema
+
+    def add_filter(self, filter_settings: input_schema.NodeFilter):
+        is_advanced = filter_settings.filter_input.filter_type == 'advanced'
+        if is_advanced:
+            predicate = filter_settings.filter_input.advanced_filter
+        else:
+            _basic_filter = filter_settings.filter_input.basic_filter
+            filter_settings.filter_input.advanced_filter = (f'[{_basic_filter.field}]{_basic_filter.filter_type}"'
+                                                            f'{_basic_filter.filter_value}"')
+
+        def _func(fl: FlowFileTable):
+            is_advanced = filter_settings.filter_input.filter_type == 'advanced'
+            if is_advanced:
+                print('applying advanced filter')
+                return fl.do_filter(predicate)
+            else:
+                print('applying basic filter')
+                basic_filter = filter_settings.filter_input.basic_filter
+                if basic_filter.filter_value.isnumeric():
+                    field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
+                    if field_data_type == 'str':
+                        _f = f'[{basic_filter.field}]{basic_filter.filter_type}"{basic_filter.filter_value}"'
+                    else:
+                        _f = f'[{basic_filter.field}]{basic_filter.filter_type}{basic_filter.filter_value}'
+                else:
+                    _f = f'[{basic_filter.field}]{basic_filter.filter_type}"{basic_filter.filter_value}"'
+                filter_settings.filter_input.advanced_filter = _f
+                return fl.do_filter(_f)
+
+        self.add_node_step(filter_settings.node_id, _func,
+                           node_type='filter',
+                           renew_schema=False,
+                           setting_input=filter_settings,
+                           )
+
+    def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
+        def _func(fl: FlowFileTable) -> FlowFileTable:
+            return fl.get_record_count()
+
+        self.add_node_step(node_id=node_number_of_records.node_id,
+                           function=_func,
+                           node_type='record_count',
+                           setting_input=node_number_of_records)
+
+    def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
+        def _func(fl: FlowFileTable) -> FlowFileTable:
+            return fl.execute_polars_code(node_polars_code.polars_code_input.polars_code)
+
+        self.add_node_step(node_id=node_polars_code.node_id,
+                           function=_func,
+                           node_type='polars_code',
+                           setting_input=node_polars_code)
+
+        try:
+            polars_code_parser.validate_code(node_polars_code.polars_code_input.polars_code)
+        except Exception as e:
+            node = self.get_node(node_id=node_polars_code.node_id)
+            node.results.errors = str(e)
+
+    def add_unique(self, unique_settings: input_schema.NodeUnique):
+
+        def _func(fl: FlowFileTable) -> FlowFileTable:
+            return fl.make_unique(unique_settings.unique_input)
+
+        self.add_node_step(node_id=unique_settings.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type='unique',
+                           setting_input=unique_settings)
+
+    def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
+        def _func(fl: FlowFileTable) -> FlowFileTable:
+            return fl.solve_graph(graph_solver_settings.graph_solver_input)
+
+        self.add_node_step(node_id=graph_solver_settings.node_id,
+                           function=_func,
+                           node_type='graph_solver',
+                           setting_input=graph_solver_settings)
+
+    def add_formula(self, function_settings: input_schema.NodeFormula):
+        error = ""
+        if function_settings.function.field.data_type is not None:
+            output_type = type_to_polars_str(function_settings.function.field.data_type)
+        else:
+            output_type = None
+        if output_type is not None:
+            new_col = [FlowFileColumn.from_input(column_name=function_settings.function.field.name,
+                                                 data_type=str(output_type))]
+        else:
+            new_col = [FlowFileColumn.from_input(function_settings.function.field.name, 'String')]
+
+        def _func(fl: FlowFileTable):
+            return fl.apply_sql_formula(func=function_settings.function.function,
+                                        col_name=function_settings.function.field.name,
+                                        output_data_type=output_type)
+
+        self.add_node_step(function_settings.node_id, _func,
+                           output_schema=new_col,
+                           node_type='formula',
+                           renew_schema=False,
+                           setting_input=function_settings,
+                           )
+        if error != "":
+            node = self.get_node(function_settings.node_id)
+            node.results.errors = error
+            return False, error
+        else:
+            return True, ""
+
+    def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "EtlGraph":
+
+        def _func(main: FlowFileTable, right: FlowFileTable) -> FlowFileTable:
+            for left_select in cross_join_settings.cross_join_input.left_select.renames:
+                left_select.is_available = True if left_select.old_name in main.schema else False
+            for right_select in cross_join_settings.cross_join_input.right_select.renames:
+                right_select.is_available = True if right_select.old_name in right.schema else False
+
+            return main.do_cross_join(cross_join_input=cross_join_settings.cross_join_input,
+                                      auto_generate_selection=cross_join_settings.auto_generate_selection,
+                                      verify_integrity=False,
+                                      other=right)
+
+        self.add_node_step(node_id=cross_join_settings.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type='cross_join',
+                           setting_input=cross_join_settings)
+        return self
+
+    def add_join(self, join_settings: input_schema.NodeJoin) -> "EtlGraph":
+        def _func(main: FlowFileTable, right: FlowFileTable) -> FlowFileTable:
+            for left_select in join_settings.join_input.left_select.renames:
+                left_select.is_available = True if left_select.old_name in main.schema else False
+            for right_select in join_settings.join_input.right_select.renames:
+                right_select.is_available = True if right_select.old_name in right.schema else False
+
+            return main.do_join(join_input=join_settings.join_input,
+                                auto_generate_selection=join_settings.auto_generate_selection,
+                                verify_integrity=False,
+                                other=right)
+
+        self.add_node_step(node_id=join_settings.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type='join',
+                           setting_input=join_settings)
+        return self
+
+    def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "EtlGraph":
+        def _func(main: FlowFileTable, right: FlowFileTable) -> FlowFileTable:
+            return main.do_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash)
+
+        self.add_node_step(node_id=fuzzy_settings.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type='fuzzy_match',
+                           setting_input=fuzzy_settings)
+        node = self.get_node(node_id=fuzzy_settings.node_id)
+
+        def schema_callback():
+            return calculate_fuzzy_match_schema(fuzzy_settings.join_input,
+                                                left_schema=node.node_inputs.main_inputs[0].schema,
+                                                right_schema=node.node_inputs.right_input.schema
+                                                )
+
+        node.schema_callback = schema_callback
+        return self
+
+    def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "EtlGraph":
+        def _func(table: FlowFileTable) -> FlowFileTable:
+            return table.split(node_text_to_rows.text_to_rows_input)
+
+        self.add_node_step(node_id=node_text_to_rows.node_id,
+                           function=_func,
+                           node_type='text_to_rows',
+                           setting_input=node_text_to_rows)
+        return self
+
+    def add_sort(self, sort_settings: input_schema.NodeSort) -> "EtlGraph":
+        def _func(table: FlowFileTable) -> FlowFileTable:
+            return table.do_sort(sort_settings.sort_input)
+
+        self.add_node_step(node_id=sort_settings.node_id,
+                           function=_func,
+                           node_type='sort',
+                           setting_input=sort_settings)
+        return self
+
+    def add_sample(self, sample_settings: input_schema.NodeSample) -> "EtlGraph":
+        def _func(table: FlowFileTable) -> FlowFileTable:
+            return table.get_sample(sample_settings.sample_size)
+
+        self.add_node_step(node_id=sample_settings.node_id,
+                           function=_func,
+                           node_type='sample',
+                           setting_input=sample_settings
+                           )
+        return self
+
+    def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "EtlGraph":
+
+        def _func(table: FlowFileTable) -> FlowFileTable:
+            return table.add_record_id(record_id_settings.record_id_input)
+
+        self.add_node_step(node_id=record_id_settings.node_id,
+                           function=_func,
+                           node_type='record_id',
+                           setting_input=record_id_settings
+                           )
+        return self
+
+    def add_select(self, select_settings: input_schema.NodeSelect) -> "EtlGraph":
+        select_cols = select_settings.select_input
+        drop_cols = tuple(s.old_name for s in select_settings.select_input)
+
+        def _func(table: FlowFileTable) -> FlowFileTable:
+            input_cols = set(f.name for f in table.schema)
+            ids_to_remove = []
+            for i, select_col in enumerate(select_cols):
+                if select_col.old_name not in input_cols:
+                    select_col.is_available = False
+                    if not select_col.keep:
+                        ids_to_remove.append(i)
+                else:
+                    select_col.is_available = True
+            ids_to_remove.reverse()
+            for i in ids_to_remove:
+                v = select_cols.pop(i)
+                del v
+            return table.do_select(select_inputs=transform_schema.SelectInputs(select_cols),
+                                   keep_missing=select_settings.keep_missing)
+
+        setting_input = select_settings
+
+        self.add_node_step(node_id=select_settings.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type='select',
+                           drop_columns=list(drop_cols),
+                           setting_input=setting_input)
+        return self
+
+    @property
+    def graph_has_functions(self) -> bool:
+        return len(self._node_ids) > 0
+
+    def delete_node(self, node_id: Union[int, str]):
+        logger.info(f"Starting deletion of node with ID: {node_id}")
+
+        node = self._node_db.get(node_id)
+        if node:
+            logger.info(f"Found node: {node_id}, processing deletion")
+
+            lead_to_steps: List[NodeStep] = node.leads_to_nodes
+            logger.debug(f"Node {node_id} leads to {len(lead_to_steps)} other nodes")
+
+            if len(lead_to_steps) > 0:
+                for lead_to_step in lead_to_steps:
+                    logger.debug(f"Deleting input node {node_id} from dependent node {lead_to_step}")
+                    lead_to_step.delete_input_node(node_id, complete=True)
+
+            if not node.is_start:
+                depends_on: List[NodeStep] = node.node_inputs.get_all_inputs()
+                logger.debug(f"Node {node_id} depends on {len(depends_on)} other nodes")
+
+                for depend_on in depends_on:
+                    logger.debug(f"Removing lead_to reference {node_id} from node {depend_on}")
+                    depend_on.delete_lead_to_node(node_id)
+
+            self._node_db.pop(node_id)
+            logger.debug(f"Successfully removed node {node_id} from node_db")
+            del node
+            logger.info("Node object deleted")
+        else:
+            logger.error(f"Failed to find node with id {node_id}")
+            raise Exception(f"Node with id {node_id} does not exist")
+
+    @property
+    def graph_has_input_data(self) -> bool:
+        return self._input_data is not None
+
+    def add_node_step(self,
+                      node_id: Union[int, str],
+                      function: Callable,
+                      input_columns: List[str] = None,
+                      output_schema: List[FlowFileColumn] = None,
+                      node_type: str = None,
+                      drop_columns: List[str] = None,
+                      renew_schema: bool = True,
+                      setting_input: Any = None,
+                      cache_results: bool = None,
+                      schema_callback: Callable = None):
+        existing_node = self.get_node(node_id)
+        if existing_node is not None:
+            if existing_node.node_type != node_type:
+                self.delete_node(existing_node.node_id)
+                existing_node = None
+        if existing_node:
+            input_nodes = existing_node.all_inputs
+        else:
+            input_nodes = None
+        if cache_results is None:
+            if hasattr(setting_input, 'cache_results'):
+                cache_results = getattr(setting_input, 'cache_results')
+                cache_results = False if cache_results is None else cache_results
+        if isinstance(input_columns, str):
+            input_columns = [input_columns]
+
+        if input_nodes is not None or function.__name__ in ('placeholder', 'analysis_preparation'):
+
+            if not existing_node:
+                node = NodeStep(node_id=node_id,
+                                function=function,
+                                output_schema=output_schema,
+                                input_columns=input_columns,
+                                drop_columns=drop_columns,
+                                renew_schema=renew_schema,
+                                setting_input=setting_input,
+                                node_type=node_type,
+                                name=function.__name__,
+                                cache_results=cache_results,
+                                schema_callback=schema_callback,
+                                parent_uuid=self.uuid)
+            else:
+                existing_node.update_node(function=function,
+                                          output_schema=output_schema,
+                                          input_columns=input_columns,
+                                          drop_columns=drop_columns,
+                                          setting_input=setting_input,
+                                          cache_results=cache_results,
+                                          schema_callback=schema_callback)
+                node = existing_node
+        elif node_type == 'input_data':
+            node = None
+        else:
+            raise Exception("No data initialized")
+        self._node_db[node_id] = node
+        self._node_ids.append(node_id)
+
+    def add_include_cols(self, include_columns: List[str]):
+        for column in include_columns:
+            if column not in self._input_cols:
+                self._input_cols.append(column)
+            if column not in self._output_cols:
+                self._output_cols.append(column)
+        return self
+
+    def add_output(self, output_file: input_schema.NodeOutput):
+        def _func(df: FlowFileTable):
+            df.output(output_fs=output_file.output_settings)
+            return df
+
+        self.add_node_step(node_id=output_file.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type='output',
+                           setting_input=output_file)
+
+    def add_airbyte_reader(self, external_source_input: input_schema.NodeExternalSource):
+        logger.info('Adding airbyte reader')
+        self.add_external_source(external_source_input)
+
+    def add_google_sheet(self,  external_source_input: input_schema.NodeExternalSource):
+        logger.info('Adding google sheet reader')
+        self.add_external_source(external_source_input)
+
+    def add_external_source(self,
+                            external_source_input: input_schema.NodeExternalSource | input_schema.NodeAirbyteReader):
+
+        custom_source_type = external_source_input.identifier != 'airbyte'
+        if custom_source_type:
+            node_type = 'external_source'
+            external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
+            source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
+                               parse_obj(external_source_input.source_settings))
+            if hasattr(external_source_script, 'initial_getter'):
+                initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
+            else:
+                initial_getter = None
+            data_getter = external_source_script.getter(source_settings)
+            external_source = data_source_factory(source_type='custom',
+                                                  data_getter=data_getter,
+                                                  initial_data_getter=initial_getter,
+                                                  orientation=external_source_input.source_settings.orientation,
+                                                  schema=None)
+        else:
+            node_type = 'airbyte_reader'
+            source_settings: input_schema.AirbyteReader = external_source_input.source_settings
+            airbyte_settings = airbyte_settings_from_config(source_settings)
+            airbyte_settings.fields = source_settings.fields
+            external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
+
+        def _func():
+            logger.info('Calling external source')
+            fl = FlowFileTable.create_from_external_source(external_source=external_source)
+            external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        node = self.get_node(external_source_input.node_id)
+        if node:
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = external_source_input
+            node.node_settings.cache_results = external_source_input.cache_results
+            if external_source_input.node_id not in set(start_node.node_id for start_node in self._flow_starts):
+                self._flow_starts.append(node)
+        else:
+            node = NodeStep(external_source_input.node_id, function=_func,
+                            setting_input=external_source_input,
+                            name=node_type, node_type=node_type, parent_uuid=self.uuid)
+            self._node_db[external_source_input.node_id] = node
+            self._flow_starts.append(node)
+            self._node_ids.append(external_source_input.node_id)
+        if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
+            logger.info('Using provided schema in the node')
+
+            def schema_callback():
+                return [FlowFileColumn.from_input(f.name, f.data_type) for f in
+                        external_source_input.source_settings.fields]
+
+            node.schema_callback = schema_callback
+        else:
+            logger.warning('Removing schema')
+            node._schema_callback = None
+        self.add_node_step(node_id=external_source_input.node_id,
+                           function=_func,
+                           input_columns=[],
+                           node_type=node_type,
+                           setting_input=external_source_input)
+
+    def add_read(self, input_file: input_schema.NodeRead):
+        if input_file.received_file.file_type in ('xlsx', 'excel') and input_file.received_file.sheet_name == '':
+            sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
+            input_file.received_file.sheet_name = sheet_name
+
+        def _func():
+            if input_file.received_file.file_type == 'parquet':
+                input_data = FlowFileTable.create_from_path(input_file.received_file)
+            elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:
+                input_data = FlowFileTable.create_from_path(input_file.received_file)
+            else:
+                input_data = FlowFileTable.create_from_path_worker(input_file.received_file)
+            input_data.name = input_file.received_file.name
+            return input_data
+
+        if input_file.received_file.file_type in ('csv', 'json', 'parquet'):
+            def schema_callback():
+                input_data = FlowFileTable.create_from_path(input_file.received_file)
+                return input_data.schema
+        else:
+            schema_callback = None
+        input_file.received_file.set_absolute_filepath()
+        # here is the issue
+        node = self.get_node(input_file.node_id)
+        if node:
+            node.node_type = 'read'
+            node.name = 'read'
+            node.function = _func
+            node.setting_input = input_file
+            if input_file.node_id not in set(start_node.node_id for start_node in self._flow_starts):
+                self._flow_starts.append(node)
+
+        else:
+            node = NodeStep(input_file.node_id, function=_func,
+                            setting_input=input_file,
+                            name='read', node_type='read', parent_uuid=self.uuid)
+            self._node_db[input_file.node_id] = node
+            self._flow_starts.append(node)
+            self._node_ids.append(input_file.node_id)
+
+        received_file = input_file.received_file
+
+        if len(received_file.fields) > 0:
+            def schema_callback():
+                return [FlowFileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+
+            node.schema_callback = schema_callback
+        elif schema_callback is not None:
+            node.schema_callback = schema_callback
+        elif received_file.file_type in ('xlsx', 'excel'):
+            if received_file.type_inference:
+                engine = 'openpyxl'
+            elif received_file.start_row > 0 and received_file.start_column == 0:
+                engine = 'calamine' if received_file.has_headers else 'xlsx2csv'
+            elif received_file.start_column > 0 or received_file.start_row > 0:
+                engine = 'openpyxl'
+            else:
+                engine = 'calamine'
+            schema_future = schema_future_xlsx(engine='openpyxl',
+                                               file_path=received_file.file_path,
+                                               sheet_name=received_file.sheet_name,
+                                               start_row=received_file.start_row,
+                                               end_row=received_file.end_row,
+                                               start_column=received_file.start_column,
+                                               end_column=received_file.end_column,
+                                               has_headers=received_file.has_headers)
+            node.node_schema.predicted_schema = schema_future.result()
+
+        return self
+
+    def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
+
+        if isinstance(input_file, input_schema.NodeManualInput):
+            input_data = FlowFileTable(input_file.raw_data)
+            ref = 'manual_input'
+
+        else:
+            input_data = FlowFileTable(path_ref=input_file.file_ref)
+            ref = 'datasource'
+        node = self.get_node(input_file.node_id)
+        if node:
+            node.node_type = ref
+            node.name = ref
+            node.function = input_data
+            node.setting_input = input_file
+
+            if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
+                self._flow_starts.append(node)
+        else:
+            node = NodeStep(input_file.node_id, function=input_data,
+                            setting_input=input_file,
+                            name=ref, node_type=ref, parent_uuid=self.uuid)
+            self._node_db[input_file.node_id] = node
+            self._flow_starts.append(node)
+            self._node_ids.append(input_file.node_id)
+        return self
+
+    def add_manual_input(self, input_file: input_schema.NodeManualInput):
+        self.add_datasource(input_file)
+
+    @property
+    def nodes(self) -> List[NodeStep]:
+        return list(self._node_db.values())
+
+    def check_for_missed_cols(self, expected_cols: List):
+        not_filled_cols = set(expected_cols) - set(self._output_cols)
+        cols_available = list(not_filled_cols & set([c.name for c in self._input_data.schema]))
+        self._output_cols += cols_available
+
+    @property
+    def input_data_columns(self) -> List[str]:
+        if self._input_cols:
+            return list(set([col for col in self._input_cols if
+                             col in [table_col.name for table_col in self._input_data.schema]]))
+
+    def get_execution_location(self, performance_mode: bool = False) -> schemas.ExecutionLocationsLiteral:
+        if performance_mode:
+            return 'local'
+        if self.flow_settings.execution_location == 'auto':
+            if any([node.node_settings.execute_location == 'local' for node in self.nodes]):
+                return 'local'
+            else:
+                return 'auto'
+        elif self.flow_settings.execution_location == 'local':
+            return 'local'
+        elif self.flow_settings.execution_location == 'remote':
+            return 'remote'
+        else:
+            raise Exception('Invalid execution mode')
+
+    #@profile
+    def run_graph(self, performance_mode: bool = False) -> RunInformation:
+        self.is_running = True
+        self.nodes_completed = 0
+        self.node_results = []
+        self.start_datetime = datetime.datetime.now()
+        self.end_datetime = None
+        self.latest_run_info = None
+        run_mode = self.get_execution_location(performance_mode=performance_mode)
+        all_node_ids = set(self._node_db.keys())
+        for _, node in self._node_db.items():
+            logger.info(f'{node} ->  {node.leads_to_nodes}')
+        logger.info(f'Running graph with node ids: {all_node_ids}')
+
+        execution_order = determine_execution_order(self.nodes, self._flow_starts)
+        logger.info(f'Execution order: {[n.node_id for n in execution_order]}')
+        logger.info(f'Using run mode: {run_mode}')
+        skip_nodes = []
+        for node in execution_order:
+            if node.node_id in skip_nodes:
+                continue
+            node_result = NodeResult(node_id=node.node_id, node_name=node.name)
+            logger.info(f'nodeId={node.node_id}\n start time: {node_result.start_timestamp}')
+            node.execute_node(run_location=run_mode)
+            try:
+                node_result.error = str(node.results.errors)
+                node_result.success = node.results.errors is None
+                node_result.end_timestamp = time()
+                node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+            except Exception as e:
+                node_result.error = 'Node did not run'
+                node_result.success = False
+                node_result.end_timestamp = time()
+                node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+            if not node_result.success:
+                skip_nodes.extend(list(node.get_all_dependent_nodes()))
+
+            self.nodes_completed += 1
+            self.node_results.append(node_result)
+        self.end_datetime = datetime.datetime.now()
+        self.is_running = False
+        return self.get_run_info()
+
+    def get_run_info(self) -> RunInformation:
+        if self.latest_run_info is None:
+            node_results = self.node_results
+            success = all(nr.success for nr in node_results)
+            self.latest_run_info = RunInformation(start_time=self.start_datetime, end_time=self.end_datetime,
+                                                  success=success,
+                                                  node_step_result=node_results, flow_id=self.flow_id,
+                                                  nodes_completed=self.nodes_completed,
+                                                  number_of_nodes=len(self.nodes))
+        elif self.latest_run_info.nodes_completed != self.nodes_completed:
+            node_results = self.node_results
+            self.latest_run_info = RunInformation(start_time=self.start_datetime, end_time=self.end_datetime,
+                                                  success=all(nr.success for nr in node_results),
+                                                  node_step_result=node_results, flow_id=self.flow_id,
+                                                  nodes_completed=self.nodes_completed,
+                                                  number_of_nodes=len(self.nodes))
+        return self.latest_run_info
+
+    @property
+    def node_connections(self) -> List[Tuple[int, int]]:
+        connections = set()
+        for node in self.nodes:
+            outgoing_connections = [(node.node_id, ltn.node_id) for ltn in node.leads_to_nodes]
+            incoming_connections = [(don.node_id, node.node_id) for don in node.all_inputs]
+            node_connections = [c for c in outgoing_connections + incoming_connections if (c[0] is not None
+                                                                                           and c[1] is not None)]
+            for node_connection in node_connections:
+                if node_connection not in connections:
+                    connections.add(node_connection)
+        return list(connections)
+
+    def get_schema(self) -> List[FlowFileColumn]:
+        if self.schema is None:
+            if len(self._node_ids) > 0:
+                self.schema = self._node_db[self._node_ids[0]].schema
+        return self.schema
+
+    def get_example_data(self, node_id: int) -> TableExample | None:
+        node = self._node_db[node_id]
+        return node.get_table_example(include_data=True)
+
+    def get_node_data(self, node_id: int, include_example: bool = True) -> NodeData:
+        node = self._node_db[node_id]
+        return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
+
+    def get_node_storage(self) -> schemas.FlowInformation:
+
+        node_information = {node.node_id: node.get_node_information() for
+                            node in self.nodes if node.is_setup and node.is_correct}
+
+        return schemas.FlowInformation(flow_id=self.flow_id,
+                                       flow_name=self.__name__,
+                                       storage_location=self.flow_settings.path,
+                                       flow_settings=self.flow_settings,
+                                       data=node_information,
+                                       node_starts=[v.node_id for v in self._flow_starts],
+                                       node_connections=self.node_connections
+                                       )
+
+    def close_flow(self):
+        for node in self.nodes:
+            node.remove_cache()
+
+    def save_flow(self, flow_path: str):
+        with open(os.path.join('saved_flows', flow_path), 'wb') as f:
+            pickle.dump(self.get_node_storage(), f)
+        self.flow_settings.path = flow_path
+
+    def get_frontend_data(self):
+        result = {
+            'Home': {
+                "data": {}
+            }
+        }
+        flow_info: schemas.FlowInformation = self.get_node_storage()
+
+        for node_id, node_info in flow_info.data.items():
+            if node_info.is_setup:
+                try:
+                    pos_x = node_info.data.pos_x
+                    pos_y = node_info.data.pos_y
+                    # Basic node structure
+                    result["Home"]["data"][str(node_id)] = {
+                        "id": node_info.id,
+                        "name": node_info.type,
+                        "data": {},  # Additional data can go here
+                        "class": node_info.type,
+                        "html": node_info.type,
+                        "typenode": "vue",
+                        "inputs": {},
+                        "outputs": {},
+                        "pos_x": pos_x,
+                        "pos_y": pos_y
+                    }
+                except Exception as e:
+                    print(e)
+            # Add outputs to the node based on `outputs` in your backend data
+            if node_info.outputs:
+                outputs = {o: 0 for o in node_info.outputs}
+                for o in node_info.outputs:
+                    outputs[o] += 1
+                connections = []
+                for output_node_id, n_connections in outputs.items():
+                    leading_to_node = self.get_node(output_node_id)
+                    input_types = leading_to_node.get_input_type(node_info.id)
+                    for input_type in input_types:
+                        if input_type == 'main':
+                            input_frontend_id = 'input_1'
+                        elif input_type == 'right':
+                            input_frontend_id = 'input_2'
+                        elif input_type == 'left':
+                            input_frontend_id = 'input_3'
+                        else:
+                            input_frontend_id = 'input_1'
+                        connection = {"node": str(output_node_id), "input": input_frontend_id}
+                        connections.append(connection)
+
+                result["Home"]["data"][str(node_id)]["outputs"]["output_1"] = {
+                    "connections": connections}
+            else:
+                result["Home"]["data"][str(node_id)]["outputs"] = {"output_1": {"connections": []}}
+
+            # Add input to the node based on `depending_on_id` in your backend data
+            if node_info.left_input_id is not None or node_info.right_input_id is not None or node_info.input_ids is not None:
+                main_inputs = node_info.main_input_ids
+                result["Home"]["data"][str(node_id)]["inputs"]["input_1"] = {
+                    "connections": [{"node": str(main_node_id), "input": "output_1"} for main_node_id in main_inputs]
+                }
+                if node_info.right_input_id is not None:
+                    result["Home"]["data"][str(node_id)]["inputs"]["input_2"] = {
+                        "connections": [{"node": str(node_info.right_input_id), "input": "output_1"}]
+                    }
+                if node_info.left_input_id is not None:
+                    result["Home"]["data"][str(node_id)]["inputs"]["input_3"] = {
+                        "connections": [{"node": str(node_info.left_input_id), "input": "output_1"}]
+                    }
+        return result
+
+    def get_vue_flow_input(self) -> schemas.VueFlowInput:
+        edges: List[schemas.NodeEdge] = []
+        nodes: List[schemas.NodeInput] = []
+        for node in self.nodes:
+            nodes.append(node.get_node_input())
+            edges.extend(node.get_edge_input())
+        return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes)
+
+    def reset(self):
+        for node in self.nodes:
+            node.reset(True)
+
+
+def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection):
+    print('adding a connection')
+    from_node = flow.get_node(node_connection.output_connection.node_id)
+    to_node = flow.get_node(node_connection.input_connection.node_id)
+    print('from_node', 'to_node', from_node, to_node)
+    connection_class = node_connection.input_connection.connection_class
+    match connection_class:
+        case 'input-0':
+            insert_type = 'main'
+        case 'input-1':
+            insert_type = 'right'
+        case 'input-2':
+            insert_type = 'left'
+        case _:
+            insert_type = connection_class
+    if not (from_node and to_node):
+        raise HTTPException(404, 'Not not available')
+    else:
+        to_node.add_node_connection(from_node, insert_type)

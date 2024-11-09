@@ -1,0 +1,12 @@
+.toggle-button {
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    padding: var(--spacing-sm);
+    border: none;
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+  }
+  
+  .toggle-button:hover {
+    background-color: var(--color-primary-dark);
+  }

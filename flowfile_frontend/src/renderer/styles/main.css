@@ -1,0 +1,55 @@
+@import './base/_variables.css';
+@import './components/_listbox.css';
+@import './components/_buttons.css';
+@import './components/_column-options.css';
+@import './components//_styled-table.css';
+@import './utils/_spacing.css';
+
+
+/* styles/base/_variables.css */
+:root {
+  /* Fonts */
+  --font-family-base: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  
+  /* Colors */
+  --primary-blue: #081b30;
+  --primary-blue-hover: #0d2640;
+  --primary-blue-light: #00040a;
+  --light-blue: #2C74B3;
+  --hover-blue: #f0f7ff;
+  --border-color: #e0e0e0;
+}
+
+/* General Element Plus styling */
+[class^="el-"] {
+  font-family: var(--font-family-base) !important;
+}
+
+/* Exception for icons to ensure they work properly */
+.el-icon,
+.el-select__caret,
+.el-input__icon,
+[class*="el-icon-"],
+[class*="el-select__caret"],
+[class*="el-input__icon"] {
+  font-family: element-icons !important;
+}
+
+.el-button--primary {
+  background-color: var(--primary-blue) !important;
+  border-color: var(--primary-blue) !important;
+}
+
+.el-button--primary:hover {
+  background-color: var(--primary-blue-hover) !important;
+  border-color: var(--primary-blue-hover) !important;
+}
+
+.el-select-dropdown__item.selected {
+  background-color: var(--hover-blue) !important;
+  color: var(--primary-blue) !important;
+}
+
+.el-input:focus {
+  border-color: var(--light-blue) !important;
+}

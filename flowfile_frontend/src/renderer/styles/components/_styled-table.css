@@ -1,0 +1,114 @@
+/* Modern Table Styles with Better Spacing */
+
+/* Base Table Structure */
+.styled-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+    line-height: 1.5; /* Added line height */
+  }
+  
+  /* Cell Base Styles */
+  .styled-table th,
+  .styled-table td {
+    text-align: left;
+    padding: 2px 16px; /* Increased padding for better readability */
+    border-bottom: 1px solid #ddd;
+    background-color: #fff;
+    font-size: 12px;
+    line-height: 1.5; /* Consistent line height */
+    height: 10px; /* Fixed height for consistent spacing */
+  }
+  
+  /* Column Widths */
+  .styled-table th:first-child,
+  .styled-table td:first-child {
+    width: 35%;
+  }
+  
+  .styled-table th:nth-child(2),
+  .styled-table td:nth-child(2) {
+    width: 30%;
+  }
+  
+  .styled-table th:last-child,
+  .styled-table td:last-child {
+    width: 35%;
+    border-right: none;
+  }
+  
+  /* Header Styles */
+  .styled-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
+    background-color: #fafafa;
+    font-weight: 600;
+    color: #333;
+    height: 40px; /* Slightly taller headers */
+    padding: 8px 16px;
+    vertical-align: middle; /* Center content vertically */
+  }
+  
+  /* Borders */
+  .styled-table td:not(:last-child) {
+    border-right: 1px solid #eee;
+  }
+  
+  /* Row Styles */
+  .styled-table tr {
+    height: 32px; /* Consistent row height */
+  }
+  
+  /* Hover Effects */
+  .styled-table tbody tr:hover {
+    background-color: #f5f5f5;
+  }
+  
+  .styled-table tbody tr:hover td {
+    background-color: transparent;
+  }
+  
+  /* Ensure content vertical alignment */
+  .styled-table td,
+  .styled-table th {
+    vertical-align: middle;
+  }
+  
+  /* Optional: Add spacing between rows */
+  .styled-table tbody tr {
+    transition: background-color 0.2s ease;
+  }
+  
+  /* Optional: Custom scrollbar for table container */
+  .table-container {
+    overflow: auto;
+  }
+  
+  .table-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .table-container::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .table-container::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+  }
+  
+  .table-container::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.2);
+  }
+
+  .table-wrapper {
+    max-height: 300px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    overflow: auto;
+    margin: 5px;
+  }

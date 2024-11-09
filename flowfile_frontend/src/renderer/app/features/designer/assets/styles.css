@@ -1,0 +1,87 @@
+.drawflow .drawflow-node {
+  background: #ffffffeb;
+  width: fit-content;
+  height: fit-content;
+  color: rgb(95, 95, 95);
+  padding: 0px;
+  border: 0px solid rgb(0, 0, 0);
+}
+
+.drawflow .drawflow-node.selected {
+  background: #ffffff;
+  border: 1px solid rgb(128, 128, 128);
+  margin-top: 0px;
+  margin-bottom: 0px;
+  margin-left: 0px;
+  margin-right: 0px;
+}
+
+.drawflow .drawflow-node .input,
+.drawflow .drawflow-node .output {
+  background: #434343;
+}
+
+.drawflow .drawflow-node .input,
+.drawflow .drawflow-node .output {
+  width: 10px;
+  height: 10px;
+  background-color: #afafaf;
+  border: 0px solid #1c1c1c;
+}
+
+.drawflow .drawflow-node .input {
+  left: -20px;
+}
+
+.drawflow .drawflow-node .output {
+  right: -15px;
+}
+
+.drawflow .drawflow-node .output:hover,
+.drawflow .drawflow-node .input:hover {
+  background: #494949;
+  border: 1px solid rgb(103, 77, 155);
+}
+
+.drawflow .connection .main-path {
+  stroke-width: 2px;
+  stroke: #000000;
+}
+
+.drawflow .connection .main-path:hover {
+  stroke: rgb(0, 0, 0);
+}
+
+.parent-node .drawflow-delete {
+  display: none !important;
+}
+
+.drawflow .drawflow-node.selected .drawflow_content_node .header {
+  color: #494949;
+  align-content: center;
+  align-items: center;
+}
+
+.drawflow .drawflow-node .drawflow_content_node button {
+  border-color: #ffffff;
+}
+
+.drawflow .drawflow-node .drawflow_content_node input,
+.drawflow .drawflow-node .drawflow_content_node .el-select,
+.drawflow .drawflow-node .drawflow_content_node button {
+  width: 100%;
+  background-color: #ffffff;
+}
+
+.drawflow .el-main {
+  height: 100%;
+}
+
+.el-drawer__body {
+  color: rgb(0, 0, 0);
+  height: fit-content;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 20px;
+  height: 100%;
+}
