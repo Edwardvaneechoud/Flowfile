@@ -123,4 +123,4 @@ npm run build:linux  # Linux
 
 ## Acknowledgments
 
-Built with Polars, Vue.js, FastAPI, and Electron.
+Built with Polars, Vue.js, FastAPI, Vueflow and Electron.
