@@ -285,7 +285,7 @@ def test_add_external_source():
 #
 # def test_google_sheets():
 #     graph = test_create_graph()
-#     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 332, 'pos_y': 187, 'is_setup': True, 'description': '', 'identifier': 'google_sheet', 'source_settings': {'orientation': 'row', 'fields': [], 'GOOGLE_SHEET': True, 'class_name': 'GoogleSheet', 'access_token': 'ya29.a0AcM612xHwpzSWxJMgGmGf_NrckBhC6LXwsy1320Adm_MKZUjRs0UGuw2IpEvdOcNtuk5Y7CO-WZH2NTdtf3Y0oWWnF52fsEntOrmQjLXD8aHGl7w9EOGIHe7PS87qyqpKHMJwKiUFn3WueJjGeIO_ahvP6hCJeAd2IYaCgYKAe0SARMSFQHGX2MiBChU8pKaXjmMPPmTLKLnFA0170', 'sheet_id': '17icXQF6qzbhizhNnarffzZmr1jRgYYjgp0WQasaTV8A', 'worksheet_name': 'InputSheet', 'sheet_name': 'GoogleFormContentooInput'}}
+#     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 332, 'pos_y': 187, 'is_setup': True, 'description': '', 'identifier': 'google_sheet', 'source_settings': {'orientation': 'row', 'fields': [], 'GOOGLE_SHEET': True, 'class_name': 'GoogleSheet', 'access_token': 'access token', 'sheet_id': '17icXQF6qzbhizhNnarffzZmr1jRgYYjgp0WQasaTV8A', 'worksheet_name': 'InputSheet', 'sheet_name': 'GoogleFormContentooInput'}}
 #     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
 #     graph.add_node_promise(node_promise)
 #     external_source_input = input_schema.NodeExternalSource(**settings)
