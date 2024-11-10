@@ -29,3 +29,4 @@ flowfile_core/db_data
 /.vscode
 /.idea
 /.venv
+print_structure.py
