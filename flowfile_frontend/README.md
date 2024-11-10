@@ -59,19 +59,6 @@ npm run build:web
 npm run preview:web
 ```
 
-## 📦 Project Structure
-
-```
-src/
-├── main/          # Electron main process
-├── renderer/      # Vue application files
-│   ├── components/
-│   ├── views/
-│   ├── stores/    # Pinia stores
-│   └── styles/
-└── assets/        # Static assets
-```
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
