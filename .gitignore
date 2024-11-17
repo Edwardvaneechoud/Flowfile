@@ -28,4 +28,5 @@ flowfile_core/db_data
 /build
 /.vscode
 /.idea
-/.venv
+/.venv.DS_Store
+site/ # Also ignore mkdocs build directory
