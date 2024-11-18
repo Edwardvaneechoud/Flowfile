@@ -12,7 +12,7 @@ This guide will help you get FlowFile up and running quickly.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/flowfile
+git clone https://github.com/edwardvaneechoud/flowfile
 cd flowfile
 ```
 
@@ -34,13 +34,13 @@ You'll need to start three components in separate terminals:
 1. Start the Worker service:
 ```bash
 # In first terminal
-poetry run flowfile_worker  # Starts on port 8000
+poetry run flowfile_worker  # Starts on port 63579
 ```
 
 2. Start the Core service:
 ```bash
 # In second terminal
-poetry run flowfile_core   # Starts on port 5667
+poetry run flowfile_core   # Starts on port 63578
 ```
 
 3. Start the frontend application:
@@ -54,8 +54,8 @@ npm run dev               # Starts Electron app (frontend on port 3000)
 
 Once all services are running, you should be able to:
 
-1. Access the worker service at `http://localhost:8000`
-2. Access the core service at `http://localhost:5667`
+1. Access the worker service at `http://localhost:63579`
+2. Access the core service at `http://localhost:63578`
 3. See the Electron application window open automatically
 
 The application is now ready to use! You can start creating your first data flow by dragging nodes onto the canvas.

@@ -8,9 +8,9 @@ from starlette.datastructures import Secret
 
 def get_default_worker_url():
     if platform.system() == "Windows":
-        return "http://127.0.0.1:8000"
+        return "http://127.0.0.1:63579"
     else:
-        return "http://0.0.0.0:8000"
+        return "http://0.0.0.0:63579"
 
 
 config = Config(".env")

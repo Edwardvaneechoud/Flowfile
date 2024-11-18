@@ -3,7 +3,7 @@ import { NodeData, nodeData } from './nodeInterfaces' // Adjust the path to your
 
 export const getNodeData = async (flow_id: number, node_id: number): Promise<NodeData | null> => {
   try {
-    const response = await axios.get<NodeData>('http://localhost:5667/node', {
+    const response = await axios.get<NodeData>('/node', {
       params: { flow_id, node_id },
       headers: { accept: 'application/json' },
     })

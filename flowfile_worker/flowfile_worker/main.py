@@ -62,7 +62,7 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def run(host: str = '0.0.0.0', port: int = 8000):
+def run(host: str = '0.0.0.0', port: int = 63579):
     """Run the FastAPI app with graceful shutdown"""
     global server_instance
 

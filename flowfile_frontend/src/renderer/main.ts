@@ -1,4 +1,5 @@
 import { createApp } from "vue";
+import { flowfileCorebaseURL } from './config/constants';
 import stores from "./app/stores";
 import router from "./app/router";
 import App from "./app/App.vue";
@@ -11,7 +12,7 @@ import "./styles/main.css";
 
 import axios from "axios";
 axios.defaults.withCredentials = true;
-axios.defaults.baseURL = "http://localhost:5667/"; // the FastAPI backend
+axios.defaults.baseURL = flowfileCorebaseURL; // the FastAPI backend
 const app = createApp(App);
 app.directive("click-outside", ClickOutsideDirective);
 app.use(stores);

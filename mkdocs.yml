@@ -1,6 +1,6 @@
 site_name: FlowFile
 site_description: A visual ETL tool combining drag-and-drop workflow building with Polars dataframes
-site_url: https://edwardvaneechoud.github.io/flowfile/  # Replace with your username and repo name
+site_url: https://edwardvaneechoud.github.io/flowfile/
 
 theme:
   name: material
@@ -37,3 +37,11 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Building Flows: flows/building.md
+  - Nodes:
+    - Overview: nodes/index.md
+    - Input Nodes: nodes/input.md
+    - Transform Nodes: nodes/transform.md
+    - Combine Nodes: nodes/combine.md
+    - Aggregate Nodes: nodes/aggregate.md
+    - Output Nodes: nodes/output.md

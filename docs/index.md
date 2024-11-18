@@ -15,8 +15,8 @@ FlowFile is a visual ETL tool that combines drag-and-drop workflow building with
 FlowFile operates as three interconnected services:
 
 - **Designer** (Electron + Vue): Visual interface for building data flows
-- **Core** (FastAPI): ETL engine using Polars for data transformations (`:5667`)
-- **Worker** (FastAPI): Handles computation and caching of data operations (`:8000`)
+- **Core** (FastAPI): ETL engine using Polars for data transformations (`:63578`)
+- **Worker** (FastAPI): Handles computation and caching of data operations (`:63579`)
 
 Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations.
 
@@ -41,6 +41,19 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 
 ## 🚀 Getting Started
 
+### Building Your First Flow
+
+FlowFile allows you to create data pipelines visually:
+
+1. Click **Create** to start a new `.flowfile`
+2. Drag nodes from the left sidebar onto the canvas
+3. Connect nodes by dragging between them
+4. Configure each node by clicking on it
+5. Click **Run** to execute your flow
+6. Click on nodes after running to preview results
+
+[Learn more about building flows](flows/building.md)
+
 ### Prerequisites
 - Python 3.10+
 - Node.js 16+
@@ -61,8 +74,8 @@ Manual installation:
 poetry install
 
 # Start services (in separate terminals)
-poetry run flowfile_worker  # Starts worker on :8000
-poetry run flowfile_core   # Starts core on :5667
+poetry run flowfile_worker  # Starts worker on :63579
+poetry run flowfile_core   # Starts core on :63578
 
 # Start desktop app
 cd flowfile_frontend
