@@ -48,13 +48,13 @@ FlowFile allows you to create data pipelines visually by connecting nodes that r
 
 ## Running Your Flow
 
-### Execution Options
+### 1. Execution Options
 1. Choose your run mode from the dropdown:
      - **Auto**: Automatically runs when changes are made
      - **Local**: Runs the flow in the same process as the designer
      - **Remote**: Runs the flow on a separate worker process
 
-### Running the Flow
+### 2. Running the Flow
 1. Click the **Run** button in the top toolbar
 2. Watch the execution progress:
      - 🟢 Green: Success
@@ -62,7 +62,7 @@ FlowFile allows you to create data pipelines visually by connecting nodes that r
      - 🟡 Yellow: Warning
      - ⚪ White: Not executed
 
-### Viewing Results
+### 3. Viewing Results
 1. Click any node after execution to see its output data
 2. Review the results in the preview panel
 3. Check for any errors or warnings
