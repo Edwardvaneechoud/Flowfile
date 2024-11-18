@@ -74,7 +74,7 @@ export const createNewSelect = (org_node_select: NodeSelect, node_id: number): N
 }
 
 export const insertSelect = async (select_input: NodeSelect): Promise<NodeSelect> => {
-  const response = await axios.post('http://localhost:5667/transform/select', select_input, {
+  const response = await axios.post('/transform/select', select_input, {
     headers: {
       'Content-Type': 'application/json',
     },

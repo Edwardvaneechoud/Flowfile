@@ -50,23 +50,23 @@ python -m flowfile_worker --host 0.0.0.0 --port 8000
 import requests
 
 # Submit a Polars operation
-task = requests.post("http://localhost:8000/submit_query/", json={
+task = requests.post("http://localhost:63579/submit_query/", json={
     "polars_script": script,
     "operation_type": "store"
 })
 
 # Get task status
-status = requests.get(f"http://localhost:8000/status/{task.json()['background_task_id']}")
+status = requests.get(f"http://localhost:63579/status/{task.json()['background_task_id']}")
 
 # Fetch results when complete
-results = requests.get(f"http://localhost:8000/fetch_results/{task.json()['background_task_id']}")
+results = requests.get(f"http://localhost:63579/fetch_results/{task.json()['background_task_id']}")
 ```
 
 ## ⚙️ Configuration
 
 The worker uses environment variables for configuration:
 - `WORKER_HOST` - Host address (default: 0.0.0.0)
-- `WORKER_PORT` - Port number (default: 8000)
+- `WORKER_PORT` - Port number (default: 63579)
 - `CACHE_DIR` - Directory for temporary files (auto-generated if not specified)
 
 ## 🔒 Security

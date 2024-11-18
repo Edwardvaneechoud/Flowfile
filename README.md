@@ -5,6 +5,8 @@
 </h1>
 <p align="center">
   <b>Documentation</b>:
+  <a href="https://edwardvaneechoud.github.io/flowfile/">Website</a>
+  -
   <a href="flowfile_core/README.md">Core</a>
   -
   <a href="flowfile_worker/README.md">Worker</a>
@@ -24,8 +26,8 @@ FlowFile is a visual ETL tool that combines drag-and-drop workflow building with
 FlowFile operates as three interconnected services:
 
 - **Designer** (Electron + Vue): Visual interface for building data flows
-- **Core** (FastAPI): ETL engine using Polars for data transformations (`:5667`)
-- **Worker** (FastAPI): Handles computation and caching of data operations (`:8000`)
+- **Core** (FastAPI): ETL engine using Polars for data transformations (`:63578`)
+- **Worker** (FastAPI): Handles computation and caching of data operations (`:63579`)
 
 Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations.
 
@@ -70,8 +72,8 @@ Manual installation:
 poetry install
 
 # Start services (in separate terminals)
-poetry run flowfile_worker  # Starts worker on :8000
-poetry run flowfile_core   # Starts core on :5667
+poetry run flowfile_worker  # Starts worker on :63579
+poetry run flowfile_core   # Starts core on :63578
 
 # Start desktop app
 cd flowfile_frontend

@@ -1,5 +1,5 @@
 import polars as pl
-from flowfile_core.configs.settings import AVAILABLE_RAM
+from flowfile_core.configs.settings import AVAILABLE_RAM, WORKER_URL
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.subprocess_operations import ExternalDfFetcher
 from flowfile_core.flowfile.flowfile_table.subprocess_operations import Status
@@ -143,7 +143,7 @@ def execute_write_method(write_method: Callable, path: str, data_type: str = Non
 def write_output(_df: pl.LazyFrame, data_type: str, path: str, write_mode: str, sheet_name: str = None,
                  delimiter: str = None) -> Status:
     serializable_df = _df.serialize()
-    r = requests.post('http://localhost:8000/write_results/',
+    r = requests.post(f'{WORKER_URL}/write_results/',
                       json={'operation': encodebytes(serializable_df).decode(),
                             'data_type': data_type,
                             'path': path,

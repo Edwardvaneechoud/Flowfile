@@ -104,7 +104,6 @@ def test_polars_transformation():
     serialized_df = df.serialize()
     load = models.PolarsScript(operation=base64.encodebytes(serialized_df), operation_type='store')
     # import requests
-    #v = requests.post('http://localhost:8000/submit_query', data=load.json())
 
     v = client.post('/submit_query', data=load.json())
     assert v.status_code == 200, v.text
