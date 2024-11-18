@@ -5,6 +5,8 @@
 </h1>
 <p align="center">
   <b>Documentation</b>:
+  <a href="https://edwardvaneechoud.github.io/flowfile/">Website</a>
+  -
   <a href="flowfile_core/README.md">Core</a>
   -
   <a href="flowfile_worker/README.md">Worker</a>

@@ -1,10 +1,9 @@
 # FlowFile
 
-<figure markdown>
-  ![FlowFile Logo](assets/images/logo.png){ width="100px" }
-</figure>
-
-FlowFile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
+<div style="display: flex; align-items: center; gap: 20px;">
+  <img src="assets/images/logo.png" alt="FlowFile Logo" width="100px">
+  <p>FlowFile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.</p>
+</div>
 
 <figure markdown>
   ![FlowFile Interface](assets/images/group_by_screenshot.png){ width="800px" }
@@ -82,3 +81,8 @@ cd flowfile_frontend
 npm install
 npm run dev               # Starts Electron app (frontend on :3000)
 ```
+## 👉 Next Steps
+
+- [Quickstart Guide](quickstart.md)
+- [Building Flows](flows/building.md)
+- [Node Overview](nodes/index.md)
