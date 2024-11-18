@@ -32,3 +32,5 @@ flowfile_core/db_data
 site/ # Also ignore mkdocs build directory
 **/.DS_Store
 /docs/.venv/
+docs/.venv/
+**/.venv/**
