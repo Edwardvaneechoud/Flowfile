@@ -52,7 +52,7 @@ from flowfile_core.flowfile.sources.external_sources.base_class import ExternalD
 
 
 @dataclass
-class FlowfileTableNew:
+class FlowfileTable:
     """
     A class that provides a unified interface for working with tabular data, supporting both eager and lazy evaluation.
 
@@ -380,13 +380,13 @@ class FlowfileTableNew:
     # Data Transformation Methods
 
     def do_group_by(self, group_by_input: transform_schemas.GroupByInput,
-                    calculate_schema_stats: bool = True) -> "FlowfileTableNew":
+                    calculate_schema_stats: bool = True) -> "FlowfileTable":
         """Perform group by operations on the DataFrame."""
         aggregations = [c for c in group_by_input.agg_cols if c.agg != 'groupby']
         group_columns = [c for c in group_by_input.agg_cols if c.agg == 'groupby']
 
         if len(group_columns) == 0:
-            return FlowfileTableNew(
+            return FlowfileTable(
                 self.data_frame.select(
                     ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations
                 ),
@@ -395,24 +395,24 @@ class FlowfileTableNew:
 
         df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
         group_by_columns = [n_c.new_name for n_c in group_columns]
-        return FlowfileTableNew(
+        return FlowfileTable(
             df.group_by(*group_by_columns).agg(
                 ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations
             ),
             calculate_schema_stats=calculate_schema_stats
         )
 
-    def do_sort(self, sorts: List[transform_schemas.SortByInput]) -> "FlowfileTableNew":
+    def do_sort(self, sorts: List[transform_schemas.SortByInput]) -> "FlowfileTable":
         """Sort the DataFrame based on specified columns and directions."""
         if not sorts:
             return self
 
         descending = [s.how == 'desc' or s.how.lower() == 'descending' for s in sorts]
         df = self.data_frame.sort([sort_by.column for sort_by in sorts], descending=descending)
-        return FlowfileTableNew(df, number_of_records=self.number_of_records, schema=self.schema)
+        return FlowfileTable(df, number_of_records=self.number_of_records, schema=self.schema)
 
     def change_column_types(self, transforms: List[transform_schemas.SelectInput],
-                            calculate_schema: bool = False) -> "FlowfileTableNew":
+                            calculate_schema: bool = False) -> "FlowfileTable":
         """Change the data types of specified columns."""
         dtypes = [dtype.base_type() for dtype in self.data_frame.collect_schema().dtypes()]
         idx_mapping = list(
@@ -427,7 +427,7 @@ class FlowfileTableNew:
         ]
 
         df = self.data_frame.with_columns(transformations)
-        return FlowfileTableNew(
+        return FlowfileTable(
             df,
             number_of_records=self.number_of_records,
             calculate_schema_stats=calculate_schema,
@@ -449,7 +449,7 @@ class FlowfileTableNew:
         return self.data_frame.to_dicts()
 
     @classmethod
-    def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowfileTableNew":
+    def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowfileTable":
         """Create a FlowfileTable from an external data source."""
         if external_source.schema is not None:
             ff = cls.create_from_schema(external_source.schema)
@@ -461,7 +461,7 @@ class FlowfileTableNew:
         return ff
 
     @classmethod
-    def create_from_schema(cls, schema: List[FlowfileColumn]) -> "FlowfileTableNew":
+    def create_from_schema(cls, schema: List[FlowfileColumn]) -> "FlowfileTable":
         """Create a FlowfileTable from a schema definition."""
         pl_schema = []
         for i, flow_file_column in enumerate(schema):
@@ -471,7 +471,7 @@ class FlowfileTableNew:
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
 
     @classmethod
-    def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowfileTableNew":
+    def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowfileTable":
         """Create a FlowfileTable from a file path."""
         received_table.set_absolute_filepath()
 
@@ -490,12 +490,12 @@ class FlowfileTableNew:
         return flow_file
 
     @classmethod
-    def create_random(cls, number_of_records: int = 1000) -> "FlowfileTableNew":
+    def create_random(cls, number_of_records: int = 1000) -> "FlowfileTable":
         """Create a FlowfileTable with random data."""
         return cls(create_fake_data(number_of_records))
 
     @classmethod
-    def generate_enumerator(cls, length: int = 1000, output_name: str = 'output_column') -> "FlowfileTableNew":
+    def generate_enumerator(cls, length: int = 1000, output_name: str = 'output_column') -> "FlowfileTable":
         """Generate a sequence of numbers as a FlowfileTable."""
         if length > 10_000_000:
             length = 10_000_000
@@ -551,7 +551,7 @@ class FlowfileTableNew:
 
     # Data Manipulation Methods
 
-    def split(self, split_input: transform_schemas.TextToRowsInput) -> "FlowfileTableNew":
+    def split(self, split_input: transform_schemas.TextToRowsInput) -> "FlowfileTable":
         """Split a column into multiple rows based on a delimiter."""
         output_column_name = (
             split_input.output_column_name
@@ -574,9 +574,9 @@ class FlowfileTableNew:
             .explode(output_column_name)
         )
 
-        return FlowfileTableNew(df)
+        return FlowfileTable(df)
 
-    def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> "FlowfileTableNew":
+    def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> "FlowfileTable":
         """Convert data from wide to long format."""
         lf = self.data_frame
 
@@ -593,9 +593,9 @@ class FlowfileTableNew:
         else:
             result = lf.unpivot()
 
-        return FlowfileTableNew(result)
+        return FlowfileTable(result)
 
-    def do_pivot(self, pivot_input: transform_schemas.PivotInput) -> "FlowfileTableNew":
+    def do_pivot(self, pivot_input: transform_schemas.PivotInput) -> "FlowfileTable":
         """Convert data from long to wide format with aggregations."""
         # Get unique values for pivot columns
         lf = self.data_frame.select(pivot_input.pivot_column).unique().cast(pl.String)
@@ -647,24 +647,24 @@ class FlowfileTableNew:
             df = df.drop('__temp__')
             pivot_input.index_columns = []
 
-        return FlowfileTableNew(df, calculate_schema_stats=False)
+        return FlowfileTable(df, calculate_schema_stats=False)
 
-    def do_filter(self, predicate: str) -> "FlowfileTableNew":
+    def do_filter(self, predicate: str) -> "FlowfileTable":
         """Filter the DataFrame based on a predicate expression."""
         try:
             f = to_expr(predicate)
         except Exception as e:
             f = to_expr("False")
         df = self.data_frame.filter(f)
-        return FlowfileTableNew(df, schema=self.schema, streamable=self._streamable)
+        return FlowfileTable(df, schema=self.schema, streamable=self._streamable)
 
-    def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTableNew":
+    def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTable":
         """Add a record ID column with optional grouping."""
         if record_id_settings.group_by and len(record_id_settings.group_by_columns) > 0:
             return self._add_grouped_record_id(record_id_settings)
         return self._add_simple_record_id(record_id_settings)
 
-    def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTableNew":
+    def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTable":
         """Add a record ID column with grouping."""
         select_cols = [pl.col(record_id_settings.output_column_name)] + [pl.col(c) for c in self.columns]
 
@@ -682,9 +682,9 @@ class FlowfileTableNew:
         output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, 'UInt64')]
         output_schema.extend(self.schema)
 
-        return FlowfileTableNew(df, schema=output_schema)
+        return FlowfileTable(df, schema=output_schema)
 
-    def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTableNew":
+    def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTable":
         """Add a simple sequential record ID column."""
         df = self.data_frame.with_row_index(
             record_id_settings.output_column_name,
@@ -694,7 +694,7 @@ class FlowfileTableNew:
         output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, 'UInt64')]
         output_schema.extend(self.schema)
 
-        return FlowfileTableNew(df, schema=output_schema)
+        return FlowfileTable(df, schema=output_schema)
 
     # Utility Methods
 
@@ -714,7 +714,7 @@ class FlowfileTableNew:
         """Return string representation of the FlowfileTable."""
         return self.data_frame.__repr__()
 
-    def __call__(self) -> "FlowfileTableNew":
+    def __call__(self) -> "FlowfileTable":
         """Make the class callable, returning self."""
         return self
 
@@ -722,12 +722,12 @@ class FlowfileTableNew:
         """Get the number of records in the table."""
         return self.number_of_records if self.number_of_records >= 0 else self.get_number_of_records()
 
-    def cache(self) -> "FlowfileTableNew":
+    def cache(self) -> "FlowfileTable":
         """
         Cache the data in background and update the DataFrame reference.
 
         Returns:
-            FlowfileTableNew: Self with cached data
+            FlowfileTable: Self with cached data
         """
         edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False)
         logger.info('Caching data in background')
@@ -765,8 +765,24 @@ class FlowfileTableNew:
             df = self.collect()
         return df.to_dicts()
 
+    def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> "FlowfileTable":
+        if not self.lazy:
+            df = self.data_frame.lazy()
+        else:
+            df = self.data_frame
+
+        if streamable:
+            try:
+                df = df.head(n_rows).collect()
+            except Exception as e:
+                logger.warning(f'Error in getting sample: {e}')
+                df = df.head(n_rows).collect(streaming=False)
+        else:
+            df = self.collect()
+        return FlowfileTable(df, number_of_records=len(df), schema=self.schema)
+
     def get_sample(self, n_rows: int = 100, random: bool = False, shuffle: bool = False,
-                   seed: int = None) -> "FlowfileTableNew":
+                   seed: int = None) -> "FlowfileTable":
         """
         Get a sample of rows from the DataFrame.
 
@@ -777,7 +793,7 @@ class FlowfileTableNew:
             seed: Random seed for reproducibility
 
         Returns:
-            FlowfileTableNew: New instance with sampled data
+            FlowfileTable: New instance with sampled data
         """
         n_records = min(n_rows, self.number_of_records)
         logging.info(f'Getting sample of {n_rows} rows')
@@ -799,9 +815,9 @@ class FlowfileTableNew:
                 self.collect(n_rows)
             sample_df = self.data_frame.head(n_rows)
 
-        return FlowfileTableNew(sample_df, schema=self.schema, number_of_records=n_records)
+        return FlowfileTable(sample_df, schema=self.schema, number_of_records=n_records)
 
-    def get_subset(self, n_rows: int = 100) -> "FlowfileTableNew":
+    def get_subset(self, n_rows: int = 100) -> "FlowfileTable":
         """
         Get a subset of rows from the DataFrame.
 
@@ -809,12 +825,12 @@ class FlowfileTableNew:
             n_rows: Number of rows to include
 
         Returns:
-            FlowfileTableNew: New instance with subset of data
+            FlowfileTable: New instance with subset of data
         """
         if not self.lazy:
-            return FlowfileTableNew(self.data_frame.head(n_rows), calculate_schema_stats=True)
+            return FlowfileTable(self.data_frame.head(n_rows), calculate_schema_stats=True)
         else:
-            return FlowfileTableNew(self.data_frame.head(n_rows), calculate_schema_stats=True)
+            return FlowfileTable(self.data_frame.head(n_rows), calculate_schema_stats=True)
 
     # Iterator Methods
     def iter_batches(self, batch_size: int = 1000, columns: Union[List, Tuple, str] = None):
@@ -826,18 +842,18 @@ class FlowfileTableNew:
             columns: Columns to include
 
         Yields:
-            FlowfileTableNew: New instance for each batch
+            FlowfileTable: New instance for each batch
         """
         if columns:
             self.data_frame = self.data_frame.select(columns)
         self.lazy = False
         batches = self.data_frame.iter_slices(batch_size)
         for batch in batches:
-            yield FlowfileTableNew(batch)
+            yield FlowfileTable(batch)
 
     # Join Methods
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowfileTableNew", file_ref: str) -> "FlowfileTableNew":
+                      other: "FlowfileTable", file_ref: str) -> "FlowfileTable":
         """
         Perform a fuzzy join with another DataFrame.
 
@@ -847,17 +863,17 @@ class FlowfileTableNew:
             file_ref: Reference for temporary files
 
         Returns:
-            FlowfileTableNew: New instance with joined data
+            FlowfileTable: New instance with joined data
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
         f = ExternalFuzzyMatchFetcher(left_df, right_df, fuzzy_maps=fuzzy_match_input.fuzzy_maps,
                                       file_ref=file_ref + '_fm',
                                       wait_on_completion=True)
-        return FlowfileTableNew(f.get_result())
+        return FlowfileTable(f.get_result())
 
-    def fuzzy_match(self, right: "FlowfileTableNew", left_on: str, right_on: str,
-                    fuzzy_method: str = 'levenshtein', threshold: float = 0.75) -> "FlowfileTableNew":
+    def fuzzy_match(self, right: "FlowfileTable", left_on: str, right_on: str,
+                    fuzzy_method: str = 'levenshtein', threshold: float = 0.75) -> "FlowfileTable":
         """
         Perform fuzzy matching between two DataFrames.
 
@@ -869,7 +885,7 @@ class FlowfileTableNew:
             threshold: Matching threshold
 
         Returns:
-            FlowfileTableNew: New instance with matched data
+            FlowfileTable: New instance with matched data
         """
         fuzzy_match_input = transform_schemas.FuzzyMatchInput(
             [transform_schemas.FuzzyMap(
@@ -884,7 +900,7 @@ class FlowfileTableNew:
 
     def do_cross_join(self, cross_join_input: transform_schemas.CrossJoinInput,
                       auto_generate_selection: bool, verify_integrity: bool,
-                      other: "FlowfileTableNew") -> "FlowfileTableNew":
+                      other: "FlowfileTable") -> "FlowfileTable":
         """
         Perform a cross join with another DataFrame.
 
@@ -895,7 +911,7 @@ class FlowfileTableNew:
             other: Right DataFrame for join
 
         Returns:
-            FlowfileTableNew: New instance with joined data
+            FlowfileTable: New instance with joined data
 
         Raises:
             Exception: If join would result in too many records
@@ -930,15 +946,15 @@ class FlowfileTableNew:
                                 if col.join_key and not col.keep and col.is_available]
 
         if verify_integrity:
-            return FlowfileTableNew(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
+            return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
                                     number_of_records=n_records, streamable=False)
         else:
-            fl = FlowfileTableNew(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
+            fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
                                   number_of_records=0, streamable=False)
             return fl
 
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
-             verify_integrity: bool, other: "FlowfileTableNew") -> "FlowfileTableNew":
+             verify_integrity: bool, other: "FlowfileTable") -> "FlowfileTable":
         """
         Perform a join operation with another DataFrame.
 
@@ -949,7 +965,7 @@ class FlowfileTableNew:
             other: Right DataFrame for join
 
         Returns:
-            FlowfileTableNew: New instance with joined data
+            FlowfileTable: New instance with joined data
 
         Raises:
             Exception: If join would result in too many records or is invalid
@@ -989,15 +1005,15 @@ class FlowfileTableNew:
                                 if col.join_key and not col.keep and col.is_available]
 
         if verify_integrity:
-            return FlowfileTableNew(joined_df.drop(cols_to_delete_after), calculate_schema_stats=True,
+            return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=True,
                                     number_of_records=n_records, streamable=False)
         else:
-            fl = FlowfileTableNew(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
+            fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
                                   number_of_records=0, streamable=False)
             return fl
 
     # Graph Operations
-    def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> "FlowfileTableNew":
+    def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> "FlowfileTable":
         """
         Solve a graph problem using the specified columns.
 
@@ -1005,16 +1021,16 @@ class FlowfileTableNew:
             graph_solver_input: Graph solving parameters
 
         Returns:
-            FlowfileTableNew: New instance with solved graph data
+            FlowfileTable: New instance with solved graph data
         """
         lf = self.data_frame.with_columns(
             graph_solver(graph_solver_input.col_from, graph_solver_input.col_to)
             .alias(graph_solver_input.output_column_name)
         )
-        return FlowfileTableNew(lf)
+        return FlowfileTable(lf)
 
     # Data Modification Methods
-    def add_new_values(self, values: Iterable, col_name: str = None) -> "FlowfileTableNew":
+    def add_new_values(self, values: Iterable, col_name: str = None) -> "FlowfileTable":
         """
         Add a new column with specified values.
 
@@ -1023,22 +1039,22 @@ class FlowfileTableNew:
             col_name: Name for new column
 
         Returns:
-            FlowfileTableNew: New instance with added column
+            FlowfileTable: New instance with added column
         """
         if col_name is None:
             col_name = 'new_values'
-        return FlowfileTableNew(self.data_frame.with_columns(pl.Series(values).alias(col_name)))
+        return FlowfileTable(self.data_frame.with_columns(pl.Series(values).alias(col_name)))
 
-    def get_record_count(self) -> "FlowfileTableNew":
+    def get_record_count(self) -> "FlowfileTable":
         """
         Get the total number of records.
 
         Returns:
-            FlowfileTableNew: New instance with record count
+            FlowfileTable: New instance with record count
         """
-        return FlowfileTableNew(self.data_frame.select(pl.len().alias('number_of_records')))
+        return FlowfileTable(self.data_frame.select(pl.len().alias('number_of_records')))
 
-    def assert_equal(self, other: "FlowfileTableNew", ordered: bool = True, strict_schema: bool = False):
+    def assert_equal(self, other: "FlowfileTable", ordered: bool = True, strict_schema: bool = False):
         """
         Assert that this DataFrame is equal to another.
 
@@ -1174,7 +1190,7 @@ class FlowfileTableNew:
             [transform_schemas.SelectInput(old_name=c.name, data_type=c.data_type) for c in self.schema]
         )
 
-    def select_columns(self, list_select: Union[List[str], Tuple[str], str]) -> "FlowfileTableNew":
+    def select_columns(self, list_select: Union[List[str], Tuple[str], str]) -> "FlowfileTable":
         """
         Select specific columns from the DataFrame.
 
@@ -1182,7 +1198,7 @@ class FlowfileTableNew:
             list_select: Columns to select
 
         Returns:
-            FlowfileTableNew: New instance with selected columns
+            FlowfileTable: New instance with selected columns
         """
         if isinstance(list_select, str):
             list_select = [list_select]
@@ -1191,14 +1207,14 @@ class FlowfileTableNew:
         selects = [ls for ls, id_to_keep in zip(list_select, idx_to_keep) if id_to_keep is not None]
         new_schema = [self.schema[i] for i in idx_to_keep if i is not None]
 
-        return FlowfileTableNew(
+        return FlowfileTable(
             self.data_frame.select(selects),
             number_of_records=self.number_of_records,
             schema=new_schema,
             streamable=self._streamable
         )
 
-    def drop_columns(self, columns: List[str]) -> "FlowfileTableNew":
+    def drop_columns(self, columns: List[str]) -> "FlowfileTable":
         """
         Drop specified columns from the DataFrame.
 
@@ -1206,19 +1222,19 @@ class FlowfileTableNew:
             columns: Columns to drop
 
         Returns:
-            FlowfileTableNew: New instance without dropped columns
+            FlowfileTable: New instance without dropped columns
         """
         cols_for_select = tuple(set(self.columns) - set(columns))
         idx_to_keep = [self.cols_idx.get(c) for c in cols_for_select]
         new_schema = [self.schema[i] for i in idx_to_keep]
 
-        return FlowfileTableNew(
+        return FlowfileTable(
             self.data_frame.select(cols_for_select),
             number_of_records=self.number_of_records,
             schema=new_schema
         )
 
-    def reorganize_order(self, column_order: List[str]) -> "FlowfileTableNew":
+    def reorganize_order(self, column_order: List[str]) -> "FlowfileTable":
         """
         Reorganize columns in specified order.
 
@@ -1226,14 +1242,14 @@ class FlowfileTableNew:
             column_order: Desired column order
 
         Returns:
-            FlowfileTableNew: New instance with reordered columns
+            FlowfileTable: New instance with reordered columns
         """
         df = self.data_frame.select(column_order)
         schema = sorted(self.schema, key=lambda x: column_order.index(x.column_name))
-        return FlowfileTableNew(df, schema=schema, number_of_records=self.number_of_records)
+        return FlowfileTable(df, schema=schema, number_of_records=self.number_of_records)
 
     # Formula and Expression Methods
-    def execute_polars_code(self, code: str) -> "FlowfileTableNew":
+    def execute_polars_code(self, code: str) -> "FlowfileTable":
         """
         Execute arbitrary Polars code.
 
@@ -1241,13 +1257,13 @@ class FlowfileTableNew:
             code: Polars code to execute
 
         Returns:
-            FlowfileTableNew: Result of code execution
+            FlowfileTable: Result of code execution
         """
         polars_executable = polars_code_parser.get_executable(code)
-        return FlowfileTableNew(polars_executable(self.data_frame))
+        return FlowfileTable(polars_executable(self.data_frame))
 
     def apply_flowfile_formula(self, func: str, col_name: str,
-                               output_data_type: pl.DataType = None) -> "FlowfileTableNew":
+                               output_data_type: pl.DataType = None) -> "FlowfileTable":
         """
         Apply a formula to create a new column.
 
@@ -1257,7 +1273,7 @@ class FlowfileTableNew:
             output_data_type: Data type for output
 
         Returns:
-            FlowfileTableNew: New instance with added column
+            FlowfileTable: New instance with added column
         """
         parsed_func = to_expr(func)
         if output_data_type is not None:
@@ -1265,10 +1281,10 @@ class FlowfileTableNew:
         else:
             df2 = self.data_frame.with_columns(parsed_func.alias(col_name))
 
-        return FlowfileTableNew(df2, number_of_records=self.number_of_records)
+        return FlowfileTable(df2, number_of_records=self.number_of_records)
 
     def apply_sql_formula(self, func: str, col_name: str,
-                          output_data_type: pl.DataType = None) -> "FlowfileTableNew":
+                          output_data_type: pl.DataType = None) -> "FlowfileTable":
         """
         Apply an SQL-style formula to create a new column.
 
@@ -1278,7 +1294,7 @@ class FlowfileTableNew:
             output_data_type: Data type for output
 
         Returns:
-            FlowfileTableNew: New instance with added column
+            FlowfileTable: New instance with added column
         """
         expr = to_expr(func)
         if output_data_type is not None:
@@ -1286,10 +1302,10 @@ class FlowfileTableNew:
         else:
             df = self.data_frame.with_columns(expr.alias(col_name))
 
-        return FlowfileTableNew(df, number_of_records=self.number_of_records)
+        return FlowfileTable(df, number_of_records=self.number_of_records)
 
     # File Operations
-    def output(self, output_fs: input_schema.OutputSettings) -> "FlowfileTableNew":
+    def output(self, output_fs: input_schema.OutputSettings) -> "FlowfileTable":
         """
         Write DataFrame to output file.
 
@@ -1297,7 +1313,7 @@ class FlowfileTableNew:
             output_fs: Output settings
 
         Returns:
-            FlowfileTableNew: Self for chaining
+            FlowfileTable: Self for chaining
         """
         logger.info('Starting to write output')
         status = utils.write_output(
@@ -1314,7 +1330,7 @@ class FlowfileTableNew:
         return self
 
     # Data Operations
-    def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> "FlowfileTableNew":
+    def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> "FlowfileTable":
         """
         Get unique rows based on specified columns.
 
@@ -1322,13 +1338,13 @@ class FlowfileTableNew:
             unique_input: Unique operation parameters
 
         Returns:
-            FlowfileTableNew: New instance with unique rows
+            FlowfileTable: New instance with unique rows
         """
         if unique_input is None or unique_input.columns is None:
-            return FlowfileTableNew(self.data_frame.unique())
-        return FlowfileTableNew(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
+            return FlowfileTable(self.data_frame.unique())
+        return FlowfileTable(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
 
-    def concat(self, other: Iterable["FlowfileTableNew"] | "FlowfileTableNew") -> "FlowfileTableNew":
+    def concat(self, other: Iterable["FlowfileTable"] | "FlowfileTable") -> "FlowfileTable":
         """
         Concatenate with other DataFrames.
 
@@ -1336,16 +1352,16 @@ class FlowfileTableNew:
             other: DataFrames to concatenate
 
         Returns:
-            FlowfileTableNew: Concatenated DataFrame
+            FlowfileTable: Concatenated DataFrame
         """
-        if isinstance(other, FlowfileTableNew):
+        if isinstance(other, FlowfileTable):
             other = [other]
 
         dfs: List[pl.LazyFrame] | List[pl.DataFrame] = [self.data_frame] + [flt.data_frame for flt in other]
-        return FlowfileTableNew(pl.concat(dfs, how='diagonal_relaxed'))
+        return FlowfileTable(pl.concat(dfs, how='diagonal_relaxed'))
 
     def do_select(self, select_inputs: transform_schemas.SelectInputs,
-                  keep_missing: bool = True) -> "FlowfileTableNew":
+                  keep_missing: bool = True) -> "FlowfileTable":
         """
         Perform complex column selection and transformation.
 
@@ -1354,7 +1370,7 @@ class FlowfileTableNew:
             keep_missing: Whether to keep columns not specified
 
         Returns:
-            FlowfileTableNew: New instance with selected/transformed columns
+            FlowfileTable: New instance with selected/transformed columns
         """
         new_schema = deepcopy(self.schema)
         renames = [r for r in select_inputs.renames if r.is_available]
@@ -1387,7 +1403,7 @@ class FlowfileTableNew:
         renames.sort(key=lambda r: 0 if r.position is None else r.position)
         sorted_cols = utils.match_order(ndf.collect_schema().names(),
                                         [r.new_name for r in renames] + self.data_frame.collect_schema().names())
-        output_file = FlowfileTableNew(ndf, number_of_records=self.number_of_records)
+        output_file = FlowfileTable(ndf, number_of_records=self.number_of_records)
         return output_file.reorganize_order(sorted_cols)
 
     # Utility Methods

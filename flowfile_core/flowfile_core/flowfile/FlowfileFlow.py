@@ -15,7 +15,7 @@ from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings im
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                      pre_calculate_pivot_schema)
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.flowfile_table.read_excel_tables import get_open_xlsx_datatypes, \
     get_calamine_xlsx_data_types
 from flowfile_core.flowfile.sources import external_sources

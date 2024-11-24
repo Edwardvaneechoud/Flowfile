@@ -1,4 +1,4 @@
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
 import polars as pl
@@ -12,7 +12,6 @@ def create_sample_data():
 
 def test_fuzzy_match():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
-
     left_flowfile_table = FlowfileTable(['edward', 'edwin', 'eduward', 'rick']).do_select(r)
     right_flowfile_table = left_flowfile_table
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
@@ -39,16 +38,6 @@ def test_cross_join():
     assert cross_join_result is not None, 'Cross join failed'
     assert cross_join_result.number_of_records == 100 * 100, 'Number of records is not correct'
     assert cross_join_result.columns == left_flowfile_table.columns + right_columns, 'Columns are not correct'
-
-
-def test_rank_over():
-    df = FlowfileTable([
-        [1, 2, 3, 4, 5, 6],
-        ["A", "A", "B", "B", "C", "C"],
-        [10, 20, 15, 25, 30, 5],
-        [100, 50, 75, 25, 60, 80],
-        [1, 2, 3, 4, 5, 6]
-    ], schema=['id', 'category', 'value1', 'value2', 'value3'])
 
 
 def create_test_dataframe():

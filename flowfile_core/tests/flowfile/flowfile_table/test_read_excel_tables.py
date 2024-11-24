@@ -1,4 +1,4 @@
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import (FlowfileTable)
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.schemas.input_schema import ReceivedTable
 
 

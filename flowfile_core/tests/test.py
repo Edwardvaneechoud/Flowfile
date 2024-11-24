@@ -115,12 +115,13 @@ def deep_memory_profile(interval=2, depth=3):
 
     return decorator
 #
-# flow_file_handler.import_flow('/Users/edwardvanechoud/Documents/flowfile_docs/files/further_analysis.flowfile')
-# graph = flow_file_handler.get_flow(1)
-# self = graph.get_node(node_id=49)
-# performance_mode = True
-# run_location = 'auto'
-# self.execute_remote
+flow_file_handler.import_flow('/Users/edwardvanechoud/compare_partner_data.flowfile')
+graph = flow_file_handler.get_flow(1)
+graph.run_graph(performance_mode=False)
+self = graph.get_node(node_id=49)
+performance_mode = True
+run_location = 'auto'
+self.execute_remote
 # # self.get_table_example(True)
 # # self.get_table_example(include_data=)
 # # graph.run_grdaph

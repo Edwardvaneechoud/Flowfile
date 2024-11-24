@@ -2,7 +2,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from typing import List, Dict
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 
 

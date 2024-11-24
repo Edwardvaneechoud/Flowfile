@@ -1,4 +1,4 @@
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable, FlowfileColumn
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable, FlowfileColumn
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gw_schema
 from typing import List
 
