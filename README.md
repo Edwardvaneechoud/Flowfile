@@ -1,7 +1,7 @@
 <h1 align="center">
-  <img src=".github/images/logo.png" alt="FlowFile Logo" width="100">
+  <img src=".github/images/logo.png" alt="Flowfile Logo" width="100">
   <br>
-  FlowFile
+  Flowfile
 </h1>
 <p align="center">
   <b>Documentation</b>:
@@ -14,16 +14,16 @@
   <a href="flowfile_frontend/README.md">Frontend</a>
 </p>
 <p>
-FlowFile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
+Flowfile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
 </p>
 
 <div align="center">
-  <img src=".github/images/group_by_screenshot.png" alt="FlowFile Interface" width="800"/>
+  <img src=".github/images/group_by_screenshot.png" alt="Flowfile Interface" width="800"/>
 </div>
 
 ## ⚡ Technical Design
 
-FlowFile operates as three interconnected services:
+Flowfile operates as three interconnected services:
 
 - **Designer** (Electron + Vue): Visual interface for building data flows
 - **Core** (FastAPI): ETL engine using Polars for data transformations (`:63578`)

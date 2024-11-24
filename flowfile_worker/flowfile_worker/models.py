@@ -4,7 +4,8 @@ from base64 import decodebytes
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
 
 
-OperationType = Literal['store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy']
+OperationType = Literal[
+    'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
 ResultType = Literal['polars', 'other']
 
 
@@ -19,6 +20,10 @@ class PolarsScript(PolarsOperation):
     task_id: Optional[str] = None
     cache_dir: Optional[str] = None
     operation_type: OperationType
+
+
+class PolarsScriptSample(PolarsScript):
+    sample_size: Optional[int] = 100
 
 
 class PolarsScriptWrite(BaseModel):

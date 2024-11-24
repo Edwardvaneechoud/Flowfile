@@ -5,11 +5,11 @@ from pathlib import Path
 
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph
-from flowfile_core.schemas.schemas import FlowSettings, ExecutionLocationsLiteral, ExecutionModeLiteral
+from flowfile_core.schemas.schemas import FlowSettings
 
 
 @dataclass
-class FlowFileHandler:
+class FlowfileHandler:
     _flows: Dict[int, EtlGraph]
 
     def __init__(self):

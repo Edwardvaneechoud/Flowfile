@@ -1,10 +1,12 @@
-from typing import List, Union, Callable, Any, Optional, Generator
 import polars as pl
+import pyarrow as pa
+from typing import List, Union, Callable, Any, Optional, Generator
 
 
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowFileTable
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
+from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
 from dataclasses import dataclass
 
@@ -13,7 +15,8 @@ from flowfile_core.flowfile.utils import get_hash
 from flowfile_core.configs.node_store import nodes as node_interface
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
-from flowfile_core.flowfile.flowfile_table.subprocess_operations import ExternalDfFetcher, results_exists, get_external_df_result
+from flowfile_core.flowfile.flowfile_table.subprocess_operations import (
+    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result,)
 
 
 @dataclass
@@ -63,17 +66,18 @@ class NodeStepInputs:
 
 
 class NodeSchemaInformation:
-    result_schema: Optional[List[FlowFileColumn]] = []  # resulting schema of the function
-    predicted_schema: Optional[List[FlowFileColumn]] = []  # predicted resulting schema of the function
+    result_schema: Optional[List[FlowfileColumn]] = []  # resulting schema of the function
+    predicted_schema: Optional[List[FlowfileColumn]] = []  # predicted resulting schema of the function
     input_columns: List[str] = []  # columns that are needed for the function
     drop_columns: List[str] = []  # columns that will not be available after the function
-    output_columns: List[FlowFileColumn] = []  # columns that will be added with the function
+    output_columns: List[FlowfileColumn] = []  # columns that will be added with the function
 
 
 class NodeResults:
-    _resulting_data: Optional[FlowFileTable] = None  # after successful execution this will contain the FlowFile
+    _resulting_data: Optional[FlowfileTable] = None  # after successful execution this will contain the Flowfile
     example_data: Optional[
-        FlowFileTable] = None  # after success this will contain a sample of the data (to provide frontend data)
+        FlowfileTable] = None  # after success this will contain a sample of the data (to provide frontend data)
+    example_data_generator: Optional[Callable[[], pa.Table]] = None
     run_time: int = -1
     errors: Optional[str] = None
     warnings: Optional[str] = None
@@ -84,13 +88,18 @@ class NodeResults:
         self.run_time = -1
         self.errors = None
         self.warnings = None
+        self.example_data_generator = None
+
+    def get_example_data(self) -> pa.Table | None:
+        if self.example_data_generator:
+            return self.example_data_generator()
 
     @property
-    def resulting_data(self) -> FlowFileTable:
+    def resulting_data(self) -> FlowfileTable:
         return self._resulting_data
 
     @resulting_data.setter
-    def resulting_data(self, d: FlowFileTable):
+    def resulting_data(self, d: FlowfileTable):
         self._resulting_data = d
 
     def reset(self):
@@ -117,6 +126,7 @@ class NodeStep:
     _schema_callback: Optional[Callable] = None  # Function that calculates the schema without executing the process
     _state_needs_reset: bool = False
     _fetch_cached_df: Optional[ExternalDfFetcher] = None
+    _cache_progress: Optional[ExternalDfFetcher] = None
 
     def post_init(self):
         self.node_inputs = NodeStepInputs()
@@ -178,7 +188,7 @@ class NodeStep:
                  name: str,
                  node_type: str,
                  input_columns: List[str] = None,
-                 output_schema: List[FlowFileColumn] = None,
+                 output_schema: List[FlowfileColumn] = None,
                  drop_columns: List[str] = None,
                  renew_schema: bool = True,
                  cache_results: bool = False,
@@ -207,7 +217,7 @@ class NodeStep:
     def update_node(self,
                     function: Callable,
                     input_columns: List[str] = None,
-                    output_schema: List[FlowFileColumn] = None,
+                    output_schema: List[FlowfileColumn] = None,
                     drop_columns: List[str] = None,
                     name: str = None,
                     setting_input: Any = None,
@@ -356,7 +366,7 @@ class NodeStep:
             self.print(f'resetting node: {node.node_id}')
             node.reset(deep)
 
-    def get_flow_file_column_schema(self, col_name: str) -> FlowFileColumn:
+    def get_flow_file_column_schema(self, col_name: str) -> FlowfileColumn:
         for s in self.schema:
             if s.column_name == col_name:
                 return s
@@ -391,15 +401,15 @@ class NodeStep:
     def print(self, v: Any):
         print(f'{self.node_type}, node_id: {self.node_id}: {v}')
 
-    def get_resulting_data(self) -> FlowFileTable:
+    def get_resulting_data(self) -> FlowfileTable:
         if self.is_setup:
             if self.results.resulting_data is None and self.results.errors is None:
                 self.print('getting resulting data')
                 try:
-                    if isinstance(self.function, FlowFileTable):
-                        fl: FlowFileTable = self.function
+                    if isinstance(self.function, FlowfileTable):
+                        fl: FlowfileTable = self.function
                     elif self.node_type in ('external_source', 'airbyte_reader'):
-                        fl: FlowFileTable = self.function()
+                        fl: FlowfileTable = self.function()
                         fl.collect_external()
                         self.node_settings.streamable = False
                     else:
@@ -410,13 +420,13 @@ class NodeStep:
                     fl.set_streamable(self.node_settings.streamable)
                     self.results.resulting_data = fl
                 except Exception as e:
-                    self.results.resulting_data = FlowFileTable()
+                    self.results.resulting_data = FlowfileTable()
                     self.results.errors = str(e)
                     self.node_stats.has_run = False
                     raise e
             return self.results.resulting_data
 
-    def _predicted_data_getter(self) -> FlowFileTable|None:
+    def _predicted_data_getter(self) -> FlowfileTable|None:
         try:
             fl = self._function(*[v.get_predicted_resulting_data() for v in self.all_inputs])
             return fl
@@ -425,23 +435,23 @@ class NodeStep:
                 logger.info('Generator already executing, waiting for the result')
                 sleep(1)
                 return self._predicted_data_getter()
-            fl = FlowFileTable()
+            fl = FlowfileTable()
             return fl
 
         except Exception as e:
-            logger.warning('there was an issue with the function, returning an empty FlowFile')
+            logger.warning('there was an issue with the function, returning an empty Flowfile')
             logger.warning(e)
 
-    def get_predicted_resulting_data(self) -> FlowFileTable:
+    def get_predicted_resulting_data(self) -> FlowfileTable:
         if self.needs_run() and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print('Getting data based on the schema')
             _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
-            return FlowFileTable.create_from_schema(_s)
+            return FlowfileTable.create_from_schema(_s)
         else:
-            if isinstance(self.function, FlowFileTable):
+            if isinstance(self.function, FlowfileTable):
                 fl = self.function
             else:
-                fl = FlowFileTable.create_from_schema(self.get_predicted_schema())
+                fl = FlowfileTable.create_from_schema(self.get_predicted_schema())
             return fl
 
     def add_lead_to_in_depend_source(self):
@@ -462,7 +472,7 @@ class NodeStep:
                 yield n
 
     @property
-    def schema(self) -> List[FlowFileColumn]:
+    def schema(self) -> List[FlowfileColumn]:
         try:
             if self.is_setup and self.results.errors is None:
                 if self.node_schema.result_schema is not None and len(self.node_schema.result_schema) > 0:
@@ -478,10 +488,10 @@ class NodeStep:
         except:
             return []
 
-    def load_from_cache(self) -> FlowFileTable:
+    def load_from_cache(self) -> FlowfileTable:
         if results_exists(self.hash):
             try:
-                return FlowFileTable(self._fetch_cached_df.get_result())
+                return FlowfileTable(self._fetch_cached_df.get_result())
             except Exception as e:
                 logger.error(e)
 
@@ -502,20 +512,16 @@ class NodeStep:
     def __call__(self, *args, **kwargs):
         self.execute_node(*args, **kwargs)
 
-    # @profile
     def execute_local(self, performance_mode: bool = False):
         try:
             resulting_data = self.get_resulting_data()
             if not performance_mode:
-                sample_data = resulting_data.__get_sample__(streamable=self.node_settings.streamable)
-                if len(sample_data) == 0 and len(resulting_data) > 0:
-                    # detect if the result gives null records where it should give at least one
-                    self.node_settings.streamable = False
-                    sample_data = resulting_data.__get_sample__(streamable=self.node_settings.streamable)
-                self.results.example_data = sample_data
+                external_sampler = ExternalSampler(lf=resulting_data.data_frame, file_ref=self.hash,
+                                                   wait_on_completion=True)
+                self.store_example_data_generator(external_sampler)
+                if self.results.errors is None:
+                    self.node_stats.has_run = True
             self.node_schema.result_schema = resulting_data.schema
-            if self.results.errors is None:
-                self.node_stats.has_run = True
 
         except Exception as e:
             logger.warn(f"Error with step {self.__name__}")
@@ -546,31 +552,34 @@ class NodeStep:
         except Exception as e:
             self.results.errors = 'Error with creating the lazy frame, most likely due to invalid graph'
             raise e
-        external_df_catcher = ExternalDfFetcher(lf=self.get_resulting_data().data_frame,
-                                                file_ref=self.hash, wait_on_completion=False)
-        self._fetch_cached_df = external_df_catcher
-        try:
-            lf = external_df_catcher.get_result()
-            self.results.resulting_data = FlowFileTable(lf, number_of_records=lf.select(pl.len()).collect()[0, 0])
-            if not performance_mode:
-                self.get_sample_data_from_cache()
-        except Exception as e:
-            if external_df_catcher.error_code == -1:
-                try:
-                    self.results.resulting_data = self.get_resulting_data()
-                    self.results.warnings = ('Error with external process (unknown error), '
-                                             'likely the process was killed by the server because of memory constraints, '
-                                             'continue with the process. '
-                                             'We cannot display example data...')
-                except Exception as e:
+        if not performance_mode:
+            external_df_fetcher = ExternalDfFetcher(lf=self.get_resulting_data().data_frame,
+                                                    file_ref=self.hash, wait_on_completion=False)
+            self._fetch_cached_df = external_df_fetcher
+            try:
+                lf = external_df_fetcher.get_result()
+                # TODO: Get number of records from worker
+                self.results.resulting_data = FlowfileTable(lf, number_of_records=lf.select(pl.len()).collect()[0, 0])
+                if not performance_mode:
+                    self.store_example_data_generator(external_df_fetcher)
+
+            except Exception as e:
+                if external_df_fetcher.error_code == -1:
+                    try:
+                        self.results.resulting_data = self.get_resulting_data()
+                        self.results.warnings = ('Error with external process (unknown error), '
+                                                 'likely the process was killed by the server because of memory constraints, '
+                                                 'continue with the process. '
+                                                 'We cannot display example data...')
+                    except Exception as e:
+                        self.results.errors = str(e)
+                        raise e
+                elif external_df_fetcher.error_description is None:
                     self.results.errors = str(e)
                     raise e
-            elif external_df_catcher.error_description is None:
-                self.results.errors = str(e)
-                raise e
-            else:
-                self.results.errors = external_df_catcher.error_description
-                raise external_df_catcher.error_description
+                else:
+                    self.results.errors = external_df_fetcher.error_description
+                    raise external_df_fetcher.error_description
 
     def prepare_before_run(self):
         self.results.errors = None
@@ -610,6 +619,13 @@ class NodeStep:
         self.node_schema.result_schema = resulting_data.schema
         if self.results.errors is None:
             self.node_stats.has_run = True
+
+    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher|ExternalSampler):
+        if external_df_fetcher.status is not None:
+            file_ref = external_df_fetcher.status.file_ref
+            self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
+        else:
+            logger.error('Could not get the sample data, the external process is not ready')
 
     def get_sample_data(self):
         resulting_data = self.get_resulting_data()
@@ -686,18 +702,7 @@ class NodeStep:
         return deleted
 
     def __repr__(self):
-        if 1 == 2:
-            v = '\n        '.join(str(s) for s in self.schema)
-            if len(self.all_inputs) > 0:
-                depends_on = ', '.join(d.__name__ for d in self.all_inputs if d.__name__ is not None)
-            else:
-                depends_on = ''
-            return (f"NodeStep(node_id={self.node_id}, function={self._function.__name__}, "
-                    f"depends_on={depends_on}, input_columns={self.node_schema.input_columns}, "
-                    f"drop_columns={self.node_schema.drop_columns}, output_columns={self.node_schema.output_columns}, "
-                    f"schema=\n{v})")
-        else:
-            return f"Node id: {self.node_id} ({self.node_type})"
+        return f"Node id: {self.node_id} ({self.node_type})"
 
     def _get_readable_schema(self):
         if self.is_setup:
@@ -740,17 +745,19 @@ class NodeStep:
         if self.node_type == 'output':
             self.print('getting the table example')
             return self.main_input[0].get_table_example(include_data)
-        if self.node_stats.has_run and self.is_setup:
+        if self.node_stats.has_run and self.is_setup and include_data:
             print('getting the table example since the node has run')
-            fl = self.results.example_data
-            schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
-            any(fl.schema)
-            if include_data:
-                data = fl.get_output_sample(10)
+            example_data_getter = self.results.example_data_generator
+            if example_data_getter is not None:
+                data = example_data_getter().to_pylist()
+                if data is None:
+                    data = []
             else:
                 data = []
+            schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
+            fl = self.get_resulting_data()
             return TableExample(node_id=self.node_id,
-                                name=str(self.node_id), number_of_records=fl.number_of_records,
+                                name=str(self.node_id), number_of_records=999,
                                 number_of_columns=fl.number_of_fields,
                                 table_schema=schema, columns=fl.columns, data=data)
         else:

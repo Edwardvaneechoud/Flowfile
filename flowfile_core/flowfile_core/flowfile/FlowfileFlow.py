@@ -5,16 +5,17 @@ import polars as pl
 import fastexcel
 from fastapi.exceptions import HTTPException
 from time import time
+import psutil
 from typing import List, Dict, Union, Callable, Any, Optional, Tuple
 from uuid import uuid1
 from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                      pre_calculate_pivot_schema)
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowFileTable
+from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
 from flowfile_core.flowfile.flowfile_table.read_excel_tables import get_open_xlsx_datatypes, \
     get_calamine_xlsx_data_types
 from flowfile_core.flowfile.sources import external_sources
@@ -26,6 +27,11 @@ from flowfile_core.flowfile.node_step.node_step import NodeStep, NodeResults
 from flowfile_core.utils.fl_executor import thread_executor
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
+
+
+def get_process_memory():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024  # MB
 
 
 @thread_executor(wait_on_completion=False, max_workers=1)
@@ -66,16 +72,16 @@ class EtlGraph:
            _output_cols (set): A set that stores the output columns from the transformations.
        """
     uuid: str
-    depends_on: Dict[int, Union[ParquetFile, FlowFileTable, "EtlGraph", pl.DataFrame,]]
+    depends_on: Dict[int, Union[ParquetFile, FlowfileTable, "EtlGraph", pl.DataFrame,]]
     _flow_id: int
-    _input_data: Union[ParquetFile, FlowFileTable, "EtlGraph"]
+    _input_data: Union[ParquetFile, FlowfileTable, "EtlGraph"]
     _input_cols: List[str]
     _output_cols: List[str]
     _node_db: Dict[Union[str, int], NodeStep]
     _node_ids: List[Union[str, int]]
-    _results: Optional[FlowFileTable] = None
+    _results: Optional[FlowfileTable] = None
     cache_results: bool = False
-    schema: Optional[List[FlowFileColumn]] = None
+    schema: Optional[List[FlowfileColumn]] = None
     has_over_row_function: bool = False
     _flow_starts: List[Union[int, str]] = None
     is_running: bool = False
@@ -91,7 +97,7 @@ class EtlGraph:
                  name: str = None, input_cols: List[str] = None,
                  output_cols: List[str] = None,
                  path_ref: str = None,
-                 input_flow: Union[ParquetFile, FlowFileTable, "EtlGraph"] = None,
+                 input_flow: Union[ParquetFile, FlowfileTable, "EtlGraph"] = None,
                  cache_results: bool = False):
         self.flow_settings = flow_settings
         self.uuid = str(uuid1())
@@ -122,7 +128,7 @@ class EtlGraph:
 
         def placeholder(n: NodeStep = None):
             if n is None:
-                return FlowFileTable()
+                return FlowfileTable()
             return n
 
         self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
@@ -132,7 +138,7 @@ class EtlGraph:
         sample_size = 10_000 if node_promise.node_type == 'explore_data' else 1000_000
         node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
 
-        def analysis_preparation(flow_file: FlowFileTable):
+        def analysis_preparation(flow_file: FlowfileTable):
             number_of_records = flow_file.get_number_of_records()
             if number_of_records > sample_size:
                 flow_file = flow_file.get_sample(sample_size, random=True)
@@ -144,7 +150,7 @@ class EtlGraph:
                 input_node = node.all_inputs[0]
                 return input_node.schema
             else:
-                return [FlowFileColumn.from_input('col_1', 'na')]
+                return [FlowfileColumn.from_input('col_1', 'na')]
 
         self.add_node_step(node_id=node_analysis.node_id, node_type=node_promise.node_type,
                            function=analysis_preparation,
@@ -153,7 +159,7 @@ class EtlGraph:
     def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
         sample_size: int = 10000
 
-        def analysis_preparation(flow_file: FlowFileTable):
+        def analysis_preparation(flow_file: FlowfileTable):
             number_of_records = flow_file.get_number_of_records()
             if number_of_records > sample_size:
                 flow_file = flow_file.get_sample(sample_size, random=True)
@@ -165,7 +171,7 @@ class EtlGraph:
                 input_node = node.all_inputs[0]
                 return input_node.schema
             else:
-                return [FlowFileColumn.from_input('col_1', 'na')]
+                return [FlowfileColumn.from_input('col_1', 'na')]
 
         self.add_node_step(node_id=node_analysis.node_id, node_type='explore_data',
                            function=analysis_preparation,
@@ -206,7 +212,7 @@ class EtlGraph:
             return node
 
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
-        def _func(fl: FlowFileTable):
+        def _func(fl: FlowfileTable):
             return fl.do_pivot(pivot_settings.pivot_input)
 
         self.add_node_step(node_id=pivot_settings.node_id,
@@ -228,7 +234,7 @@ class EtlGraph:
 
     def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):
 
-        def _func(fl: FlowFileTable) -> FlowFileTable:
+        def _func(fl: FlowfileTable) -> FlowfileTable:
             return fl.unpivot(unpivot_settings.unpivot_input)
 
         self.add_node_step(node_id=unpivot_settings.node_id,
@@ -237,9 +243,9 @@ class EtlGraph:
                            setting_input=unpivot_settings)
 
     def add_union(self, union_settings: input_schema.NodeUnion):
-        def _func(*flowfile_tables: FlowFileTable):
+        def _func(*flowfile_tables: FlowfileTable):
             dfs: List[pl.LazyFrame] | List[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
-            return FlowFileTable(pl.concat(dfs, how='diagonal_relaxed'))
+            return FlowfileTable(pl.concat(dfs, how='diagonal_relaxed'))
 
         self.add_node_step(node_id=union_settings.node_id,
                            function=_func,
@@ -248,7 +254,7 @@ class EtlGraph:
 
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
 
-        def _func(fl: FlowFileTable) -> FlowFileTable:
+        def _func(fl: FlowfileTable) -> FlowfileTable:
             return fl.do_group_by(group_by_settings.groupby_input, False)
 
         self.add_node_step(node_id=group_by_settings.node_id,
@@ -265,13 +271,13 @@ class EtlGraph:
             output_schema = []
             for old_name, new_name, data_type in output_columns:
                 data_type = input_schema_dict[old_name] if data_type is None else data_type
-                output_schema.append(FlowFileColumn.from_input(data_type=data_type, column_name=new_name))
+                output_schema.append(FlowfileColumn.from_input(data_type=data_type, column_name=new_name))
             return output_schema
 
         node.schema_callback = schema_callback
 
     def add_or_update_column_func(self, col_name: str, pl_dtype: pl.DataType, depends_on: NodeStep):
-        col_output = FlowFileColumn.from_input(column_name=col_name, data_type=str(pl_dtype))
+        col_output = FlowfileColumn.from_input(column_name=col_name, data_type=str(pl_dtype))
         schema = depends_on.schema
         col_exist = depends_on.get_flow_file_column_schema(col_name)
         if col_exist is None:
@@ -294,7 +300,7 @@ class EtlGraph:
             filter_settings.filter_input.advanced_filter = (f'[{_basic_filter.field}]{_basic_filter.filter_type}"'
                                                             f'{_basic_filter.filter_value}"')
 
-        def _func(fl: FlowFileTable):
+        def _func(fl: FlowfileTable):
             is_advanced = filter_settings.filter_input.filter_type == 'advanced'
             if is_advanced:
                 print('applying advanced filter')
@@ -320,7 +326,7 @@ class EtlGraph:
                            )
 
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
-        def _func(fl: FlowFileTable) -> FlowFileTable:
+        def _func(fl: FlowfileTable) -> FlowfileTable:
             return fl.get_record_count()
 
         self.add_node_step(node_id=node_number_of_records.node_id,
@@ -329,7 +335,7 @@ class EtlGraph:
                            setting_input=node_number_of_records)
 
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
-        def _func(fl: FlowFileTable) -> FlowFileTable:
+        def _func(fl: FlowfileTable) -> FlowfileTable:
             return fl.execute_polars_code(node_polars_code.polars_code_input.polars_code)
 
         self.add_node_step(node_id=node_polars_code.node_id,
@@ -345,7 +351,7 @@ class EtlGraph:
 
     def add_unique(self, unique_settings: input_schema.NodeUnique):
 
-        def _func(fl: FlowFileTable) -> FlowFileTable:
+        def _func(fl: FlowfileTable) -> FlowfileTable:
             return fl.make_unique(unique_settings.unique_input)
 
         self.add_node_step(node_id=unique_settings.node_id,
@@ -355,7 +361,7 @@ class EtlGraph:
                            setting_input=unique_settings)
 
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
-        def _func(fl: FlowFileTable) -> FlowFileTable:
+        def _func(fl: FlowfileTable) -> FlowfileTable:
             return fl.solve_graph(graph_solver_settings.graph_solver_input)
 
         self.add_node_step(node_id=graph_solver_settings.node_id,
@@ -370,12 +376,12 @@ class EtlGraph:
         else:
             output_type = None
         if output_type is not None:
-            new_col = [FlowFileColumn.from_input(column_name=function_settings.function.field.name,
+            new_col = [FlowfileColumn.from_input(column_name=function_settings.function.field.name,
                                                  data_type=str(output_type))]
         else:
-            new_col = [FlowFileColumn.from_input(function_settings.function.field.name, 'String')]
+            new_col = [FlowfileColumn.from_input(function_settings.function.field.name, 'String')]
 
-        def _func(fl: FlowFileTable):
+        def _func(fl: FlowfileTable):
             return fl.apply_sql_formula(func=function_settings.function.function,
                                         col_name=function_settings.function.field.name,
                                         output_data_type=output_type)
@@ -395,7 +401,7 @@ class EtlGraph:
 
     def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "EtlGraph":
 
-        def _func(main: FlowFileTable, right: FlowFileTable) -> FlowFileTable:
+        def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
             for left_select in cross_join_settings.cross_join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in cross_join_settings.cross_join_input.right_select.renames:
@@ -414,13 +420,13 @@ class EtlGraph:
         return self
 
     def add_join(self, join_settings: input_schema.NodeJoin) -> "EtlGraph":
-        def _func(main: FlowFileTable, right: FlowFileTable) -> FlowFileTable:
+        def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
             for left_select in join_settings.join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in join_settings.join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
 
-            return main.do_join(join_input=join_settings.join_input,
+            return main.join(join_input=join_settings.join_input,
                                 auto_generate_selection=join_settings.auto_generate_selection,
                                 verify_integrity=False,
                                 other=right)
@@ -433,7 +439,7 @@ class EtlGraph:
         return self
 
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "EtlGraph":
-        def _func(main: FlowFileTable, right: FlowFileTable) -> FlowFileTable:
+        def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
             return main.do_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash)
 
         self.add_node_step(node_id=fuzzy_settings.node_id,
@@ -453,7 +459,7 @@ class EtlGraph:
         return self
 
     def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "EtlGraph":
-        def _func(table: FlowFileTable) -> FlowFileTable:
+        def _func(table: FlowfileTable) -> FlowfileTable:
             return table.split(node_text_to_rows.text_to_rows_input)
 
         self.add_node_step(node_id=node_text_to_rows.node_id,
@@ -463,7 +469,7 @@ class EtlGraph:
         return self
 
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "EtlGraph":
-        def _func(table: FlowFileTable) -> FlowFileTable:
+        def _func(table: FlowfileTable) -> FlowfileTable:
             return table.do_sort(sort_settings.sort_input)
 
         self.add_node_step(node_id=sort_settings.node_id,
@@ -473,7 +479,7 @@ class EtlGraph:
         return self
 
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "EtlGraph":
-        def _func(table: FlowFileTable) -> FlowFileTable:
+        def _func(table: FlowfileTable) -> FlowfileTable:
             return table.get_sample(sample_settings.sample_size)
 
         self.add_node_step(node_id=sample_settings.node_id,
@@ -485,7 +491,7 @@ class EtlGraph:
 
     def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "EtlGraph":
 
-        def _func(table: FlowFileTable) -> FlowFileTable:
+        def _func(table: FlowfileTable) -> FlowfileTable:
             return table.add_record_id(record_id_settings.record_id_input)
 
         self.add_node_step(node_id=record_id_settings.node_id,
@@ -499,7 +505,7 @@ class EtlGraph:
         select_cols = select_settings.select_input
         drop_cols = tuple(s.old_name for s in select_settings.select_input)
 
-        def _func(table: FlowFileTable) -> FlowFileTable:
+        def _func(table: FlowfileTable) -> FlowfileTable:
             input_cols = set(f.name for f in table.schema)
             ids_to_remove = []
             for i, select_col in enumerate(select_cols):
@@ -569,7 +575,7 @@ class EtlGraph:
                       node_id: Union[int, str],
                       function: Callable,
                       input_columns: List[str] = None,
-                      output_schema: List[FlowFileColumn] = None,
+                      output_schema: List[FlowfileColumn] = None,
                       node_type: str = None,
                       drop_columns: List[str] = None,
                       renew_schema: bool = True,
@@ -632,7 +638,7 @@ class EtlGraph:
         return self
 
     def add_output(self, output_file: input_schema.NodeOutput):
-        def _func(df: FlowFileTable):
+        def _func(df: FlowfileTable):
             df.output(output_fs=output_file.output_settings)
             return df
 
@@ -678,7 +684,7 @@ class EtlGraph:
 
         def _func():
             logger.info('Calling external source')
-            fl = FlowFileTable.create_from_external_source(external_source=external_source)
+            fl = FlowfileTable.create_from_external_source(external_source=external_source)
             external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -702,7 +708,7 @@ class EtlGraph:
             logger.info('Using provided schema in the node')
 
             def schema_callback():
-                return [FlowFileColumn.from_input(f.name, f.data_type) for f in
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in
                         external_source_input.source_settings.fields]
 
             node.schema_callback = schema_callback
@@ -722,17 +728,17 @@ class EtlGraph:
 
         def _func():
             if input_file.received_file.file_type == 'parquet':
-                input_data = FlowFileTable.create_from_path(input_file.received_file)
+                input_data = FlowfileTable.create_from_path(input_file.received_file)
             elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:
-                input_data = FlowFileTable.create_from_path(input_file.received_file)
+                input_data = FlowfileTable.create_from_path(input_file.received_file)
             else:
-                input_data = FlowFileTable.create_from_path_worker(input_file.received_file)
+                input_data = FlowfileTable.create_from_path_worker(input_file.received_file)
             input_data.name = input_file.received_file.name
             return input_data
 
         if input_file.received_file.file_type in ('csv', 'json', 'parquet'):
             def schema_callback():
-                input_data = FlowFileTable.create_from_path(input_file.received_file)
+                input_data = FlowfileTable.create_from_path(input_file.received_file)
                 return input_data.schema
         else:
             schema_callback = None
@@ -759,7 +765,7 @@ class EtlGraph:
 
         if len(received_file.fields) > 0:
             def schema_callback():
-                return [FlowFileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
 
             node.schema_callback = schema_callback
         elif schema_callback is not None:
@@ -788,11 +794,11 @@ class EtlGraph:
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
 
         if isinstance(input_file, input_schema.NodeManualInput):
-            input_data = FlowFileTable(input_file.raw_data)
+            input_data = FlowfileTable(input_file.raw_data)
             ref = 'manual_input'
 
         else:
-            input_data = FlowFileTable(path_ref=input_file.file_ref)
+            input_data = FlowfileTable(path_ref=input_file.file_ref)
             ref = 'datasource'
         node = self.get_node(input_file.node_id)
         if node:
@@ -830,22 +836,6 @@ class EtlGraph:
             return list(set([col for col in self._input_cols if
                              col in [table_col.name for table_col in self._input_data.schema]]))
 
-    def get_execution_location(self, performance_mode: bool = False) -> schemas.ExecutionLocationsLiteral:
-        if performance_mode:
-            return 'local'
-        if self.flow_settings.execution_location == 'auto':
-            if any([node.node_settings.execute_location == 'local' for node in self.nodes]):
-                return 'local'
-            else:
-                return 'auto'
-        elif self.flow_settings.execution_location == 'local':
-            return 'local'
-        elif self.flow_settings.execution_location == 'remote':
-            return 'remote'
-        else:
-            raise Exception('Invalid execution mode')
-
-    #@profile
     def run_graph(self, performance_mode: bool = False) -> RunInformation:
         self.is_running = True
         self.nodes_completed = 0
@@ -853,22 +843,21 @@ class EtlGraph:
         self.start_datetime = datetime.datetime.now()
         self.end_datetime = None
         self.latest_run_info = None
-        run_mode = self.get_execution_location(performance_mode=performance_mode)
         all_node_ids = set(self._node_db.keys())
         for _, node in self._node_db.items():
             logger.info(f'{node} ->  {node.leads_to_nodes}')
         logger.info(f'Running graph with node ids: {all_node_ids}')
-
+        current_ram = get_process_memory()
         execution_order = determine_execution_order(self.nodes, self._flow_starts)
         logger.info(f'Execution order: {[n.node_id for n in execution_order]}')
-        logger.info(f'Using run mode: {run_mode}')
         skip_nodes = []
+        mem_stats = []
         for node in execution_order:
             if node.node_id in skip_nodes:
                 continue
             node_result = NodeResult(node_id=node.node_id, node_name=node.name)
             logger.info(f'nodeId={node.node_id}\n start time: {node_result.start_timestamp}')
-            node.execute_node(run_location=run_mode)
+            node.execute_node(run_location='auto', performance_mode=performance_mode)
             try:
                 node_result.error = str(node.results.errors)
                 node_result.success = node.results.errors is None
@@ -881,9 +870,17 @@ class EtlGraph:
                 node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
             if not node_result.success:
                 skip_nodes.extend(list(node.get_all_dependent_nodes()))
-
+            logger.info(f'Completed node {node.node_id} with success: {node_result.success}')
+            # vm = psutil.virtual_memory()
+            ram_delta = get_process_memory() - current_ram
+            print(f"Node {node.node_id}: RAM delta: {ram_delta:.0f} MB")
+            print(f"    Used: {get_process_memory():.0f} MB")
+            current_ram = get_process_memory()
+            mem_stats.append((node.node_id, node.node_type, ram_delta, current_ram))
             self.nodes_completed += 1
             self.node_results.append(node_result)
+        df = pl.DataFrame(mem_stats, orient='row', schema=['node_id', 'action', 'delta', 'ram_usage'])
+        df.write_excel('ram_test.xlsx')
         self.end_datetime = datetime.datetime.now()
         self.is_running = False
         return self.get_run_info()
@@ -919,7 +916,7 @@ class EtlGraph:
                     connections.add(node_connection)
         return list(connections)
 
-    def get_schema(self) -> List[FlowFileColumn]:
+    def get_schema(self) -> List[FlowfileColumn]:
         if self.schema is None:
             if len(self._node_ids) > 0:
                 self.schema = self._node_db[self._node_ids[0]].schema

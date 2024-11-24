@@ -24,7 +24,7 @@ from flowfile_core.utils.utils import camel_case_to_snake_case
 from flowfile_core.schemas import input_schema, schemas, output_model
 
 # Flow handling
-from flowfile_core.flowfile.handler import FlowFileHandler
+from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 
 from flowfile_core.flowfile.FlowfileFlow import add_connection
@@ -45,7 +45,7 @@ router = APIRouter()
 
 # Initialize services
 file_explorer = FileExplorer()
-flow_file_handler = FlowFileHandler()
+flow_file_handler = FlowfileHandler()
 
 
 def get_node_model(setting_name_ref: str):

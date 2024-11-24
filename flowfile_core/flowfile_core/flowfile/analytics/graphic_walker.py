@@ -1,4 +1,4 @@
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowFileTable, FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable, FlowfileColumn
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gw_schema
 from typing import List
 
@@ -20,15 +20,15 @@ def get_analytic_type(semantic_type: str) -> str:
     return 'measure' if semantic_type == 'quantitative' else 'dimension'
 
 
-def convert_ff_column_to_gw_field(flow_file_column: FlowFileColumn) -> gw_schema.MutField:
+def convert_ff_column_to_gw_field(flow_file_column: FlowfileColumn) -> gw_schema.MutField:
     """
-    Converts a FlowFileColumn instance into a GraphicWalkerField.
+    Converts a FlowfileColumn instance into a GraphicWalkerField.
 
     Args:
-    - flow_file_column: An instance of FlowFileColumn representing a column in the data schema.
+    - flow_file_column: An instance of FlowfileColumn representing a column in the data schema.
 
     Returns:
-    - A GraphicWalkerField instance with properties derived from the FlowFileColumn.
+    - A GraphicWalkerField instance with properties derived from the FlowfileColumn.
     """
     semantic_type = get_semantic_type(flow_file_column.data_type)
 
@@ -46,11 +46,11 @@ def convert_ff_column_to_gw_field(flow_file_column: FlowFileColumn) -> gw_schema
     )
 
 
-def convert_ff_columns_to_gw_fields(ff_columns: List[FlowFileColumn]) -> [gw_schema.MutField]:
+def convert_ff_columns_to_gw_fields(ff_columns: List[FlowfileColumn]) -> [gw_schema.MutField]:
     return [convert_ff_column_to_gw_field(ff_column) for ff_column in ff_columns]
 
 
-def get_initial_gf_data_from_ff(flow_file: FlowFileTable) -> gw_schema.DataModel:
+def get_initial_gf_data_from_ff(flow_file: FlowfileTable) -> gw_schema.DataModel:
     number_of_records = flow_file.get_number_of_records()
     if number_of_records > 100_000:
         flow_file = flow_file.get_sample(100_000, random=True)
@@ -59,6 +59,6 @@ def get_initial_gf_data_from_ff(flow_file: FlowFileTable) -> gw_schema.DataModel
     return gw_schema.DataModel(fields=fields, data=data)
 
 
-def get_gf_data_from_ff(flow_file: FlowFileTable, fields: List[gw_schema.MutField]) -> gw_schema.DataModel:
+def get_gf_data_from_ff(flow_file: FlowfileTable, fields: List[gw_schema.MutField]) -> gw_schema.DataModel:
     data = flow_file.to_pylist()
     return gw_schema.DataModel(fields=fields, data=data)

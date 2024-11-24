@@ -1,11 +1,11 @@
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowFileTable
+from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
 import polars as pl
 
 
 def create_sample_data():
-    flowfile_table = FlowFileTable.create_random(100)
+    flowfile_table = FlowfileTable.create_random(100)
     flowfile_table.lazy = True
     return flowfile_table
 
@@ -13,7 +13,7 @@ def create_sample_data():
 def test_fuzzy_match():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
 
-    left_flowfile_table = FlowFileTable(['edward', 'edwin', 'eduward', 'rick']).do_select(r)
+    left_flowfile_table = FlowfileTable(['edward', 'edwin', 'eduward', 'rick']).do_select(r)
     right_flowfile_table = left_flowfile_table
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
     right_select = [transform_schema.SelectInput(c) for c in right_flowfile_table.columns]
@@ -24,8 +24,8 @@ def test_fuzzy_match():
 
 
 def test_cross_join():
-    left_flowfile_table = FlowFileTable.create_random(100)
-    right_flowfile_table = FlowFileTable.create_random(100)
+    left_flowfile_table = FlowfileTable.create_random(100)
+    right_flowfile_table = FlowfileTable.create_random(100)
     left_select = transform_schema.SelectInputs.create_from_pl_df(left_flowfile_table.data_frame).renames
     right_select = transform_schema.SelectInputs.create_from_pl_df(right_flowfile_table.data_frame).renames
     cross_join_input = transform_schema.CrossJoinInput(left_select=left_select,
@@ -42,7 +42,7 @@ def test_cross_join():
 
 
 def test_rank_over():
-    df = FlowFileTable([
+    df = FlowfileTable([
         [1, 2, 3, 4, 5, 6],
         ["A", "A", "B", "B", "C", "C"],
         [10, 20, 15, 25, 30, 5],
@@ -64,7 +64,7 @@ def create_test_dataframe():
 
 
 def test_grouped_record_id():
-    fl_table = FlowFileTable(pl.DataFrame({
+    fl_table = FlowfileTable(pl.DataFrame({
         "id": [1, 2, 3, 4, 5, 6, 7, 8],
         "category": ["A", "A", "B", "B", "C", "C", 'C', 'B'],
         "sub_category": ["A1", "A1", "B1", "B2", "C1", "C2", 'A1', 'B2'],
@@ -80,39 +80,39 @@ def test_grouped_record_id():
 
 
 def test_split_to_rows():
-    fl_table = FlowFileTable(pl.DataFrame(pl.DataFrame([["1,2,3", "1,2,3"], [1, 2]]), schema=['text', 'rank']))
+    fl_table = FlowfileTable(pl.DataFrame(pl.DataFrame([["1,2,3", "1,2,3"], [1, 2]]), schema=['text', 'rank']))
     split_input = transform_schema.TextToRowsInput(column_to_split='text', output_column_name='splitted')
     output = fl_table.split(split_input)
-    expected_output = FlowFileTable(pl.DataFrame(
+    expected_output = FlowfileTable(pl.DataFrame(
         {'text': ['1,2,3', '1,2,3', '1,2,3', '1,2,3', '1,2,3', '1,2,3'], 'rank': [1, 1, 1, 2, 2, 2],
          'splitted': ['1', '2', '3', '1', '2', '3']}))
     output.assert_equal(expected_output)
 
 
 def test_split_to_rows_same_name():
-    fl_table = FlowFileTable(pl.DataFrame(pl.DataFrame([["1,2,3", "1,2,3"], [1, 2]]), schema=['text', 'rank']))
+    fl_table = FlowfileTable(pl.DataFrame(pl.DataFrame([["1,2,3", "1,2,3"], [1, 2]]), schema=['text', 'rank']))
     split_input = transform_schema.TextToRowsInput(column_to_split='text')
     output = fl_table.split(split_input)
     output.data_frame.to_dict(as_series=False)
-    expected_output = FlowFileTable(pl.DataFrame({'text': ['1', '2', '3', '1', '2', '3'], 'rank': [1, 1, 1, 2, 2, 2]}))
+    expected_output = FlowfileTable(pl.DataFrame({'text': ['1', '2', '3', '1', '2', '3'], 'rank': [1, 1, 1, 2, 2, 2]}))
     output.assert_equal(expected_output)
 
 
 def test_split_to_rows_var_sep():
-    fl_table = FlowFileTable(
+    fl_table = FlowfileTable(
         pl.DataFrame(pl.DataFrame([["1|2,3", "1,2,3"], [1, 2], ['|', ',']]), schema=['text', 'rank', 'sep']))
     split_input = transform_schema.TextToRowsInput(column_to_split='text', split_by_column='sep',
                                                    split_by_fixed_value=False, output_column_name='splitted')
     output = fl_table.split(split_input)
     output.data_frame.to_dict(as_series=False)
-    expected_output = FlowFileTable(pl.DataFrame(
+    expected_output = FlowfileTable(pl.DataFrame(
         {'text': ['1|2,3', '1|2,3', '1,2,3', '1,2,3', '1,2,3'], 'rank': [1, 1, 2, 2, 2],
          'sep': ['|', '|', ',', ',', ','], 'splitted': ['1', '2,3', '1', '2', '3']}))
     output.assert_equal(expected_output)
 
 
 def test_execute_polars_code():
-    fl_table = FlowFileTable(create_test_dataframe())
+    fl_table = FlowfileTable(create_test_dataframe())
     code = """
     def abc(df):
         return df.group_by('value3').len()
@@ -135,25 +135,25 @@ def get_join_settings(how: str):
 
 def test_join_inner():
     join_input = transform_schema.JoinInput(**get_join_settings('inner'))
-    left_df = FlowFileTable([{"name": "eduward"},
+    left_df = FlowfileTable([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
-    right_df = FlowFileTable([{"name": "edward"}])
-    result_df = left_df.do_join(join_input=join_input, other=right_df, verify_integrity=False,
+    right_df = FlowfileTable([{"name": "edward"}])
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowFileTable([{"name": "edward"}])
+    expected_df = FlowfileTable([{"name": "edward"}])
     result_df.assert_equal(expected_df)
 
 
 def test_join_left():
     join_input = transform_schema.JoinInput(**get_join_settings('left'))
-    left_df = FlowFileTable([{"name": "eduward"},
+    left_df = FlowfileTable([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
-    right_df = FlowFileTable([{"name": "edward"}])
-    result_df = left_df.do_join(join_input=join_input, other=right_df, verify_integrity=False,
+    right_df = FlowfileTable([{"name": "edward"}])
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowFileTable([{"name": "eduward"},
+    expected_df = FlowfileTable([{"name": "eduward"},
                                  {"name": "edward"},
                                  {"name": "courtney"}])
     result_df.assert_equal(expected_df)
@@ -161,25 +161,25 @@ def test_join_left():
 
 def test_join_right():
     join_input = transform_schema.JoinInput(**get_join_settings('right'))
-    self = FlowFileTable([{"name": "eduward"},
+    self = FlowfileTable([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
-    other = FlowFileTable([{"name": "edward"}])
-    result_df = self.do_join(join_input=join_input, other=other, verify_integrity=False,
+    other = FlowfileTable([{"name": "edward"}])
+    result_df = self.join(join_input=join_input, other=other, verify_integrity=False,
                              auto_generate_selection=True)
-    expected_df = FlowFileTable([{"right_name": "edward"}])
+    expected_df = FlowfileTable([{"right_name": "edward"}])
     result_df.assert_equal(expected_df)
 
 
 def test_join_outer():
     join_input = transform_schema.JoinInput(**get_join_settings('outer'))
-    left_df = FlowFileTable([{"name": "eduward"},
+    left_df = FlowfileTable([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
-    right_df = FlowFileTable([{"name": "edwin"}])
-    result_df = left_df.do_join(join_input=join_input, other=right_df, verify_integrity=False,
+    right_df = FlowfileTable([{"name": "edwin"}])
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowFileTable([{"name": "eduward"},
+    expected_df = FlowfileTable([{"name": "eduward"},
                                  {"name": "edward"},
                                  {"name": "courtney"},
                                  {"right_name": "edwin"}])
@@ -188,25 +188,25 @@ def test_join_outer():
 
 def test_join_semi():
     join_input = transform_schema.JoinInput(**get_join_settings('semi'))
-    left_df = FlowFileTable([{"name": "eduward"},
+    left_df = FlowfileTable([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
-    right_df = FlowFileTable([{"name": "edward"}])
-    result_df = left_df.do_join(join_input=join_input, other=right_df, verify_integrity=False,
+    right_df = FlowfileTable([{"name": "edward"}])
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowFileTable([{"name": "edward"}])
+    expected_df = FlowfileTable([{"name": "edward"}])
     result_df.assert_equal(expected_df)
 
 
 def test_join_anti():
     join_input = transform_schema.JoinInput(**get_join_settings('anti'))
-    left_df = FlowFileTable([{"name": "eduward"},
+    left_df = FlowfileTable([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
-    right_df = FlowFileTable([{"name": "edward"}])
-    result_df = left_df.do_join(join_input=join_input, other=right_df, verify_integrity=False,
+    right_df = FlowfileTable([{"name": "edward"}])
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowFileTable([{"name": "eduward"},
+    expected_df = FlowfileTable([{"name": "eduward"},
                                  {"name": "courtney"}])
     result_df.assert_equal(expected_df)
 

@@ -1,12 +1,12 @@
 # Input Nodes
 
-Input nodes are your starting point for any data flow. FlowFile currently supports reading from local files, Airbyte sources, and manual input.
+Input nodes are your starting point for any data flow. Flowfile currently supports reading from local files, Airbyte sources, and manual input.
 
 ## Node Details
 
 ### ![Read Data](../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
 
-The Read Data node is your primary way to load data from local files into FlowFile.
+The Read Data node is your primary way to load data from local files into Flowfile.
 
 **Supported Formats:**
 - CSV files (.csv)
@@ -62,7 +62,7 @@ The Read Airbyte node allows you to connect to any configured Airbyte source and
 
 ### ![Manual Input](../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
 
-The Manual Input node allows you to create data directly within FlowFile or paste data from your clipboard.
+The Manual Input node allows you to create data directly within Flowfile or paste data from your clipboard.
 
 **Key Features:**
 - Create data from scratch

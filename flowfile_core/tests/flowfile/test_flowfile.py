@@ -1,8 +1,8 @@
-from flowfile_core.flowfile.handler import FlowFileHandler
+from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from typing import List, Dict
-from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowFileTable
+from flowfile_core.flowfile.flowfile_table.flowFilePolars import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 
 
@@ -21,7 +21,7 @@ def add_node_promise_on_type(graph: EtlGraph, node_type: str, node_id: int, flow
 
 
 def test_create_flowfile_handler():
-    handler = FlowFileHandler()
+    handler = FlowfileHandler()
     assert handler._flows == {}, 'Flow should be empty'
     return handler
 
@@ -183,7 +183,7 @@ def test_add_fuzzy_match():
     graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
     graph.run_graph()
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowFileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
+    expected_data = FlowfileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
                                    {'name': 'edward', 'fuzzy_score_0': 1.0, 'right_name': 'edward'},
                                    {'name': 'eduward', 'fuzzy_score_0': 1.0, 'right_name': 'eduward'},
                                    {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'eduward'},
@@ -204,7 +204,7 @@ def test_add_record_count():
     node_number_of_records = input_schema.NodeRecordCount(flow_id=1, node_id=2)
     graph.add_record_count(node_number_of_records)
     r = graph.run_graph(performance_mode=True)
-    expected_data = FlowFileTable(raw_data=[3], schema=['number_of_records'])
+    expected_data = FlowfileTable(raw_data=[3], schema=['number_of_records'])
     d = graph.get_node(2).get_resulting_data()
     d.assert_equal(expected_data)
 
@@ -253,7 +253,7 @@ def test_add_cross_join():
     graph.add_cross_join(input_schema.NodeCrossJoin(**data))
     graph.run_graph()
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowFileTable([{'name': 'eduward', 'right_name': 'eduward'},
+    expected_data = FlowfileTable([{'name': 'eduward', 'right_name': 'eduward'},
                                    {'name': 'edward', 'right_name': 'eduward'},
                                    {'name': 'courtney', 'right_name': 'eduward'}]
                                   )
@@ -279,23 +279,6 @@ def test_add_external_source():
            'identifier': 'sample_users'})
     graph.add_external_source(external_source_input)
     graph.run_graph()
-
-
-#
-#
-# def test_google_sheets():
-#     graph = test_create_graph()
-#     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 332, 'pos_y': 187, 'is_setup': True, 'description': '', 'identifier': 'google_sheet', 'source_settings': {'orientation': 'row', 'fields': [], 'GOOGLE_SHEET': True, 'class_name': 'GoogleSheet', 'access_token': 'access token', 'sheet_id': '17icXQF6qzbhizhNnarffzZmr1jRgYYjgp0WQasaTV8A', 'worksheet_name': 'InputSheet', 'sheet_name': 'GoogleFormContentooInput'}}
-#     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
-#     graph.add_node_promise(node_promise)
-#     external_source_input = input_schema.NodeExternalSource(**settings)
-#     graph.add_external_source(external_source_input)
-#     node = graph.get_node(1)
-#     FlowFileTable.create_from_external_source(external_source=external_source_input.source_settings)
-#     graph.run_graph()
-#     node.get_resulting_data().collect(10)
-#     graph.add_external_source(external_source_input)
-#     graph.run_graph()
 
 
 def test_airbyte():

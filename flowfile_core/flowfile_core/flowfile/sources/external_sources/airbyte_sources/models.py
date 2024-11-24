@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel, field_validator, ConfigDict
 import polars as pl
 from flowfile_core.flowfile.flowfile_table.flow_file_column.utils import type_to_polars_str
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas.input_schema import MinimalFieldInfo
 from flowfile_core.flowfile.flowfile_table.flow_file_column.polars_type import PlType
 from flowfile_core.configs import logger
@@ -77,9 +77,9 @@ class AirbyteResponse(BaseModel):
             raise ValueError(f"Source must be an instance of airbyte.Source, got {type(v)}")
         return v
 
-    def get_flow_file_columns(self) -> List[FlowFileColumn]:
+    def get_flow_file_columns(self) -> List[FlowfileColumn]:
         return [
-            FlowFileColumn.create_from_polars_type(c.get_pl_type(), col_index=i)
+            FlowfileColumn.create_from_polars_type(c.get_pl_type(), col_index=i)
             for i, c in enumerate(self.properties)
         ]
 

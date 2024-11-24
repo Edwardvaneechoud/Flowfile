@@ -1,5 +1,5 @@
 {
-  "name": "FlowFile-Designer",
+  "name": "Flowfile-Designer",
   "version": "0.1.0",
   "description": "A minimal Electron + Vue application",
   "main": "main/main.js",

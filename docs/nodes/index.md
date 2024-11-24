@@ -1,6 +1,6 @@
 # Nodes Overview
 
-FlowFile's nodes are the building blocks of your data pipelines. Each node performs a specific operation on your data, and by connecting them together, you can create complex data transformations without writing code.
+Flowfile's nodes are the building blocks of your data pipelines. Each node performs a specific operation on your data, and by connecting them together, you can create complex data transformations without writing code.
 
 Our nodes are organized into five main categories:
 

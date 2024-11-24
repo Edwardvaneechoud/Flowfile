@@ -26,9 +26,9 @@ async def shutdown_handler(app: FastAPI):
 
 # Initialize FastAPI with metadata
 app = FastAPI(
-    title='FlowFile Backend',
+    title='Flowfile Backend',
     version='0.1',
-    description='Backend for the FlowFile application',
+    description='Backend for the Flowfile application',
     lifespan=shutdown_handler
 )
 

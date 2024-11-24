@@ -1,6 +1,6 @@
-# FlowFile Worker
+# Flowfile Worker
 
-FlowFile Worker is a high-performance FastAPI-based service that handles the execution and caching of data operations for FlowFile. It runs as a separate process to manage heavy computational tasks and provides a REST API for executing Polars operations efficiently.
+Flowfile Worker is a FastAPI-based service that handles the execution and caching of data operations for Flowfile. It runs as a separate process to manage heavy computational tasks and provides a REST API for executing Polars operations efficiently.
 
 ## 🚀 Features
 

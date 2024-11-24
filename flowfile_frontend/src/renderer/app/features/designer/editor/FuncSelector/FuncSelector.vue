@@ -96,11 +96,11 @@ const apiData = ref<ExpressionGroup[]>([
     expressions: [
       {
         name: "add_days",
-        doc: "\n    Add a specified number of days to a date or timestamp.\n\n    Parameters:\n    - s (Any): The date or timestamp to add days to. Can be a FlowFile expression or any other value.\n    - days (int): The number of days to add.\n\n    Returns:\n    - pl.Expr: A FlowFile expression representing the result of adding `days` to `s`.\n\n    Note: If `s` is not a FlowFile expression, it will be converted into one.\n    ",
+        doc: "\n    Add a specified number of days to a date or timestamp.\n\n    Parameters:\n    - s (Any): The date or timestamp to add days to. Can be a Flowfile expression or any other value.\n    - days (int): The number of days to add.\n\n    Returns:\n    - pl.Expr: A Flowfile expression representing the result of adding `days` to `s`.\n\n    Note: If `s` is not a Flowfile expression, it will be converted into one.\n    ",
       },
       {
         name: "add_hours",
-        doc: "\n    Add a specified number of hours to a timestamp.\n\n    Parameters:\n    - s (Any): The timestamp to add hours to. Can be a FlowFile expression or any other value.\n    - hours (int): The number of hours to add.\n\n    Returns:\n    - pl.Expr: A FlowFile expression representing the result of adding `hours` to `s`.\n\n    Note: If `s` is not a FlowFile expression, it will be converted into one.\n    ",
+        doc: "\n    Add a specified number of hours to a timestamp.\n\n    Parameters:\n    - s (Any): The timestamp to add hours to. Can be a Flowfile expression or any other value.\n    - hours (int): The number of hours to add.\n\n    Returns:\n    - pl.Expr: A Flowfile expression representing the result of adding `hours` to `s`.\n\n    Note: If `s` is not a Flowfile expression, it will be converted into one.\n    ",
       },
       // Add more expressions as needed
     ],

@@ -2,7 +2,7 @@ from typing import Any, Optional, Literal
 from pydantic import BaseModel
 from flowfile_core.schemas.transform_schema import FuzzyMap
 
-OperationType = Literal['store', 'calculate_schema', 'calculate_number_of_records', 'write_output']
+OperationType = Literal['store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'store_sample']
 
 
 class PolarsOperation(BaseModel):

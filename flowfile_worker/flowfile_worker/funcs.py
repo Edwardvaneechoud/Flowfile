@@ -40,20 +40,36 @@ def process_and_cache(polars_serializable_object: io.BytesIO, progress: Value, e
                       file_path: str) -> bytes:
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object)
-        # try:
-        #     lf.sink_ipc(file_path)
-        # except:
         lf.collect(streaming=True).write_ipc(file_path)
-        # Simulate progress update
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
-        error_msg = str(e).encode()[:256]  # Limit error message length
+        error_msg = str(e).encode()[:1024]  # Limit error message length
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1  # Indicate error
-        return b'error'
+        return error_msg
+
+
+def store_sample(polars_serializable_object: bytes,
+                 progress: Value,
+                 error_message: Array,
+                 queue: Queue,
+                 file_path: str,
+                 sample_size: int):
+    try:
+        lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        lf.limit(sample_size).collect(streaming=True).write_ipc(file_path)
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]  # Limit error message length
+        with error_message.get_lock():
+            error_message[:len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1  # Indicate error
+        return error_msg
 
 
 def store(polars_serializable_object: bytes, progress: Value, error_message: Array, queue: Queue,  file_path: str):

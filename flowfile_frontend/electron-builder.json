@@ -1,6 +1,6 @@
 {
   "appId": "com.flowfile.app",
-  "productName": "FlowFile",
+  "productName": "Flowfile",
   "directories": {
     "output": "dist",
     "buildResources": "src/assets/icons"
@@ -9,7 +9,7 @@
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
-    "shortcutName": "FlowFile",
+    "shortcutName": "Flowfile",
     "installerIcon": "src/assets/icons/win/icon.ico",
     "uninstallerIcon": "src/assets/icons/win/icon.ico",
     "installerHeaderIcon": "src/assets/icons/win/icon.ico"
