@@ -6,8 +6,8 @@ sys.path.insert(0, os.path.abspath('..'))
 # Project information
 project = 'Flowfile'
 copyright = '2024, Flowfile Contributors'
-author = 'Flowfile Contributors'
-release = '0.1.0'  # Update this with your version
+author = 'Edward van Eechoud'
+release = '0.1.1'  # Update this with your version
 
 # Add any Sphinx extension module names here
 extensions = [
