@@ -1,6 +1,6 @@
 import { useVueFlow, Node, Position, } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
-import { NodeTemplate, NodeInput, VueFlowInput, EdgeInput} from "../../types";
+import { NodeTemplate, NodeInput, VueFlowInput} from "../../types";
 import { getComponent } from "./componentLoader";
 import { insertNode } from './backendInterface'
 
