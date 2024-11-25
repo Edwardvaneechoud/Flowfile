@@ -103,7 +103,7 @@
                   class="file-icon"
                 />
                 <img
-                  v-else-if="isFlowFile(file)"
+                  v-else-if="isFlowfile(file)"
                   src="/images/flowfile.svg"
                   alt="Flow file"
                   class="file-icon"
@@ -344,7 +344,7 @@ const isDataFile = (file: FileInfo): boolean => {
   );
 };
 
-const isFlowFile = (file: FileInfo): boolean => {
+const isFlowfile = (file: FileInfo): boolean => {
   if (file.is_directory) return false;
   return file.name.toLowerCase().endsWith(".flowfile");
 };

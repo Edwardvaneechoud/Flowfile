@@ -1,5 +1,5 @@
 from typing import Any, Dict, Generator, List, Optional, Callable
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas import input_schema
 from flowfile_core.configs import vault
 from pydantic import BaseModel, SecretStr
@@ -33,7 +33,7 @@ class CustomExternalSourceSettings:
 
 class CustomExternalSource(ExternalDataSource):
     data_getter: Generator = None
-    schema: Optional[List[FlowFileColumn]] = None
+    schema: Optional[List[FlowfileColumn]] = None
     cache_store: List = None
     is_collected: bool = False
 
@@ -69,19 +69,19 @@ class CustomExternalSource(ExternalDataSource):
             self.initial_data_getter = None
 
     @staticmethod
-    def parse_schema(schema: List[Any]) -> List[FlowFileColumn]:
+    def parse_schema(schema: List[Any]) -> List[FlowfileColumn]:
         if len(schema) == 0:
             return []
         first_col = schema[0]
         if isinstance(first_col, dict):
-            return [FlowFileColumn(**col) for col in schema]
+            return [FlowfileColumn(**col) for col in schema]
         elif isinstance(first_col, (list, tuple)):
-            return [FlowFileColumn.from_input(column_name=col[0], data_type=col[1]) for col in schema]
+            return [FlowfileColumn.from_input(column_name=col[0], data_type=col[1]) for col in schema]
         elif isinstance(first_col, str):
-            return [FlowFileColumn.from_input(column_name=col, data_type='varchar') for col in schema]
+            return [FlowfileColumn.from_input(column_name=col, data_type='varchar') for col in schema]
         elif isinstance(first_col, input_schema.MinimalFieldInfo):
-            return [FlowFileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in schema]
-        elif isinstance(first_col, FlowFileColumn):
+            return [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in schema]
+        elif isinstance(first_col, FlowfileColumn):
             return schema
         else:
             raise ValueError("Schema is not a valid type")

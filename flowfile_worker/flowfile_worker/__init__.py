@@ -16,4 +16,4 @@ process_dict_lock = threading.Lock()
 # Define the cache expiration time (1 day in seconds)
 CACHE_EXPIRATION_TIME = 24 * 60 * 60
 CACHE_DIR = tempfile.TemporaryDirectory()
-PROCESS_MEMORY_USAGE: Dict[str, float] = {}
+PROCESS_MEMORY_USAGE: Dict[str, float] = dict()

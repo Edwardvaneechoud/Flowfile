@@ -1,12 +1,12 @@
 # Building Flows
 
-FlowFile allows you to create data pipelines visually by connecting nodes that represent different data operations. This guide will walk you through the process of creating and running flows.
+Flowfile allows you to create data pipelines visually by connecting nodes that represent different data operations. This guide will walk you through the process of creating and running flows.
 
 
 ## Interface Overview
 
-![FlowFile Interface Overview](../assets/images/ui/full_ui.png){ width="800px" }
-*The complete FlowFile interface showing:*
+![Flowfile Interface Overview](../assets/images/ui/full_ui.png){ width="800px" }
+*The complete Flowfile interface showing:*
 - **Left sidebar**: Browse and select from available nodes 
 - **Center canvas**: Build your flow by arranging and connecting nodes
 - **Right sidebar**: Configure node settings and parameters
@@ -15,8 +15,8 @@ FlowFile allows you to create data pipelines visually by connecting nodes that r
 
 ## Creating a Flow
 
-  ![FlowFile Landing](../assets/images/ui/landing.png){ width="800px" }
-  <figcaption>The FlowFile landing page when no flows are active, showing options to create a new flow or open an existing one</figcaption>
+  ![Flowfile Landing](../assets/images/ui/landing.png){ width="800px" }
+  <figcaption>The Flowfile landing page when no flows are active, showing options to create a new flow or open an existing one</figcaption>
 
 ### Starting a New Flow
 1. Click the **Create** button in the top toolbar
@@ -37,7 +37,7 @@ FlowFile allows you to create data pipelines visually by connecting nodes that r
 ## Configuring Nodes
 
 ### Node Settings
-![FlowFile Interface Overview](../assets/images/ui/node_settings.png){ width="800px" }
+![Flowfile Interface Overview](../assets/images/ui/node_settings.png){ width="800px" }
 1. Click any node to open its settings in the right sidebar
 2. Each node type has specific configuration options:
 
@@ -49,10 +49,9 @@ FlowFile allows you to create data pipelines visually by connecting nodes that r
 ## Running Your Flow
 
 ### 1. Execution Options
-1. Choose your run mode from the dropdown:
-     - **Auto**: Automatically runs when changes are made
-     - **Local**: Runs the flow in the same process as the designer
-     - **Remote**: Runs the flow on a separate worker process
+Choose your xecution mode from the dropdown:
+     - **Development**: Lets you view the data in every step of the process, at the cost of performance
+     - **Performance**: Only executes steps needed for the output (e.g., writing data), allowing for query optimizations and better performance
 
 ### 2. Running the Flow
 1. Click the **Run** button in the top toolbar

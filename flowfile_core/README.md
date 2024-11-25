@@ -1,6 +1,6 @@
-# FlowFile Core
+# Flowfile Core
 
-FlowFile Core is the central engine of FlowFile, providing a powerful ETL (Extract, Transform, Load) framework built on top of Polars. It manages data transformations through a directed acyclic graph (DAG) structure, enabling complex data processing workflows.
+Flowfile Core is the central engine of Flowfile, providing a powerful ETL (Extract, Transform, Load) framework built on top of Polars. It manages data transformations through a directed acyclic graph (DAG) structure, enabling complex data processing workflows.
 
 ## 🚀 Features
 
@@ -33,10 +33,10 @@ FlowFile Core is the central engine of FlowFile, providing a powerful ETL (Extra
 ### EtlGraph
 The main class handling the ETL workflow:
 ```python
-from flowfile_core.flowfile.handler import FlowFileHandler
+from flowfile_core.flowfile.handler import FlowfileHandler
 
 # Create a new flow
-handler = FlowFileHandler()
+handler = FlowfileHandler()
 flow = handler.add_flow(name="my_flow")
 
 # Add nodes and connections

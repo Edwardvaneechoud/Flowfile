@@ -67,14 +67,11 @@ def open_flow(flow_path: Path) -> EtlGraph:
         new_flow.add_node_promise(node_promise)
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
-        print('doing this')
         getattr(new_flow, 'add_' + node_info.type)(node_info.setting_input)
         from_node = new_flow.get_node(node_id)
-        print('getting here')
         for output_node_id in node_info.outputs:
             to_node = new_flow.get_node(output_node_id)
             if to_node is not None:
-                print('doing this')
                 output_node_obj = flow_storage_obj.data[output_node_id]
                 is_left_input = (output_node_obj.left_input_id == node_id) and (to_node.left_input.node_id != node_id
                                                                                 if to_node.left_input is not None

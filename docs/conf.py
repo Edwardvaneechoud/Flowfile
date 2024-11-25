@@ -4,9 +4,9 @@ import sys
 sys.path.insert(0, os.path.abspath('..'))
 
 # Project information
-project = 'FlowFile'
-copyright = '2024, FlowFile Contributors'
-author = 'FlowFile Contributors'
+project = 'Flowfile'
+copyright = '2024, Flowfile Contributors'
+author = 'Flowfile Contributors'
 release = '0.1.0'  # Update this with your version
 
 # Add any Sphinx extension module names here
@@ -17,8 +17,8 @@ extensions = [
     'sphinx.ext.githubpages',  # Generate .nojekyll file
     'myst_parser',            # Markdown support
     'sphinx_copybutton',      # Add copy button to code blocks
-    'sphinx.ext.intersphinx', # Link to other projects' documentation
-    'sphinx_autodoc_typehints', # Better type hints support
+    'sphinx.ext.intersphinx',  # Link to other projects' documentation
+    'sphinx_autodoc_typehints',  # Better type hints support
     'autoapi.extension',      # API documentation
 ]
 

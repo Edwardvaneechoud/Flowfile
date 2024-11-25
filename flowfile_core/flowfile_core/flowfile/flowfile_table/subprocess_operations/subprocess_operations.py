@@ -8,6 +8,8 @@ from time import sleep
 import requests
 from uuid import uuid4
 from base64 import decodebytes, encodebytes
+from flowfile_core.utils.arrow_reader import read
+
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.models import (OperationType, Status, FuzzyJoinInput,
                                                                                 FuzzyMap,
                                                                                 PolarsOperation)
@@ -19,9 +21,18 @@ ReceivedTableCollection = ReceivedCsvTable | ReceivedParquetTable | ReceivedJson
 
 def trigger_df_operation(lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = 'store') -> Status:
     encoded_operation = encodebytes(lf.serialize()).decode()
-    v = requests.post(url=f'{WORKER_URL}/submit_query/', json={'task_id': file_ref,
-                                                               'operation': encoded_operation,
-                                                               'operation_type': operation_type})
+    _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': operation_type}
+    v = requests.post(url=f'{WORKER_URL}/submit_query/', json=_json)
+    if not v.ok:
+        raise Exception(f'Could not cache the data, {v.text}')
+    return Status(**v.json())
+
+
+def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, sample_size: int = 100) -> Status:
+    encoded_operation = encodebytes(lf.serialize()).decode()
+    _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': 'store_sample',
+             'sample_size': sample_size}
+    v = requests.post(url=f'{WORKER_URL}/store_sample/', json=_json)
     if not v.ok:
         raise Exception(f'Could not cache the data, {v.text}')
     return Status(**v.json())
@@ -80,6 +91,14 @@ def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
         return get_df_result(status.results)
     else:
         raise Exception(f"Result type is not polars, {status.result_type}")
+
+
+def get_status(file_ref: str) -> Status:
+    status_response = requests.get(f'{WORKER_URL}/status/{file_ref}')
+    if status_response.status_code == 200:
+        return Status(**status_response.json())
+    else:
+        raise Exception(f"Could not fetch the status, {status_response.text}")
 
 
 class BaseFetcher:
@@ -181,6 +200,8 @@ class BaseFetcher:
 
 
 class ExternalDfFetcher(BaseFetcher):
+    status: Optional[Status] = None
+
     def __init__(self, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
                  operation_type: OperationType = 'store'):
         super().__init__(file_ref=file_ref)
@@ -189,6 +210,21 @@ class ExternalDfFetcher(BaseFetcher):
         self.running = r.status == 'Processing'
         if wait_on_completion:
             _ = self.get_result()
+        self.status = get_status(self.file_ref)
+
+
+class ExternalSampler(BaseFetcher):
+    status: Optional[Status] = None
+
+    def __init__(self, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
+                 sample_size: int = 100):
+        super().__init__(file_ref=file_ref)
+        lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
+        r = trigger_sample_operation(lf=lf, file_ref=file_ref, sample_size=sample_size)
+        self.running = r.status == 'Processing'
+        if wait_on_completion:
+            _ = self.get_result()
+        self.status = get_status(self.file_ref)
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
@@ -301,3 +337,52 @@ class ExternalExecutorTracker:
         if self.error_description is not None:
             raise Exception(self.error_description)
         return self.result
+
+
+def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
+    """
+    Fetches unique values from a specified column in a LazyFrame, attempting first via an external fetcher
+    and falling back to direct LazyFrame computation if that fails.
+
+    Args:
+        lf: A Polars LazyFrame containing the data
+        column: Name of the column to extract unique values from
+
+    Returns:
+        List[str]: List of unique values from the specified column cast to strings
+
+    Raises:
+        ValueError: If no unique values are found or if the fetch operation fails
+
+    Example:
+        >>> lf = pl.LazyFrame({'category': ['A', 'B', 'A', 'C']})
+        >>> unique_vals = fetch_unique_values(lf, 'category')
+        >>> print(unique_vals)
+        ['A', 'B', 'C']
+    """
+    try:
+        # Try external source first if lf is provided
+        try:
+            external_df_fetcher = ExternalDfFetcher(lf=lf)
+            if external_df_fetcher.status.status == 'Completed':
+
+                unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
+                if logger:
+                    logger.info(f"Got {len(unique_values)} unique values from external source")
+                return unique_values
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed reading external file: {str(e)}")
+
+        unique_values = (lf.unique().collect(streaming=True)[:, 0].to_list())
+
+        if not unique_values:
+            raise ValueError(f"No unique values found in lazyframe")
+
+        return unique_values
+
+    except Exception as e:
+        error_msg = f"Failed to fetch unique values: {str(e)}"
+        if logger:
+            logger.error(error_msg)
+        raise ValueError(error_msg) from e

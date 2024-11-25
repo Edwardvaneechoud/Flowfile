@@ -1,5 +1,5 @@
 import { createApp } from "vue";
-import { flowfileCorebaseURL } from './config/constants';
+import { flowfileCorebaseURL } from "./config/constants";
 import stores from "./app/stores";
 import router from "./app/router";
 import App from "./app/App.vue";

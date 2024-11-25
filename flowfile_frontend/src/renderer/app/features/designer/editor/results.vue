@@ -21,7 +21,9 @@
         >
           <el-card class="node-card">
             <h4 v-if="nodeStore.nodeDescriptions[node.node_id]">
-              {{ nodeStore.nodeDescriptions[node.node_id] }} ({{ node.node_name }})
+              {{ nodeStore.nodeDescriptions[node.node_id] }} ({{
+                node.node_name
+              }})
             </h4>
             <h4 v-else>{{ `Node ${node.node_id}` }}: {{ node.node_name }}</h4>
             <div class="node-details">

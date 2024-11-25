@@ -1,5 +1,5 @@
 import polars as pl
-from flowfile_worker.polars_fuzzy_match.configs import logger
+from flowfile_worker.configs import logger
 import os
 import uuid
 

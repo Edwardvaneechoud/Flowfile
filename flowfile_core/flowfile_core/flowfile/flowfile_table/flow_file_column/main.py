@@ -10,7 +10,7 @@ DataTypeGroup = Literal['numeric', 'str', 'date']
 
 
 @dataclass
-class FlowFileColumn:
+class FlowfileColumn:
     column_name: str
     data_type: str
     size: int
@@ -45,14 +45,14 @@ class FlowFileColumn:
         self.__perc_unique = None
 
     @classmethod
-    def create_from_polars_type(cls, polars_type: PlType, **kwargs) -> "FlowFileColumn":
+    def create_from_polars_type(cls, polars_type: PlType, **kwargs) -> "FlowfileColumn":
         for k, v in kwargs.items():
             if hasattr(polars_type, k):
                 setattr(polars_type, k, v)
         return cls(polars_type)
 
     @classmethod
-    def from_input(cls, column_name: str, data_type: str, **kwargs) -> "FlowFileColumn":
+    def from_input(cls, column_name: str, data_type: str, **kwargs) -> "FlowfileColumn":
         pl_type = type_to_polars_str(data_type)
         if pl_type is not None:
             data_type = pl_type
@@ -66,7 +66,7 @@ class FlowFileColumn:
         return input_schema.MinimalFieldInfo(name=self.column_name, data_type=self.data_type)
 
     @classmethod
-    def create_from_minimal_field_info(cls, minimal_field_info: input_schema.MinimalFieldInfo) -> "FlowFileColumn":
+    def create_from_minimal_field_info(cls, minimal_field_info: input_schema.MinimalFieldInfo) -> "FlowfileColumn":
         return cls.from_input(**minimal_field_info.__dict__)
 
     @property
@@ -136,5 +136,5 @@ class FlowFileColumn:
         return PlType(pl_datatype=pl_datatype, **self.__dict__)
 
 
-def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowFileColumn]:
-    return [FlowFileColumn.create_from_polars_type(PlType(**c)) for c in stats]
+def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowfileColumn]:
+    return [FlowfileColumn.create_from_polars_type(PlType(**c)) for c in stats]

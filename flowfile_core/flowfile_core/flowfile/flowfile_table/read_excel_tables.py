@@ -4,7 +4,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 import gc
 import polars as pl
 from flowfile_core.flowfile.flowfile_table.utils import create_pl_df_type_save, get_data_type
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.flow_file_column.utils import dtype_to_pl_str
 
 
@@ -31,7 +31,7 @@ def raw_data_openpyxl(file_path: str,
 
 def get_calamine_xlsx_data_types(file_path: str, sheet_name: str, start_row: int=0, end_row: int=0):
     df = df_from_calamine_xlsx(file_path, sheet_name, start_row, end_row)
-    return [FlowFileColumn.from_input(n, str(dt), col_index=i) for i, (n, dt) in enumerate(zip(df.columns, df.dtypes))]
+    return [FlowfileColumn.from_input(n, str(dt), col_index=i) for i, (n, dt) in enumerate(zip(df.columns, df.dtypes))]
 
 
 def df_from_calamine_xlsx(file_path: str, sheet_name: str, start_row: int = 0, end_row: int = 0) -> pl.DataFrame:
@@ -90,7 +90,7 @@ def get_open_xlsx_datatypes(file_path: str,
                             max_row: int = None,
                             min_col: int = None,
                             max_col: int = None,
-                            has_headers: bool = True) -> List[FlowFileColumn]:
+                            has_headers: bool = True) -> List[FlowfileColumn]:
     data_iterator = raw_data_openpyxl(file_path=file_path,
                                       sheet_name=sheet_name,
                                       min_row=min_row,
@@ -101,11 +101,11 @@ def get_open_xlsx_datatypes(file_path: str,
     if has_headers:
         columns = (f'_unnamed_column_{i}' if col is None else col for i, col in enumerate(next(raw_data)))
         data_types = (dtype_to_pl_str.get(get_data_type(vals), 'String') for vals in zip(*raw_data))
-        schema = [FlowFileColumn.from_input(n, d, col_index = i) for i, (n, d) in enumerate(zip(columns, data_types))]
+        schema = [FlowfileColumn.from_input(n, d, col_index = i) for i, (n, d) in enumerate(zip(columns, data_types))]
     else:
         columns = (f'column_{i}' for i in range(len(next(raw_data))))
         data_types = (dtype_to_pl_str.get(get_data_type(vals), 'String') for vals in zip(*raw_data))
-        schema = [FlowFileColumn.from_input(n, d, col_index=i) for i, (n, d) in enumerate(zip(columns, data_types))]
+        schema = [FlowfileColumn.from_input(n, d, col_index=i) for i, (n, d) in enumerate(zip(columns, data_types))]
     return schema
 
 

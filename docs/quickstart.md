@@ -1,6 +1,6 @@
 # Quickstart Guide
 
-This guide will help you get FlowFile up and running quickly.
+This guide will help you get Flowfile up and running quickly.
 
 ## Prerequisites
 
