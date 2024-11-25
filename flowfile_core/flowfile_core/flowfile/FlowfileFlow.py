@@ -5,7 +5,6 @@ import polars as pl
 import fastexcel
 from fastapi.exceptions import HTTPException
 from time import time
-import psutil
 from typing import List, Dict, Union, Callable, Any, Optional, Tuple
 from uuid import uuid1
 from pyarrow.parquet import ParquetFile
@@ -27,11 +26,6 @@ from flowfile_core.flowfile.node_step.node_step import NodeStep, NodeResults
 from flowfile_core.utils.fl_executor import thread_executor
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
-
-
-def get_process_memory():
-    process = psutil.Process(os.getpid())
-    return process.memory_info().rss / 1024 / 1024  # MB
 
 
 @thread_executor(wait_on_completion=False, max_workers=1)
@@ -836,7 +830,7 @@ class EtlGraph:
             return list(set([col for col in self._input_cols if
                              col in [table_col.name for table_col in self._input_data.schema]]))
 
-    def run_graph(self, performance_mode: bool = False) -> RunInformation:
+    def run_graph(self) -> RunInformation:
         self.is_running = True
         self.nodes_completed = 0
         self.node_results = []
@@ -847,13 +841,13 @@ class EtlGraph:
         for _, node in self._node_db.items():
             logger.info(f'{node} ->  {node.leads_to_nodes}')
         logger.info(f'Running graph with node ids: {all_node_ids}')
-        current_ram = get_process_memory()
         execution_order = determine_execution_order(self.nodes, self._flow_starts)
         logger.info(f'Execution order: {[n.node_id for n in execution_order]}')
         skip_nodes = []
-        mem_stats = []
+        performance_mode = self.flow_settings.execution_mode == 'Performance'
         for node in execution_order:
-            if node.node_id in skip_nodes:
+            if node in skip_nodes:
+                logger.info(f'Skipping node {node.node_id}')
                 continue
             node_result = NodeResult(node_id=node.node_id, node_name=node.name)
             logger.info(f'nodeId={node.node_id}\n start time: {node_result.start_timestamp}')
@@ -871,16 +865,8 @@ class EtlGraph:
             if not node_result.success:
                 skip_nodes.extend(list(node.get_all_dependent_nodes()))
             logger.info(f'Completed node {node.node_id} with success: {node_result.success}')
-            # vm = psutil.virtual_memory()
-            ram_delta = get_process_memory() - current_ram
-            print(f"Node {node.node_id}: RAM delta: {ram_delta:.0f} MB")
-            print(f"    Used: {get_process_memory():.0f} MB")
-            current_ram = get_process_memory()
-            mem_stats.append((node.node_id, node.node_type, ram_delta, current_ram))
             self.nodes_completed += 1
             self.node_results.append(node_result)
-        df = pl.DataFrame(mem_stats, orient='row', schema=['node_id', 'action', 'delta', 'ram_usage'])
-        df.write_excel('ram_test.xlsx')
         self.end_datetime = datetime.datetime.now()
         self.is_running = False
         return self.get_run_info()

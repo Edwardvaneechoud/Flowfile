@@ -9,17 +9,16 @@
     </div>
     <div v-if="visible" :style="popoverStyle" class="popover">
       <h3 v-if="props.title !== ''">{{ props.title }}</h3>
-      <p class="content">{{ props.content }}</p>
+      <p class="content" v-html="props.content"></p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue"; // Removed unused computed import
+import { ref } from "vue";
 
 const visible = ref(false);
 
-// Don't destructure props to maintain reactivity
 const props = defineProps({
   content: {
     type: String,

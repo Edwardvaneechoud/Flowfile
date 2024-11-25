@@ -30,7 +30,7 @@ class NodeStepSettings:
     renew_schema: bool = True
     streamable: bool = True
     setup_errors: bool = False
-    execute_location: schemas.ExecutionLocationsLiteral = 'remote'
+    execute_location: schemas.ExecutionLocationsLiteral = 'auto'
 
 
 class NodeStepInputs:

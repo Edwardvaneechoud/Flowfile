@@ -4,7 +4,6 @@ import tracemalloc
 import polars as pl
 import time
 import gc
-import objsize
 from functools import wraps
 
 
@@ -115,13 +114,14 @@ def deep_memory_profile(interval=2, depth=3):
 
     return decorator
 #
-flow_file_handler.import_flow('/Users/edwardvanechoud/compare_partner_data.flowfile')
+flow_file_handler.import_flow('/Users/edwardvaneechoud/example_flow.flowfile')
 graph = flow_file_handler.get_flow(1)
-graph.run_graph(performance_mode=False)
-self = graph.get_node(node_id=49)
-performance_mode = True
-run_location = 'auto'
-self.execute_remote
+graph.run_graph()
+# self = graph.get_node(node_id=1)
+# self.execute_node()
+# performance_mode = True
+# run_location = 'auto'
+# self.execute_remote
 # # self.get_table_example(True)
 # # self.get_table_example(include_data=)
 # # graph.run_grdaph
@@ -134,6 +134,6 @@ def your_function():
     graph = flow_file_handler.get_flow(1)
     graph.run_graph(performance_mode=True)
 
-
-if __name__ == '__main__':
-    your_function()
+#
+# if __name__ == '__main__':
+#     your_function()

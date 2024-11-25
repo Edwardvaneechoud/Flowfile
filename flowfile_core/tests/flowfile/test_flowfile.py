@@ -140,7 +140,8 @@ def test_running_performance_mode():
     add_connection(graph, connection)
     node_number_of_records = input_schema.NodeRecordCount(flow_id=1, node_id=2)
     graph.add_record_count(node_number_of_records)
-    fast = graph.run_graph(performance_mode=True)
+    graph.flow_settings.execution_mode = 'Performance'
+    fast = graph.run_graph()
     graph.reset()
     slow = graph.run_graph()
     assert slow.node_step_result[1].run_time > fast.node_step_result[1].run_time, 'Performance mode should be faster'

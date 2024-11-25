@@ -10,7 +10,7 @@ export interface AxiosResponse {
   config: any // Use a more detailed type if you want.
 }
 
-export type ExecutionLocation = 'local' | 'remote' | 'auto';
+export type ExecutionMode = 'Development' | 'Performance';
 
 export interface FlowSettings {
   flow_id: number
@@ -20,8 +20,7 @@ export interface FlowSettings {
   auto_save: boolean
   modified_on?: number
   path?: string
-  execution_settings?: 'dubug' | 'production'
-  execution_location?: ExecutionLocation
+  execution_mode: ExecutionMode
 }
 
 

@@ -477,6 +477,7 @@ class NodeStep:
                     self.node_stats.has_run = True
 
             except Exception as e:
+                logger.error('Error with external process')
                 if external_df_fetcher.error_code == -1:
                     try:
                         self.results.resulting_data = self.get_resulting_data()
@@ -492,7 +493,7 @@ class NodeStep:
                     raise e
                 else:
                     self.results.errors = external_df_fetcher.error_description
-                    raise external_df_fetcher.error_description
+                    raise Exception(external_df_fetcher.error_description)
 
     def prepare_before_run(self):
         self.results.errors = None

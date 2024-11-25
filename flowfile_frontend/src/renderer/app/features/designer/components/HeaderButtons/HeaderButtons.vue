@@ -22,22 +22,30 @@
       >Create</el-button
     >
     <RunButton ref="runButton" :flow-id="1"></RunButton>
-    <div class="dropdown-container">
-      <span>Run Mode:</span>
+    <div v-if="flowSettings" class="dropdown-container">
+      <span>Execution Mode:</span>
       <el-select
-        v-model="executionLocation"
+        v-model="flowSettings.execution_mode"
         size="small"
         style="width: 200px"
         placeholder="Select run mode"
         @change="pushFlowSettings"
       >
         <el-option
-          v-for="eM in executionLocations"
+          v-for="eM in executionModes"
           :key="eM"
           :label="eM"
           :value="eM"
         />
       </el-select>
+      <pop-over
+        title="Execution mode"
+        content="<strong>Development Mode</strong>: Let's you view the data in every step of the process, at the cost of performance.
+<strong>Performance Mode</strong>: Only executes steps that are needed for the output (e.g.) writing data. Allowing for query optimizations and better performance."
+        placement="bottom"
+      >
+        <Question class="help-icon">?</Question>
+      </pop-over>
     </div>
   </div>
 
@@ -90,12 +98,13 @@ import { saveFlow } from "./utils";
 import RunButton from "../../editor/run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
+import PopOver from "../../editor/PopOver.vue";
 import {
   createFlow,
   getFlowSettings,
   FlowSettings,
   updateFlowSettings,
-  ExecutionLocation,
+  ExecutionMode,
 } from "../../nodes/nodeLogic";
 
 const modalVisibleForOpen = ref(false);
@@ -104,13 +113,7 @@ const modalVisibleForCreate = ref(false);
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
 
-const executionLocations = ref<ExecutionLocation[]>([
-  "local",
-  "remote",
-  "auto",
-]);
-
-const executionLocation = ref<ExecutionLocation>("auto");
+const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
 const props = withDefaults(
   defineProps<{
@@ -126,10 +129,10 @@ const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);
 };
 
-const pushFlowSettings = async (execution_lcoation: ExecutionLocation) => {
+const pushFlowSettings = async (execution_lcoation: ExecutionMode) => {
   console.log("updateFlowSettings", flowSettings);
   if (flowSettings.value) {
-    flowSettings.value.execution_location = execution_lcoation;
+    flowSettings.value.execution_mode = execution_lcoation;
   }
 
   if (flowSettings.value) {
@@ -207,5 +210,15 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+.help-icon {
+  width: 16px;
+  height: 16px;
+  color: #909399;
+  margin: 0 4px;
+}
+
+.help-icon:hover {
+  color: #606266;
 }
 </style>
