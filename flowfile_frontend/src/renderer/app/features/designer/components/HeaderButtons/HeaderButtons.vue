@@ -40,8 +40,8 @@
       </el-select>
       <pop-over
         title="Execution mode"
-        content="<strong>Development Mode</strong>: Let's you view the data in every step of the process, at the cost of performance.
-<strong>Performance Mode</strong>: Only executes steps that are needed for the output (e.g.) writing data. Allowing for query optimizations and better performance."
+        content="<strong>- Development Mode</strong>: Lets you view the data in every step of the process, at the cost of performance.
+<strong>- Performance Mode</strong>: Only executes steps needed for the output (e.g., writing data), enabling query optimizations and better performance."
         placement="bottom"
       >
         <Question class="help-icon">?</Question>
