@@ -41,13 +41,10 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
   - Filter data based on conditions
 
 - **Data Integration**
-  - Combine data from multiple sources
-  - Fuzzy matching of customer records
   - Standardize data formats
   - Handle messy Excel files
 
 - **ETL Operations**
-  - Excel to database pipelines
   - Data quality checks
 
 ## 🚀 Getting Started
