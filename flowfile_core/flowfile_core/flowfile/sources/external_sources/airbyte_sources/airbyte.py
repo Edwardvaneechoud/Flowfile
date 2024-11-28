@@ -1,10 +1,9 @@
 import os
 from ast import literal_eval
 import polars as pl
-import pandas as pd
 from typing import Any, Dict, Generator, List, Optional
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import (
     AirbyteProperty, JsonSchema, AirbyteResponse, AirbyteSettings
@@ -60,7 +59,7 @@ class AirbyteSource(ExternalDataSource):
         else:
             logger.info('Using provided schema')
             self.schema = [
-                FlowFileColumn.from_input(column_name=col.name, data_type=col.data_type)
+                FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type)
                 for col in airbyte_settings.fields
             ]
 
@@ -69,7 +68,7 @@ class AirbyteSource(ExternalDataSource):
         if airbyte_settings.fields is not None and len(airbyte_settings.fields) > 0:
             logger.info('Using provided schema')
             self.schema = [
-                FlowFileColumn.from_input(column_name=col.name, data_type=col.data_type)
+                FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type)
                 for col in airbyte_settings.fields
             ]
         else:
@@ -130,10 +129,10 @@ class AirbyteSource(ExternalDataSource):
                 break
 
     @staticmethod
-    def parse_schema(airbyte_response: AirbyteResponse) -> List[FlowFileColumn]:
+    def parse_schema(airbyte_response: AirbyteResponse) -> List[FlowfileColumn]:
         return airbyte_response.get_flow_file_columns()
 
-    def get_df(self) -> pd.DataFrame:
+    def get_df(self):
         if self.read_result is None:
             source = self.airbyte_response.source
             self.read_result = source.read()

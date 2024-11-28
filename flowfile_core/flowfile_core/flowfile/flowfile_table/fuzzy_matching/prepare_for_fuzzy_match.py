@@ -6,7 +6,7 @@ from typing import Tuple
 from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import finetune_fuzzy_mapping_settings
 
 
-def prepare_for_fuzzy_match(left: "FlowFileTable", right: "FlowFileTable",
+def prepare_for_fuzzy_match(left: "FlowfileTable", right: "FlowfileTable",
                             fuzzy_match_input: FuzzyMatchInput) -> Tuple[pl.LazyFrame, pl.LazyFrame]:
     left.calculate_schema()
     right.calculate_schema()

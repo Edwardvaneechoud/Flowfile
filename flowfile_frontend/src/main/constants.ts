@@ -5,5 +5,5 @@ export const HEALTH_CHECK_TIMEOUT = 1000;
 export const SERVICE_START_TIMEOUT = 30000;
 
 // Service ports
-export const WORKER_PORT = 8000;
-export const CORE_PORT = 5667;
+export const WORKER_PORT = 63579;
+export const CORE_PORT = 63578;

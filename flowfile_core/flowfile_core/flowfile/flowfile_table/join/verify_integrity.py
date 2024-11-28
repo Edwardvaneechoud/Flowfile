@@ -1,7 +1,7 @@
 
 from typing import List
 from flowfile_core.schemas import transform_schema
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 
 
 def verify_join_select_integrity(join_input: transform_schema.JoinInput | transform_schema.CrossJoinInput,
@@ -20,15 +20,15 @@ def verify_join_select_integrity(join_input: transform_schema.JoinInput | transf
 
 
 def verify_join_map_integrity(join_input: transform_schema.JoinInput,
-                              left_columns: List[FlowFileColumn],
-                              right_columns: List[FlowFileColumn]
+                              left_columns: List[FlowfileColumn],
+                              right_columns: List[FlowfileColumn]
                               ):
     join_mappings = join_input.join_mapping
     left_column_dict = {lc.name: lc for lc in left_columns}
     right_column_dict = {rc.name: rc for rc in right_columns}
     for join_mapping in join_mappings:
-        left_column_info: FlowFileColumn | None = left_column_dict.get(join_mapping.left_col)
-        right_column_info: FlowFileColumn | None = right_column_dict.get(join_mapping.right_col)
+        left_column_info: FlowfileColumn | None = left_column_dict.get(join_mapping.left_col)
+        right_column_info: FlowfileColumn | None = right_column_dict.get(join_mapping.right_col)
         if not left_column_info or not right_column_info:
             return False
         if left_column_info.data_type != right_column_info.data_type:

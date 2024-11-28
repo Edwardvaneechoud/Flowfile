@@ -26,9 +26,9 @@ async def shutdown_handler(app: FastAPI):
 
 # Initialize FastAPI with metadata
 app = FastAPI(
-    title='FlowFile Backend',
+    title='Flowfile Backend',
     version='0.1',
-    description='Backend for the FlowFile application',
+    description='Backend for the Flowfile application',
     lifespan=shutdown_handler
 )
 
@@ -81,7 +81,7 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def run(host: str = '0.0.0.0', port: int = 5667):
+def run(host: str = '0.0.0.0', port: int = 63578):
     """Run the FastAPI app with graceful shutdown"""
     global server_instance
 

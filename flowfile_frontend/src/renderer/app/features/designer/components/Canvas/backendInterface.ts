@@ -69,7 +69,7 @@ export const connectNode = async(flowId: number, nodeConnection: NodeConnection)
   export async function deleteNode(flow_id: number, node_id: number): Promise<any> {
     try {
       const response: AxiosResponse = await axios.post(
-        'http://localhost:5667/editor/delete_node/',
+        '/editor/delete_node/',
         {},
         {
           params: {

@@ -10,7 +10,7 @@ export interface AxiosResponse {
   config: any // Use a more detailed type if you want.
 }
 
-export type ExecutionLocation = 'local' | 'remote' | 'auto';
+export type ExecutionMode = 'Development' | 'Performance';
 
 export interface FlowSettings {
   flow_id: number
@@ -20,8 +20,7 @@ export interface FlowSettings {
   auto_save: boolean
   modified_on?: number
   path?: string
-  execution_settings?: 'dubug' | 'production'
-  execution_location?: ExecutionLocation
+  execution_mode: ExecutionMode
 }
 
 
@@ -107,29 +106,10 @@ export async function getSavedFlows(): Promise<LocalFileInfo[]> {
   throw Error('Error fetching flow data')
 }
 
-// export async function connectNode(flow_id: number, nodeConnection: object): Promise<any> {
-//   try {
-//     const response = await axios.post('http://localhost:5667/editor/connect_node/', nodeConnection, {
-//       headers: {
-//         'Content-Type': 'application/json',
-//         accept: 'application/json',
-//       },
-//       params: {
-//         flow_id,
-//       },
-//     })
-
-//     return response.data
-//   } catch (error) {
-//     console.error('There was an error:', error)
-//     throw error
-//   }
-// }
-
 export async function deleteConnection(flow_id: number, nodeConnection: object): Promise<any> {
   try {
     const response: AxiosResponse = await axios.post(
-      'http://localhost:5667/editor/delete_connection/',
+      '/editor/delete_connection/',
       nodeConnection,
       {
         params: {
@@ -149,7 +129,7 @@ export async function deleteConnection(flow_id: number, nodeConnection: object):
 }
 
 export const getNodeData = async (flow_id: number, node_id: number): Promise<Ref<NodeData>> => {
-  const response = await axios.get('http://localhost:5667/node', {
+  const response = await axios.get('/node', {
     params: { flow_id: flow_id, node_id: node_id },
     headers: { accept: 'application/json' },
   })
@@ -165,7 +145,7 @@ export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
 export async function deleteNode(flow_id: number, node_id: number): Promise<any> {
   try {
     const response: AxiosResponse = await axios.post(
-      'http://localhost:5667/editor/delete_node/',
+      '/editor/delete_node/',
       {},
       {
         params: {

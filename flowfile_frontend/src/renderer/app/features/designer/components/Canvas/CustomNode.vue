@@ -6,8 +6,15 @@
       @contextmenu="onTitleClick"
     >
       <div>
-        <div v-if="!editMode">
-          {{ descriptionSummary }}
+        <div v-if="!editMode" class="description-display">
+          <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+          </div>
+          <pre class="description-text">{{ descriptionSummary }}</pre>
+          <span v-if="isTruncated" class="truncated-indicator" title="Click to see full description">...</span>
         </div>
         <div
           v-else
@@ -49,6 +56,7 @@
 </template>
 
 <script setup lang="ts">
+// Script section remains the same
 import { Handle } from "@vue-flow/core";
 import { computed, ref, defineProps, onMounted, nextTick } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
@@ -57,6 +65,8 @@ const nodeStore = useNodeStore();
 const mouseX = ref<number>(0);
 const mouseY = ref<number>(0);
 const editMode = ref<boolean>(false);
+
+const CHAR_LIMIT = 100;
 
 const onTitleClick = (event: MouseEvent) => {
   console.log("Double clicked");
@@ -99,26 +109,23 @@ const getNodeDescription = async () => {
 };
 
 const overlayStyle = computed(() => {
-  const overlayWidth = 400; // Overlay width
-  const overlayHeight = 200; // Overlay height
-  const buffer = 100; // A small buffer distance from the cursor to the overlay
+  const overlayWidth = 400;
+  const overlayHeight = 200;
+  const buffer = 100;
 
   let left = mouseX.value + buffer;
   let top = mouseY.value + buffer;
 
-  // Ensuring the overlay doesn't go off the right edge of the viewport
   if (left + overlayWidth > window.innerWidth) {
-    left -= overlayWidth + 2 * buffer; // Move it to the left of the cursor if it goes off the right
+    left -= overlayWidth + 2 * buffer;
   }
 
-  // Ensuring the overlay doesn't go off the bottom edge of the viewport
   if (top + overlayHeight > window.innerHeight) {
-    top -= overlayHeight + 2 * buffer; // Move it above the cursor if it goes off the bottom
+    top -= overlayHeight + 2 * buffer;
   }
 
-  // Adjust if overlay goes off the left or top edge of the viewport (rare due to cursor positioning)
-  left = Math.max(left, buffer); // Ensure it doesn't go off-screen to the left
-  top = Math.max(top, buffer); // Ensure it doesn't go off-screen to the top
+  left = Math.max(left, buffer);
+  top = Math.max(top, buffer);
 
   return {
     top: `${top}px`,
@@ -126,14 +133,22 @@ const overlayStyle = computed(() => {
   };
 });
 
-const descriptionShort = computed(() => {
-  return description.value.length > 12
-    ? description.value.slice(0, 12) + "..."
-    : description.value;
+const isTruncated = computed(() => {
+  return description.value.length > CHAR_LIMIT;
 });
 
 const descriptionSummary = computed(() => {
-  return descriptionShort.value || `${props.data.id}: ${props.data.label}`;
+  if (!description.value) {
+    return `${props.data.id}: ${props.data.label}`;
+  }
+  
+  if (isTruncated.value) {
+    const truncatePoint = description.value.lastIndexOf(' ', CHAR_LIMIT);
+    const endPoint = truncatePoint > 0 ? truncatePoint : CHAR_LIMIT;
+    return description.value.substring(0, endPoint);
+  }
+  
+  return description.value;
 });
 
 const props = defineProps({
@@ -144,17 +159,17 @@ const props = defineProps({
 });
 
 function getHandleStyle(index: number, total: number) {
-  const topMargin = 30; // Increase this value to have more margin from the top
-  const bottomMargin = 25; // Adjust bottom margin if needed
+  const topMargin = 30;
+  const bottomMargin = 25;
   if (total === 1) {
     return {
       top: "55%",
       transform: "translateY(-55%)",
     };
   } else {
-    const spacing = (100 - topMargin - bottomMargin) / (total - 1); // Calculate spacing
+    const spacing = (100 - topMargin - bottomMargin) / (total - 1);
     return {
-      top: `${topMargin + spacing * index}%`, // Apply top margin and spacing
+      top: `${topMargin + spacing * index}%`,
     };
   }
 }
@@ -184,18 +199,79 @@ onMounted(async () => {
   font-weight: 100;
   font-size: small;
   width: 20px;
-  white-space: nowrap; /* Prevents text from wrapping to the next line */
-  overflow: visible; /* Ensures that overflowing text is hidden */
-  text-overflow: ellipsis; /* Adds ellipsis (...) to the overflowing text */
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: ellipsis;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+}
+
+.description-display {
+  position: relative;
+  white-space: pre-wrap;
+  min-width: 100px;
+  padding: 2px 4px;
+  cursor: pointer;
+  background-color: rgba(255, 255, 255, 0.9);
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.edit-icon {
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: #0f275f;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+
+.description-display:hover .edit-icon {
+  opacity: 1;
+}
+
+.edit-icon:hover {
+  color: #051233; 
+}
+
+
+.description-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+}
+
+.edit-overlay {
+  position: fixed;
+  z-index: 1000;
+  background: white;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.description-input {
+  width: 200px;
+  height: 75px;
+  resize: both;
+  padding: 4px;
+  border: 1px solid #0f275f;
+  border-radius: 4px;
+  font-size: small;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  background-color: white;
 }
 
 .handle-input {
   position: absolute;
-  left: -8px; /* Position the handles on the left */
+  left: -8px;
 }
 
 .handle-output {
   position: absolute;
-  right: -8px; /* Position the handles on the right */
+  right: -8px;
 }
+
 </style>

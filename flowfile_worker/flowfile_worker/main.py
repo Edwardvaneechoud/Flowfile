@@ -5,8 +5,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from flowfile_worker.routes import router
 from flowfile_worker import mp_context, CACHE_DIR
+from flowfile_worker.configs import logger
 
-# Global shutdown flag and server reference
 should_exit = False
 server_instance = None
 
@@ -14,18 +14,18 @@ server_instance = None
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown"""
-    print('Starting application...')
+    logger.info('Starting application...')
     try:
         yield
     finally:
-        print('Shutting down application...')
-        print("Cleaning up worker resources...")
+        logger.info('Shutting down application...')
+        logger.info("Cleaning up worker resources...")
         for p in mp_context.active_children():
             try:
                 p.terminate()
                 p.join()
             except Exception as e:
-                print(f"Error cleaning up process: {e}")
+                logger.error(f"Error cleaning up process: {e}")
 
         try:
             CACHE_DIR.cleanup()
@@ -57,12 +57,12 @@ async def trigger_shutdown():
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
-    print(f"Received signal {signum}")
+    logger.info(f"Received signal {signum}")
     if server_instance:
         server_instance.should_exit = True
 
 
-def run(host: str = '0.0.0.0', port: int = 8000):
+def run(host: str = '0.0.0.0', port: int = 63579):
     """Run the FastAPI app with graceful shutdown"""
     global server_instance
 
@@ -79,16 +79,16 @@ def run(host: str = '0.0.0.0', port: int = 8000):
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally
 
-    print('Starting server...')
-    print('Server started')
+    logger.info('Starting server...')
+    logger.info('Server started')
 
     try:
         server.run()
     except KeyboardInterrupt:
-        print("Received interrupt signal, shutting down...")
+        logger.info("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
-        print("Server shutdown complete")
+        logger.info("Server shutdown complete")
 
 
 if __name__ == "__main__":

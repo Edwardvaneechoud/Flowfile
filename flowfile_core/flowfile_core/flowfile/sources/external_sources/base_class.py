@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 from typing import Generator, Callable, List, Any, Optional, Dict
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowFileColumn
+from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 import polars as pl
 
 
 class ExternalDataSource(ABC):
-    schema: Optional[List[FlowFileColumn]]
+    schema: Optional[List[FlowfileColumn]]
     data_getter: Optional[Callable]
     is_collected: bool
     cache_store: Any
@@ -34,6 +34,6 @@ class ExternalDataSource(ABC):
 
     @staticmethod
     @abstractmethod
-    def parse_schema(*args, **kwargs) -> List[FlowFileColumn]:
+    def parse_schema(*args, **kwargs) -> List[FlowfileColumn]:
         pass
 

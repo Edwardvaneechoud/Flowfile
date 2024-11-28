@@ -285,7 +285,7 @@ export const useNodeStore = defineStore('node', {
 
     async getTableExample(flow_id: number, node_id: number): Promise<TableExample | null> {
       try {
-        const response = await axios.get<TableExample>('http://localhost:5667/node/data', {
+        const response = await axios.get<TableExample>('/node/data', {
           params: { flow_id: flow_id, node_id: node_id },
           headers: { accept: 'application/json' },
         })

@@ -20,7 +20,12 @@
           @click="navigateToNode(`node-${node.node_id}`)"
         >
           <el-card class="node-card">
-            <h4>{{ `Node ${node.node_id}` }}: {{ node.node_name }}</h4>
+            <h4 v-if="nodeStore.nodeDescriptions[node.node_id]">
+              {{ nodeStore.nodeDescriptions[node.node_id] }} ({{
+                node.node_name
+              }})
+            </h4>
+            <h4 v-else>{{ `Node ${node.node_id}` }}: {{ node.node_name }}</h4>
             <div class="node-details">
               <p>Duration: {{ formatRunTime(node.run_time) }}</p>
               <p>

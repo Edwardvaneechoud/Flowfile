@@ -2,9 +2,8 @@ from pydantic import BaseModel, validator, ConfigDict
 from typing import List, Dict, Tuple, Iterable, Optional, Any, Literal
 
 
-ExecutionModeLiteral = Literal['debug', 'production']
-ExecutionLocationsLiteral = Literal['local', 'remote', 'auto']
-
+ExecutionModeLiteral = Literal['Development', 'Performance']
+ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
 
 class FlowSettings(BaseModel):
     flow_id: int
@@ -14,8 +13,7 @@ class FlowSettings(BaseModel):
     name: str = ''
     modified_on: Optional[float] = None
     path: str
-    execution_location: ExecutionLocationsLiteral = 'auto'
-    execution_mode: ExecutionModeLiteral = 'debug'
+    execution_mode: ExecutionModeLiteral = 'Development'
 
 
 class NodeTemplate(BaseModel):

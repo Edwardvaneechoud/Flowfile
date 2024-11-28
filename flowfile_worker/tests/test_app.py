@@ -6,11 +6,10 @@ from flowfile_worker import main
 from flowfile_worker import models
 from polars_grouper import graph_solver
 
-client = TestClient(main)
+client = TestClient(main.app)
 
 
 def create_fuzzy_data() -> models.FuzzyJoinInput:
-
     fuzzy_maps = [
         models.FuzzyMapping(left_col='name', right_col='name_right', threshold_score=60.0,
                             fuzzy_type='levenshtein'),
@@ -67,6 +66,7 @@ def create_grouper_data():
     )
     return df.select(graph_solver(pl.col("from"), pl.col("to")).alias('group')).lazy()
 
+
 def test_external_package():
     df = create_grouper_data()
     load = models.PolarsScript(operation=base64.encodebytes(df.serialize()), operation_type='store')
@@ -97,14 +97,30 @@ def test_add_fuzzy_join():
     pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
 
 
+def test_sample():
+    lf = pl.LazyFrame({'value': [i for i in range(1000)]})
+    serialized_df = lf.serialize()
+    polars_script = models.PolarsScriptSample(operation=base64.encodebytes(serialized_df),
+                                              operation_type='store_sample', sample_size=10)
+    v = client.post('/store_sample', data=polars_script.json())
+    assert v.status_code == 200, v.text
+    assert models.Status.parse_obj(v.json()), 'Error with parsing the response to Status'
+    status: models.Status = models.Status.parse_obj(v.json())
+    r = client.get(f'/status/{status.background_task_id}')
+    status = models.Status.parse_obj(r.json())
+    if status.error_message is not None:
+        raise Exception(f'Error message: {status.error_message}')
+    result_df = pl.read_ipc(status.file_ref)
+    assert result_df.equals(lf.collect().limit(10)), f'Expected:\n{lf.collect()}\n\nResult:\n{result_df}'
+
+
 def test_polars_transformation():
     df = (pl.DataFrame([{'a': 1, 'b': 2}, {'a': 3, 'b': 4}]).lazy()
-                        .select((pl.col('a') + pl.col('b')).alias('total'))
+          .select((pl.col('a') + pl.col('b')).alias('total'))
           )
     serialized_df = df.serialize()
     load = models.PolarsScript(operation=base64.encodebytes(serialized_df), operation_type='store')
     # import requests
-    #v = requests.post('http://localhost:8000/submit_query', data=load.json())
 
     v = client.post('/submit_query', data=load.json())
     assert v.status_code == 200, v.text
@@ -140,7 +156,10 @@ def test_create_func():
 
 
 def test_write_output_csv():
-    data = {'operation': 'oWJJUqJndmVyc2lvbhggY2RzbKFtRGF0YUZyYW1lU2NhbqJiZGahZ2NvbHVtbnOBpGRuYW1lZG5h\nbWVoZGF0YXR5cGVmU3RyaW5nbGJpdF9zZXR0aW5ncwBmdmFsdWVzg2dlZHV3YXJkZmVkd2FyZGhj\nb3VydG5leWZzY2hlbWGhZmZpZWxkc6FkbmFtZWZTdHJpbmc=\n', 'data_type': 'csv', 'path': '/Users/username/FlowFileDesigner/backend/tests/data/output_csv.csv', 'write_mode': 'overwrite', 'sheet_name': 'Sheet1', 'delimiter': ','}
+    data = {
+        'operation': 'oWJJUqJndmVyc2lvbhggY2RzbKFtRGF0YUZyYW1lU2NhbqJiZGahZ2NvbHVtbnOBpGRuYW1lZG5h\nbWVoZGF0YXR5cGVmU3RyaW5nbGJpdF9zZXR0aW5ncwBmdmFsdWVzg2dlZHV3YXJkZmVkd2FyZGhj\nb3VydG5leWZzY2hlbWGhZmZpZWxkc6FkbmFtZWZTdHJpbmc=\n',
+        'data_type': 'csv', 'path': '/Users/username/FlowfileDesigner/backend/tests/data/output_csv.csv',
+        'write_mode': 'overwrite', 'sheet_name': 'Sheet1', 'delimiter': ','}
     v = client.post('/write_results/', json=data)
     polars_script_write = models.PolarsScriptWrite(**data)
     assert v.status_code == 200, v.text

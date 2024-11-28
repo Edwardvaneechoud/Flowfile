@@ -24,7 +24,7 @@ from flowfile_core.utils.utils import camel_case_to_snake_case
 from flowfile_core.schemas import input_schema, schemas, output_model
 
 # Flow handling
-from flowfile_core.flowfile.handler import FlowFileHandler
+from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 
 from flowfile_core.flowfile.FlowfileFlow import add_connection
@@ -45,7 +45,7 @@ router = APIRouter()
 
 # Initialize services
 file_explorer = FileExplorer()
-flow_file_handler = FlowFileHandler()
+flow_file_handler = FlowfileHandler()
 
 
 def get_node_model(setting_name_ref: str):
@@ -141,7 +141,7 @@ async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
 
 @router.post('/flow/run/', tags=['editor'])
 def run_flow(flow_id: int, background_tasks: BackgroundTasks):
-    print('starting to run...')
+    logger.info('starting to run...')
     flow = flow_file_handler.get_flow(flow_id)
     if flow.is_running:
         raise HTTPException(422, 'Flow is running')
@@ -234,9 +234,7 @@ def delete_connection(flow_id: int,
     if flow.is_running:
         raise HTTPException(422, 'Flow is running')
     from_node = flow.get_node(node_connection.output_connection.node_id)
-    print(from_node)
     to_node = flow.get_node(node_connection.input_connection.node_id)
-    print(to_node)
     if from_node is not None:
         from_node.delete_lead_to_node(node_connection.input_connection.node_id)
 
@@ -248,9 +246,8 @@ def delete_connection(flow_id: int,
 @router.post('/editor/connect_node/', tags=['editor'])
 def connect_node(flow_id: int, node_connection: input_schema.NodeConnection):
     flow = flow_file_handler.get_flow(flow_id)
-    print('flow', flow)
     if flow is None:
-        print('could not find the flow')
+        logger.info('could not find the flow')
         raise HTTPException(404, 'could not find the flow')
     if flow.is_running:
         raise HTTPException(422, 'Flow is running')
@@ -304,10 +301,8 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
 
 @router.post('/update_settings/', tags=['transform'])
 def add_generic_settings(input_data: Dict[str, Any], node_type: str):
-    print(f'Updating the data for node {input_data["node_id"]}')
+    logger.info(f'Updating the data for node {input_data["node_id"]}')
     node_type = camel_case_to_snake_case(node_type)
-    logger.info(input_data)
-    logger.info(node_type)
     flow_id = int(input_data.get('flow_id'))
     flow = flow_file_handler.get_flow(flow_id)
     if flow.is_running:
@@ -408,7 +403,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 
 @router.get('/flow', tags=['editor'])
 def get_flow_on_id(flow_id: int):
-    print('getting flow')
+    logger.info('getting flow')
     flow = flow_file_handler.get_flow(flow_id)
     return flow.get_nodes_overview()
 
@@ -457,7 +452,6 @@ def get_vue_flow_data(flow_id: Optional[int] = 1) -> schemas.VueFlowInput:
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
     data = flow.get_vue_flow_input()
-    print(data)
     return data
 
 
