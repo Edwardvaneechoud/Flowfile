@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Iterable, Optional, Any, Literal
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
 
+
 class FlowSettings(BaseModel):
     flow_id: int
     description: Optional[str] = None

@@ -330,6 +330,7 @@ class NodeStep:
                             raise e
                     fl.set_streamable(self.node_settings.streamable)
                     self.results.resulting_data = fl
+                    self.node_schema.result_schema = fl.schema
                 except Exception as e:
                     self.results.resulting_data = FlowfileTable()
                     self.results.errors = str(e)
@@ -534,9 +535,10 @@ class NodeStep:
         if self.results.errors is None:
             self.node_stats.has_run = True
 
-    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher|ExternalSampler):
+    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
         if external_df_fetcher.status is not None:
             file_ref = external_df_fetcher.status.file_ref
+            self.results.example_data_path = file_ref
             self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
         else:
             logger.error('Could not get the sample data, the external process is not ready')

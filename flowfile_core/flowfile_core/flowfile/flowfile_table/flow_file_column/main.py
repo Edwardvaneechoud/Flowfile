@@ -135,6 +135,9 @@ class FlowfileColumn:
 
         return PlType(pl_datatype=pl_datatype, **self.__dict__)
 
+    def update_type_from_polars_type(self, pl_type: PlType):
+        self.data_type = str(pl_type.pl_datatype.base_type())
+
 
 def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowfileColumn]:
     return [FlowfileColumn.create_from_polars_type(PlType(**c)) for c in stats]

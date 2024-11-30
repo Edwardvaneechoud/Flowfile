@@ -49,9 +49,13 @@ class JsonSchema(BaseModel):
                 'array': 'string',
                 'object': 'string'
             }
-            _type = self.type[0] if isinstance(self.type, list) else self.type
-            dtype = type_mapping.get(_type, 'string')
-
+            if isinstance(self.type, list) and len(self.type) >= 1:
+                _type_mappings = (type_mapping.get(t) for t in self.type)
+                dtype = next((t for t in _type_mappings if t is not None), self.type[0])
+            elif isinstance(self.type, list) and len(self.type) == 0:
+                dtype = 'string'
+            else:
+                dtype = type_mapping.get(self.type[0] if isinstance(self.type, list) else self.type, 'string')
         return type_to_polars_str(dtype)
 
 
@@ -157,13 +161,15 @@ class AirbyteSettings:
             stream: str,
             config_ref: Optional[str] = None,
             config: Optional[Dict] = None,
-            fields: Optional[List[MinimalFieldInfo]] = None
+            fields: Optional[List[MinimalFieldInfo]] = None,
+            enforce_full_refresh: Optional[bool] = True
     ):
         self.source_name = source_name
         self.stream = stream
         self.config_ref = config_ref
         self.config = config
         self.fields = fields
+        self.enforce_full_refresh = enforce_full_refresh
 
 
 def get_source_instance(*args, **kwargs) -> 'Source':
