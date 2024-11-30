@@ -503,7 +503,7 @@ class NodeStep:
 
     # @profile
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
-                     performance_mode: bool = False):
+                     performance_mode: bool = False, retry: bool = True):
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run = False
@@ -520,9 +520,20 @@ class NodeStep:
                         logger.info('Running the node locally')
                         self.execute_local(performance_mode=performance_mode)
                 except Exception as e:
-                    self.node_stats.has_run = False
-                    self.results.errors = str(e)
-                    logger.error('Error with running the node')
+                    if 'No such file or directory (os error' in str(e) and retry:
+                        logger.warning('Error with the input node, starting to rerun the input node...')
+                        all_inputs: List[NodeStep] = self.node_inputs.get_all_inputs()
+                        for node_input in all_inputs:
+                            node_input.execute_node(run_location=run_location,
+                                                    performance_mode=performance_mode, retry=True,
+                                                    reset_cache=True)
+                        self.execute_node(run_location=run_location,
+                                          performance_mode=performance_mode, retry=False)
+                    else:
+                        self.node_stats.has_run = False
+                        self.results.errors = str(e)
+                        logger.error(f'Error with running the node: {e}')
+
             else:
                 logger.info('Node has already run, not running the node')
         else:

@@ -1,57 +1,14 @@
-import os
 from ast import literal_eval
 import polars as pl
 from typing import Optional
-from flowfile_worker.configs import logger
-from flowfile_worker.external_sources.airbyte_sources.models import (
-    AirbyteProperty, JsonSchema, AirbyteResponse, AirbyteSettings
-)
-from airbyte import get_source, DuckDBCache
-from time import sleep
-
-
+import airbyte as ab
 import os
-os.getcwd()
-
-cache = DuckDBCache(
-    db_path='/Users/edwardvanechoud/.flowfile/.cache_worker1',
-    schema_name="main",
-    clean_up=True
-)
-
-class LazyAirbyteImporter:
-    """Lazy importer for airbyte module."""
-    _airbyte = None
-
-    @classmethod
-    def get_airbyte(cls):
-        if cls._airbyte is None:
-            logger.info("Importing airbyte module")
-            import airbyte as ab
-            cls._airbyte = ab
-        return cls._airbyte
-self =         airbyte_settings = AirbyteSettings(**{'source_name': 'source-faker', 'stream': 'users', 'config_ref': None,
-                                              'config': {'count': 1000, 'seed': -1, 'records_per_slice': 1000,
-                                                         'always_updated': True, 'parallelism': 4}, 'fields': None,
-                                              'enforce_full_refresh': True})
-
-def test_read_airbyte():
-    try:
-        airbyte_settings = AirbyteSettings(**{'source_name': 'source-faker', 'stream': 'users', 'config_ref': None,
-                                              'config': {'count': 1000, 'seed': -1, 'records_per_slice': 1000,
-                                                         'always_updated': True, 'parallelism': 4}, 'fields': None,
-                                              'enforce_full_refresh': True})
-        data = read_airbyte_source(airbyte_settings)
-        del airbyte_settings
-
-    except Exception as e:
-        print(e)
-        assert False
+from airbyte import exceptions as exc
 
 
-def read_airbyte_source(airbyte_settings: AirbyteSettings) -> pl.DataFrame:
-    airbyte_getter = AirbyteGetter(airbyte_settings)
-    return airbyte_getter()
+from flowfile_worker.configs import logger
+from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
+from flowfile_worker.external_sources.airbyte_sources.cache_manager import DuckDBCacheManager
 
 
 class AirbyteGetter:
@@ -66,6 +23,7 @@ class AirbyteGetter:
         self.stream = airbyte_settings.stream
         self.source_name = airbyte_settings.source_name
         self._enforce_full_refresh = airbyte_settings.enforce_full_refresh
+        self.cache_manager = DuckDBCacheManager()
 
         # Handle config
         if airbyte_settings.config_ref and not airbyte_settings.config:
@@ -82,48 +40,46 @@ class AirbyteGetter:
         self._type = 'airbyte'
         self.read_result = None
 
-    @property
-    def airbyte_response(self) -> AirbyteResponse:
-        if self._airbyte_response is None:
-            # Lazy import airbyte
-            ab = LazyAirbyteImporter.get_airbyte()
-            from pathlib import Path
-            source = ab.get_source(
-                name=self.source_name,
-                config=self.config,
-                streams=self.stream,
-                docker_image=True,
-                install_root=Path('/Users/edwardvanechoud/.flowfile')
-            )
-
-            try:
-                source.check()
-            except Exception:
-                logger.warning('Source check failed, trying to continue')
-
-            logger.info(f'Source check passed, starting to load data for {self.stream}')
-
-            json_schema = source.get_stream_json_schema(self.stream)['properties']
-            properties = [
-                AirbyteProperty(name=name, json_schema=JsonSchema(**schema))
-                for name, schema in json_schema.items()
-            ]
-
-            logger.info(f"Loaded source {self.source_name}")
-            self._airbyte_response = AirbyteResponse(properties=properties, source=source)
-
-        return self._airbyte_response
-
     def __call__(self) -> pl.DataFrame:
-        if self.read_result is None:
-            self.read_result = self.airbyte_response.source.read(cache=False, force_full_refresh=self._enforce_full_refresh)
+        with self.cache_manager.get_cache() as cache:
+            if self.read_result is None:
+                # Lazy import airbyte
 
-        df = self.read_result[self.stream].to_pandas()
-        drop_cols = [c for c in df.columns if c.startswith('_airbyte')]
-        df.drop(drop_cols, axis=1, inplace=True)
-        return pl.from_pandas(df)
+                try:
+                    source = ab.get_source(
+                        name=self.source_name,
+                        config=self.config,
+                        streams=self.stream,
+                        docker_image=True,
+                    )
+
+                    logger.debug(f'Starting to load data for {self.stream}')  # Changed to debug level
+
+                    self.read_result = source.read(
+                        cache=cache,
+                        force_full_refresh=self._enforce_full_refresh
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error during source operation: {str(e)}")
+                    raise
+
+            df = self.read_result[self.stream].to_pandas()
+            drop_cols = [c for c in df.columns if c.startswith('_airbyte')]
+            df.drop(drop_cols, axis=1, inplace=True)
+            return pl.from_pandas(df)
 
 
-# if __name__ == '__main__':
-#     test_read_airbyte()
-#     sleep(100)
+def read_airbyte_source(airbyte_settings: AirbyteSettings) -> pl.DataFrame:
+    """
+    Read data from an Airbyte source and return it as a Polars DataFrame.
+    Args:
+        airbyte_settings (): The settings for the Airbyte source.
+
+    Returns: The data as a Polars DataFrame.
+    """
+    airbyte_getter = AirbyteGetter(airbyte_settings)
+    logger.info('Getting data from Airbyte')
+    data = airbyte_getter()
+    logger.info('Data retrieved from Airbyte')
+    return data

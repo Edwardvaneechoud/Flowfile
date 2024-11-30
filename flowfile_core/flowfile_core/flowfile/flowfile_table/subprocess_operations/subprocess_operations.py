@@ -1,20 +1,31 @@
-from typing import Optional, Literal, Any, List
-import polars as pl
+# Standard library imports
+from base64 import decodebytes, encodebytes
 import io
-from flowfile_core.configs import logger
-from flowfile_core.configs.settings import WORKER_URL
 import threading
 from time import sleep
-import requests
+from typing import Any, List, Literal, Optional
 from uuid import uuid4
-from base64 import decodebytes, encodebytes
-from flowfile_core.utils.arrow_reader import read
 
-from flowfile_core.flowfile.flowfile_table.subprocess_operations.models import (OperationType, Status, FuzzyJoinInput,
-                                                                                FuzzyMap,
-                                                                                PolarsOperation)
-from flowfile_core.schemas.input_schema import ReceivedCsvTable, ReceivedParquetTable, ReceivedJsonTable, \
-    ReceivedExcelTable
+import polars as pl
+import requests
+
+from flowfile_core.configs import logger
+from flowfile_core.configs.settings import WORKER_URL
+from flowfile_core.flowfile.flowfile_table.subprocess_operations.models import (
+    FuzzyJoinInput,
+    FuzzyMap,
+    OperationType,
+    PolarsOperation,
+    Status
+)
+from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import AirbyteSettings
+from flowfile_core.schemas.input_schema import (
+    ReceivedCsvTable,
+    ReceivedExcelTable,
+    ReceivedJsonTable,
+    ReceivedParquetTable
+)
+from flowfile_core.utils.arrow_reader import read
 
 ReceivedTableCollection = ReceivedCsvTable | ReceivedParquetTable | ReceivedJsonTable | ReceivedExcelTable
 
@@ -57,6 +68,13 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
 def trigger_create_operation(received_table: ReceivedTableCollection,
                              file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
     f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.json())
+    if not f.ok:
+        raise Exception(f'Could not cache the data, {f.text}')
+    return Status(**f.json())
+
+
+def trigger_airbyte_collector(airbyte_settings: AirbyteSettings):
+    f = requests.post(url=f'{WORKER_URL}/store_airbyte_result', data=airbyte_settings.json())
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
     return Status(**f.json())
@@ -243,6 +261,15 @@ class ExternalCreateFetcher(BaseFetcher):
     def __init__(self, received_table: ReceivedTableCollection, file_type: str = 'csv',
                  wait_on_completion: bool = True):
         r = trigger_create_operation(received_table=received_table, file_type=file_type)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == 'Processing'
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalAirbyteFetcher(BaseFetcher):
+    def __init__(self, airbyte_settings: AirbyteSettings, wait_on_completion: bool = True):
+        r = trigger_airbyte_collector(airbyte_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:

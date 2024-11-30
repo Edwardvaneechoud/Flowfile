@@ -114,22 +114,14 @@ class AirbyteConfigTemplate(BaseModel):
     available_streams: Optional[List[str]] = None
 
 
-class AirbyteSettings:
-    def __init__(
-            self,
-            source_name: str,
-            stream: str,
-            config_ref: Optional[str] = None,
-            config: Optional[Dict] = None,
-            fields: Optional[List] = None,
-            enforce_full_refresh: Optional[bool] = True
-    ):
-        self.source_name = source_name
-        self.stream = stream
-        self.config_ref = config_ref
-        self.config = config
-        self.fields = fields
-        self.enforce_full_refresh = enforce_full_refresh
+class AirbyteSettings(BaseModel):
+
+    source_name: str
+    stream: str
+    config_ref: Optional[str] = None
+    config: Optional[Dict] = None
+    fields: Optional[List] = None
+    enforce_full_refresh: Optional[bool] = True
 
 
 def get_source_instance(*args, **kwargs) -> 'Source':
