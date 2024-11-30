@@ -300,7 +300,6 @@ def get_config_spec(connector_name: str):
 
 @router.post('/airbyte/set_airbyte_configs_for_streams', tags=['airbyte'])
 def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
-    print(airbyte_config.__dict__)
     logger.info('Setting airbyte config, update_style = ')
     logger.info(f'Setting config for {airbyte_config.source_name}')
     logger.debug(f'Config: {airbyte_config.mapped_config_spec}')
