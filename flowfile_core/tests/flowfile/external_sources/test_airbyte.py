@@ -1,5 +1,4 @@
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import (airbyte_settings_from_config,
-                                                                                      AirbyteSettings)
+from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import AirbyteSettings
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.airbyte import AirbyteSource
 import polars as pl
 

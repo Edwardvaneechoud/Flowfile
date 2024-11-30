@@ -11,7 +11,7 @@ packages = [
 
 [tool.poetry.dependencies]
 pyinstaller = "^6.11.0"
-python = ">=3.10,<3.14"
+python = ">=3.10,<3.13"
 matplotlib = "~3.9.2"
 fastapi = "~0.115.2"
 uvicorn = "~0.32.0"
@@ -34,14 +34,18 @@ google-api-python-client = "~2.149.0"
 polars-sim = { version = "~0.1.3", markers = "sys_platform != 'win32'" } # polars-sim is not supported on windows
 polars-grouper = "~0.2.0"
 polars-ds = "~0.6.0"
-airbyte = "~0.19.1"
-airbyte-cdk = "~5.14.0"
+airbyte = "^0.20.1"
+airbyte-cdk = "^6.6.3"
 
 [tool.poetry.scripts]
 flowfile_worker = "flowfile_worker.main:run"  # Entry point for the command
 flowfile_core = "flowfile_core.main:run"
 build_backends = "build_backends.main:main"
 
+
+[tool.poetry.group.dev.dependencies]
+mkdocs = "^1.6.1"
+mkdocs-material = "^9.5.46"
 
 [build-system]
 requires = ["poetry-core"]

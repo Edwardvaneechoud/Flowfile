@@ -46,6 +46,10 @@ class AirbyteConfigHandler:
             ]
         return self._available_connectors
 
+    @property
+    def available_configs(self) -> List[str]:
+        return list(self.configs.keys())
+
     def get_config(self, config_name: str) -> AirbyteConfigTemplate:
         """Get configuration for a specific source."""
         logger.info(f"Getting config for {config_name}")
@@ -80,7 +84,7 @@ class AirbyteConfigHandler:
         try:
             source = self.airbyte.get_source(
                 name=config_name,
-                install_if_missing=False,
+                install_if_missing=True,
                 config=config_settings,
                 docker_image=True
             )

@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
-hiddenimports = ['passlib.handlers.bcrypt', 'fastexcel', 'fastexcel.xlsx2csv', 'fastexcel.Sheet', 'polars', 'snowflake.connector', 'snowflake.connector.snow_logging', 'snowflake.connector.errors']
+hiddenimports = ['multiprocessing', 'multiprocessing.resource_tracker', 'multiprocessing.sharedctypes', 'uvicorn', 'uvicorn.logging', 'uvicorn.protocols.http', 'uvicorn.protocols.websockets', 'fastexcel', 'fastexcel.xlsx2csv', 'fastexcel.Sheet', 'polars', 'snowflake.connector', 'snowflake.connector.snow_logging', 'snowflake.connector.errors']
 tmp_ret = collect_all('tempfile')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('polars')
@@ -15,7 +15,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['flowfile_core/flowfile_core/main.py'],
+    ['flowfile_worker/flowfile_worker/main.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

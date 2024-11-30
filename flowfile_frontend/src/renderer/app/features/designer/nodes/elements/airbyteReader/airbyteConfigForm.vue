@@ -6,14 +6,110 @@
         :key="index"
         class="form-item-wrapper"
       >
+        <!-- Handle array fields -->
         <div
-          v-if="item.properties && item.properties.length == 0"
+          v-if="item.type === 'array'"
           class="single-item"
-          @mouseover="showPopover(item.description ?? '', $event)"
-          @mouseleave="hidePopover"
         >
-          <div class="compact-header">
-            {{ item.title || item.key || item.description }}
+          <div 
+            class="compact-header"
+            @mouseover="showPopover(item.description ?? '', $event)"
+            @mouseleave="hidePopover"
+          >
+            {{ item.title || item.key }}
+            <span v-if="item.required" class="tag">*</span>
+          </div>
+          
+          <div class="array-input-section">
+            <div class="input-with-button">
+              <input
+                v-model="newArrayValue[item.key]"
+                type="text"
+                class="minimal-input"
+                :placeholder="`Add new ${item.title || item.key}`"
+                @keyup.enter="addArrayValue(item)"
+              />
+              <button 
+                class="add-btn"
+                @click="addArrayValue(item)"
+                type="button"
+              >
+                Add
+              </button>
+            </div>
+            
+            <div class="items-container">
+              <div 
+                v-for="(value, valueIndex) in getArrayValues(item)" 
+                :key="valueIndex" 
+                class="item-box"
+              >
+                {{ value }}
+                <span class="remove-btn" @click="removeArrayValue(item, valueIndex)">x</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Handle oneOf fields (like credentials) -->
+        <div
+          v-else-if="item.oneOf"
+          class="collapsible-section"
+        >
+          <div 
+            class="compact-header"
+            @mouseover="showPopover(item.description ?? '', $event)"
+            @mouseleave="hidePopover"
+          >
+            {{ item.title || item.key }}
+            <span v-if="item.required" class="tag">*</span>
+          </div>
+          
+          <drop-down-generic
+            v-model="selectedValues[index]"
+            :option-list="item.oneOf.map((opt: OneOfOption) => opt.title)"
+            :allow-other="false"
+            @change="(value: string) => updateSelectedOption(item, value, index)"
+            style="width: 100%; margin-bottom: 8px;"
+          />
+
+          <div v-if="item.selectedOption !== undefined" class="nested-content">
+            <div
+              v-for="(property, propKey) in item.oneOf[item.selectedOption].properties"
+              :key="propKey"
+              class="nested-item"
+            >
+              <template v-if="propKey !== 'auth_type'">
+                <div 
+                  class="compact-header"
+                  @mouseover="showPopover(property.description, $event)"
+                  @mouseleave="hidePopover"
+                >
+                  {{ property.title || propKey }}
+                  <span v-if="isRequired(item.oneOf[item.selectedOption], propKey)" class="tag">*</span>
+                </div>
+                <input
+                  v-model="(item.input_value as Record<string, any>)[propKey]"
+                  :type="property.airbyte_secret ? 'password' : 'text'"
+                  class="minimal-input"
+                  :placeholder="property.title || propKey"
+                />
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Handle regular fields -->
+        <div
+          v-else-if="!item.properties || item.properties.length === 0"
+          class="single-item"
+        >
+          <div 
+            class="compact-header"
+            @mouseover="showPopover(item.description ?? '', $event)"
+            @mouseleave="hidePopover"
+          >
+            {{ item.title || item.key }}
             <span v-if="item.required" class="tag">*</span>
           </div>
           <input
@@ -23,6 +119,8 @@
             :placeholder="item.title || item.key"
           />
         </div>
+
+        <!-- Handle nested properties -->
         <div v-else class="collapsible-section">
           <button
             class="minimal-header"
@@ -42,12 +140,14 @@
               v-for="(property, propIndex) in item.properties"
               :key="propIndex"
               class="nested-item"
-              @mouseover="showPopover(property.description, $event)"
-              @mouseleave="hidePopover"
             >
-              <div class="compact-header">
+              <div 
+                class="compact-header"
+                @mouseover="showPopover(property.description, $event)"
+                @mouseleave="hidePopover"
+              >
                 {{ property.key }}
-                <span class="type-indicator">({{ property.type }})</span>
+                <span v-if="property.required" class="tag">*</span>
               </div>
               <input
                 v-model="property.input_value"
@@ -72,9 +172,10 @@
 </template>
 
 <script setup lang="ts">
-// Script remains the same
-import { ref, computed } from "vue";
-import { Field } from "./types";
+import { ref, computed, onMounted, nextTick } from "vue";
+import { Field, OneOfOption } from "./types";
+import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
+import SettingsSection from "../../../components/node/SettingsSection.vue"
 
 const props = defineProps<{
   parsedConfig: Field[];
@@ -87,10 +188,69 @@ interface Popover {
   y: number;
 }
 
-const popover = ref<Popover>({ show: false, content: "", x: 0, y: 0 });
+const popover = ref<Popover>({
+  show: false,
+  content: "",
+  x: 0,
+  y: 0
+});
+
 const localConfig = ref([...props.parsedConfig]);
+const selectedValues = ref<string[]>(new Array(props.parsedConfig.length).fill(''));
+const newArrayValue = ref<Record<string, string>>({});
+
+
+function isStringArray(value: any): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+// Array handling functions
+const getArrayValues = (item: Field): string[] => {
+  if (!item.input_value) {
+    item.input_value = [];
+  }
+  if (!isStringArray(item.input_value)) {
+    item.input_value = [] as string[];
+  }
+  return item.input_value as string[];
+};
+
+const addArrayValue = (item: Field) => {
+  const value = newArrayValue.value[item.key];
+  if (!value?.trim()) return;
+  
+  if (!item.input_value || !isStringArray(item.input_value)) {
+    item.input_value = [];
+  }
+
+  // Don't add duplicates
+  const currentArray = item.input_value as string[];
+  if (!currentArray.includes(value)) {
+    currentArray.push(value);
+    newArrayValue.value[item.key] = '';
+  }
+};
+
+const removeArrayValue = (item: Field, index: number) => {
+  if (isStringArray(item.input_value)) {
+    item.input_value.splice(index, 1);
+  }
+};
+
+// Initialize selected values from existing configuration
+onMounted(() => {
+  props.parsedConfig.forEach((item, index) => {
+    if (item.oneOf && typeof item.selectedOption === 'number' && item.selectedOption >= 0) {
+      selectedValues.value[index] = item.oneOf[item.selectedOption].title;
+      console.log(item.oneOf[item.selectedOption].title)
+      console.log('selecting a value')
+    }
+  });
+});
 
 const showPopover = (content: string, event: MouseEvent) => {
+  if (!content) return;
+  
   popover.value = {
     show: true,
     content,
@@ -107,10 +267,122 @@ const toggle = (index: number) => {
   localConfig.value[index].isOpen = !localConfig.value[index].isOpen;
 };
 
-const computedSchema = computed(() => props.parsedConfig);
+const isRequired = (schema: any, fieldName: string) => {
+  return schema.required?.includes(fieldName) || false;
+};
+
+const updateSelectedOption = (item: Field, selectedValue: string, index: number) => {
+ if (!item.oneOf) return;
+ 
+ const optionIndex = item.oneOf.findIndex(opt => opt.title === selectedValue);
+ if (optionIndex === -1) return;
+
+ selectedValues.value[index] = selectedValue;
+
+ const localItem = localConfig.value[index];
+ if (!localItem || !localItem.oneOf) return;
+
+ localItem.selectedOption = optionIndex;
+ const selectedOption = localItem.oneOf[optionIndex];
+ const previousValue = localItem.input_value as Record<string, any>;
+
+ const newInputValue: Record<string, any> = {};
+ 
+ if (selectedOption.properties) {
+   Object.entries(selectedOption.properties).forEach(([key, prop]) => {
+     if (key === 'auth_type') {
+       newInputValue[key] = prop.const;
+     } else if (previousValue && typeof previousValue === 'object' && key in previousValue) {
+       newInputValue[key] = previousValue[key];
+     } else {
+       newInputValue[key] = prop.input_value ?? prop.default ?? '';
+     }
+   });
+ }
+
+ localItem.input_value = newInputValue as Field['input_value'];
+};
+
+const computedSchema = computed(() => {
+  return props.parsedConfig.map(item => {
+    if (item.oneOf) {
+      return {
+        ...item,
+        selectedOption: item.selectedOption,
+        oneOf: item.oneOf.map(option => ({
+          ...option,
+          properties: option.properties ? 
+            Object.entries(option.properties).reduce((acc, [key, value]) => {
+              acc[key] = { ...value };  // Simply preserve all properties exactly as they are
+              return acc;
+            }, {} as Record<string, any>) 
+          : {},
+        })),
+      };
+    }
+    return item;
+  });
+});
+
+
+defineExpose({
+  localConfig,
+});
 </script>
 
 <style scoped>
+/* Array input styles */
+.array-input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-with-button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.items-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px; /* Space between items */
+}
+
+.item-box {
+  display: flex;
+  align-items: center;
+  padding: 5px 10px;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  font-size: 12px;
+  position: relative;
+}
+
+.remove-btn {
+  margin-left: 8px;
+  cursor: pointer;
+  color: #100f0f72;
+  font-weight: bold;
+}
+
+.add-btn {
+  padding: 4px 12px;
+  background: #7878ff5b;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.2s;
+  white-space: nowrap;
+}
+
+.add-btn:hover {
+  background: #6363ff5b;
+}
+
+/* Your existing styles */
 .form-container {
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 13px;
@@ -201,6 +473,7 @@ const computedSchema = computed(() => props.parsedConfig);
 }
 
 .minimal-input {
+  box-sizing: border-box; /* Add this to include padding in width calculation */
   width: 100%;
   padding: 4px 8px;
   border: 1px solid #ddd;

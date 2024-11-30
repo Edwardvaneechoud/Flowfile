@@ -9,66 +9,102 @@
       <span class="docker-notice">Running Docker instance required</span>
     </div>
   </div>
+  
   <div class="listbox-wrapper to-front">
     <drop-down-generic
       v-model="selectedConnector"
       :option-list="availableConnectors"
-      title="Data type"
+      title="Load data from"
+      :is-loading="!loadedConnectors"
       :allow-other="false"
       @change="selectConnector"
     />
   </div>
-  <div class="listbox-wrapper">
-    <div class="listbox-subtitle">
-      <span>Config settings</span>
+
+  <div v-if="sourceSelected">
+    <div class="listbox-subtitle flex justify-between items-center">
+ <div class="flex items-center gap-2">
+   <span>Config settings</span>
+    <button 
+        class="icon-button"
+        @click="isConfigCollapsed = !isConfigCollapsed"
+      >
+        <span class="material-icons">
+          {{ isConfigCollapsed ? 'expand_more' : 'expand_less' }}
+        </span>
+      </button>
     </div>
-    <button
-      v-if="connectorSelected"
-      class="file-upload-label"
-      @click="getConfig"
-    >
+      <div class="flex gap-2">
+        <button 
+          v-if="airbyteConfig?.parsed_config" 
+          class="secondary-button" 
+          @click="resetConfig"
+        >
+          Reset settings
+          <span class="material-icons">restart_alt</span>
+        </button>
+        <button 
+          v-if="airbyteConfig?.parsed_config"
+          class="secondary-button"
+          @click="validateConfig"
+          :disabled="isValidating"
+        >
+          {{ isValidating ? 'Validating...' : 'Validate' }}
+          <span class="material-icons" :class="{ 'spin': isValidating }">check_circle</span>
+        </button>
+      </div>
+    </div>
+
+    <div v-if="validationMessage" :class="['validation-banner', validationStatus]">
+      <span class="material-icons">{{ validationStatus === 'success' ? 'check_circle' : 'warning' }}</span>
+      {{ validationMessage }}
+    </div>
+    
+    <div v-if="airbyteConfig?.parsed_config" class="config-section">
+      <AirbyteForm v-if="!isConfigCollapsed"
+        ref="airbyteForm"
+        :parsed-config="airbyteConfig.parsed_config"
+      />
+
+      <div class="stream-section" v-if="!airbyteConfigTemplate?.available_streams">
+        <button 
+          class="primary-button" 
+          @click="fetchAvailableStreams"
+          :disabled="isFetchingStreams"
+        >
+          {{ isFetchingStreams ? 'Loading streams...' : 'Load available streams' }}
+          <span class="material-icons" :class="{ 'spin': isFetchingStreams }">refresh</span>
+        </button>
+      </div>
+
+      <div v-else class="stream-section">
+        <div class="listbox-subtitle">
+          <span>Select stream</span>
+        </div>
+        <el-select
+          v-model="airbyteConfig.selected_stream"
+          placeholder="Select a stream"
+          size="small"
+          class="stream-select"
+        >
+          <el-option
+            v-for="stream in airbyteConfigTemplate.available_streams"
+            :key="stream"
+            :label="stream"
+            :value="stream"
+          />
+        </el-select>
+      </div>
+    </div>
+    
+    <CodeLoader v-else />
+  </div>
+
+  <div v-else-if="connectorSelected" class="config-section">
+    <button class="file-upload-label" @click="getConfig">
       Load settings
       <span class="material-icons file-icon">refresh</span>
     </button>
-    <div v-else-if="sourceSelected" class="listbox-wrapper">
-      <div v-if="airbyteConfig?.parsed_config" class="listbox">
-        <AirbyteForm
-          ref="airbyteForm"
-          :parsed-config="airbyteConfig.parsed_config"
-        ></AirbyteForm>
-        <button @click="updateConfig">Get availalbe streams</button>
-      </div>
-      <CodeLoader v-else />
-    </div>
-    <div
-      v-if="
-        airbyteConfigTemplate &&
-        airbyteConfigTemplate.available_streams &&
-        airbyteConfig
-      "
-      class="listbox-wrapper"
-    >
-      <div class="listbox-subtitle">
-        <span>Select stream</span>
-      </div>
-    </div>
-    <el-select
-      v-if="
-        airbyteConfigTemplate &&
-        airbyteConfigTemplate.available_streams &&
-        airbyteConfig
-      "
-      v-model="airbyteConfig.selected_stream"
-      placeholder="Select a connector"
-      size="small"
-    >
-      <el-option
-        v-for="connector in airbyteConfigTemplate.available_streams"
-        :key="connector"
-        :label="connector"
-        :value="connector"
-      />
-    </el-select>
   </div>
 </template>
 
@@ -80,6 +116,7 @@ import {
   computeSchema,
   getConfigSettings,
   setAirbyteConfigGetStreams,
+  getAirbyteAvailableConfigs,
 } from "./utils";
 import AirbyteForm from "./airbyteConfigForm.vue";
 import {
@@ -96,129 +133,182 @@ defineProps<{ nodeId?: number }>();
 
 const nodeStore = useNodeStore();
 const nodeExternalSource = ref<null | NodeExternalSource>(null);
+const backupAirbyteConfig = ref<null | AirbyteConfig>(null);
 const sourceSelected = ref<boolean>(false);
 const availableConnectors = ref<string[]>([]);
+const isConfigCollapsed = ref<boolean>(false);
+const availableConfigs = ref<string[]>([]);
+const loadedConnectors = ref<boolean>(false);
 const connectorSelected = ref<boolean>(false);
 const initialSelectedStream = ref<string | null>(null);
-const getConnectors = async () => {
-  availableConnectors.value = await getAirbyteConnectors();
-};
 const inputValues = ref<Record<string, SchemaProperty> | null>(null);
 const selectedConnector = ref<string>("");
-getConnectors();
+const isFetchingStreams = ref<boolean>(false);
+const isValidating = ref(false);
+const validationMessage = ref('');
+const validationStatus = ref<'success' | 'error'>('success');
 
 const airbyteConfigTemplate = ref<AirbyteConfigTemplate | null>(null);
 const airbyteConfig = ref<AirbyteConfig | null>(null);
 
+const getConnectors = async () => {
+  availableConnectors.value = await getAirbyteConnectors();
+  loadedConnectors.value = true;
+};
+
+const getAvailableConfigs = async () => {
+  availableConfigs.value = await getAirbyteAvailableConfigs();
+};
+
+getAvailableConfigs();  
+getConnectors();
+
+const validateConfig = async () => {
+  if (!airbyteConfig.value?.parsed_config) return;
+  
+  isValidating.value = true;
+  validationMessage.value = '';
+  
+  try {
+    await validateSelection();
+    validationStatus.value = 'success';
+    validationMessage.value = 'Configuration validated successfully';
+  } catch (error) {
+    validationStatus.value = 'error';
+    validationMessage.value = error instanceof Error ? error.message : 'Validation failed';
+  } finally {
+    isValidating.value = false;
+    setTimeout(() => {
+      validationMessage.value = '';
+    }, 5000);
+  }
+};
+
+const resetConfig = async () => {
+  if (
+    !confirm('Are you sure you want to reset all settings? This cannot be undone.') || 
+    !backupAirbyteConfig.value
+  ) return;
+
+  if (!backupAirbyteConfig.value) {
+    console.error('Backup config is missing');
+    return;
+  }
+
+  airbyteConfig.value = { ...backupAirbyteConfig.value };
+  selectedConnector.value = backupAirbyteConfig.value.source_name;
+  initialSelectedStream.value = backupAirbyteConfig.value.selected_stream;
+  
+  const connectorInputData = await getAirbyteConnectorTemplate(selectedConnector.value);
+  if (!connectorInputData) return;
+  
+  airbyteConfigTemplate.value = connectorInputData;
+  sourceSelected.value = true;
+};
+
+const fetchAvailableStreams = async () => {
+  if (!airbyteConfig.value?.parsed_config) return;
+  
+  isFetchingStreams.value = true;
+  try {
+    inputValues.value = getConfigSettings(airbyteConfig.value.parsed_config);
+    airbyteConfig.value.mapped_config_spec = inputValues.value;
+    await setAirbyteConfigGetStreams(airbyteConfig.value);
+    airbyteConfigTemplate.value = await getAirbyteConnectorTemplate(
+      selectedConnector.value
+    );
+  } catch (error) {
+    console.error('Error fetching streams:', error);
+  } finally {
+    isFetchingStreams.value = false;
+  }
+};
+
 const loadNodeData = async (nodeId: number) => {
   const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
   nodeExternalSource.value = nodeResult?.setting_input;
-  if (
-    nodeExternalSource.value?.is_setup &&
-    nodeExternalSource.value.source_settings &&
-    nodeExternalSource.value.source_settings
-  ) {
-    airbyteConfig.value = nodeExternalSource.value.source_settings;
-    selectedConnector.value = airbyteConfig.value.source_name;
-    sourceSelected.value = true;
-    initialSelectedStream.value = airbyteConfig.value.selected_stream;
+  
+  if (!nodeExternalSource.value?.is_setup || !nodeExternalSource.value.source_settings) return;
+  airbyteConfig.value = nodeExternalSource.value.source_settings;
+  backupAirbyteConfig.value = { ...airbyteConfig.value };
 
-    // Fetch and restore the configuration
-    const connectorInputData = await getAirbyteConnectorTemplate(
-      selectedConnector.value,
-    );
-    if (connectorInputData) {
-      airbyteConfigTemplate.value = connectorInputData;
-      // Preserve the existing parsed_config instead of computing a new one
-      if (!airbyteConfig.value.parsed_config) {
-        airbyteConfig.value.parsed_config = computeSchema(
-          airbyteConfigTemplate.value.config_spec,
-        );
-      }
+  selectedConnector.value = airbyteConfig.value.source_name;
+  sourceSelected.value = true;
+  initialSelectedStream.value = airbyteConfig.value.selected_stream;
 
-      // If we have streams available, restore them
-      if (connectorInputData.available_streams) {
-        airbyteConfigTemplate.value.available_streams =
-          connectorInputData.available_streams;
-      } else if (airbyteConfig.value.parsed_config) {
-        // If no streams are available, try to fetch them
-        inputValues.value = getConfigSettings(
-          airbyteConfig.value.parsed_config,
-        );
-        airbyteConfig.value.mapped_config_spec = inputValues.value;
-        await setAirbyteConfigGetStreams(airbyteConfig.value);
-        airbyteConfigTemplate.value = await getAirbyteConnectorTemplate(
-          selectedConnector.value,
-        );
-      }
-    }
+  const connectorInputData = await getAirbyteConnectorTemplate(selectedConnector.value);
+  if (!connectorInputData) return;
+
+  airbyteConfigTemplate.value = connectorInputData;
+
+  if (!airbyteConfig.value.parsed_config) {
+    airbyteConfig.value.parsed_config = computeSchema(airbyteConfigTemplate.value.config_spec);
+  }
+
+  if (!connectorInputData.available_streams && airbyteConfig.value.parsed_config) {
+    await fetchAvailableStreams();
   }
 };
 
 const selectConnector = () => {
-  // Only reset if selecting a different connector
-  if (airbyteConfig.value?.source_name !== selectedConnector.value) {
-    sourceSelected.value = false;
-    connectorSelected.value = true;
-    airbyteConfigTemplate.value = null;
-    airbyteConfig.value = null;
+  if (airbyteConfig.value?.source_name === selectedConnector.value) return;
+  
+  if (availableConfigs.value.includes('source-'+selectedConnector.value)) {
+    getConfig();
+    return;
   }
+  
+  sourceSelected.value = false;
+  connectorSelected.value = true;
+  airbyteConfigTemplate.value = null;
+  airbyteConfig.value = null;
 };
 
 const getConfig = async () => {
   connectorSelected.value = false;
   sourceSelected.value = true;
-  const connectorInputData = await getAirbyteConnectorTemplate(
-    selectedConnector.value,
-  );
-  if (connectorInputData) {
-    airbyteConfigTemplate.value = connectorInputData;
-    let parsed_config = computeSchema(airbyteConfigTemplate.value.config_spec);
-    airbyteConfig.value = {
-      parsed_config: parsed_config,
-      mapped_config_spec: {},
-      config_mode: "in_line",
-      selected_stream: "",
-      source_name: selectedConnector.value,
-    };
-  }
+  
+  const connectorInputData = await getAirbyteConnectorTemplate(selectedConnector.value);
+  if (!connectorInputData) return;
+
+  airbyteConfigTemplate.value = connectorInputData;
+  const parsed_config = computeSchema(airbyteConfigTemplate.value.config_spec);
+  
+  airbyteConfig.value = {
+    parsed_config,
+    mapped_config_spec: {},
+    config_mode: "in_line",
+    selected_stream: "",
+    source_name: selectedConnector.value,
+  };
 };
 
-const updateConfig = async () => {
-  if (
-    !airbyteConfigTemplate.value?.available_streams &&
-    airbyteConfig.value &&
-    airbyteConfig.value.parsed_config
-  ) {
-    inputValues.value = getConfigSettings(airbyteConfig.value.parsed_config);
-    airbyteConfig.value.mapped_config_spec = inputValues.value;
-    await setAirbyteConfigGetStreams(airbyteConfig.value);
-    airbyteConfigTemplate.value = await getAirbyteConnectorTemplate(
-      selectedConnector.value,
-    );
+const validateSelection = async () => {
+  if (!nodeExternalSource.value || !airbyteConfig.value) throw new Error('Invalid configuration');
+
+  nodeExternalSource.value.is_setup = true;
+  nodeExternalSource.value.source_settings = airbyteConfig.value;
+  nodeExternalSource.value.source_settings.mapped_config_spec = getConfigSettings(airbyteConfig.value.parsed_config);
+  
+  if (initialSelectedStream.value != airbyteConfig.value.selected_stream) {
+    nodeExternalSource.value.source_settings.fields = [];
   }
+
+  await nodeStore.updateSettings(nodeExternalSource);
 };
 
 const pushNodeData = async () => {
-  if (nodeExternalSource.value && airbyteConfig.value) {
-    nodeExternalSource.value.is_setup = true;
-    nodeExternalSource.value.source_settings = airbyteConfig.value;
-    nodeExternalSource.value.source_settings.mapped_config_spec =
-      getConfigSettings(airbyteConfig.value.parsed_config);
-    if (initialSelectedStream.value != airbyteConfig.value.selected_stream) {
-      nodeExternalSource.value.source_settings.fields = [];
-    }
+  if (!nodeExternalSource.value || !airbyteConfig.value) return;
+
+  nodeExternalSource.value.is_setup = true;
+  nodeExternalSource.value.source_settings = airbyteConfig.value;
+  nodeExternalSource.value.source_settings.mapped_config_spec = getConfigSettings(airbyteConfig.value.parsed_config);
+  
+  if (initialSelectedStream.value != airbyteConfig.value.selected_stream) {
+    nodeExternalSource.value.source_settings.fields = [];
   }
-  console.log(nodeExternalSource.value);
+
   await nodeStore.updateSettings(nodeExternalSource);
-  if (nodeExternalSource.value) {
-    await nodeStore.getNodeData(
-      1,
-      Number(nodeExternalSource.value.node_id),
-      false,
-    );
-  }
-  console.log("pushed");
 };
 
 defineExpose({
@@ -226,9 +316,103 @@ defineExpose({
   pushNodeData,
 });
 </script>
+
 <style scoped>
 .to-front {
   z-index: 1000;
+}
+
+.config-section {
+  margin-top: 16px;
+}
+
+.stream-section {
+  margin-top: 16px;
+}
+
+.stream-select {
+  width: 100%;
+  max-width: 400px;
+}
+.icon-button {
+ padding: 2px;
+ border: none;
+ background: none;
+ cursor: pointer;
+ color: #666;
+}
+
+.icon-button:hover {
+ color: #333;
+}
+
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 8px 16px;
+  background-color: #7878ff5b;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  transition: background-color 0.3s ease;
+}
+
+.primary-button:hover:not(:disabled) {
+  background-color: #b3b5ba;
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background-color: #f1f1f1;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #666;
+  transition: all 0.2s ease;
+}
+
+.secondary-button:hover {
+  background-color: #e4e4e4;
+  color: #333;
+}
+
+.validation-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  margin-top: 12px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.validation-banner.success {
+  background-color: #ecfdf5;
+  color: #047857;
+}
+
+.validation-banner.error {
+  background-color: #fef2f2;
+  color: #dc2626;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .file-upload-label {
@@ -254,48 +438,9 @@ defineExpose({
 
 .file-icon {
   margin-right: 10px;
-  font-size: 20px; /* Slightly larger icon for better visual balance */
-  width: 24px; /* or any size that fits your design */
+  font-size: 20px;
+  width: 24px;
   height: auto;
-}
-
-button {
-  display: inline-flex; /* Aligns text and icon */
-  align-items: center; /* Centers items vertically */
-  justify-content: center; /* Centers items horizontally */
-  cursor: pointer;
-  padding: 4px;
-  background-color: #7878ff5b;
-  border: none;
-  border-radius: 4px;
-  font-size: 13px;
-  transition: background-color 0.3s ease; /* Smooth transition for hover effect */
-}
-
-button:hover {
-  background-color: #b3b5ba;
-}
-
-button .material-icons {
-  margin-right: 8px; /* Space between icon and text */
-  font-size: 20px; /* Icon size */
-}
-
-/* Specific overrides for el-select */
-.el-select-dropdown .el-select-dropdown__item.selected {
-  background-color: #f5f5f5 !important;
-  color: #000000;
-}
-.dropdown-wrapper {
-  position: relative; /* or absolute, depending on your layout */
-  z-index: 1; /* make sure it is above the parent element */
-}
-
-.dropdown-wrapper .options-list {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 1;
 }
 
 .attention-notice {
@@ -318,15 +463,25 @@ button .material-icons {
   animation: pulse 2s infinite;
 }
 
+.flex {
+  display: flex;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.gap-2 {
+  gap: 8px;
+}
+
 @keyframes pulse {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-  100% {
-    opacity: 1;
-  }
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
 }
 </style>

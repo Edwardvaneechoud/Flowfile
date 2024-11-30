@@ -283,15 +283,24 @@ def get_available_connectors():
     return airbyte_config_handler.available_connectors
 
 
+@router.get('/airbyte/available_configs', tags=['airbyte'])
+def get_available_configs() -> List[str]:
+    """
+    Get the available configurations for the airbyte connectors
+    Returns: List of available configurations
+    """
+    return airbyte_config_handler.available_configs
+
+
 @router.get('/airbyte/config_template', tags=['airbyte'], response_model=AirbyteConfigTemplate)
 def get_config_spec(connector_name: str):
     a = airbyte_config_handler.get_config('source-' + connector_name)
-    logger.info(a.available_streams)
     return a
 
 
 @router.post('/airbyte/set_airbyte_configs_for_streams', tags=['airbyte'])
 def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
+    print(airbyte_config.__dict__)
     logger.info('Setting airbyte config, update_style = ')
     logger.info(f'Setting config for {airbyte_config.source_name}')
     logger.debug(f'Config: {airbyte_config.mapped_config_spec}')
@@ -302,6 +311,7 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
 @router.post('/update_settings/', tags=['transform'])
 def add_generic_settings(input_data: Dict[str, Any], node_type: str):
     logger.info(f'Updating the data for node {input_data["node_id"]}')
+    print(input_data)
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
     flow = flow_file_handler.get_flow(flow_id)
