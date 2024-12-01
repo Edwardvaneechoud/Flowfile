@@ -88,8 +88,10 @@ class AirbyteConfigHandler:
                 config=config_settings,
                 docker_image=True
             )
-
-            self.configs[config_name].available_streams = source.get_available_streams()
+            streams = source.get_available_streams()
+            if len(streams) == 0 or streams is None:
+                raise ValueError(f"No streams found for {config_name}")
+            self.configs[config_name].available_streams = streams
             return self.configs[config_name].available_streams
 
         except Exception as e:

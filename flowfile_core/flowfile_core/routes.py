@@ -304,7 +304,10 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
     logger.info(f'Setting config for {airbyte_config.source_name}')
     logger.debug(f'Config: {airbyte_config.mapped_config_spec}')
     airbyte_handler = AirbyteHandler(airbyte_config=airbyte_config)
-    _ = airbyte_handler.get_available_streams()
+    try:
+        _ = airbyte_handler.get_available_streams()
+    except Exception as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post('/update_settings/', tags=['transform'])

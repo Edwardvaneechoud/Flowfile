@@ -82,8 +82,8 @@ const props = defineProps({
   },
   isLoading: {
     type: Boolean,
-    default: false
-  }
+    default: false,
+  },
 });
 
 const emits = defineEmits(["update:modelValue", "error"]);
@@ -106,7 +106,7 @@ const displayedOptions = computed(() => {
   if (!Array.isArray(column_options.value)) return [];
   if (!hasTyped.value) return column_options.value;
   return column_options.value.filter((option) =>
-    option.toLowerCase().includes(inputValue.value.toLowerCase())
+    option.toLowerCase().includes(inputValue.value.toLowerCase()),
   );
 });
 
@@ -250,7 +250,7 @@ watch(
 .select-box {
   width: 100%;
   box-sizing: border-box; /* Add this */
-  padding: 8px 12px; 
+  padding: 8px 12px;
   font-size: 14px;
   line-height: 1.4;
   border: 1px solid #e0e0e0;
@@ -319,8 +319,12 @@ watch(
 }
 
 @keyframes spin {
-  0% { transform: translateY(-50%) rotate(0deg); }
-  100% { transform: translateY(-50%) rotate(360deg); }
+  0% {
+    transform: translateY(-50%) rotate(0deg);
+  }
+  100% {
+    transform: translateY(-50%) rotate(360deg);
+  }
 }
 
 .select-box:disabled {

@@ -41,7 +41,7 @@ const props = defineProps({
   isLoading: {
     type: Boolean,
     default: false,
-  }
+  },
 });
 
 const emit = defineEmits(["update:modelValue", "change"]);

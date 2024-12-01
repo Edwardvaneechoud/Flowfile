@@ -7,11 +7,8 @@
         class="form-item-wrapper"
       >
         <!-- Handle array fields -->
-        <div
-          v-if="item.type === 'array'"
-          class="single-item"
-        >
-          <div 
+        <div v-if="item.type === 'array'" class="single-item">
+          <div
             class="compact-header"
             @mouseover="showPopover(item.description ?? '', $event)"
             @mouseleave="hidePopover"
@@ -19,7 +16,7 @@
             {{ item.title || item.key }}
             <span v-if="item.required" class="tag">*</span>
           </div>
-          
+
           <div class="array-input-section">
             <div class="input-with-button">
               <input
@@ -29,34 +26,35 @@
                 :placeholder="`Add new ${item.title || item.key}`"
                 @keyup.enter="addArrayValue(item)"
               />
-              <button 
+              <button
                 class="add-btn"
-                @click="addArrayValue(item)"
                 type="button"
+                @click="addArrayValue(item)"
               >
                 Add
               </button>
             </div>
-            
+
             <div class="items-container">
-              <div 
-                v-for="(value, valueIndex) in getArrayValues(item)" 
-                :key="valueIndex" 
+              <div
+                v-for="(value, valueIndex) in getArrayValues(item)"
+                :key="valueIndex"
                 class="item-box"
               >
                 {{ value }}
-                <span class="remove-btn" @click="removeArrayValue(item, valueIndex)">x</span>
+                <span
+                  class="remove-btn"
+                  @click="removeArrayValue(item, valueIndex)"
+                  >x</span
+                >
               </div>
             </div>
           </div>
         </div>
 
         <!-- Handle oneOf fields (like credentials) -->
-        <div
-          v-else-if="item.oneOf"
-          class="collapsible-section"
-        >
-          <div 
+        <div v-else-if="item.oneOf" class="collapsible-section">
+          <div
             class="compact-header"
             @mouseover="showPopover(item.description ?? '', $event)"
             @mouseleave="hidePopover"
@@ -64,29 +62,36 @@
             {{ item.title || item.key }}
             <span v-if="item.required" class="tag">*</span>
           </div>
-          
+
           <drop-down-generic
             v-model="selectedValues[index]"
             :option-list="item.oneOf.map((opt: OneOfOption) => opt.title)"
             :allow-other="false"
-            @change="(value: string) => updateSelectedOption(item, value, index)"
-            style="width: 100%; margin-bottom: 8px;"
+            style="width: 100%; margin-bottom: 8px"
+            @change="
+              (value: string) => updateSelectedOption(item, value, index)
+            "
           />
 
           <div v-if="item.selectedOption !== undefined" class="nested-content">
             <div
-              v-for="(property, propKey) in item.oneOf[item.selectedOption].properties"
+              v-for="(property, propKey) in item.oneOf[item.selectedOption]
+                .properties"
               :key="propKey"
               class="nested-item"
             >
               <template v-if="propKey !== 'auth_type'">
-                <div 
+                <div
                   class="compact-header"
                   @mouseover="showPopover(property.description, $event)"
                   @mouseleave="hidePopover"
                 >
                   {{ property.title || propKey }}
-                  <span v-if="isRequired(item.oneOf[item.selectedOption], propKey)" class="tag">*</span>
+                  <span
+                    v-if="isRequired(item.oneOf[item.selectedOption], propKey)"
+                    class="tag"
+                    >*</span
+                  >
                 </div>
                 <input
                   v-model="(item.input_value as Record<string, any>)[propKey]"
@@ -104,7 +109,7 @@
           v-else-if="!item.properties || item.properties.length === 0"
           class="single-item"
         >
-          <div 
+          <div
             class="compact-header"
             @mouseover="showPopover(item.description ?? '', $event)"
             @mouseleave="hidePopover"
@@ -141,7 +146,7 @@
               :key="propIndex"
               class="nested-item"
             >
-              <div 
+              <div
                 class="compact-header"
                 @mouseover="showPopover(property.description, $event)"
                 @mouseleave="hidePopover"
@@ -175,7 +180,7 @@
 import { ref, computed, onMounted, nextTick } from "vue";
 import { Field, OneOfOption } from "./types";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
-import SettingsSection from "../../../components/node/SettingsSection.vue"
+import SettingsSection from "../../../components/node/SettingsSection.vue";
 
 const props = defineProps<{
   parsedConfig: Field[];
@@ -192,16 +197,19 @@ const popover = ref<Popover>({
   show: false,
   content: "",
   x: 0,
-  y: 0
+  y: 0,
 });
 
 const localConfig = ref([...props.parsedConfig]);
-const selectedValues = ref<string[]>(new Array(props.parsedConfig.length).fill(''));
+const selectedValues = ref<string[]>(
+  new Array(props.parsedConfig.length).fill(""),
+);
 const newArrayValue = ref<Record<string, string>>({});
 
-
 function isStringArray(value: any): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string');
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
 }
 
 // Array handling functions
@@ -218,7 +226,7 @@ const getArrayValues = (item: Field): string[] => {
 const addArrayValue = (item: Field) => {
   const value = newArrayValue.value[item.key];
   if (!value?.trim()) return;
-  
+
   if (!item.input_value || !isStringArray(item.input_value)) {
     item.input_value = [];
   }
@@ -227,7 +235,7 @@ const addArrayValue = (item: Field) => {
   const currentArray = item.input_value as string[];
   if (!currentArray.includes(value)) {
     currentArray.push(value);
-    newArrayValue.value[item.key] = '';
+    newArrayValue.value[item.key] = "";
   }
 };
 
@@ -240,17 +248,21 @@ const removeArrayValue = (item: Field, index: number) => {
 // Initialize selected values from existing configuration
 onMounted(() => {
   props.parsedConfig.forEach((item, index) => {
-    if (item.oneOf && typeof item.selectedOption === 'number' && item.selectedOption >= 0) {
+    if (
+      item.oneOf &&
+      typeof item.selectedOption === "number" &&
+      item.selectedOption >= 0
+    ) {
       selectedValues.value[index] = item.oneOf[item.selectedOption].title;
-      console.log(item.oneOf[item.selectedOption].title)
-      console.log('selecting a value')
+      console.log(item.oneOf[item.selectedOption].title);
+      console.log("selecting a value");
     }
   });
 });
 
 const showPopover = (content: string, event: MouseEvent) => {
   if (!content) return;
-  
+
   popover.value = {
     show: true,
     content,
@@ -271,59 +283,71 @@ const isRequired = (schema: any, fieldName: string) => {
   return schema.required?.includes(fieldName) || false;
 };
 
-const updateSelectedOption = (item: Field, selectedValue: string, index: number) => {
- if (!item.oneOf) return;
- 
- const optionIndex = item.oneOf.findIndex(opt => opt.title === selectedValue);
- if (optionIndex === -1) return;
+const updateSelectedOption = (
+  item: Field,
+  selectedValue: string,
+  index: number,
+) => {
+  if (!item.oneOf) return;
 
- selectedValues.value[index] = selectedValue;
+  const optionIndex = item.oneOf.findIndex(
+    (opt) => opt.title === selectedValue,
+  );
+  if (optionIndex === -1) return;
 
- const localItem = localConfig.value[index];
- if (!localItem || !localItem.oneOf) return;
+  selectedValues.value[index] = selectedValue;
 
- localItem.selectedOption = optionIndex;
- const selectedOption = localItem.oneOf[optionIndex];
- const previousValue = localItem.input_value as Record<string, any>;
+  const localItem = localConfig.value[index];
+  if (!localItem || !localItem.oneOf) return;
 
- const newInputValue: Record<string, any> = {};
- 
- if (selectedOption.properties) {
-   Object.entries(selectedOption.properties).forEach(([key, prop]) => {
-     if (key === 'auth_type') {
-       newInputValue[key] = prop.const;
-     } else if (previousValue && typeof previousValue === 'object' && key in previousValue) {
-       newInputValue[key] = previousValue[key];
-     } else {
-       newInputValue[key] = prop.input_value ?? prop.default ?? '';
-     }
-   });
- }
+  localItem.selectedOption = optionIndex;
+  const selectedOption = localItem.oneOf[optionIndex];
+  const previousValue = localItem.input_value as Record<string, any>;
 
- localItem.input_value = newInputValue as Field['input_value'];
+  const newInputValue: Record<string, any> = {};
+
+  if (selectedOption.properties) {
+    Object.entries(selectedOption.properties).forEach(([key, prop]) => {
+      if (key === "auth_type") {
+        newInputValue[key] = prop.const;
+      } else if (
+        previousValue &&
+        typeof previousValue === "object" &&
+        key in previousValue
+      ) {
+        newInputValue[key] = previousValue[key];
+      } else {
+        newInputValue[key] = prop.input_value ?? prop.default ?? "";
+      }
+    });
+  }
+
+  localItem.input_value = newInputValue as Field["input_value"];
 };
 
 const computedSchema = computed(() => {
-  return props.parsedConfig.map(item => {
+  return props.parsedConfig.map((item) => {
     if (item.oneOf) {
       return {
         ...item,
         selectedOption: item.selectedOption,
-        oneOf: item.oneOf.map(option => ({
+        oneOf: item.oneOf.map((option) => ({
           ...option,
-          properties: option.properties ? 
-            Object.entries(option.properties).reduce((acc, [key, value]) => {
-              acc[key] = { ...value };  // Simply preserve all properties exactly as they are
-              return acc;
-            }, {} as Record<string, any>) 
-          : {},
+          properties: option.properties
+            ? Object.entries(option.properties).reduce(
+                (acc, [key, value]) => {
+                  acc[key] = { ...value }; // Simply preserve all properties exactly as they are
+                  return acc;
+                },
+                {} as Record<string, any>,
+              )
+            : {},
         })),
       };
     }
     return item;
   });
 });
-
 
 defineExpose({
   localConfig,

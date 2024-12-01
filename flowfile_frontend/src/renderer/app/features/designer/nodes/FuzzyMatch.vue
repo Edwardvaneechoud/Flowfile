@@ -3,7 +3,7 @@
     <NodeButton
       ref="nodeButton"
       :node-id="nodeId"
-      image-src="fuzzy_match.jpg"
+      image-src="fuzzy_match.png"
       :title="`${nodeId}: Fuzzy match`"
       @click="openDrawer"
     />

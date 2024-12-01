@@ -228,11 +228,14 @@ def generic_task(func: Callable,
             raise Exception('Returned object is not a DataFrame or LazyFrame')
         with progress.get_lock():
             progress.value = 100
+        logger.info("Task completed successfully")
     except Exception as e:
-        error_msg = str(e).encode()[:256]
+        logger.error(f'Error during task execution: {str(e)}')
+        error_msg = str(e).encode()[:1024]
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
+
     lf = pl.scan_ipc(file_path)
     queue.put(encodebytes(lf.serialize()))

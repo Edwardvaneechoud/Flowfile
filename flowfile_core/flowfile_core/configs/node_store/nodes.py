@@ -20,7 +20,7 @@ nodes_list: List[NodeTemplate] = [
     NodeTemplate(name='Select data', item='select', input=1, output=1, image='select.png', node_group='transform'),
     NodeTemplate(name='Filter data', item='filter', input=1, output=1, image='filter.png', node_group='transform'),
     NodeTemplate(name='Group by', item='group_by', input=1, output=1, image='group_by.png', node_group='aggregate'),
-    NodeTemplate(name='Fuzzy match', item='fuzzy_match', input=2, output=1, image='fuzzy_match.jpg',
+    NodeTemplate(name='Fuzzy match', item='fuzzy_match', input=2, output=1, image='fuzzy_match.png',
                  node_group='combine'),
     NodeTemplate(name='Sort data', item='sort', input=1, output=1, image='sort.png', node_group='transform'),
     NodeTemplate(name='Add record Id', item='record_id', input=1, output=1, image='record_id.png',

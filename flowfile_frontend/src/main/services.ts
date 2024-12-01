@@ -9,6 +9,7 @@ import {
   WORKER_PORT,
   CORE_PORT,
 } from "./constants";
+import { existsSync, mkdirSync } from "fs";
 
 // Global variables for managing processes
 export const shutdownState = {
@@ -62,6 +63,49 @@ export function getResourcePath(resourceName: string): string {
   return join(basePath, resourceName);
 }
 
+function getProcessEnv(): NodeJS.ProcessEnv {
+  const homeDir = app.getPath("home");
+  const tempDir = app.getPath("temp");
+  const flowfileDir = join(homeDir, ".flowfile");
+  const airbyteDir = join(homeDir, ".airbyte");
+  const cacheDirRoot = join(flowfileDir, ".tmp");
+
+  // Create all necessary directories
+  const dirsToCreate = [
+    flowfileDir,
+    airbyteDir,
+    cacheDirRoot,
+    join(airbyteDir, "connectors"),
+    join(tempDir, "airbyte", "logs"),
+  ];
+
+  for (const dir of dirsToCreate) {
+    try {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+    } catch (error) {
+      console.error(`Failed to create directory ${dir}:`, error);
+    }
+  }
+
+  return {
+    ...process.env,
+    PATH: `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH || ""}`,
+    DOCKER_HOST: "unix:///var/run/docker.sock",
+    HOME: homeDir,
+    DOCKER_CONFIG: join(homeDir, ".docker"),
+    TMPDIR: tempDir,
+    // Use the specific environment variable that constants.py looks for
+    AIRBYTE_CACHE_ROOT: cacheDirRoot,
+    AIRBYTE_TEMP_DIR: tempDir,
+    AIRBYTE_LOGS_DIR: join(tempDir, "airbyte", "logs"),
+    AIRBYTE_LOCAL_ROOT: airbyteDir,
+    // Add Docker volume mounts
+    AIRBYTE_EXTRA_DOCKER_OPTS: `--volume "${cacheDirRoot}:/tmp" --volume "${airbyteDir}:/airbyte"`,
+  };
+}
+
 export function startProcess(
   name: string,
   path: string,
@@ -71,7 +115,10 @@ export function startProcess(
   return new Promise((resolve, reject) => {
     console.log(`Starting ${name} from ${path}`);
 
-    const childProcess = exec(path);
+    const childProcess = exec(path, {
+      env: getProcessEnv(),
+      shell: "/bin/bash", // or '/bin/zsh' depending on your system
+    });
 
     if (!childProcess.pid) {
       reject(new Error(`Failed to start ${name}`));
@@ -99,7 +146,6 @@ export function startProcess(
         console.log(`${name} is responsive on port ${port}`);
         resolve(childProcess);
       } catch (error) {
-        console.log(`${name} not yet responsive, retrying...`);
         setTimeout(checkService, 1000);
       }
     };

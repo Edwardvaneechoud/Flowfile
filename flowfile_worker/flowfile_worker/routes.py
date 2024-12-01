@@ -124,7 +124,6 @@ def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: Ba
         status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
                                result_type="polars")
         status_dict[task_id] = status
-        # start_generic_process(func_ref=read_airbyte_source, file_ref=file_path, task_id=task_id, args=(airbyte_settings,))
         background_tasks.add_task(start_generic_process, func_ref=read_airbyte_source, file_ref=file_path,
                                   task_id=task_id, args=(airbyte_settings,))
         logger.info(f"Started Airbyte source task: {task_id}")
