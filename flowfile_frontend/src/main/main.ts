@@ -7,7 +7,11 @@ import {
   cleanupProcesses,
   setupProcessMonitoring,
 } from "./services";
-import { createWindow, getMainWindow } from "./windowManager";
+import {
+  createWindow,
+  getMainWindow,
+  createLoadingWindow,
+} from "./windowManager";
 import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
 import { openAuthWindow } from "./windowManager";
@@ -26,7 +30,8 @@ async function checkDocker(): Promise<{
       if (!stdout) {
         resolve({
           isAvailable: false,
-          error: "Docker Desktop is not running. Please start Docker Desktop.",
+          error:
+            "Docker is not available. Some features may have limited functionality.",
         });
         return;
       }
@@ -38,7 +43,7 @@ async function checkDocker(): Promise<{
           console.error("Docker check stderr:", stderr);
           resolve({
             isAvailable: false,
-            error: stderr || error.message,
+            error: "Docker service is currently unreachable",
           });
         } else {
           console.log("Docker check stdout:", stdout);
@@ -52,19 +57,6 @@ async function checkDocker(): Promise<{
   });
 }
 
-async function showDockerError(error: string) {
-  const mainWindow = getMainWindow();
-  if (mainWindow) {
-    await dialog.showMessageBox(mainWindow, {
-      type: "error",
-      title: "Docker Error",
-      message: "Docker is not available",
-      detail: `Please ensure Docker Desktop is running and accessible.\n\nError details: ${error}`,
-      buttons: ["OK"],
-    });
-  }
-}
-
 app.whenReady().then(async () => {
   const logFile = setupLogging();
   console.log("Logging to:", logFile);
@@ -73,22 +65,46 @@ app.whenReady().then(async () => {
   setupAppEventListeners();
 
   try {
+    // Create loading window first
+    const loadingWin = createLoadingWindow();
+
+    // Check Docker status
     const dockerStatus = await checkDocker();
     console.log("Docker status:", dockerStatus);
 
-    // Create window regardless of Docker status
-    createWindow();
+    // Update loading window with Docker status
+    loadingWin?.webContents.send("update-docker-status", {
+      isAvailable: dockerStatus.isAvailable,
+      error: dockerStatus.error,
+    });
 
-    if (!dockerStatus.isAvailable) {
-      await showDockerError(dockerStatus.error || "Unknown error");
+    // Start services and update status
+    try {
+      loadingWin?.webContents.send("update-services-status", {
+        status: "starting",
+      });
+
+      await startServices();
+
+      loadingWin?.webContents.send("update-services-status", {
+        status: "ready",
+      });
+
+      console.log("All services started successfully");
+    } catch (error) {
+      loadingWin?.webContents.send("update-services-status", {
+        status: "error",
+        error: "Failed to start services",
+      });
+      throw error;
     }
 
-    await startServices();
-    console.log("All services started successfully");
+    // Create main window only after services are ready
     createWindow();
     modifySessionHeaders();
     setupProcessMonitoring();
 
+    // Register shortcuts
     globalShortcut.register("CommandOrControl+R", async () => {
       const mainWindow = getMainWindow();
       if (mainWindow) {
@@ -111,22 +127,4 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
-});
-
-// IPC handlers
-ipcMain.on("open-auth-window", () => {
-  openAuthWindow();
-});
-
-// Error handling for uncaught exceptions
-process.on("uncaughtException", async (error) => {
-  console.error("Uncaught exception:", error);
-  await cleanupProcesses();
-  app.quit();
-});
-
-process.on("unhandledRejection", async (error) => {
-  console.error("Unhandled rejection:", error);
-  await cleanupProcesses();
-  app.quit();
 });

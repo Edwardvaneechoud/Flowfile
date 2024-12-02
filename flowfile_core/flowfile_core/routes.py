@@ -313,7 +313,6 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
 @router.post('/update_settings/', tags=['transform'])
 def add_generic_settings(input_data: Dict[str, Any], node_type: str):
     logger.info(f'Updating the data for node {input_data["node_id"]}')
-    print(input_data)
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
     flow = flow_file_handler.get_flow(flow_id)
