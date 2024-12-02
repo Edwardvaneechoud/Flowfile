@@ -1,8 +1,8 @@
-// services.ts
 import { app } from "electron";
 import { join } from "path";
-import { ChildProcess, exec } from "child_process";
+import { ChildProcess, exec, spawn } from "child_process";
 import axios from "axios";
+import { platform } from 'os';
 import {
   SHUTDOWN_TIMEOUT,
   FORCE_KILL_TIMEOUT,
@@ -11,11 +11,7 @@ import {
 } from "./constants";
 import { existsSync, mkdirSync } from "fs";
 
-// Global variables for managing processes
-export const shutdownState = {
-  isShuttingDown: false,
-};
-
+export const shutdownState = { isShuttingDown: false };
 let cleanupInProgress = false;
 export let workerProcess: ChildProcess | null = null;
 export let coreProcess: ChildProcess | null = null;
@@ -32,7 +28,7 @@ export async function shutdownService(port: number): Promise<void> {
 
     clearTimeout(timeout);
     console.log(`Successfully sent shutdown signal to port ${port}`);
-    await new Promise((resolve) => setTimeout(resolve, 500)); // Brief wait for shutdown to begin
+    await new Promise((resolve) => setTimeout(resolve, 500));
   } catch (error) {
     if (axios.isAxiosError(error) && error.code === "ECONNREFUSED") {
       console.log(`Service on port ${port} is already stopped`);
@@ -54,23 +50,28 @@ export async function ensureServicesStopped(): Promise<void> {
 }
 
 export function getResourcePath(resourceName: string): string {
-  const basePath =
-    process.env.NODE_ENV === "development"
-      ? app.getAppPath()
-      : process.resourcesPath;
-
+  const basePath = process.env.NODE_ENV === "development" 
+    ? app.getAppPath() 
+    : process.resourcesPath;
   console.log("Base path:", basePath);
   return join(basePath, resourceName);
 }
 
+function formatDockerPath(path: string): string {
+  if (platform() === 'win32') {
+    return path.replace(/\\/g, '/').replace(/^(\w):\//, '/$1/');
+  }
+  return path;
+}
+
 function getProcessEnv(): NodeJS.ProcessEnv {
+  const isWindows = platform() === 'win32';
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
   const flowfileDir = join(homeDir, ".flowfile");
   const airbyteDir = join(homeDir, ".airbyte");
   const cacheDirRoot = join(flowfileDir, ".tmp");
 
-  // Create all necessary directories
   const dirsToCreate = [
     flowfileDir,
     airbyteDir,
@@ -89,20 +90,33 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     }
   }
 
-  return {
+  const dockerVolumes = isWindows
+    ? `-v "${formatDockerPath(cacheDirRoot)}:/tmp" -v "${formatDockerPath(airbyteDir)}:/airbyte"`
+    : `--volume "${cacheDirRoot}:/tmp" --volume "${airbyteDir}:/airbyte"`;
+
+  const baseEnv = {
     ...process.env,
-    PATH: `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH || ""}`,
-    DOCKER_HOST: "unix:///var/run/docker.sock",
     HOME: homeDir,
     DOCKER_CONFIG: join(homeDir, ".docker"),
     TMPDIR: tempDir,
-    // Use the specific environment variable that constants.py looks for
     AIRBYTE_CACHE_ROOT: cacheDirRoot,
     AIRBYTE_TEMP_DIR: tempDir,
     AIRBYTE_LOGS_DIR: join(tempDir, "airbyte", "logs"),
     AIRBYTE_LOCAL_ROOT: airbyteDir,
-    // Add Docker volume mounts
-    AIRBYTE_EXTRA_DOCKER_OPTS: `--volume "${cacheDirRoot}:/tmp" --volume "${airbyteDir}:/airbyte"`,
+    AIRBYTE_EXTRA_DOCKER_OPTS: dockerVolumes,
+  };
+
+  if (isWindows) {
+    return {
+      ...baseEnv,
+      DOCKER_HOST: "npipe:////.//pipe//docker_engine",
+    };
+  }
+
+  return {
+    ...baseEnv,
+    PATH: `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH || ""}`,
+    DOCKER_HOST: "unix:///var/run/docker.sock",
   };
 }
 
@@ -113,11 +127,14 @@ export function startProcess(
   onData?: (data: string) => void,
 ): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
+    const isWindows = platform() === 'win32';
     console.log(`Starting ${name} from ${path}`);
 
-    const childProcess = exec(path, {
+    const childProcess = spawn(path, [], {
       env: getProcessEnv(),
-      shell: "/bin/bash", // or '/bin/zsh' depending on your system
+      shell: isWindows ? true : '/bin/bash',
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe']
     });
 
     if (!childProcess.pid) {
@@ -139,7 +156,6 @@ export function startProcess(
       reject(error);
     });
 
-    // Check if service is responsive
     const checkService = async () => {
       try {
         await axios.get(`http://127.0.0.1:${port}/docs`);
@@ -155,11 +171,6 @@ export function startProcess(
 
 export async function startServices(retry = true): Promise<void> {
   try {
-    if (retry) {
-      // await ensureServicesStopped();
-    }
-
-    // Start both processes in parallel
     const corePromise = startProcess(
       "flowfile_core",
       getResourcePath("flowfile_core"),
@@ -182,7 +193,6 @@ export async function startServices(retry = true): Promise<void> {
       },
     );
 
-    // Wait for both processes to be ready
     [coreProcess, workerProcess] = await Promise.all([
       corePromise,
       workerPromise,
@@ -192,7 +202,7 @@ export async function startServices(retry = true): Promise<void> {
     if (retry) {
       console.log("Retrying service startup...");
       await cleanupProcesses();
-      return startServices(false); // Retry once without the initial shutdown
+      return startServices(false);
     }
     throw error;
   }
@@ -220,7 +230,7 @@ export async function cleanupProcesses(): Promise<void> {
         const forceKill = setTimeout(() => {
           try {
             console.warn(`Force killing ${name} process`);
-            process.kill("SIGKILL");
+            process.kill('SIGKILL');
           } catch (error) {
             console.error(`Error force killing ${name}:`, error);
           }
@@ -234,12 +244,12 @@ export async function cleanupProcesses(): Promise<void> {
         });
 
         try {
-          process.kill("SIGTERM");
+          process.kill('SIGTERM');
         } catch (error) {
           clearTimeout(forceKill);
           console.error(`Error sending SIGTERM to ${name}:`, error);
           try {
-            process.kill("SIGKILL");
+            process.kill('SIGKILL');
           } catch (secondError) {
             console.error(`Failed to force kill ${name}:`, secondError);
           }

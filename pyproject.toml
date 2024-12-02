@@ -41,11 +41,13 @@ airbyte-cdk = "^6.6.3"
 flowfile_worker = "flowfile_worker.main:run"  # Entry point for the command
 flowfile_core = "flowfile_core.main:run"
 build_backends = "build_backends.main:main"
+build_backends_prd = "build_backends.main_prd:main"
 
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
 mkdocs-material = "^9.5.46"
+nuitka = "^2.5.4"
 
 [build-system]
 requires = ["poetry-core"]

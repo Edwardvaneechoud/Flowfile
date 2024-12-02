@@ -16,42 +16,44 @@ import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
 import { openAuthWindow } from "./windowManager";
 import { loadWindow } from "./windowLoader";
+import { platform } from 'os';
 
-async function checkDocker(): Promise<{
-  isAvailable: boolean;
-  error: string | null;
-}> {
+
+
+async function checkDocker(): Promise<{ isAvailable: boolean; error: string | null }> {
+  const isWindows = platform() === 'win32';
+  
   return new Promise((resolve) => {
-    // Use absolute path to Docker
-    const dockerPath = "/Applications/Docker.app/Contents/Resources/bin/docker";
+    const checkCommand = isWindows 
+      ? 'docker info'
+      : `${"/Applications/Docker.app/Contents/Resources/bin/docker"} info`;
 
-    // First check if Docker is running
-    exec('ps aux | grep -v grep | grep "Docker.app"', async (error, stdout) => {
+    // Windows doesn't need process check
+    if (isWindows) {
+      exec(checkCommand, (error) => {
+        resolve({
+          isAvailable: !error,
+          error: error ? "Docker service is currently unreachable" : null
+        });
+      });
+      return;
+    }
+
+    // Mac-specific checks
+    exec('ps aux | grep -v grep | grep "Docker.app"', (error, stdout) => {
       if (!stdout) {
         resolve({
           isAvailable: false,
-          error:
-            "Docker is not available. Some features may have limited functionality.",
+          error: "Docker is not available. Some features may have limited functionality.",
         });
         return;
       }
 
-      // Then check if Docker daemon is responsive
-      exec(`${dockerPath} info`, (error, stdout, stderr) => {
-        if (error) {
-          console.error("Docker check error:", error);
-          console.error("Docker check stderr:", stderr);
-          resolve({
-            isAvailable: false,
-            error: "Docker service is currently unreachable",
-          });
-        } else {
-          console.log("Docker check stdout:", stdout);
-          resolve({
-            isAvailable: true,
-            error: null,
-          });
-        }
+      exec(checkCommand, (error) => {
+        resolve({
+          isAvailable: !error,
+          error: error ? "Docker service is currently unreachable" : null
+        });
       });
     });
   });
