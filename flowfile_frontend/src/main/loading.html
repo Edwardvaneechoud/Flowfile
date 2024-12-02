@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background: transparent;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            -webkit-app-region: drag;
+        }
+        .loading-container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 3rem;
+            border-radius: 16px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 90%;
+            max-width: 500px;
+        }
+        .logo {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 1.5rem;
+        }
+        .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 1.5rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 0.75rem 0;
+            padding: 0.75rem;
+            text-align: left;
+            font-size: 1.1rem;
+        }
+        .status-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .pending {
+            background-color: #f1c40f;
+        }
+        .success {
+            background-color: #2ecc71;
+        }
+        .error {
+            background-color: #e74c3c;
+        }
+        h3 {
+            margin: 0.75rem 0;
+            color: #2c3e50;
+            font-size: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="logo">
+            <img src="../static/assets/flowfile.png" alt="Flowfile" />
+        </div>
+        <h3>Starting Flowfile</h3>
+        <div class="spinner"></div>
+        <div class="status">
+            <div class="status-item">
+                <div id="docker-status" class="status-icon pending"></div>
+                <span id="docker-text">Checking Docker availability...</span>
+            </div>
+            <div class="status-item">
+                <div id="services-status" class="status-icon pending"></div>
+                <span id="services-text">Starting services...</span>
+            </div>
+        </div>
+    </div>
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        ipcRenderer.on('update-docker-status', (event, { isAvailable, error }) => {
+            const statusEl = document.getElementById('docker-status');
+            const textEl = document.getElementById('docker-text');
+            
+            statusEl.className = 'status-icon ' + (isAvailable ? 'success' : 'error');
+            textEl.textContent = isAvailable ? 
+                'Docker is available' : 
+                `Docker unavailable: ${error}`;
+        });
+
+        ipcRenderer.on('update-services-status', (event, { status, error }) => {
+            const statusEl = document.getElementById('services-status');
+            const textEl = document.getElementById('services-text');
+            
+            statusEl.className = 'status-icon ' + (status === 'ready' ? 'success' : error ? 'error' : 'pending');
+            textEl.textContent = error || 
+                (status === 'ready' ? 'Services ready' : 'Starting services...');
+        });
+    </script>
+</body>
+</html>
