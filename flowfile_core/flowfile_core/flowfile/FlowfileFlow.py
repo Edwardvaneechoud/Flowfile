@@ -683,7 +683,6 @@ class EtlGraph:
         if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
             logger.info('Using provided schema in the node')
 
-
     def add_google_sheet(self,  external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding google sheet reader')
         self.add_external_source(external_source_input)

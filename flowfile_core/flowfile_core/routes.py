@@ -412,13 +412,6 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
     return list(node.get_all_dependent_node_ids())
 
 
-@router.get('/flow', tags=['editor'])
-def get_flow_on_id(flow_id: int):
-    logger.info('getting flow')
-    flow = flow_file_handler.get_flow(flow_id)
-    return flow.get_nodes_overview()
-
-
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     flow_path = Path(flow_path)

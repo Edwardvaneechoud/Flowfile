@@ -34,7 +34,7 @@ google-api-python-client = "~2.149.0"
 polars-sim = { version = "~0.1.3", markers = "sys_platform != 'win32'" } # polars-sim is not supported on windows
 polars-grouper = "~0.2.0"
 polars-ds = "~0.6.0"
-airbyte = { url = "https://github.com/Edwardvaneechoud/PyAirbyte/releases/download/v0.20.1.flowfile1/airbyte-0.0.0-py3-none-any.whl" }
+airbyte = { url = "https://github.com/Edwardvaneechoud/PyAirbyte/releases/download/v0.20.1.flowfile2/airbyte-0.0.0-py3-none-any.whl" }
 airbyte-cdk = "^6.6.3"
 
 [tool.poetry.scripts]
