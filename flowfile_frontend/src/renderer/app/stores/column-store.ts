@@ -297,7 +297,6 @@ export const useNodeStore = defineStore('node', {
     },
 
     async getNodeData(flow_id: number, node_id: number, useCache = true): Promise<NodeData | null> {
-      console.log('getNodeData called in column-store.ts', flow_id, node_id, useCache)
       if (this.flow_id === flow_id && this.node_id === node_id && useCache) {
         if (this.nodeData) {
           this.is_loaded = true

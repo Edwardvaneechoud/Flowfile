@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background: transparent;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            -webkit-app-region: drag;
+            display: flex;
+            justify-content: stretch;
+            align-items: stretch;
+            overflow: hidden;
+        }
+        .loading-container {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(10px);
+            padding: 3rem;
+            text-align: center;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.1);
+        }
+        .logo {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 1.5rem;
+            transition: transform 0.3s ease;
+        }
+        .logo:hover {
+            transform: scale(1.05);
+        }
+        .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .spinner {
+            border: 3px solid #f0f0f0;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 0.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+            margin: 1.5rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 0.75rem 0;
+            padding: 0.75rem;
+            text-align: left;
+            font-size: 0.95rem;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 12px;
+            transition: all 0.2s ease;
+            width: 300px;
+        }
+        .status-item:hover {
+            transform: translateX(5px);
+        }
+        .status-icon {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        .status-icon::after {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            border-radius: 50%;
+            background: inherit;
+            opacity: 0.2;
+            z-index: -1;
+        }
+        .pending {
+            background-color: #fbbf24;
+            animation: pulse 2s infinite;
+        }
+        .success {
+            background-color: #34d399;
+        }
+        .error {
+            background-color: #ef4444;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        h3 {
+            margin: 0.75rem 0;
+            color: #111827;
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.025em;
+        }
+        .status {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="logo">
+            <img src="../static/assets/flowfile.png" alt="Flowfile" />
+        </div>
+        <h3>Starting Flowfile</h3>
+        <div class="spinner"></div>
+        <div class="status">
+            <div class="status-item">
+                <div id="docker-status" class="status-icon pending"></div>
+                <span id="docker-text">Checking Docker availability...</span>
+            </div>
+            <div class="status-item">
+                <div id="services-status" class="status-icon pending"></div>
+                <span id="services-text">Starting services...</span>
+            </div>
+        </div>
+    </div>
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        ipcRenderer.on('update-docker-status', (event, { isAvailable, error }) => {
+            const statusEl = document.getElementById('docker-status');
+            const textEl = document.getElementById('docker-text');
+            
+            statusEl.className = 'status-icon ' + (isAvailable ? 'success' : 'error');
+            textEl.textContent = isAvailable ? 
+                'Docker is available' : 
+                `Docker unavailable: ${error}`;
+        });
+
+        ipcRenderer.on('update-services-status', (event, { status, error }) => {
+            const statusEl = document.getElementById('services-status');
+            const textEl = document.getElementById('services-text');
+            
+            statusEl.className = 'status-icon ' + (status === 'ready' ? 'success' : error ? 'error' : 'pending');
+            textEl.textContent = error || 
+                (status === 'ready' ? 'Services ready' : 'Starting services...');
+        });
+    </script>
+</body>
+</html>

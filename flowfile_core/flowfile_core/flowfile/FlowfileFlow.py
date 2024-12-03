@@ -26,6 +26,7 @@ from flowfile_core.flowfile.node_step.node_step import NodeStep, NodeResults
 from flowfile_core.utils.fl_executor import thread_executor
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import ExternalAirbyteFetcher
 
 
 @thread_executor(wait_on_completion=False, max_workers=1)
@@ -642,9 +643,45 @@ class EtlGraph:
                            node_type='output',
                            setting_input=output_file)
 
-    def add_airbyte_reader(self, external_source_input: input_schema.NodeExternalSource):
+    def add_airbyte_reader(self, external_source_input: input_schema.NodeAirbyteReader):
         logger.info('Adding airbyte reader')
-        self.add_external_source(external_source_input)
+        node_type = 'airbyte_reader'
+        source_settings: input_schema.AirbyteReader = external_source_input.source_settings
+        airbyte_settings = airbyte_settings_from_config(source_settings)
+        airbyte_settings.fields = source_settings.fields
+        external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
+
+        def _func():
+            logger.info('Calling external source')
+            external_fetcher = ExternalAirbyteFetcher(airbyte_settings)
+            fl = FlowfileTable(external_fetcher.result)
+            external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        def schema_callback():
+            return [FlowfileColumn.from_input(f.name, f.data_type) for f in
+                    external_source.schema]
+
+        node = self.get_node(external_source_input.node_id)
+        if node:
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = external_source_input
+            node.node_settings.cache_results = external_source_input.cache_results
+            if external_source_input.node_id not in set(start_node.node_id for start_node in self._flow_starts):
+                self._flow_starts.append(node)
+            node.schema_callback = schema_callback
+        else:
+            node = NodeStep(external_source_input.node_id, function=_func,
+                            setting_input=external_source_input,
+                            name=node_type, node_type=node_type, parent_uuid=self.uuid,
+                            schema_callback=schema_callback)
+            self._node_db[external_source_input.node_id] = node
+            self._flow_starts.append(node)
+            self._node_ids.append(external_source_input.node_id)
+        if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
+            logger.info('Using provided schema in the node')
 
     def add_google_sheet(self,  external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding google sheet reader')

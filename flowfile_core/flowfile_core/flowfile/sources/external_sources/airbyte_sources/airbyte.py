@@ -31,12 +31,14 @@ class AirbyteSource(ExternalDataSource):
     is_collected: bool
     _airbyte_response: Optional[AirbyteResponse] = None
     _airbyte_module = None
+    _enforce_full_refresh: Optional[bool] = True
 
     def __init__(self, airbyte_settings: AirbyteSettings):
         self.is_collected = False
         self._airbyte_response = None
         self.stream = airbyte_settings.stream
         self.source_name = airbyte_settings.source_name
+        self._enforce_full_refresh = airbyte_settings.enforce_full_refresh
 
         # Handle config
         if airbyte_settings.config_ref and not airbyte_settings.config:
@@ -85,7 +87,6 @@ class AirbyteSource(ExternalDataSource):
             source = ab.get_source(
                 name=self.source_name,
                 config=self.config,
-                install_if_missing=True,
                 streams=self.stream,
                 docker_image=True
             )
@@ -134,8 +135,8 @@ class AirbyteSource(ExternalDataSource):
 
     def get_df(self):
         if self.read_result is None:
-            source = self.airbyte_response.source
-            self.read_result = source.read()
+            self.read_result = self.airbyte_response.source.read()
+
         df = self.read_result[self.stream].to_pandas()
         drop_cols = [c for c in df.columns if c.startswith('_airbyte')]
         df.drop(drop_cols, axis=1, inplace=True)

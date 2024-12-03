@@ -45,6 +45,10 @@
   },
   "mac": {
     "icon": "src/assets/icons/mac/icon.icns",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "src/assets/mac-config/entitlements.mac.plist",
+    "entitlementsInherit": "src/assets/mac-config/entitlements.mac.plist",
     "extraFiles": [
       {
         "from": "../dist/flowfile_worker",
@@ -53,6 +57,10 @@
       {
         "from": "../dist/flowfile_core",
         "to": "resources/flowfile_core"
+      },
+      {
+        "from": "src/assets/mac-config/Info.plist",
+        "to": "Contents/Info.plist"
       }
     ]
   },

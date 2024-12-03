@@ -283,10 +283,18 @@ def get_available_connectors():
     return airbyte_config_handler.available_connectors
 
 
+@router.get('/airbyte/available_configs', tags=['airbyte'])
+def get_available_configs() -> List[str]:
+    """
+    Get the available configurations for the airbyte connectors
+    Returns: List of available configurations
+    """
+    return airbyte_config_handler.available_configs
+
+
 @router.get('/airbyte/config_template', tags=['airbyte'], response_model=AirbyteConfigTemplate)
 def get_config_spec(connector_name: str):
     a = airbyte_config_handler.get_config('source-' + connector_name)
-    logger.info(a.available_streams)
     return a
 
 
@@ -296,7 +304,10 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
     logger.info(f'Setting config for {airbyte_config.source_name}')
     logger.debug(f'Config: {airbyte_config.mapped_config_spec}')
     airbyte_handler = AirbyteHandler(airbyte_config=airbyte_config)
-    _ = airbyte_handler.get_available_streams()
+    try:
+        _ = airbyte_handler.get_available_streams()
+    except Exception as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post('/update_settings/', tags=['transform'])
@@ -399,13 +410,6 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     return list(node.get_all_dependent_node_ids())
-
-
-@router.get('/flow', tags=['editor'])
-def get_flow_on_id(flow_id: int):
-    logger.info('getting flow')
-    flow = flow_file_handler.get_flow(flow_id)
-    return flow.get_nodes_overview()
 
 
 @router.get('/import_flow/', tags=['editor'], response_model=int)

@@ -63,3 +63,85 @@ def test_add_generic_settings_polars_code():
     connect_node(1, connection)
     settings = {'flow_id': 1, 'node_id': 2, 'pos_x': 668, 'pos_y': 450, 'polars_code_input': {'polars_code': '# Add your polars code here\ninput_df.select(pl.col("name"))'}, 'cache_results': False, 'is_setup': True}
     add_generic_settings(settings, 'polars_code')
+
+
+async def test_instant_function_result():
+    # Setup nodes
+    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    add_node(flow_id=1, node_id=2, node_type='formula', pos_x=0, pos_y=0)
+
+    # Create connection
+    node_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+
+    # Setup input data
+    input_file = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data=[
+            {'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}
+        ]
+    ).__dict__
+
+    # Add settings and connect nodes
+    add_generic_settings(input_file, 'manual_input')
+    connect_node(1, node_connection)
+
+    # Await the result
+    result = await get_instant_function_result(1, 2, '[name]')
+    assert result.success, 'Instant function result failed'
+
+
+async def test_instant_function_result_fail():
+    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    add_node(flow_id=1, node_id=2, node_type='formula', pos_x=0, pos_y=0)
+
+    # Create connection
+    node_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+
+    # Setup input data
+    input_file = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data=[
+            {'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}
+        ]
+    ).__dict__
+
+    add_generic_settings(input_file, 'manual_input')
+    connect_node(1, node_connection)
+
+    result = await get_instant_function_result(1, 2, 'name')
+    assert not result.success, 'Instant function result did not fail'
+
+
+async def test_instant_function_result_after_run():
+    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    add_node(flow_id=1, node_id=2, node_type='formula', pos_x=0, pos_y=0)
+
+    # Create connection
+    node_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+
+    # Setup input data
+    input_file = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data=[
+            {'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}
+        ]
+    ).__dict__
+
+    add_generic_settings(input_file, 'manual_input')
+    connect_node(1, node_connection)
+    flow = flow_file_handler.get_flow(1)
+    flow.run_graph()
+    result = await get_instant_function_result(1, 2, '[name]')
+    assert result.success, 'Instant function result failed: ' + result.result

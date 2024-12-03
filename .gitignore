@@ -34,3 +34,4 @@ site/ # Also ignore mkdocs build directory
 /docs/.venv/
 docs/.venv/
 **/.venv/**
+/site/
