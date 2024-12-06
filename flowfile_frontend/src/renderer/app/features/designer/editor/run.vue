@@ -3,12 +3,12 @@
     <el-button
       size="small"
       :style="
-        isRunning
+        nodeStore.isRunning
           ? 'background-color: lightgrey; color: white'
           : 'background-color: rgb(92, 92, 92); color: white; font-weight: bold'
       "
       round
-      :disabled="isRunning"
+      :disabled="nodeStore.isRunning"
       @click="runFlow()"
     >
       Run
@@ -18,64 +18,54 @@
 
 <script setup lang="ts">
 import axios from "axios";
-import { defineProps, ref } from "vue";
+import { defineProps, ref, onUnmounted } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { RunInformation } from "../baseNode/nodeInterfaces";
 import { ElNotification } from "element-plus";
 
-const startRun = () => {
+const nodeStore = useNodeStore();
+const pollingInterval = ref<number | null>(null);
+
+const props = defineProps({
+  flowId: { type: Number, required: true },
+  pollingConfig: {
+    type: Object,
+    default: () => ({
+      interval: 2000,
+      enabled: true,
+      maxAttempts: Infinity,
+    }),
+  },
+});
+
+// Exposed notification functions
+const showNotification = (title: string, message: string, type?: 'success' | 'error') => {
   ElNotification({
-    title: "Run started",
-    message: "The flow started flowing",
+    title,
+    message,
+    type,
     position: "top-left",
   });
 };
-const isRunning = ref(false);
-const pollingInterval = ref<number | null>(null);
-const nodeStore = useNodeStore();
-const props = defineProps({
-  flowId: { type: Number, required: true },
-});
 
-const runFlow = async () => {
-  nodeStore.resetNodeResult();
-  console.log("start run");
-  startRun();
-  try {
-    await axios.post("/flow/run/", null, {
-      params: { flow_id: props.flowId },
-      headers: { accept: "application/json" },
-    });
-    isRunning.value = true;
-    nodeStore.isRunning = true;
-    if (pollingInterval.value === null) {
-      pollingInterval.value = setInterval(
-        checkRunStatus,
-        2000,
-      ) as unknown as number;
-    }
-  } catch (error) {
-    console.error("Error starting run:", error);
+// Exposed polling control functions
+const startPolling = (checkFn: () => Promise<void>) => {
+  if (pollingInterval.value === null && props.pollingConfig.enabled) {
+    pollingInterval.value = setInterval(
+      checkFn,
+      props.pollingConfig.interval,
+    ) as unknown as number;
   }
 };
-const runCompleted = (success: boolean) => {
-  if (success) {
-    ElNotification({
-      title: "Success",
-      message: "The flow has completed",
-      type: "success",
-      position: "top-left",
-    });
-  } else {
-    ElNotification({
-      title: "Error",
-      message:
-        "There were issues with the flow run, check the logging for more information",
-      type: "error",
-      position: "top-left",
-    });
+
+const stopPolling = () => {
+  if (pollingInterval.value !== null) {
+    clearInterval(pollingInterval.value);
+    pollingInterval.value = null;
   }
 };
+
+// Exposed run status check
 const checkRunStatus = async () => {
   try {
     const response = await axios.get("/flow/run_status/", {
@@ -84,36 +74,71 @@ const checkRunStatus = async () => {
     });
 
     if (response.status === 200) {
-      isRunning.value = false;
       console.log("stop polling");
-      clearInterval(pollingInterval.value!); // Stop polling
-      pollingInterval.value = null;
+      stopPolling();
       nodeStore.isRunning = false;
+      
       try {
         const runResult = await axios.get("/flow/run_results/", {
           params: { flow_id: props.flowId },
           headers: { accept: "application/json" },
         });
         const runInformation = runResult.data as RunInformation;
-        nodeStore.insertRunResult(runResult.data as RunInformation);
-        runCompleted(runInformation.success);
+        nodeStore.insertRunResult(runInformation);
+        showNotification(
+          runInformation.success ? "Success" : "Error",
+          runInformation.success 
+            ? "The flow has completed"
+            : "There were issues with the flow run, check the logging for more information",
+          runInformation.success ? "success" : "error"
+        );
       } catch (error) {
         console.error("Error getting run results:", error);
       }
     } else {
       nodeStore.insertRunResult(response.data);
     }
-    // If status is not 'completed', keep polling
   } catch (error) {
     console.error("Error checking run status:", error);
-    // Handle error (e.g., by showing a notification or stopping polling)
+    stopPolling();
   }
 };
+
+// Main run function
+const runFlow = async () => {
+  nodeStore.resetNodeResult();
+  console.log("start run");
+  showNotification("Run started", "The flow started flowing");
+  
+  try {
+    await axios.post("/flow/run/", null, {
+      params: { flow_id: props.flowId },
+      headers: { accept: "application/json" },
+    });
+    nodeStore.isRunning = true;
+    startPolling(checkRunStatus);
+  } catch (error) {
+    console.error("Error starting run:", error);
+  }
+};
+
+// Cleanup on component unmount
+onUnmounted(() => {
+  stopPolling();
+});
+
+// Expose functions for external use
+defineExpose({
+  startPolling,
+  stopPolling,
+  checkRunStatus,
+  showNotification,
+  runFlow,
+});
 </script>
 
 <style scoped>
 .el-button {
-  flex-shrink: 0; /* Prevent buttons from shrinking */
-  /* Additional styling here if needed */
+  flex-shrink: 0;
 }
 </style>

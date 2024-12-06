@@ -495,11 +495,19 @@ class NodeStep:
                 else:
                     self.results.errors = external_df_fetcher.error_description
                     raise Exception(external_df_fetcher.error_description)
+            finally:
+                self._fetch_cached_df = None
 
     def prepare_before_run(self):
         self.results.errors = None
         self.results.resulting_data = None
         self.results.example_data = None
+
+    def cancel(self):
+        if self._fetch_cached_df is not None:
+            self._fetch_cached_df.cancel()
+        else:
+            logger.warning('No external process to cancel')
 
     # @profile
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,

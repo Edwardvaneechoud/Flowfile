@@ -98,6 +98,8 @@ import { saveFlow } from "./utils";
 import RunButton from "../../editor/run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
+import { useNodeStore } from "../../../../stores/column-store";
+
 import PopOver from "../../editor/PopOver.vue";
 import {
   createFlow,
@@ -107,11 +109,14 @@ import {
   ExecutionMode,
 } from "../../nodes/nodeLogic";
 
+const nodeStore = useNodeStore();
+
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
+const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
@@ -127,6 +132,18 @@ const emit = defineEmits(["openFlow", "refreshFlow"]);
 
 const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);
+  if (flowSettings.value.is_running) {
+    if (runButton.value) {
+      nodeStore.isRunning = true;
+      runButton.value.startPolling(runButton.value.checkRunStatus);
+    }
+  }
+  else {
+    if (runButton.value) {
+      nodeStore.isRunning = false;
+      runButton.value.stopPolling();
+    }
+  }
 };
 
 const pushFlowSettings = async (execution_lcoation: ExecutionMode) => {

@@ -79,7 +79,6 @@ class EtlGraph:
     schema: Optional[List[FlowfileColumn]] = None
     has_over_row_function: bool = False
     _flow_starts: List[Union[int, str]] = None
-    is_running: bool = False
     node_results: [List[NodeResults]] = None
     latest_run_info: Optional[RunInformation] = None
     start_datetime: datetime = None
@@ -101,7 +100,6 @@ class EtlGraph:
         self.end_datetime = None
         self.latest_run_info = None
         self.node_results = []
-        self.is_running = False
         self._flow_id = flow_id
         self._flow_starts: List[NodeStep] = []
         self._results = None
@@ -654,8 +652,10 @@ class EtlGraph:
         def _func():
             logger.info('Calling external source')
             external_fetcher = ExternalAirbyteFetcher(airbyte_settings)
+            node._fetch_cached_df = external_fetcher
             fl = FlowfileTable(external_fetcher.result)
             external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
+            node._fetch_cached_df = None
             return fl
 
         def schema_callback():
@@ -868,7 +868,7 @@ class EtlGraph:
                              col in [table_col.name for table_col in self._input_data.schema]]))
 
     def run_graph(self) -> RunInformation:
-        self.is_running = True
+        self.flow_settings.is_running = True
         self.nodes_completed = 0
         self.node_results = []
         self.start_datetime = datetime.datetime.now()
@@ -883,6 +883,9 @@ class EtlGraph:
         skip_nodes = []
         performance_mode = self.flow_settings.execution_mode == 'Performance'
         for node in execution_order:
+            if self.flow_settings.is_canceled:
+                logger.info('Flow canceled')
+                break
             if node in skip_nodes:
                 logger.info(f'Skipping node {node.node_id}')
                 continue
@@ -905,7 +908,7 @@ class EtlGraph:
             self.nodes_completed += 1
             self.node_results.append(node_result)
         self.end_datetime = datetime.datetime.now()
-        self.is_running = False
+        self.flow_settings.is_running = False
         return self.get_run_info()
 
     def get_run_info(self) -> RunInformation:
@@ -966,6 +969,13 @@ class EtlGraph:
                                        node_starts=[v.node_id for v in self._flow_starts],
                                        node_connections=self.node_connections
                                        )
+
+    def cancel(self):
+        if not self.flow_settings.is_running:
+            return
+        for node in self.nodes:
+            self.flow_settings.is_canceled = True
+            node.cancel()
 
     def close_flow(self):
         for node in self.nodes:
@@ -1078,3 +1088,4 @@ def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection)
         raise HTTPException(404, 'Not not available')
     else:
         to_node.add_node_connection(from_node, insert_type)
+

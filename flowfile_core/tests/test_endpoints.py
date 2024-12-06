@@ -17,6 +17,12 @@ def test_connect_node():
     assert flow_file_handler.get_node(1, 1).leads_to_nodes[0].node_id == 2, 'Node not connected'
 
 
+
+def test_open_flowfile():
+    flow_id = flow_file_handler.import_flow('/Users/edwardvaneechoud/example.flowfile')
+    flow = flow_file_handler.get_flow(flow_id)
+
+
 def test_remove_connection():
     ...
 
