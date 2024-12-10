@@ -19,12 +19,12 @@ import Logo from "../logo/Logo.vue";
 const props = defineProps({
   isCollapse: {
     type: Boolean,
-    default: false
-  }
+    default: false,
+  },
 });
 
 // Define the toggle-collapse emit
-const emit = defineEmits(['toggle-collapse']);
+const emit = defineEmits(["toggle-collapse"]);
 
 const items = ref(NavigationRoutes.routes);
 </script>
