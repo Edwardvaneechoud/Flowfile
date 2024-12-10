@@ -2,7 +2,7 @@ import { app } from "electron";
 import { join } from "path";
 import { ChildProcess, exec, spawn } from "child_process";
 import axios from "axios";
-import { platform } from 'os';
+import { platform } from "os";
 import {
   SHUTDOWN_TIMEOUT,
   FORCE_KILL_TIMEOUT,
@@ -50,22 +50,23 @@ export async function ensureServicesStopped(): Promise<void> {
 }
 
 export function getResourcePath(resourceName: string): string {
-  const basePath = process.env.NODE_ENV === "development" 
-    ? app.getAppPath() 
-    : process.resourcesPath;
+  const basePath =
+    process.env.NODE_ENV === "development"
+      ? app.getAppPath()
+      : process.resourcesPath;
   console.log("Base path:", basePath);
   return join(basePath, resourceName);
 }
 
 function formatDockerPath(path: string): string {
-  if (platform() === 'win32') {
-    return path.replace(/\\/g, '/').replace(/^(\w):\//, '/$1/');
+  if (platform() === "win32") {
+    return path.replace(/\\/g, "/").replace(/^(\w):\//, "/$1/");
   }
   return path;
 }
 
 function getProcessEnv(): NodeJS.ProcessEnv {
-  const isWindows = platform() === 'win32';
+  const isWindows = platform() === "win32";
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
   const flowfileDir = join(homeDir, ".flowfile");
@@ -127,14 +128,14 @@ export function startProcess(
   onData?: (data: string) => void,
 ): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
-    const isWindows = platform() === 'win32';
+    const isWindows = platform() === "win32";
     console.log(`Starting ${name} from ${path}`);
 
     const childProcess = spawn(path, [], {
       env: getProcessEnv(),
-      shell: isWindows ? true : '/bin/bash',
+      shell: isWindows ? true : "/bin/bash",
       detached: false,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     if (!childProcess.pid) {
@@ -230,7 +231,7 @@ export async function cleanupProcesses(): Promise<void> {
         const forceKill = setTimeout(() => {
           try {
             console.warn(`Force killing ${name} process`);
-            process.kill('SIGKILL');
+            process.kill("SIGKILL");
           } catch (error) {
             console.error(`Error force killing ${name}:`, error);
           }
@@ -244,12 +245,12 @@ export async function cleanupProcesses(): Promise<void> {
         });
 
         try {
-          process.kill('SIGTERM');
+          process.kill("SIGTERM");
         } catch (error) {
           clearTimeout(forceKill);
           console.error(`Error sending SIGTERM to ${name}:`, error);
           try {
-            process.kill('SIGKILL');
+            process.kill("SIGKILL");
           } catch (secondError) {
             console.error(`Failed to force kill ${name}:`, secondError);
           }

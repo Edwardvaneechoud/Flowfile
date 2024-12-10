@@ -12,7 +12,6 @@
     <!-- Show loading state while fetching flows -->
     <div v-if="isLoading" class="loading-state">
       <div class="loading-state-content">
-        <el-spinner size="large" />
         <p>Loading flows...</p>
       </div>
     </div>
