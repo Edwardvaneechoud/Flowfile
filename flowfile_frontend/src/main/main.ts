@@ -16,16 +16,17 @@ import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
 import { openAuthWindow } from "./windowManager";
 import { loadWindow } from "./windowLoader";
-import { platform } from 'os';
+import { platform } from "os";
 
+async function checkDocker(): Promise<{
+  isAvailable: boolean;
+  error: string | null;
+}> {
+  const isWindows = platform() === "win32";
 
-
-async function checkDocker(): Promise<{ isAvailable: boolean; error: string | null }> {
-  const isWindows = platform() === 'win32';
-  
   return new Promise((resolve) => {
-    const checkCommand = isWindows 
-      ? 'docker info'
+    const checkCommand = isWindows
+      ? "docker info"
       : `${"/Applications/Docker.app/Contents/Resources/bin/docker"} info`;
 
     // Windows doesn't need process check
@@ -33,7 +34,7 @@ async function checkDocker(): Promise<{ isAvailable: boolean; error: string | nu
       exec(checkCommand, (error) => {
         resolve({
           isAvailable: !error,
-          error: error ? "Docker service is currently unreachable" : null
+          error: error ? "Docker service is currently unreachable" : null,
         });
       });
       return;
@@ -44,7 +45,8 @@ async function checkDocker(): Promise<{ isAvailable: boolean; error: string | nu
       if (!stdout) {
         resolve({
           isAvailable: false,
-          error: "Docker is not available. Some features may have limited functionality.",
+          error:
+            "Docker is not available. Some features may have limited functionality.",
         });
         return;
       }
@@ -52,7 +54,7 @@ async function checkDocker(): Promise<{ isAvailable: boolean; error: string | nu
       exec(checkCommand, (error) => {
         resolve({
           isAvailable: !error,
-          error: error ? "Docker service is currently unreachable" : null
+          error: error ? "Docker service is currently unreachable" : null,
         });
       });
     });

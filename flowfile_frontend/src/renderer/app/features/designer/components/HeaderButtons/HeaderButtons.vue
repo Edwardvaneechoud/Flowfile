@@ -44,7 +44,7 @@
 <strong>- Performance Mode</strong>: Only executes steps needed for the output (e.g., writing data), enabling query optimizations and better performance."
         placement="bottom"
       >
-        <Question class="help-icon">?</Question>
+        <el-icon class="help-icon"><QuestionFilled /></el-icon>
       </pop-over>
     </div>
   </div>
@@ -93,6 +93,7 @@
 </template>
 
 <script setup lang="ts">
+import { QuestionFilled } from "@element-plus/icons-vue";
 import { defineProps, ref, onMounted, defineExpose } from "vue";
 import { saveFlow } from "./utils";
 import RunButton from "../../editor/run.vue";
