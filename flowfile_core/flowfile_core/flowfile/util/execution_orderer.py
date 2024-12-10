@@ -24,8 +24,7 @@ def determine_execution_order(all_nodes: List[NodeStep], flow_starts: List[NodeS
     queue, visited_nodes = initialize_queue(flow_starts, all_nodes, in_degree)
 
     execution_order = perform_topological_sort(queue, node_map, in_degree, adjacency_list, visited_nodes)
-    print(execution_order)
-    print(node_map)
+    logger.info(f"execution order: \n {execution_order}")
     if len(execution_order) != len(node_map):
         raise Exception("Cycle detected in the graph. Execution order cannot be determined.")
 

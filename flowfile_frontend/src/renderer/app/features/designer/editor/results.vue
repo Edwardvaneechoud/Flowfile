@@ -27,15 +27,21 @@
             </h4>
             <h4 v-else>{{ `Node ${node.node_id}` }}: {{ node.node_name }}</h4>
             <div class="node-details">
-              <p>Duration: {{ formatRunTime(node.run_time) }}</p>
-              <p>
-                Status:
-                <span
-                  :class="{ success: node.success, failure: !node.success }"
-                  >{{ node.success ? "Success" : "Failure" }}</span
-                >
-              </p>
-              <p v-if="!node.success" class="failure">
+              <p>Duration: {{ formatRunTime(node.run_time, node.start_timestamp, node.is_running) }}</p>
+                <p>
+                  Status:
+                  <span
+                    :class="{
+                      running: node.success === null,
+                      success: node.success === true,
+                      failure: node.success === false,
+
+                    }"
+                  >
+                    {{ node.success === null ? "Running" : node.success ? "Success" : "Failure" }}
+                  </span>
+                </p>
+              <p v-if="node.success === false" class="failure">
                 Error: {{ node.error }}
               </p>
             </div>
@@ -65,17 +71,30 @@ const props = defineProps({
 const nodeStore = useNodeStore();
 const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
+const timer = ref<number | null>(null);
 
 const formatTimestamp = (timestamp: number) => {
   return format(new Date(timestamp * 1000), "yyyy-MM-dd HH:mm:ss");
 };
 
-const calculateColor = (success: boolean) => {
+const calculateColor = (success: boolean | undefined) => {
+  if (success === null) return "#0909ca";
   return success ? "green" : "red";
 };
+const formatRunTime = (runTime: number, startTimestamp: number, isRunning: boolean) => {
 
-const formatRunTime = (runTime: number) => {
+  if (isRunning && startTimestamp > 0) {
+    const currentTime = Date.now() / 1000; // Convert to seconds
+    runTime = currentTime - startTimestamp;
+  }
+
   const ms = runTime * 1000;
+  
+  // Handle invalid runtime
+  if (runTime < 0) {
+    return "Not started";
+  }
+  
   if (ms < 1000) {
     return `${Math.round(ms)} ms`;
   } else if (ms >= 1000 && runTime < 60) {
@@ -110,8 +129,6 @@ const navigateToNode = (nodeId: string) => {
       nodeComponent.classList.add("selected");
     }
 
-    // Assuming the button can be uniquely identified within the node component
-    // Here we use `el-button` as a selector; adjust if necessary
     const button = nodeComponent.querySelector(".el-button");
 
     if (button) {
@@ -126,6 +143,8 @@ const navigateToNode = (nodeId: string) => {
     }
   }
 };
+
+
 </script>
 
 <style scoped>
@@ -148,5 +167,20 @@ const navigateToNode = (nodeId: string) => {
 }
 .failure {
   color: red;
+}
+.running {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 </style>

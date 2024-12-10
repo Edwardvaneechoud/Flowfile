@@ -9,9 +9,10 @@ class NodeResult(BaseModel):
     node_name: str = None
     start_timestamp: float = Field(default_factory=time.time)
     end_timestamp: float = 0
-    success: bool = True
+    success: Optional[bool] = None
     error: str = ''
     run_time: int = -1
+    is_running: bool = True
 
 
 class RunInformation(BaseModel):

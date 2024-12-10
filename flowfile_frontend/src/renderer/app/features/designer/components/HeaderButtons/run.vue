@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="button-group">
     <el-button
       size="small"
       :style="
@@ -13,15 +13,25 @@
     >
       Run
     </el-button>
+    <el-button
+      v-if="nodeStore.isRunning"
+      size="small"
+      style="background-color: rgb(220, 53, 69); color: white; font-weight: bold"
+      round
+      @click="cancelFlow()"
+    >
+      Cancel
+    </el-button>
   </div>
 </template>
 
 <script setup lang="ts">
 import axios from "axios";
 import { defineProps, ref, onUnmounted } from "vue";
-import { useNodeStore } from "../../../stores/column-store";
-import { RunInformation } from "../baseNode/nodeInterfaces";
+import { useNodeStore } from "../../../../stores/column-store";
+import { RunInformation } from "../../baseNode/nodeInterfaces";
 import { ElNotification } from "element-plus";
+import { updateRunStatus } from "../../nodes/nodeLogic";
 
 const nodeStore = useNodeStore();
 const pollingInterval = ref<number | null>(null);
@@ -37,6 +47,13 @@ const props = defineProps({
     }),
   },
 });
+
+interface NotificationConfig {
+  title: string;
+  message: string;
+  type: 'success' | 'error';
+}
+
 
 // Exposed notification functions
 const showNotification = (title: string, message: string, type?: 'success' | 'error') => {
@@ -65,38 +82,31 @@ const stopPolling = () => {
   }
 };
 
-// Exposed run status check
+const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
+  title: runInfo.success ? "Success" : "Error",
+  message: runInfo.success 
+    ? "The flow has completed"
+    : "There were issues with the flow run, check the logging for more information",
+  type: runInfo.success ? "success" : "error"
+});
+
 const checkRunStatus = async () => {
   try {
-    const response = await axios.get("/flow/run_status/", {
-      params: { flow_id: props.flowId },
-      headers: { accept: "application/json" },
-    });
+    const response = await updateRunStatus(props.flowId, nodeStore);
 
     if (response.status === 200) {
-      console.log("stop polling");
       stopPolling();
       nodeStore.isRunning = false;
       
-      try {
-        const runResult = await axios.get("/flow/run_results/", {
-          params: { flow_id: props.flowId },
-          headers: { accept: "application/json" },
-        });
-        const runInformation = runResult.data as RunInformation;
-        nodeStore.insertRunResult(runInformation);
-        showNotification(
-          runInformation.success ? "Success" : "Error",
-          runInformation.success 
-            ? "The flow has completed"
-            : "There were issues with the flow run, check the logging for more information",
-          runInformation.success ? "success" : "error"
-        );
-      } catch (error) {
-        console.error("Error getting run results:", error);
-      }
-    } else {
-      nodeStore.insertRunResult(response.data);
+      const notificationConfig = createNotificationConfig(response.data);
+      showNotification(
+        notificationConfig.title,
+        notificationConfig.message,
+        notificationConfig.type
+      );
+    } else if (response.status === 404) {
+      stopPolling();
+      nodeStore.runResults = {};
     }
   } catch (error) {
     console.error("Error checking run status:", error);
@@ -122,22 +132,45 @@ const runFlow = async () => {
   }
 };
 
-// Cleanup on component unmount
+const cancelFlow = async () => {
+  try {
+    await axios.post("/flow/cancel/", null, {
+      params: { flow_id: props.flowId },
+      headers: { accept: "application/json" },
+    });
+    showNotification("Cancelling", "The flow is being cancelled");
+    nodeStore.isRunning = false;
+    stopPolling();
+  } catch (error) {
+    console.error("Error cancelling run:", error);
+    showNotification(
+      "Error",
+      "Failed to cancel the flow",
+      "error"
+    );
+  }
+};
+
 onUnmounted(() => {
   stopPolling();
 });
 
-// Expose functions for external use
 defineExpose({
   startPolling,
   stopPolling,
   checkRunStatus,
   showNotification,
   runFlow,
+  cancelFlow,
 });
 </script>
 
 <style scoped>
+.button-group {
+  display: flex;
+  gap: 10px;
+}
+
 .el-button {
   flex-shrink: 0;
 }

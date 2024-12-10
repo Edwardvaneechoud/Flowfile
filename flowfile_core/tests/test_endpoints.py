@@ -1,4 +1,5 @@
 from flowfile_core.routes import *
+import threading
 
 
 register_flow(schemas.FlowSettings(flow_id=1, path='./'))
@@ -19,8 +20,13 @@ def test_connect_node():
 
 
 def test_open_flowfile():
-    flow_id = flow_file_handler.import_flow('/Users/edwardvaneechoud/example.flowfile')
+    flow_id = flow_file_handler.import_flow('/Users/edwardvaneechoud/airbyte_example.flowfile')
     flow = flow_file_handler.get_flow(flow_id)
+    node = flow.get_node(1)
+    thread = threading.Thread(target=flow.run_graph)
+    thread.start()
+    flow.cancel()
+
 
 
 def test_remove_connection():

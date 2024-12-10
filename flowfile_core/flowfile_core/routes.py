@@ -159,7 +159,7 @@ def cancel_flow(flow_id: int):
 
 
 @router.get('/flow/run_status/', tags=['editor'],
-            response_model=output_model.RunInformation)  # Adjust the response model as needed
+            response_model=output_model.RunInformation)
 def get_run_status(flow_id: int, response: Response):
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
@@ -168,16 +168,6 @@ def get_run_status(flow_id: int, response: Response):
         response.status_code = status.HTTP_202_ACCEPTED
         return flow.get_run_info()
     response.status_code = status.HTTP_200_OK
-    return flow.get_run_info()
-
-
-@router.get('/flow/run_results', tags=['editor'], response_model=output_model.RunInformation)
-def get_run_results(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
-    if not flow:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    if not flow.latest_run_info:
-        raise HTTPException(status_code=404, detail="Flow has not been run")
     return flow.get_run_info()
 
 

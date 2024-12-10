@@ -2,6 +2,7 @@ import polars as pl
 from typing import Dict, Any, Callable
 import textwrap
 import ast
+import time
 
 
 def remove_comments_and_docstrings(source: str) -> str:
@@ -140,6 +141,7 @@ class PolarsCodeParser:
             'True': True,
             'False': False,
             'None': None,
+            'time': time
         }
 
     @staticmethod

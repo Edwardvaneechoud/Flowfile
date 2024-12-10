@@ -95,7 +95,7 @@
 <script setup lang="ts">
 import { defineProps, ref, onMounted, defineExpose } from "vue";
 import { saveFlow } from "./utils";
-import RunButton from "../../editor/run.vue";
+import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
 import { useNodeStore } from "../../../../stores/column-store";
@@ -107,6 +107,7 @@ import {
   FlowSettings,
   updateFlowSettings,
   ExecutionMode,
+  updateRunStatus,
 } from "../../nodes/nodeLogic";
 
 const nodeStore = useNodeStore();
@@ -142,12 +143,12 @@ const loadFlowSettings = async () => {
     if (runButton.value) {
       nodeStore.isRunning = false;
       runButton.value.stopPolling();
+      updateRunStatus(props.flowId, nodeStore, false);
     }
   }
 };
 
 const pushFlowSettings = async (execution_lcoation: ExecutionMode) => {
-  console.log("updateFlowSettings", flowSettings);
   if (flowSettings.value) {
     flowSettings.value.execution_mode = execution_lcoation;
   }
@@ -171,13 +172,13 @@ const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
 };
 
 function openFlowAction(inputSelectedFile: FileInfo | null) {
-  console.log("openFlowAction", inputSelectedFile);
   if (inputSelectedFile) {
     emit("openFlow", {
       message: "Flow opened",
       flowPath: inputSelectedFile.path,
     });
   }
+  nodeStore.resetRunResults();
   modalVisibleForOpen.value = false;
 }
 

@@ -23,6 +23,7 @@ class NodeStepStats:
     error: str = None
     has_run: bool = False
     active: bool = True
+    is_canceled: bool = False
 
 
 class NodeStepSettings:
