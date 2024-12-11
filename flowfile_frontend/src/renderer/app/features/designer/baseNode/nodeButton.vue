@@ -115,8 +115,8 @@ const toggleEditMode = (state: boolean) => {
 };
 
 interface ResultOutput {
-  success: boolean;
-  statusIndicator: "success" | "failure" | "unkown" | "warning";
+  success?: boolean;
+  statusIndicator: "success" | "failure" | "unknown" | "warning" | "running";
   error?: string;
   hasRun: boolean;
 }
@@ -124,73 +124,93 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
   const nodeResult = nodeStore.runNodeResultMap.get(props.nodeId);
   const nodeValidation = nodeStore.getNodeValidation(props.nodeId);
 
-  if (nodeResult && nodeValidation) {
-    // Case 1: nodeResult is success, nodeValidation is not success, and validation is after result -> warning (orange)
-    if (
-      nodeResult.success &&
-      !nodeValidation.isValid &&
-      nodeValidation.validationTime > nodeResult.start_timestamp
-    ) {
-      return {
-        success: nodeResult.success,
-        statusIndicator: "warning", // Orange -> warning
-        error: nodeValidation.error,
-        hasRun: true,
-      };
+  // Check if node is currently running (has start timestamp but not completed)
+  if (nodeResult && nodeResult.is_running) {
+    return {
+      success: undefined,
+      statusIndicator: "running",
+      hasRun: false,
+      error: undefined,
+    };
+  }
+
+  if (nodeResult && !nodeResult.is_running) {
+    if (nodeValidation) {
+      // Case 1: nodeResult is success, nodeValidation is not success, and validation is after result -> warning
+      if (
+        nodeResult.success === true &&
+        !nodeValidation.isValid &&
+        nodeValidation.validationTime > nodeResult.start_timestamp
+      ) {
+        return {
+          success: true,
+          statusIndicator: "warning",
+          error: nodeValidation.error,
+          hasRun: true,
+        };
+      }
+      // Case 2: nodeResult and nodeValidation both success -> success
+      if (nodeResult.success === true && nodeValidation.isValid) {
+        return {
+          success: true,
+          statusIndicator: "success",
+          error: nodeResult.error || nodeValidation.error,
+          hasRun: true,
+        };
+      }
+      if (
+        nodeResult.success === false &&
+        nodeValidation.isValid &&
+        nodeValidation.validationTime > nodeResult.start_timestamp
+      ) {
+        return {
+          success: false,
+          statusIndicator: "unknown",
+          error: nodeResult.error || nodeValidation.error,
+          hasRun: true,
+        };
+      }
+      if (
+        nodeResult.success === false &&
+        (!nodeValidation.isValid || !nodeValidation.validationTime)
+      ) {
+        return {
+          success: false,
+          statusIndicator: "failure",
+          error: nodeResult.error || nodeValidation.error,
+          hasRun: true,
+        };
+      }
     }
-    // Case 2: nodeResult and nodeValidation both success -> success (green)
-    if (nodeResult.success && nodeValidation.isValid) {
-      return {
-        success: true,
-        statusIndicator: "success", // Green -> success
-        error: nodeResult.error || nodeValidation.error,
-        hasRun: true,
-      };
-    }
-    // Case 3: nodeResult fail, nodeValidation success, validation after result -> unkown (white)
-    if (
-      !nodeResult.success &&
-      nodeValidation.isValid &&
-      nodeValidation.validationTime > nodeResult.start_timestamp
-    ) {
-      return {
-        success: nodeResult.success,
-        statusIndicator: "unkown", // White -> unkown
-        error: nodeResult.error || nodeValidation.error,
-        hasRun: true,
-      };
-    }
-    // Case 4: nodeResult fail, nodeValidation empty or fail -> failure (red)
-    if (
-      !nodeResult.success &&
-      (!nodeValidation.isValid || !nodeValidation.validationTime)
-    ) {
+    // Handle completed but no validation case
+    return {
+      success: nodeResult.success ?? false,
+      statusIndicator: nodeResult.success ? "success" : "failure",
+      error: nodeResult.error,
+      hasRun: true,
+    };
+  }
+
+  // Handle incomplete node cases
+  if (nodeValidation) {
+    if (!nodeValidation.isValid) {
       return {
         success: false,
-        statusIndicator: "failure", // Red -> failure
-        error: nodeResult.error || nodeValidation.error,
-        hasRun: true,
+        statusIndicator: "warning",
+        error: nodeValidation.error,
+        hasRun: false,
+      };
+    }
+    if (nodeValidation.isValid) {
+      return {
+        success: true,
+        statusIndicator: "unknown",
+        error: nodeValidation.error,
+        hasRun: false,
       };
     }
   }
-  // Case 5: nodeResult empty, nodeValidation fail -> warning (orange)
-  if (!nodeResult && nodeValidation && !nodeValidation.isValid) {
-    return {
-      success: false,
-      statusIndicator: "warning", // Orange -> warning
-      error: nodeValidation.error,
-      hasRun: false,
-    };
-  }
-  // Case 6: nodeResult empty, nodeValidation success -> unkown (white)
-  if (!nodeResult && nodeValidation && nodeValidation.isValid) {
-    return {
-      success: true,
-      statusIndicator: "unkown", // White -> unkown
-      error: nodeValidation.error,
-      hasRun: false,
-    };
-  }
+
   return undefined; // Default case
 });
 
@@ -208,7 +228,9 @@ const tooltipContent = computed(() => {
         "Operation warning: \n" +
         (nodeResult.value?.error || "No warning message available")
       );
-    case "unkown":
+    case "running":
+      return "Operation in progress...";
+    case "unknown":
     default:
       return "Status unknown";
   }
@@ -246,9 +268,9 @@ onUnmounted(() => {
 <style scoped>
 .status-indicator {
   position: relative;
-  display: flex; /* Use flex here if needed */
-  align-items: center; /* Align the indicator vertically */
-  margin-right: 8px; /* Adjust based on your layout */
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
 }
 
 .status-indicator::before {
@@ -273,6 +295,30 @@ onUnmounted(() => {
 
 .status-indicator.unknown::before {
   background-color: #ffffff;
+}
+
+.status-indicator.running::before {
+  background-color: #0909ca;
+  animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  box-shadow: 0 0 10px #0909ca;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 0 5px #0909ca;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.6;
+    box-shadow: 0 0 15px #0909ca;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 0 5px #0909ca;
+  }
 }
 
 .tooltip-text {
@@ -332,6 +378,12 @@ onUnmounted(() => {
   background-color: #ffffff;
   border-radius: 10px;
   border-width: 0.5px;
+}
+
+.node-button:hover {
+  background-color: #f5f5f5;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .overlay-content {

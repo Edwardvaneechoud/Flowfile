@@ -119,6 +119,28 @@ def get_status(file_ref: str) -> Status:
         raise Exception(f"Could not fetch the status, {status_response.text}")
 
 
+def cancel_task(file_ref: str) -> bool:
+    """
+    Cancels a running task by making a request to the worker service.
+
+    Args:
+        file_ref: The unique identifier of the task to cancel
+
+    Returns:
+        bool: True if cancellation was successful, False otherwise
+
+    Raises:
+        Exception: If there's an error communicating with the worker service
+    """
+    try:
+        response = requests.post(f'{WORKER_URL}/cancel_task/{file_ref}')
+        if response.ok:
+            return True
+        return False
+    except requests.RequestException as e:
+        raise Exception(f'Failed to cancel task: {str(e)}')
+
+
 class BaseFetcher:
     result: Optional[Any] = None
     started: bool = False
@@ -202,9 +224,25 @@ class BaseFetcher:
             self.started = True
 
     def cancel(self):
+        """
+        Cancels the current task both locally and on the worker service.
+        Also cleans up any resources being used.
+        """
         logger.warning('Cancelling the operation')
+        try:
+            cancel_task(self.file_ref)
+        except Exception as e:
+            logger.error(f'Failed to cancel task on worker: {str(e)}')
+
+        # Then stop the local monitoring thread
         self.stop_event.set()
         self.thread.join()
+
+        # Update local state
+        with self.condition:
+            self.running = False
+            self.error_description = "Task cancelled by user"
+            self.condition.notify_all()
 
     def get_result(self) -> Optional[Any]:
         if not self.started:
