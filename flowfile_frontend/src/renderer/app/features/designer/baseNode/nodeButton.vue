@@ -130,7 +130,7 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
       success: undefined,
       statusIndicator: "running",
       hasRun: false,
-      error: undefined
+      error: undefined,
     };
   }
 
@@ -214,15 +214,20 @@ const nodeResult = computed<ResultOutput | undefined>(() => {
   return undefined; // Default case
 });
 
-
 const tooltipContent = computed(() => {
   switch (nodeResult.value?.statusIndicator) {
     case "success":
       return "Operation successful";
     case "failure":
-      return "Operation failed: \n" + (nodeResult.value?.error || "No error message available");
+      return (
+        "Operation failed: \n" +
+        (nodeResult.value?.error || "No error message available")
+      );
     case "warning":
-      return "Operation warning: \n" + (nodeResult.value?.error || "No warning message available");
+      return (
+        "Operation warning: \n" +
+        (nodeResult.value?.error || "No warning message available")
+      );
     case "running":
       return "Operation in progress...";
     case "unknown":
@@ -230,7 +235,6 @@ const tooltipContent = computed(() => {
       return "Status unknown";
   }
 });
-
 
 const getNodeDescription = async () => {
   description.value = await nodeStore.getNodeDescription(props.nodeId);
@@ -262,7 +266,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-
 .status-indicator {
   position: relative;
   display: flex;

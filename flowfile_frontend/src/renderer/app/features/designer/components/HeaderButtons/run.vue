@@ -16,7 +16,11 @@
     <el-button
       v-if="nodeStore.isRunning"
       size="small"
-      style="background-color: rgb(220, 53, 69); color: white; font-weight: bold"
+      style="
+        background-color: rgb(220, 53, 69);
+        color: white;
+        font-weight: bold;
+      "
       round
       @click="cancelFlow()"
     >
@@ -51,12 +55,15 @@ const props = defineProps({
 interface NotificationConfig {
   title: string;
   message: string;
-  type: 'success' | 'error';
+  type: "success" | "error";
 }
 
-
 // Exposed notification functions
-const showNotification = (title: string, message: string, type?: 'success' | 'error') => {
+const showNotification = (
+  title: string,
+  message: string,
+  type?: "success" | "error",
+) => {
   ElNotification({
     title,
     message,
@@ -82,12 +89,14 @@ const stopPolling = () => {
   }
 };
 
-const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
+const createNotificationConfig = (
+  runInfo: RunInformation,
+): NotificationConfig => ({
   title: runInfo.success ? "Success" : "Error",
-  message: runInfo.success 
+  message: runInfo.success
     ? "The flow has completed"
     : "There were issues with the flow run, check the logging for more information",
-  type: runInfo.success ? "success" : "error"
+  type: runInfo.success ? "success" : "error",
 });
 
 const checkRunStatus = async () => {
@@ -97,12 +106,12 @@ const checkRunStatus = async () => {
     if (response.status === 200) {
       stopPolling();
       nodeStore.isRunning = false;
-      
+
       const notificationConfig = createNotificationConfig(response.data);
       showNotification(
         notificationConfig.title,
         notificationConfig.message,
-        notificationConfig.type
+        notificationConfig.type,
       );
     } else if (response.status === 404) {
       stopPolling();
@@ -119,7 +128,7 @@ const runFlow = async () => {
   nodeStore.resetNodeResult();
   console.log("start run");
   showNotification("Run started", "The flow started flowing");
-  
+
   try {
     await axios.post("/flow/run/", null, {
       params: { flow_id: props.flowId },
@@ -143,11 +152,7 @@ const cancelFlow = async () => {
     stopPolling();
   } catch (error) {
     console.error("Error cancelling run:", error);
-    showNotification(
-      "Error",
-      "Failed to cancel the flow",
-      "error"
-    );
+    showNotification("Error", "Failed to cancel the flow", "error");
   }
 };
 

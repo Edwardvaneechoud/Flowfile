@@ -139,8 +139,7 @@ const loadFlowSettings = async () => {
       nodeStore.isRunning = true;
       runButton.value.startPolling(runButton.value.checkRunStatus);
     }
-  }
-  else {
+  } else {
     if (runButton.value) {
       nodeStore.isRunning = false;
       runButton.value.stopPolling();
