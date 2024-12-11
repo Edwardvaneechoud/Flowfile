@@ -72,7 +72,7 @@ class FlowfileTable:
     name: str = None
     number_of_records: int = None
     errors: List = None
-    _schema: List['FlowfileColumn'] = None
+    _schema: Optional[List['FlowfileColumn']] = None
 
     # Configuration attributes
     _optimize_memory: bool = False
@@ -712,7 +712,7 @@ class FlowfileTable:
 
     def __repr__(self) -> str:
         """Return string representation of the FlowfileTable."""
-        return self.data_frame.__repr__()
+        return f'flowfile table\n{self.data_frame.__repr__()}'
 
     def __call__(self) -> "FlowfileTable":
         """Make the class callable, returning self."""
@@ -747,6 +747,7 @@ class FlowfileTable:
                 self.data_frame = self.external_source.get_pl_df().lazy()
             else:
                 self.data_frame = pl.LazyFrame(list(self.external_source.get_iter()))
+            self._schema = None  # enforce reset schema
 
     # Data Access Methods
     def get_output_sample(self, n_rows: int = 10) -> List[Dict]:

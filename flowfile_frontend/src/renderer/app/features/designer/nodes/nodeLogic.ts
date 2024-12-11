@@ -1,14 +1,7 @@
 import { ref, Ref } from 'vue'
 import axios from 'axios'
-import { NodeData, nodeData as nodeDataRef, TableExample } from '../baseNode/nodeInterfaces'
-
-export interface AxiosResponse {
-  data: any // You can replace 'any' with the specific structure if known.
-  status: number
-  statusText: string
-  headers: any // Use a more detailed type if you want.
-  config: any // Use a more detailed type if you want.
-}
+import { NodeData, nodeData as nodeDataRef, TableExample, RunInformation} from '../baseNode/nodeInterfaces'
+import { AxiosResponse } from 'axios';
 
 export type ExecutionMode = 'Development' | 'Performance';
 
@@ -21,6 +14,7 @@ export interface FlowSettings {
   modified_on?: number
   path?: string
   execution_mode: ExecutionMode
+  is_running: boolean
 }
 
 
@@ -164,3 +158,29 @@ export async function deleteNode(flow_id: number, node_id: number): Promise<any>
     throw error
   }
 }
+
+const isResponseSuccessful = (status: number): boolean => 
+  status >= 200 && status < 300;
+
+
+export const getRunStatus = async (flowId: number): Promise<AxiosResponse<RunInformation>> => {
+  const response = await axios.get("/flow/run_status/", {
+    params: { flow_id: flowId },
+    headers: { accept: "application/json" },
+  });
+  return response;
+};
+
+export const updateRunStatus = async (
+  flowId: number, 
+  nodeStore: { insertRunResult: (result: RunInformation, showRunResults: boolean) => void },
+  showRunResults: boolean = true
+): Promise<AxiosResponse<RunInformation>> => {
+  const response = await getRunStatus(flowId);
+  
+  if (isResponseSuccessful(response.status)) {
+    nodeStore.insertRunResult(response.data, showRunResults);
+  }
+  
+  return response;
+};

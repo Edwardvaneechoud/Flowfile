@@ -143,32 +143,31 @@ async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
 def run_flow(flow_id: int, background_tasks: BackgroundTasks):
     logger.info('starting to run...')
     flow = flow_file_handler.get_flow(flow_id)
-    if flow.is_running:
+    print(flow.flow_settings)
+    if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     background_tasks.add_task(flow.run_graph)
     JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_202_ACCEPTED)
 
 
+@router.post('/flow/cancel/', tags=['editor'])
+def cancel_flow(flow_id: int):
+    flow = flow_file_handler.get_flow(flow_id)
+    if not flow.flow_settings.is_running:
+        raise HTTPException(422, 'Flow is not running')
+    flow.cancel()
+
+
 @router.get('/flow/run_status/', tags=['editor'],
-            response_model=output_model.RunInformation)  # Adjust the response model as needed
+            response_model=output_model.RunInformation)
 def get_run_status(flow_id: int, response: Response):
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-    if flow.is_running:
+    if flow.flow_settings.is_running:
         response.status_code = status.HTTP_202_ACCEPTED
         return flow.get_run_info()
     response.status_code = status.HTTP_200_OK
-    return flow.get_run_info()
-
-
-@router.get('/flow/run_results', tags=['editor'], response_model=output_model.RunInformation)
-def get_run_results(flow_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
-    if not flow:
-        raise HTTPException(status_code=404, detail="Flow not found")
-    if not flow.latest_run_info:
-        raise HTTPException(status_code=404, detail="Flow has not been run")
     return flow.get_run_info()
 
 
@@ -192,7 +191,7 @@ def add_flow_input(input_data: input_schema.NodeDatasource):
 def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: int = 0):
     flow = flow_file_handler.get_flow(flow_id)
     logger.info(f'Adding a promise for {node_type}')
-    if flow.is_running:
+    if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     node = flow.get_node(node_id)
     if node is not None:
@@ -219,7 +218,7 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
 def delete_node(flow_id: Optional[int], node_id: int):
     print('Deleting node')
     flow = flow_file_handler.get_flow(flow_id)
-    if flow.is_running:
+    if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     flow.delete_node(node_id)
 
@@ -231,7 +230,7 @@ def delete_connection(flow_id: int,
     logger.info(
         f'Deleting connection node {node_connection.output_connection.node_id} to node {node_connection.input_connection.node_id}')
     flow = flow_file_handler.get_flow(flow_id)
-    if flow.is_running:
+    if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
@@ -249,7 +248,7 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection):
     if flow is None:
         logger.info('could not find the flow')
         raise HTTPException(404, 'could not find the flow')
-    if flow.is_running:
+    if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     add_connection(flow, node_connection)
 
@@ -283,10 +282,18 @@ def get_available_connectors():
     return airbyte_config_handler.available_connectors
 
 
+@router.get('/airbyte/available_configs', tags=['airbyte'])
+def get_available_configs() -> List[str]:
+    """
+    Get the available configurations for the airbyte connectors
+    Returns: List of available configurations
+    """
+    return airbyte_config_handler.available_configs
+
+
 @router.get('/airbyte/config_template', tags=['airbyte'], response_model=AirbyteConfigTemplate)
 def get_config_spec(connector_name: str):
     a = airbyte_config_handler.get_config('source-' + connector_name)
-    logger.info(a.available_streams)
     return a
 
 
@@ -296,7 +303,10 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
     logger.info(f'Setting config for {airbyte_config.source_name}')
     logger.debug(f'Config: {airbyte_config.mapped_config_spec}')
     airbyte_handler = AirbyteHandler(airbyte_config=airbyte_config)
-    _ = airbyte_handler.get_available_streams()
+    try:
+        _ = airbyte_handler.get_available_streams()
+    except Exception as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post('/update_settings/', tags=['transform'])
@@ -305,7 +315,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str):
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
     flow = flow_file_handler.get_flow(flow_id)
-    if flow.is_running:
+    if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
@@ -399,13 +409,6 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     return list(node.get_all_dependent_node_ids())
-
-
-@router.get('/flow', tags=['editor'])
-def get_flow_on_id(flow_id: int):
-    logger.info('getting flow')
-    flow = flow_file_handler.get_flow(flow_id)
-    return flow.get_nodes_overview()
 
 
 @router.get('/import_flow/', tags=['editor'], response_model=int)

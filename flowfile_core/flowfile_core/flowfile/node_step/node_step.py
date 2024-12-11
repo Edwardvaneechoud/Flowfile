@@ -330,6 +330,7 @@ class NodeStep:
                             raise e
                     fl.set_streamable(self.node_settings.streamable)
                     self.results.resulting_data = fl
+                    self.node_schema.result_schema = fl.schema
                 except Exception as e:
                     self.results.resulting_data = FlowfileTable()
                     self.results.errors = str(e)
@@ -430,7 +431,7 @@ class NodeStep:
                 external_sampler = ExternalSampler(lf=resulting_data.data_frame, file_ref=self.hash,
                                                    wait_on_completion=True)
                 self.store_example_data_generator(external_sampler)
-                if self.results.errors is None:
+                if self.results.errors is None and not self.node_stats.is_canceled:
                     self.node_stats.has_run = True
             self.node_schema.result_schema = resulting_data.schema
 
@@ -494,15 +495,24 @@ class NodeStep:
                 else:
                     self.results.errors = external_df_fetcher.error_description
                     raise Exception(external_df_fetcher.error_description)
+            finally:
+                self._fetch_cached_df = None
 
     def prepare_before_run(self):
         self.results.errors = None
         self.results.resulting_data = None
         self.results.example_data = None
 
+    def cancel(self):
+        if self._fetch_cached_df is not None:
+            self._fetch_cached_df.cancel()
+            self.node_stats.is_canceled = True
+        else:
+            logger.warning('No external process to cancel')
+
     # @profile
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
-                     performance_mode: bool = False):
+                     performance_mode: bool = False, retry: bool = True):
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run = False
@@ -519,9 +529,20 @@ class NodeStep:
                         logger.info('Running the node locally')
                         self.execute_local(performance_mode=performance_mode)
                 except Exception as e:
-                    self.node_stats.has_run = False
-                    self.results.errors = str(e)
-                    logger.error('Error with running the node')
+                    if 'No such file or directory (os error' in str(e) and retry:
+                        logger.warning('Error with the input node, starting to rerun the input node...')
+                        all_inputs: List[NodeStep] = self.node_inputs.get_all_inputs()
+                        for node_input in all_inputs:
+                            node_input.execute_node(run_location=run_location,
+                                                    performance_mode=performance_mode, retry=True,
+                                                    reset_cache=True)
+                        self.execute_node(run_location=run_location,
+                                          performance_mode=performance_mode, retry=False)
+                    else:
+                        self.node_stats.has_run = False
+                        self.results.errors = str(e)
+                        logger.error(f'Error with running the node: {e}')
+
             else:
                 logger.info('Node has already run, not running the node')
         else:
@@ -534,9 +555,10 @@ class NodeStep:
         if self.results.errors is None:
             self.node_stats.has_run = True
 
-    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher|ExternalSampler):
+    def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
         if external_df_fetcher.status is not None:
             file_ref = external_df_fetcher.status.file_ref
+            self.results.example_data_path = file_ref
             self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
         else:
             logger.error('Could not get the sample data, the external process is not ready')
@@ -592,10 +614,8 @@ class NodeStep:
                           complete: bool = False) -> bool:
         #  connection type must be in right, left or main
         deleted: bool = False
-        print(connection_type)
         if connection_type == 'input-0':
             for i, node in enumerate(self.node_inputs.main_inputs):
-                print(node, node.node_id == node_id, node_id)
                 if node.node_id == node_id:
                     self.node_inputs.main_inputs.pop(i)
                     deleted = True
@@ -660,7 +680,7 @@ class NodeStep:
             self.print('getting the table example')
             return self.main_input[0].get_table_example(include_data)
         if self.node_stats.has_run and self.is_setup and include_data:
-            print('getting the table example since the node has run')
+            logger.info('getting the table example since the node has run')
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:
                 data = example_data_getter().to_pylist()
@@ -675,7 +695,7 @@ class NodeStep:
                                 number_of_columns=fl.number_of_fields,
                                 table_schema=schema, columns=fl.columns, data=data)
         else:
-            print('getting the table example but the node has not run')
+            logger.warning('getting the table example but the node has not run')
             try:
                 schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
             except Exception as e:
@@ -697,7 +717,6 @@ class NodeStep:
                         has_run=self.node_stats.has_run,
                         setting_input=self.setting_input,
                         flow_type=self.node_type)
-        print('flow id of node: ', node.flow_id)
         if self.main_input:
             node.main_input = self.main_input[0].get_table_example()
         if self.left_input:

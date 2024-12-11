@@ -16,3 +16,4 @@ class AirbyteConfig(BaseModel):
     @property
     def full_source_name(self) -> str:
         return f"source-{self.source_name}"
+

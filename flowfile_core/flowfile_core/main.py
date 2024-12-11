@@ -1,11 +1,11 @@
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import signal
 import asyncio
 from contextlib import asynccontextmanager
-from flowfile_core.routes import router, register_flow
-from flowfile_core.schemas import schemas
+from flowfile_core.routes import router
 
 # Global shutdown flag and server reference
 should_exit = False

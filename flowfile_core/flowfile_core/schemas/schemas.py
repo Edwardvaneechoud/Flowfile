@@ -5,6 +5,7 @@ from typing import List, Dict, Tuple, Iterable, Optional, Any, Literal
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
 
+
 class FlowSettings(BaseModel):
     flow_id: int
     description: Optional[str] = None
@@ -14,6 +15,8 @@ class FlowSettings(BaseModel):
     modified_on: Optional[float] = None
     path: str
     execution_mode: ExecutionModeLiteral = 'Development'
+    is_running: bool = False
+    is_canceled: bool = False
 
 
 class NodeTemplate(BaseModel):

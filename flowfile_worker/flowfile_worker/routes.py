@@ -10,7 +10,8 @@ from flowfile_worker import models
 from flowfile_worker.spawner import start_process, start_fuzzy_process, start_generic_process, process_manager
 from flowfile_worker.create import table_creator_factory_method, received_table_parser, FileType
 from flowfile_worker.configs import logger
-
+from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
+from flowfile_worker.external_sources.airbyte_sources.main import read_airbyte_source
 
 router = APIRouter()
 
@@ -100,6 +101,37 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
 
     except Exception as e:
         logger.error(f"Error in write operation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/store_airbyte_result')
+def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: BackgroundTasks) -> models.Status:
+    """
+    Store the result of an Airbyte source operation.
+
+    Args:
+        airbyte_settings (AirbyteSettings): Settings for the Airbyte source operation
+        background_tasks (BackgroundTasks): FastAPI background tasks handler
+
+    Returns:
+        models.Status: Status object tracking the Airbyte source operation
+    """
+    logger.info(f"Processing Airbyte source operation")
+
+    try:
+        task_id = str(uuid.uuid4())
+        file_path = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
+                               result_type="polars")
+        status_dict[task_id] = status
+        background_tasks.add_task(start_generic_process, func_ref=read_airbyte_source, file_ref=file_path,
+                                  task_id=task_id, args=(airbyte_settings,))
+        logger.info(f"Started Airbyte source task: {task_id}")
+
+        return status
+
+    except Exception as e:
+        logger.error(f"Error processing Airbyte source: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

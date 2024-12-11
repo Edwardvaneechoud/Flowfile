@@ -53,9 +53,10 @@ export interface NodeResult {
   node_name?: string
   start_timestamp: number
   end_timestamp: number
-  success: boolean
+  success?: boolean
   error: string
   run_time: number
+  is_running: boolean
 }
 
 export interface RunInformation {

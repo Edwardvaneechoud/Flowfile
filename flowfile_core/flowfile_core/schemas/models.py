@@ -7,6 +7,7 @@ import mimetypes
 from copy import deepcopy
 from flowfile_core.configs.settings import FILE_LOCATION
 
+
 class DirItem:
     name: str
     full_path: str

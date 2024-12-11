@@ -23,6 +23,7 @@ class NodeStepStats:
     error: str = None
     has_run: bool = False
     active: bool = True
+    is_canceled: bool = False
 
 
 class NodeStepSettings:
@@ -66,6 +67,7 @@ class NodeResults:
     _resulting_data: Optional[FlowfileTable] = None  # after successful execution this will contain the Flowfile
     example_data: Optional[
         FlowfileTable] = None  # after success this will contain a sample of the data (to provide frontend data)
+    example_data_path: Optional[str] = None  # Path to the arrow table file
     example_data_generator: Optional[Callable[[], pa.Table]] = None
     run_time: int = -1
     errors: Optional[str] = None
