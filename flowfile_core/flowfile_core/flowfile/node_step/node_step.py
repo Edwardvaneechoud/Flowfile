@@ -1,7 +1,5 @@
 import polars as pl
 from typing import List, Union, Callable, Any, Optional, Generator
-
-
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
@@ -17,6 +15,7 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations import (
     ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result,)
 from flowfile_core.flowfile.node_step.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
+from flowfile_core.flowfile.node_step.schema_callback import SingleExecutionFuture
 
 
 class NodeStep:
@@ -34,7 +33,7 @@ class NodeStep:
     _setting_input: Any = None
     _hash: Optional[str] = None  # host this for caching results
     _function: Callable = None  # the function that needs to be executed when triggered
-    _schema_callback: Optional[Callable] = None  # Function that calculates the schema without executing the process
+    _schema_callback: Optional[SingleExecutionFuture] = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
     _fetch_cached_df: Optional[ExternalDfFetcher] = None
     _cache_progress: Optional[ExternalDfFetcher] = None
@@ -69,15 +68,13 @@ class NodeStep:
         if f is None:
             return
 
-        def schema_call_back_func():
-            try:
-                return f()
-            except Exception as e:
-                logger.warn(e)
-                self.node_settings.setup_errors = True
-                return []
+        def error_callback(e: Exception) -> List:
+            logger.warn(e)
+            self.node_settings.setup_errors = True
+            return []
 
-        self._schema_callback = schema_call_back_func
+        self._schema_callback = SingleExecutionFuture(f, error_callback)
+        self._schema_callback.start()
 
     @property
     def is_start(self) -> bool:
