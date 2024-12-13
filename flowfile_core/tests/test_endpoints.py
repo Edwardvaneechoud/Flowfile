@@ -1,5 +1,5 @@
 from flowfile_core.routes import *
-
+import threading
 
 register_flow(schemas.FlowSettings(flow_id=1, path='./'))
 
@@ -15,6 +15,45 @@ def test_connect_node():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(1, connection)
     assert flow_file_handler.get_node(1, 1).leads_to_nodes[0].node_id == 2, 'Node not connected'
+
+
+def test_add_big_excel():
+    add_node(1, 1, node_type='read', pos_x=0, pos_y=0)
+    settings = input_schema.NodeRead(flow_id=1, node_id=1, cache_results=True, pos_x=466.57009116828044,
+                                     pos_y=108.7232469702331, is_setup=True,
+                                     description='',
+                                     received_file=input_schema.ReceivedTable(file_type='excel', id=None,
+                                                                              name='big_xlsx.xlsx',
+                                                                              path='C:\\Users\\edwar\\Downloads\\big_xlsx.xlsx',
+                                                                              directory=None,
+                                                                              analysis_file_available=False,
+                                                                              status=None,
+                                                                              fields=[],
+                                                                              abs_file_path='C:\\Users\\edwar\\Downloads\\big_xlsx.xlsx',
+                                                                              reference='', starting_from_line=0,
+                                                                              delimiter=',',
+                                                                              has_headers=True, encoding='utf-8',
+                                                                              parquet_ref=None,
+                                                                              row_delimiter='\n', quote_char='"',
+                                                                              infer_schema_length=1000,
+                                                                              truncate_ragged_lines=False,
+                                                                              ignore_errors=False,
+                                                                              sheet_name='Sheet1', start_row=0,
+                                                                              start_column=0, end_row=0,
+                                                                              end_column=0,
+                                                                              type_inference=False)).__dict__
+    add_generic_settings(settings, 'read')
+    flow = flow_file_handler.get_flow(1)
+    flow.get_node_data(1)
+
+
+def test_open_flowfile():
+    flow_id = flow_file_handler.import_flow('C:/Users//edwar//big_excel_test.flowfile')
+    flow = flow_file_handler.get_flow(flow_id)
+    node = flow.get_node(1)
+    thread = threading.Thread(target=flow.run_graph)
+    thread.start()
+    flow.cancel()
 
 
 def test_remove_connection():
@@ -61,7 +100,9 @@ def test_add_generic_settings_polars_code():
     add_generic_settings(input_file, 'manual_input')
     add_node(1, 2, node_type='polars_code', pos_x=0, pos_y=0)
     connect_node(1, connection)
-    settings = {'flow_id': 1, 'node_id': 2, 'pos_x': 668, 'pos_y': 450, 'polars_code_input': {'polars_code': '# Add your polars code here\ninput_df.select(pl.col("name"))'}, 'cache_results': False, 'is_setup': True}
+    settings = {'flow_id': 1, 'node_id': 2, 'pos_x': 668, 'pos_y': 450,
+                'polars_code_input': {'polars_code': '# Add your polars code here\ninput_df.select(pl.col("name"))'},
+                'cache_results': False, 'is_setup': True}
     add_generic_settings(settings, 'polars_code')
 
 

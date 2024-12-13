@@ -265,18 +265,20 @@ export const useNodeStore = defineStore('node', {
       this.inputCode = newCode
     },
 
-    insertRunResult(runResult: RunInformation) {
+    resetRunResults() {
+      this.runNodeResultMap = new Map<number, NodeResult>()
+      this.runResults = {}
+      this.currentRunResult = null
+    },
+
+    insertRunResult(runResult: RunInformation, showResult: boolean = true) {
       this.currentRunResult = runResult
       this.runResults[runResult.flow_id] = runResult
-      this.showFlowResult = true
-      console.log('insertRunResult called in column-store.ts')
-      console.log(this.runNodeResultMap)
+      this.showFlowResult = showResult
       runResult.node_step_result.forEach((nodeResult) => {
-        console.log('Inserting node result', nodeResult)
         this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
       })
       this.resultVersion++
-      console.log(this.runNodeResultMap.get(1))
     },
 
     getRunResult(flow_id: number): RunInformation | null {

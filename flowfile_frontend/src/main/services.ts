@@ -1,14 +1,9 @@
 import { app } from "electron";
-import { join } from "path";
+import { join, dirname } from "path";
 import { ChildProcess, exec, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
-import {
-  SHUTDOWN_TIMEOUT,
-  FORCE_KILL_TIMEOUT,
-  WORKER_PORT,
-  CORE_PORT,
-} from "./constants";
+import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT, WORKER_PORT, CORE_PORT } from "./constants";
 import { existsSync, mkdirSync } from "fs";
 
 export const shutdownState = { isShuttingDown: false };
@@ -40,22 +35,55 @@ export async function shutdownService(port: number): Promise<void> {
 
 export async function ensureServicesStopped(): Promise<void> {
   try {
-    await Promise.all([
-      shutdownService(WORKER_PORT),
-      shutdownService(CORE_PORT),
-    ]);
+    await Promise.all([shutdownService(WORKER_PORT), shutdownService(CORE_PORT)]);
   } catch (error) {
     console.error("Error during service shutdown:", error);
   }
 }
 
-export function getResourcePath(resourceName: string): string {
-  const basePath =
-    process.env.NODE_ENV === "development"
-      ? app.getAppPath()
-      : process.resourcesPath;
-  console.log("Base path:", basePath);
-  return join(basePath, resourceName);
+function findProjectRoot(startPath: string): string {
+  let currentPath = startPath;
+  while (currentPath !== dirname(currentPath)) {
+    // Stop at root directory
+    if (existsSync(join(currentPath, "package.json"))) {
+      return currentPath;
+    }
+    currentPath = dirname(currentPath);
+  }
+  return "";
+}
+
+export function getResourceServicePath(resourceName: string): string {
+  if (process.env.NODE_ENV === "development") {
+    const projectRoot = findProjectRoot(app.getAppPath());
+    console.log(projectRoot);
+    if (!projectRoot) {
+      console.warn("Could not find project root directory");
+      return "";
+    }
+
+    const devPath = join(projectRoot, "..", "services_dist", resourceName);
+    if (existsSync(devPath)) {
+      console.log(`Using development executable at: ${devPath}`);
+      return devPath;
+    }
+    console.warn(`Development executable not found at: ${devPath}`);
+    return "";
+  }
+
+  // Production path handling remains the same...
+  const basePath = join(process.resourcesPath, "flowfile-services");
+  const isWindows = platform() === "win32";
+  const executableName = isWindows ? `${resourceName}.exe` : resourceName;
+  const executablePath = join(basePath, executableName);
+
+  if (existsSync(basePath) && existsSync(executablePath)) {
+    console.log(`Using production executable at: ${basePath}`);
+    return executablePath;
+  }
+
+  console.warn(`Production executable not found at: ${executablePath}`);
+  return "";
 }
 
 function formatDockerPath(path: string): string {
@@ -131,11 +159,17 @@ export function startProcess(
     const isWindows = platform() === "win32";
     console.log(`Starting ${name} from ${path}`);
 
+    // Get the working directory (directory containing the executable)
+    const workingDirectory = path.endsWith(name)
+      ? join(path, "..") // New structure
+      : join(path, "../.."); // Legacy structure
+
     const childProcess = spawn(path, [], {
-      env: getProcessEnv(),
+      env: getProcessEnv(), // Keep using the original getProcessEnv with all Docker settings
       shell: isWindows ? true : "/bin/bash",
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
+      cwd: workingDirectory, // Add this line for directory handling
     });
 
     if (!childProcess.pid) {
@@ -174,7 +208,7 @@ export async function startServices(retry = true): Promise<void> {
   try {
     const corePromise = startProcess(
       "flowfile_core",
-      getResourcePath("flowfile_core"),
+      getResourceServicePath("flowfile_core"),
       CORE_PORT,
       (data) => {
         if (data.includes("Core server started")) {
@@ -185,7 +219,7 @@ export async function startServices(retry = true): Promise<void> {
 
     const workerPromise = startProcess(
       "flowfile_worker",
-      getResourcePath("flowfile_worker"),
+      getResourceServicePath("flowfile_worker"),
       WORKER_PORT,
       (data) => {
         if (data.includes("Server started")) {
@@ -194,10 +228,7 @@ export async function startServices(retry = true): Promise<void> {
       },
     );
 
-    [coreProcess, workerProcess] = await Promise.all([
-      corePromise,
-      workerPromise,
-    ]);
+    [coreProcess, workerProcess] = await Promise.all([corePromise, workerPromise]);
   } catch (error) {
     console.error("Error starting services:", error);
     if (retry) {

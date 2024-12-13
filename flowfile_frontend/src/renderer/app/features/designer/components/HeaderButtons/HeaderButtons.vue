@@ -96,9 +96,11 @@
 import { QuestionFilled } from "@element-plus/icons-vue";
 import { defineProps, ref, onMounted, defineExpose } from "vue";
 import { saveFlow } from "./utils";
-import RunButton from "../../editor/run.vue";
+import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
+import { useNodeStore } from "../../../../stores/column-store";
+
 import PopOver from "../../editor/PopOver.vue";
 import {
   createFlow,
@@ -106,13 +108,17 @@ import {
   FlowSettings,
   updateFlowSettings,
   ExecutionMode,
+  updateRunStatus,
 } from "../../nodes/nodeLogic";
+
+const nodeStore = useNodeStore();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
+const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
@@ -128,10 +134,21 @@ const emit = defineEmits(["openFlow", "refreshFlow"]);
 
 const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);
+  if (flowSettings.value.is_running) {
+    if (runButton.value) {
+      nodeStore.isRunning = true;
+      runButton.value.startPolling(runButton.value.checkRunStatus);
+    }
+  } else {
+    if (runButton.value) {
+      nodeStore.isRunning = false;
+      runButton.value.stopPolling();
+      updateRunStatus(props.flowId, nodeStore, false);
+    }
+  }
 };
 
 const pushFlowSettings = async (execution_lcoation: ExecutionMode) => {
-  console.log("updateFlowSettings", flowSettings);
   if (flowSettings.value) {
     flowSettings.value.execution_mode = execution_lcoation;
   }
@@ -155,13 +172,13 @@ const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
 };
 
 function openFlowAction(inputSelectedFile: FileInfo | null) {
-  console.log("openFlowAction", inputSelectedFile);
   if (inputSelectedFile) {
     emit("openFlow", {
       message: "Flow opened",
       flowPath: inputSelectedFile.path,
     });
   }
+  nodeStore.resetRunResults();
   modalVisibleForOpen.value = false;
 }
 

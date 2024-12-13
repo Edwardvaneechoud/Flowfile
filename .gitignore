@@ -35,4 +35,7 @@ site/ # Also ignore mkdocs build directory
 docs/.venv/
 **/.venv/**
 /site/
-/services_dist
+/.venv
+print_structure.py
+/venv_flowfile/**
+services_dist/

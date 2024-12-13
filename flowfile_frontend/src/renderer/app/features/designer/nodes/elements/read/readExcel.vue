@@ -115,9 +115,11 @@ const emit = defineEmits(["update:modelValue"]);
 const localExcelTable = ref({ ...props.modelValue });
 const showOptionalSettings = ref(false);
 const sheetNames = ref<string[]>([]);
+const sheetNamesLoaded = ref(false);
 
 const getSheetNames = async () => {
   sheetNames.value = await getXlsxSheetNamesForPath(localExcelTable.value.path);
+  sheetNamesLoaded.value = true;
 };
 
 const toggleOptionalSettings = () => {
@@ -125,6 +127,9 @@ const toggleOptionalSettings = () => {
 };
 
 const showWarning = computed(() => {
+  if (!sheetNamesLoaded.value) {
+    return false;
+  }
   return !sheetNames.value.includes(localExcelTable.value.sheet_name);
 });
 

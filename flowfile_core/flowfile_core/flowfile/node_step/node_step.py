@@ -1,7 +1,5 @@
 import polars as pl
 from typing import List, Union, Callable, Any, Optional, Generator
-
-
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
@@ -17,6 +15,7 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations import (
     ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result,)
 from flowfile_core.flowfile.node_step.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
+from flowfile_core.flowfile.node_step.schema_callback import SingleExecutionFuture
 
 
 class NodeStep:
@@ -34,7 +33,7 @@ class NodeStep:
     _setting_input: Any = None
     _hash: Optional[str] = None  # host this for caching results
     _function: Callable = None  # the function that needs to be executed when triggered
-    _schema_callback: Optional[Callable] = None  # Function that calculates the schema without executing the process
+    _schema_callback: Optional[SingleExecutionFuture] = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
     _fetch_cached_df: Optional[ExternalDfFetcher] = None
     _cache_progress: Optional[ExternalDfFetcher] = None
@@ -69,15 +68,13 @@ class NodeStep:
         if f is None:
             return
 
-        def schema_call_back_func():
-            try:
-                return f()
-            except Exception as e:
-                logger.warn(e)
-                self.node_settings.setup_errors = True
-                return []
+        def error_callback(e: Exception) -> List:
+            logger.warn(e)
+            self.node_settings.setup_errors = True
+            return []
 
-        self._schema_callback = schema_call_back_func
+        self._schema_callback = SingleExecutionFuture(f, error_callback)
+        self._schema_callback.start()
 
     @property
     def is_start(self) -> bool:
@@ -431,7 +428,7 @@ class NodeStep:
                 external_sampler = ExternalSampler(lf=resulting_data.data_frame, file_ref=self.hash,
                                                    wait_on_completion=True)
                 self.store_example_data_generator(external_sampler)
-                if self.results.errors is None:
+                if self.results.errors is None and not self.node_stats.is_canceled:
                     self.node_stats.has_run = True
             self.node_schema.result_schema = resulting_data.schema
 
@@ -495,11 +492,20 @@ class NodeStep:
                 else:
                     self.results.errors = external_df_fetcher.error_description
                     raise Exception(external_df_fetcher.error_description)
+            finally:
+                self._fetch_cached_df = None
 
     def prepare_before_run(self):
         self.results.errors = None
         self.results.resulting_data = None
         self.results.example_data = None
+
+    def cancel(self):
+        if self._fetch_cached_df is not None:
+            self._fetch_cached_df.cancel()
+            self.node_stats.is_canceled = True
+        else:
+            logger.warning('No external process to cancel')
 
     # @profile
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
@@ -605,10 +611,8 @@ class NodeStep:
                           complete: bool = False) -> bool:
         #  connection type must be in right, left or main
         deleted: bool = False
-        print(connection_type)
         if connection_type == 'input-0':
             for i, node in enumerate(self.node_inputs.main_inputs):
-                print(node, node.node_id == node_id, node_id)
                 if node.node_id == node_id:
                     self.node_inputs.main_inputs.pop(i)
                     deleted = True
@@ -673,7 +677,7 @@ class NodeStep:
             self.print('getting the table example')
             return self.main_input[0].get_table_example(include_data)
         if self.node_stats.has_run and self.is_setup and include_data:
-            print('getting the table example since the node has run')
+            logger.info('getting the table example since the node has run')
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:
                 data = example_data_getter().to_pylist()
@@ -688,7 +692,7 @@ class NodeStep:
                                 number_of_columns=fl.number_of_fields,
                                 table_schema=schema, columns=fl.columns, data=data)
         else:
-            print('getting the table example but the node has not run')
+            logger.warning('getting the table example but the node has not run')
             try:
                 schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
             except Exception as e:
@@ -710,7 +714,6 @@ class NodeStep:
                         has_run=self.node_stats.has_run,
                         setting_input=self.setting_input,
                         flow_type=self.node_type)
-        print('flow id of node: ', node.flow_id)
         if self.main_input:
             node.main_input = self.main_input[0].get_table_example()
         if self.left_input:

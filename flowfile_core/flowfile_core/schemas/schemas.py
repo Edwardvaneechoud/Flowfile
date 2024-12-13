@@ -15,6 +15,8 @@ class FlowSettings(BaseModel):
     modified_on: Optional[float] = None
     path: str
     execution_mode: ExecutionModeLiteral = 'Development'
+    is_running: bool = False
+    is_canceled: bool = False
 
 
 class NodeTemplate(BaseModel):

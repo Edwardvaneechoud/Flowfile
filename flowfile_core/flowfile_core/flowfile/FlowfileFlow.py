@@ -5,6 +5,7 @@ import polars as pl
 import fastexcel
 from fastapi.exceptions import HTTPException
 from time import time
+from functools import partial
 from typing import List, Dict, Union, Callable, Any, Optional, Tuple
 from uuid import uuid1
 from pyarrow.parquet import ParquetFile
@@ -23,15 +24,13 @@ from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResul
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.node_step.node_step import NodeStep, NodeResults
-from flowfile_core.utils.fl_executor import thread_executor
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import ExternalAirbyteFetcher
 
 
-@thread_executor(wait_on_completion=False, max_workers=1)
-def schema_future_xlsx(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
-                       end_row: int, end_column: int, has_headers: bool):
+def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
+                    end_row: int, end_column: int, has_headers: bool):
     try:
         logger.info('Starting to calculate the schema')
         if engine == 'openpyxl':
@@ -51,6 +50,12 @@ def schema_future_xlsx(engine: str, file_path: str, sheet_name: str, start_row: 
     except Exception as e:
         logger.error(e)
         return []
+
+
+def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
+                             end_row: int, end_column: int, has_headers: bool):
+    return partial(get_xlsx_schema, engine=engine, file_path=file_path, sheet_name=sheet_name, start_row=start_row,
+                   start_column=start_column, end_row=end_row, end_column=end_column, has_headers=has_headers)
 
 
 class EtlGraph:
@@ -79,7 +84,6 @@ class EtlGraph:
     schema: Optional[List[FlowfileColumn]] = None
     has_over_row_function: bool = False
     _flow_starts: List[Union[int, str]] = None
-    is_running: bool = False
     node_results: [List[NodeResults]] = None
     latest_run_info: Optional[RunInformation] = None
     start_datetime: datetime = None
@@ -101,7 +105,6 @@ class EtlGraph:
         self.end_datetime = None
         self.latest_run_info = None
         self.node_results = []
-        self.is_running = False
         self._flow_id = flow_id
         self._flow_starts: List[NodeStep] = []
         self._results = None
@@ -298,10 +301,8 @@ class EtlGraph:
         def _func(fl: FlowfileTable):
             is_advanced = filter_settings.filter_input.filter_type == 'advanced'
             if is_advanced:
-                print('applying advanced filter')
                 return fl.do_filter(predicate)
             else:
-                print('applying basic filter')
                 basic_filter = filter_settings.filter_input.basic_filter
                 if basic_filter.filter_value.isnumeric():
                     field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
@@ -422,9 +423,9 @@ class EtlGraph:
                 right_select.is_available = True if right_select.old_name in right.schema else False
 
             return main.join(join_input=join_settings.join_input,
-                                auto_generate_selection=join_settings.auto_generate_selection,
-                                verify_integrity=False,
-                                other=right)
+                             auto_generate_selection=join_settings.auto_generate_selection,
+                             verify_integrity=False,
+                             other=right)
 
         self.add_node_step(node_id=join_settings.node_id,
                            function=_func,
@@ -653,8 +654,9 @@ class EtlGraph:
 
         def _func():
             logger.info('Calling external source')
-            external_fetcher = ExternalAirbyteFetcher(airbyte_settings)
-            fl = FlowfileTable(external_fetcher.result)
+            external_fetcher = ExternalAirbyteFetcher(airbyte_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_fetcher
+            fl = FlowfileTable(external_fetcher.get_result())
             external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -683,7 +685,7 @@ class EtlGraph:
         if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
             logger.info('Using provided schema in the node')
 
-    def add_google_sheet(self,  external_source_input: input_schema.NodeExternalSource):
+    def add_google_sheet(self, external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding google sheet reader')
         self.add_external_source(external_source_input)
 
@@ -757,6 +759,9 @@ class EtlGraph:
             sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
             input_file.received_file.sheet_name = sheet_name
 
+        received_file = input_file.received_file
+        input_file.received_file.set_absolute_filepath()
+
         def _func():
             if input_file.received_file.file_type == 'parquet':
                 input_data = FlowfileTable.create_from_path(input_file.received_file)
@@ -767,22 +772,42 @@ class EtlGraph:
             input_data.name = input_file.received_file.name
             return input_data
 
-        if input_file.received_file.file_type in ('csv', 'json', 'parquet'):
+        # Define the schema callback function
+        if len(received_file.fields) > 0:
+            # If the file has fields defined, we can use them to create the schema
+            def schema_callback():
+                return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+
+        elif input_file.received_file.file_type in ('csv', 'json', 'parquet'):
+            # everything that can be scanned by polars
             def schema_callback():
                 input_data = FlowfileTable.create_from_path(input_file.received_file)
                 return input_data.schema
+
+        elif input_file.received_file.file_type in ('xlsx', 'excel'):
+            # If the file is an Excel file, we need to use the openpyxl engine to read the schema
+            schema_callback = get_xlsx_schema_callback(engine='openpyxl',
+                                                       file_path=received_file.file_path,
+                                                       sheet_name=received_file.sheet_name,
+                                                       start_row=received_file.start_row,
+                                                       end_row=received_file.end_row,
+                                                       start_column=received_file.start_column,
+                                                       end_column=received_file.end_column,
+                                                       has_headers=received_file.has_headers)
         else:
             schema_callback = None
-        input_file.received_file.set_absolute_filepath()
-        # here is the issue
+
         node = self.get_node(input_file.node_id)
         if node:
+            start_hash = node.hash
             node.node_type = 'read'
             node.name = 'read'
             node.function = _func
             node.setting_input = input_file
             if input_file.node_id not in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
+            if start_hash == node.hash:
+                schema_callback = None
 
         else:
             node = NodeStep(input_file.node_id, function=_func,
@@ -792,33 +817,8 @@ class EtlGraph:
             self._flow_starts.append(node)
             self._node_ids.append(input_file.node_id)
 
-        received_file = input_file.received_file
-
-        if len(received_file.fields) > 0:
-            def schema_callback():
-                return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
-
+        if schema_callback is not None:
             node.schema_callback = schema_callback
-        elif schema_callback is not None:
-            node.schema_callback = schema_callback
-        elif received_file.file_type in ('xlsx', 'excel'):
-            if received_file.type_inference:
-                engine = 'openpyxl'
-            elif received_file.start_row > 0 and received_file.start_column == 0:
-                engine = 'calamine' if received_file.has_headers else 'xlsx2csv'
-            elif received_file.start_column > 0 or received_file.start_row > 0:
-                engine = 'openpyxl'
-            else:
-                engine = 'calamine'
-            schema_future = schema_future_xlsx(engine='openpyxl',
-                                               file_path=received_file.file_path,
-                                               sheet_name=received_file.sheet_name,
-                                               start_row=received_file.start_row,
-                                               end_row=received_file.end_row,
-                                               start_column=received_file.start_column,
-                                               end_column=received_file.end_column,
-                                               has_headers=received_file.has_headers)
-            node.node_schema.predicted_schema = schema_future.result()
 
         return self
 
@@ -868,7 +868,8 @@ class EtlGraph:
                              col in [table_col.name for table_col in self._input_data.schema]]))
 
     def run_graph(self) -> RunInformation:
-        self.is_running = True
+        self.flow_settings.is_canceled = False
+        self.flow_settings.is_running = True
         self.nodes_completed = 0
         self.node_results = []
         self.start_datetime = datetime.datetime.now()
@@ -879,33 +880,43 @@ class EtlGraph:
             logger.info(f'{node} ->  {node.leads_to_nodes}')
         logger.info(f'Running graph with node ids: {all_node_ids}')
         execution_order = determine_execution_order(self.nodes, self._flow_starts)
-        logger.info(f'Execution order: {[n.node_id for n in execution_order]}')
         skip_nodes = []
         performance_mode = self.flow_settings.execution_mode == 'Performance'
         for node in execution_order:
+            if self.flow_settings.is_canceled:
+                logger.info('Flow canceled')
+                break
             if node in skip_nodes:
                 logger.info(f'Skipping node {node.node_id}')
                 continue
             node_result = NodeResult(node_id=node.node_id, node_name=node.name)
-            logger.info(f'nodeId={node.node_id}\n start time: {node_result.start_timestamp}')
+            self.node_results.append(node_result)
+            logger.info(f'Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}')
             node.execute_node(run_location='auto', performance_mode=performance_mode)
             try:
                 node_result.error = str(node.results.errors)
+                if self.flow_settings.is_canceled:
+                    node_result.success = None
+                    continue
                 node_result.success = node.results.errors is None
                 node_result.end_timestamp = time()
                 node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+                node_result.is_running = False
             except Exception as e:
                 node_result.error = 'Node did not run'
                 node_result.success = False
                 node_result.end_timestamp = time()
                 node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+                node_result.is_running = False
             if not node_result.success:
                 skip_nodes.extend(list(node.get_all_dependent_nodes()))
             logger.info(f'Completed node {node.node_id} with success: {node_result.success}')
             self.nodes_completed += 1
-            self.node_results.append(node_result)
+
         self.end_datetime = datetime.datetime.now()
-        self.is_running = False
+        self.flow_settings.is_running = False
+        if self.flow_settings.is_canceled:
+            logger.info('Flow canceled')
         return self.get_run_info()
 
     def get_run_info(self) -> RunInformation:
@@ -966,6 +977,13 @@ class EtlGraph:
                                        node_starts=[v.node_id for v in self._flow_starts],
                                        node_connections=self.node_connections
                                        )
+
+    def cancel(self):
+        if not self.flow_settings.is_running:
+            return
+        self.flow_settings.is_canceled = True
+        for node in self.nodes:
+            node.cancel()
 
     def close_flow(self):
         for node in self.nodes:
@@ -1060,10 +1078,10 @@ class EtlGraph:
 
 
 def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection):
-    print('adding a connection')
+    logger.info('adding a connection')
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
-    print('from_node', 'to_node', from_node, to_node)
+    logger.info(f'from_node={from_node}, to_node={to_node}')
     connection_class = node_connection.input_connection.connection_class
     match connection_class:
         case 'input-0':

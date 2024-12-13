@@ -33,6 +33,9 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
                                              name=flow_storage_obj.flow_name)
         setattr(flow_storage_obj, 'flow_settings', flow_settings)
         flow_storage_obj = schemas.FlowInformation.parse_obj(flow_storage_obj)
+    elif not hasattr(flow_storage_obj.flow_settings, 'is_running'):
+        setattr(flow_storage_obj.flow_settings, 'is_running', False)
+        setattr(flow_storage_obj.flow_settings, 'is_canceled', False)
     for _id, node_information in flow_storage_obj.data.items():
         if not hasattr(node_information, 'setting_input'):
             continue
@@ -43,5 +46,3 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
         elif node_information.setting_input.__class__.__name__ in ('NodeJoin', 'NodeFuzzyMatch'):
             ensure_compatibility_node_joins(node_information.setting_input)
         ensure_description(node_information.setting_input)
-
-
