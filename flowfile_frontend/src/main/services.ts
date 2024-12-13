@@ -3,12 +3,7 @@ import { join, dirname } from "path";
 import { ChildProcess, exec, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
-import {
-  SHUTDOWN_TIMEOUT,
-  FORCE_KILL_TIMEOUT,
-  WORKER_PORT,
-  CORE_PORT,
-} from "./constants";
+import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT, WORKER_PORT, CORE_PORT } from "./constants";
 import { existsSync, mkdirSync } from "fs";
 
 export const shutdownState = { isShuttingDown: false };
@@ -40,35 +35,31 @@ export async function shutdownService(port: number): Promise<void> {
 
 export async function ensureServicesStopped(): Promise<void> {
   try {
-    await Promise.all([
-      shutdownService(WORKER_PORT),
-      shutdownService(CORE_PORT),
-    ]);
+    await Promise.all([shutdownService(WORKER_PORT), shutdownService(CORE_PORT)]);
   } catch (error) {
     console.error("Error during service shutdown:", error);
   }
 }
 
-
 function findProjectRoot(startPath: string): string {
   let currentPath = startPath;
-  while (currentPath !== dirname(currentPath)) { // Stop at root directory
-    if (existsSync(join(currentPath, 'package.json'))) {
+  while (currentPath !== dirname(currentPath)) {
+    // Stop at root directory
+    if (existsSync(join(currentPath, "package.json"))) {
       return currentPath;
     }
     currentPath = dirname(currentPath);
   }
-  return '';
+  return "";
 }
-
 
 export function getResourceServicePath(resourceName: string): string {
   if (process.env.NODE_ENV === "development") {
     const projectRoot = findProjectRoot(app.getAppPath());
-    console.log(projectRoot)
+    console.log(projectRoot);
     if (!projectRoot) {
-      console.warn('Could not find project root directory');
-      return '';
+      console.warn("Could not find project root directory");
+      return "";
     }
 
     const devPath = join(projectRoot, "..", "services_dist", resourceName);
@@ -84,12 +75,11 @@ export function getResourceServicePath(resourceName: string): string {
   const basePath = join(process.resourcesPath, "flowfile-services");
   const isWindows = platform() === "win32";
   const executableName = isWindows ? `${resourceName}.exe` : resourceName;
-  const directoryPath = join(basePath, resourceName);
-  const executablePath = join(directoryPath, executableName);
+  const executablePath = join(basePath, executableName);
 
-  if (existsSync(directoryPath) && existsSync(executablePath)) {
-    console.log(`Using production executable at: ${directoryPath}`);
-    return directoryPath;
+  if (existsSync(basePath) && existsSync(executablePath)) {
+    console.log(`Using production executable at: ${basePath}`);
+    return executablePath;
   }
 
   console.warn(`Production executable not found at: ${executablePath}`);
@@ -238,10 +228,7 @@ export async function startServices(retry = true): Promise<void> {
       },
     );
 
-    [coreProcess, workerProcess] = await Promise.all([
-      corePromise,
-      workerPromise,
-    ]);
+    [coreProcess, workerProcess] = await Promise.all([corePromise, workerPromise]);
   } catch (error) {
     console.error("Error starting services:", error);
     if (retry) {
