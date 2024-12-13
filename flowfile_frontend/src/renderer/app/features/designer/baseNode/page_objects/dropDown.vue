@@ -1,4 +1,5 @@
 <template>
+  test 
   <div v-if="isLoaded" ref="dropdownRef" class="dropdown-container">
     <label :for="uniqueId" class="sr-only">{{ label }}</label>
     <div class="input-wrapper">

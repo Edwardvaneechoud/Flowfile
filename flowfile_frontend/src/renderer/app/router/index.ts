@@ -8,8 +8,8 @@ const routes: Array<RouteRecordRaw> = [
     redirect: { name: "designer" }  // First redirect to admin
   },
   {
-    name: "admin",
-    path: "/admin",
+    name: "main",
+    path: "/main",
     component: AppLayout,
     children: [
       {
@@ -37,7 +37,7 @@ const routes: Array<RouteRecordRaw> = [
 
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHistory(import.meta.env.BASE_URL as string),
   routes,
 });
 

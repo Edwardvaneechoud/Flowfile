@@ -51,7 +51,7 @@ class FileInfo(BaseModel):
 
 
 class FileExplorer:
-    def __init__(self, start_path: Optional[str] = None):
+    def __init__(self, start_path: Optional[str|Path] = None):
         """Initialize FileExplorer with user's home directory or specified path."""
         if start_path is None:
             self.current_path = Path.home()

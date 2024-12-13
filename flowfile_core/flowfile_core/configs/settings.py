@@ -1,4 +1,5 @@
 import platform
+import os
 
 from databases import DatabaseURL
 from passlib.context import CryptContext
@@ -6,7 +7,23 @@ from starlette.config import Config
 from starlette.datastructures import Secret
 
 
+def is_running_in_docker() -> bool:
+    """
+    Check if the current process is running in a Docker container.
+    Returns: bool
+
+    """
+    return False
+
+
 def get_default_worker_url():
+    # Check for Docker environment first
+    worker_host = os.getenv('WORKER_HOST', None)
+    print('worker host', worker_host)
+    if worker_host:
+        return f"http://{worker_host}:63579"
+
+    # Fall back to default behavior
     if platform.system() == "Windows":
         return "http://127.0.0.1:63579"
     else:
@@ -28,9 +45,7 @@ SECRET_KEY: Secret = config("SECRET_KEY", cast=Secret, default='edward')
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("WORKER_URL", cast=str, default=get_default_worker_url())
-
-
-PORT = '7879'
+IS_RUNNING_IN_DOCKER = is_running_in_docker()
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120

@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  flowfile-frontend:
+    build:
+      context: .
+      dockerfile: flowfile_frontend/Dockerfile
+    ports:
+      - "8080:8080"
+    networks:
+      - flowfile-network
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - flowfile-core
+      - flowfile-worker
+
+  flowfile-core:
+    build:
+      context: .
+      dockerfile: flowfile_core/Dockerfile
+    ports:
+      - "63578:63578"
+    environment:
+      - WORKER_HOST=flowfile-worker
+      - TEMP_DIR=/app/temp
+
+    volumes:
+      - ./shared_data:/app/shared
+      - ./saved_flows:/app/flowfile_core/saved_flows
+      - temp-storage:/app/temp
+    networks:
+      - flowfile-network
+
+  flowfile-worker:
+    build:
+      context: .
+      dockerfile: flowfile_worker/Dockerfile
+    ports:
+      - "63579:63579"
+    volumes:
+      - ./shared_data:/app/shared
+      - temp-storage:/app/temp
+    environment:
+      - TEMP_DIR=/app/temp
+    networks:
+      - flowfile-network
+
+networks:
+  flowfile-network:
+    driver: bridge
+
+volumes:
+  temp-storage:
+    driver: local
+  shared_data:
+    driver: local
