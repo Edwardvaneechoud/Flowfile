@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { join } from "path";
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess, exec, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
 import {
@@ -16,15 +16,8 @@ let cleanupInProgress = false;
 export let workerProcess: ChildProcess | null = null;
 export let coreProcess: ChildProcess | null = null;
 
-const log = (message: string, error?: any) => {
-  const timestamp = new Date().toISOString();
-  const logMessage = `[${timestamp}] ${message}`;
-  error ? console.error(logMessage, error) : console.log(logMessage);
-};
-
 export async function shutdownService(port: number): Promise<void> {
   try {
-    log(`Attempting to shutdown service on port ${port}`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), SHUTDOWN_TIMEOUT);
 
@@ -34,76 +27,14 @@ export async function shutdownService(port: number): Promise<void> {
     });
 
     clearTimeout(timeout);
-    log(`Successfully sent shutdown signal to port ${port}`);
+    console.log(`Successfully sent shutdown signal to port ${port}`);
     await new Promise((resolve) => setTimeout(resolve, 500));
   } catch (error) {
     if (axios.isAxiosError(error) && error.code === "ECONNREFUSED") {
-      log(`Service on port ${port} is already stopped`);
+      console.log(`Service on port ${port} is already stopped`);
     } else {
-      log(`Service on port ${port} shutdown timed out or failed`, error);
+      console.log(`Service on port ${port} shutdown timed out or failed`);
     }
-  }
-}
-
-export async function cleanupProcesses(): Promise<void> {
-  if (cleanupInProgress) {
-    log("Cleanup already in progress...");
-    return;
-  }
-
-  cleanupInProgress = true;
-  log("Starting cleanup process...");
-
-  try {
-    await Promise.race([
-      ensureServicesStopped(),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_TIMEOUT)),
-    ]);
-
-    const cleanup = async (process: ChildProcess | null, name: string) => {
-      if (!process) return;
-
-      return new Promise<void>((resolve) => {
-        const forceKill = setTimeout(() => {
-          try {
-            log(`Force killing ${name} process`);
-            process.kill("SIGKILL");
-          } catch (error) {
-            log(`Error force killing ${name}:`, error);
-          }
-          resolve();
-        }, FORCE_KILL_TIMEOUT);
-
-        process.once("exit", () => {
-          clearTimeout(forceKill);
-          log(`${name} process exited successfully`);
-          resolve();
-        });
-
-        try {
-          process.kill("SIGTERM");
-        } catch (error) {
-          clearTimeout(forceKill);
-          log(`Error sending SIGTERM to ${name}:`, error);
-          try {
-            process.kill("SIGKILL");
-          } catch (secondError) {
-            log(`Failed to force kill ${name}:`, secondError);
-          }
-          resolve();
-        }
-      });
-    };
-
-    await Promise.all([
-      cleanup(workerProcess, "flowfile_worker"),
-      cleanup(coreProcess, "flowfile_core"),
-    ]);
-  } finally {
-    workerProcess = null;
-    coreProcess = null;
-    cleanupInProgress = false;
-    log("Cleanup process completed");
   }
 }
 
@@ -114,7 +45,7 @@ export async function ensureServicesStopped(): Promise<void> {
       shutdownService(CORE_PORT),
     ]);
   } catch (error) {
-    log("Error during service shutdown:", error);
+    console.error("Error during service shutdown:", error);
   }
 }
 
@@ -123,33 +54,29 @@ export function getResourcePath(resourceName: string): string {
     process.env.NODE_ENV === "development"
       ? app.getAppPath()
       : process.resourcesPath;
+  console.log("Base path:", basePath);
 
   const isWindows = platform() === "win32";
   const executableName = isWindows ? `${resourceName}.exe` : resourceName;
 
   // First try the new directory structure
   const directoryPath = join(basePath, resourceName, resourceName);
-  const executablePath = join(basePath, resourceName, executableName);
 
   if (existsSync(directoryPath)) {
-    log(`Using directory-based executable at: ${directoryPath}`);
+    console.log(`Using directory-based executable at: ${directoryPath}`);
     return directoryPath;
   }
 
-  if (existsSync(executablePath)) {
-    log(`Using directory executable at: ${executablePath}`);
-    return executablePath;
-  }
-
   // Fallback to old structure
-  const legacyPath = join(basePath, executableName);
-  log(`Falling back to legacy path: ${legacyPath}`);
-
-  if (!existsSync(legacyPath)) {
-    log(`WARNING: No executable found at any location for ${resourceName}`);
-  }
-
+  const legacyPath = join(basePath, resourceName);
   return legacyPath;
+}
+
+function formatDockerPath(path: string): string {
+  if (platform() === "win32") {
+    return path.replace(/\\/g, "/").replace(/^(\w):\//, "/$1/");
+  }
+  return path;
 }
 
 function getProcessEnv(): NodeJS.ProcessEnv {
@@ -157,27 +84,54 @@ function getProcessEnv(): NodeJS.ProcessEnv {
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
   const flowfileDir = join(homeDir, ".flowfile");
+  const airbyteDir = join(homeDir, ".airbyte");
   const cacheDirRoot = join(flowfileDir, ".tmp");
 
-  const dirsToCreate = [flowfileDir, cacheDirRoot];
+  const dirsToCreate = [
+    flowfileDir,
+    airbyteDir,
+    cacheDirRoot,
+    join(airbyteDir, "connectors"),
+    join(tempDir, "airbyte", "logs"),
+  ];
+
   for (const dir of dirsToCreate) {
     try {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
-        log(`Created directory: ${dir}`);
       }
     } catch (error) {
-      log(`Failed to create directory ${dir}`, error);
+      console.error(`Failed to create directory ${dir}:`, error);
     }
   }
 
-  return {
+  const dockerVolumes = isWindows
+    ? `-v "${formatDockerPath(cacheDirRoot)}:/tmp" -v "${formatDockerPath(airbyteDir)}:/airbyte"`
+    : `--volume "${cacheDirRoot}:/tmp" --volume "${airbyteDir}:/airbyte"`;
+
+  const baseEnv = {
     ...process.env,
     HOME: homeDir,
+    DOCKER_CONFIG: join(homeDir, ".docker"),
     TMPDIR: tempDir,
-    FLOWFILE_CACHE_ROOT: cacheDirRoot,
-    PYTHONOPTIMIZE: "1",
-    PYTHONDONTWRITEBYTECODE: "1",
+    AIRBYTE_CACHE_ROOT: cacheDirRoot,
+    AIRBYTE_TEMP_DIR: tempDir,
+    AIRBYTE_LOGS_DIR: join(tempDir, "airbyte", "logs"),
+    AIRBYTE_LOCAL_ROOT: airbyteDir,
+    AIRBYTE_EXTRA_DOCKER_OPTS: dockerVolumes,
+  };
+
+  if (isWindows) {
+    return {
+      ...baseEnv,
+      DOCKER_HOST: "npipe:////.//pipe//docker_engine",
+    };
+  }
+
+  return {
+    ...baseEnv,
+    PATH: `/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH || ""}`,
+    DOCKER_HOST: "unix:///var/run/docker.sock",
   };
 }
 
@@ -189,7 +143,7 @@ export function startProcess(
 ): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
     const isWindows = platform() === "win32";
-    log(`Starting ${name} from ${path}`);
+    console.log(`Starting ${name} from ${path}`);
 
     // Get the working directory (directory containing the executable)
     const workingDirectory = path.endsWith(name)
@@ -197,39 +151,36 @@ export function startProcess(
       : join(path, "../.."); // Legacy structure
 
     const childProcess = spawn(path, [], {
-      env: getProcessEnv(),
-      shell: isWindows,
+      env: getProcessEnv(), // Keep using the original getProcessEnv with all Docker settings
+      shell: isWindows ? true : "/bin/bash",
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
-      cwd: workingDirectory, // Set working directory
+      cwd: workingDirectory, // Add this line for directory handling
     });
 
     if (!childProcess.pid) {
-      const error = new Error(`Failed to start ${name}`);
-      log(`Process start failed for ${name}`, error);
-      reject(error);
+      reject(new Error(`Failed to start ${name}`));
       return;
     }
 
     childProcess.stdout?.on("data", (data) => {
-      const output = data.toString().trim();
-      log(`[${name}] ${output}`);
-      onData?.(output);
+      console.log(`[${name} stdout]: ${data}`);
+      onData?.(data.toString());
     });
 
     childProcess.stderr?.on("data", (data) => {
-      log(`[${name} ERROR] ${data.toString().trim()}`);
+      console.error(`[${name} stderr]: ${data}`);
     });
 
     childProcess.on("error", (error) => {
-      log(`${name} process error`, error);
+      console.error(`${name} error:`, error);
       reject(error);
     });
 
     const checkService = async () => {
       try {
         await axios.get(`http://127.0.0.1:${port}/docs`);
-        log(`${name} is responsive on port ${port}`);
+        console.log(`${name} is responsive on port ${port}`);
         resolve(childProcess);
       } catch (error) {
         setTimeout(checkService, 1000);
@@ -275,6 +226,68 @@ export async function startServices(retry = true): Promise<void> {
       return startServices(false);
     }
     throw error;
+  }
+}
+
+export async function cleanupProcesses(): Promise<void> {
+  if (cleanupInProgress) {
+    console.log("Cleanup already in progress...");
+    return;
+  }
+
+  cleanupInProgress = true;
+  console.log("Starting cleanup process...");
+
+  try {
+    await Promise.race([
+      ensureServicesStopped(),
+      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_TIMEOUT)),
+    ]);
+
+    const cleanup = async (process: ChildProcess | null, name: string) => {
+      if (!process) return;
+
+      return new Promise<void>((resolve) => {
+        const forceKill = setTimeout(() => {
+          try {
+            console.warn(`Force killing ${name} process`);
+            process.kill("SIGKILL");
+          } catch (error) {
+            console.error(`Error force killing ${name}:`, error);
+          }
+          resolve();
+        }, FORCE_KILL_TIMEOUT);
+
+        process.once("exit", () => {
+          clearTimeout(forceKill);
+          console.log(`${name} process exited successfully`);
+          resolve();
+        });
+
+        try {
+          process.kill("SIGTERM");
+        } catch (error) {
+          clearTimeout(forceKill);
+          console.error(`Error sending SIGTERM to ${name}:`, error);
+          try {
+            process.kill("SIGKILL");
+          } catch (secondError) {
+            console.error(`Failed to force kill ${name}:`, secondError);
+          }
+          resolve();
+        }
+      });
+    };
+
+    await Promise.all([
+      cleanup(workerProcess, "flowfile_worker"),
+      cleanup(coreProcess, "flowfile_core"),
+    ]);
+  } finally {
+    workerProcess = null;
+    coreProcess = null;
+    cleanupInProgress = false;
+    console.log("Cleanup process completed");
   }
 }
 
