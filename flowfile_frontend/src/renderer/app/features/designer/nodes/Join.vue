@@ -3,15 +3,12 @@
     <NodeButton
       ref="nodeButton"
       :node-id="nodeId"
-      image-src="join.jpg"
+      image-src="join.png"
       :title="`${nodeId}: Join`"
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Join"
-        intro="Combine datasets based on one or more columns."
-      />
+      <NodeTitle title="Join" intro="Combine datasets based on one or more columns." />
       <joinInput ref="childComp" :node-id="nodeId"> </joinInput>
     </teleport>
   </div>
