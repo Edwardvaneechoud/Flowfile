@@ -35,3 +35,4 @@ site/ # Also ignore mkdocs build directory
 docs/.venv/
 **/.venv/**
 /site/
+/venv_flowfile/**

@@ -14,7 +14,6 @@ import {
 } from "./windowManager";
 import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
-import { openAuthWindow } from "./windowManager";
 import { loadWindow } from "./windowLoader";
 import { platform } from "os";
 
