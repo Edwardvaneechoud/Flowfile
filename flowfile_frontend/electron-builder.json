@@ -19,12 +19,8 @@
     "icon": "src/assets/icons/win/icon.ico",
     "extraFiles": [
       {
-        "from": "../dist/flowfile_worker.exe",
-        "to": "resources/flowfile_worker.exe"
-      },
-      {
-        "from": "../dist/flowfile_core.exe",
-        "to": "resources/flowfile_core.exe"
+        "from": "../services_dist",
+        "to": "resources/flowfile-services"
       }
     ]
   },
@@ -34,12 +30,8 @@
     "category": "Utility",
     "extraFiles": [
       {
-        "from": "../dist/flowfile_worker",
-        "to": "resources/flowfile_worker"
-      },
-      {
-        "from": "../dist/flowfile_core",
-        "to": "resources/flowfile_core"
+        "from": "../services_dist",
+        "to": "resources/flowfile-services"
       }
     ]
   },
@@ -51,12 +43,8 @@
     "entitlementsInherit": "src/assets/mac-config/entitlements.mac.plist",
     "extraFiles": [
       {
-        "from": "../dist/flowfile_worker",
-        "to": "resources/flowfile_worker"
-      },
-      {
-        "from": "../dist/flowfile_core",
-        "to": "resources/flowfile_core"
+        "from": "../services_dist",
+        "to": "resources/flowfile-services"
       },
       {
         "from": "src/assets/mac-config/Info.plist",

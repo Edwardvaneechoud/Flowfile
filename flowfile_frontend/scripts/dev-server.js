@@ -52,7 +52,7 @@ async function startElectron() {
         process.stdout.write(Chalk.blueBright(`[electron] `) + Chalk.white(data.toString()))
     });
 
-    electronProcess.stderr.on('data', data => 
+    electronProcess.stderr.on('data', data =>
         process.stderr.write(Chalk.blueBright(`[electron] `) + Chalk.white(data.toString()))
     );
 
@@ -69,6 +69,24 @@ function restartElectron() {
     if (!electronProcessLocker) {
         electronProcessLocker = true;
         startElectron();
+    }
+}
+
+function copyLoadingHtml() {
+    console.log(Chalk.blueBright(`[electron] `) + 'Copying loading.html...');
+
+    const sourcePath = Path.join(__dirname, '..', 'src', 'main', 'loading.html');
+    const destPath = Path.join(__dirname, '..', 'build', 'main', 'loading.html');
+
+    try {
+        FileSystem.mkdirSync(Path.dirname(destPath), { recursive: true });
+
+        FileSystem.copyFileSync(sourcePath, destPath);
+        console.log(Chalk.greenBright(`[electron] `) + 'Successfully copied loading.html');
+
+    } catch (error) {
+        console.error(Chalk.redBright(`[electron] `) + 'Error handling loading.html:', error);
+        console.error(Chalk.gray(`[electron] Error details: ${JSON.stringify(error, null, 2)}`));
     }
 }
 
@@ -100,6 +118,7 @@ async function start() {
 
     const devServer = await startRenderer();
     rendererPort = devServer.config.server.port;
+    copyLoadingHtml();
 
     copyStaticFiles();
     startElectron();

@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { join } from "path";
+import { join, dirname } from "path";
 import { ChildProcess, exec, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
@@ -49,27 +49,51 @@ export async function ensureServicesStopped(): Promise<void> {
   }
 }
 
-export function getResourcePath(resourceName: string): string {
-  const basePath =
-    process.env.NODE_ENV === "development"
-      ? app.getAppPath()
-      : process.resourcesPath;
-  console.log("Base path:", basePath);
 
+function findProjectRoot(startPath: string): string {
+  let currentPath = startPath;
+  while (currentPath !== dirname(currentPath)) { // Stop at root directory
+    if (existsSync(join(currentPath, 'package.json'))) {
+      return currentPath;
+    }
+    currentPath = dirname(currentPath);
+  }
+  return '';
+}
+
+
+export function getResourceServicePath(resourceName: string): string {
+  if (process.env.NODE_ENV === "development") {
+    const projectRoot = findProjectRoot(app.getAppPath());
+    console.log(projectRoot)
+    if (!projectRoot) {
+      console.warn('Could not find project root directory');
+      return '';
+    }
+
+    const devPath = join(projectRoot, "..", "services_dist", resourceName);
+    if (existsSync(devPath)) {
+      console.log(`Using development executable at: ${devPath}`);
+      return devPath;
+    }
+    console.warn(`Development executable not found at: ${devPath}`);
+    return "";
+  }
+
+  // Production path handling remains the same...
+  const basePath = join(process.resourcesPath, "flowfile-services");
   const isWindows = platform() === "win32";
   const executableName = isWindows ? `${resourceName}.exe` : resourceName;
+  const directoryPath = join(basePath, resourceName);
+  const executablePath = join(directoryPath, executableName);
 
-  // First try the new directory structure
-  const directoryPath = join(basePath, resourceName, resourceName);
-
-  if (existsSync(directoryPath)) {
-    console.log(`Using directory-based executable at: ${directoryPath}`);
+  if (existsSync(directoryPath) && existsSync(executablePath)) {
+    console.log(`Using production executable at: ${directoryPath}`);
     return directoryPath;
   }
 
-  // Fallback to old structure
-  const legacyPath = join(basePath, resourceName);
-  return legacyPath;
+  console.warn(`Production executable not found at: ${executablePath}`);
+  return "";
 }
 
 function formatDockerPath(path: string): string {
@@ -194,7 +218,7 @@ export async function startServices(retry = true): Promise<void> {
   try {
     const corePromise = startProcess(
       "flowfile_core",
-      getResourcePath("flowfile_core"),
+      getResourceServicePath("flowfile_core"),
       CORE_PORT,
       (data) => {
         if (data.includes("Core server started")) {
@@ -205,7 +229,7 @@ export async function startServices(retry = true): Promise<void> {
 
     const workerPromise = startProcess(
       "flowfile_worker",
-      getResourcePath("flowfile_worker"),
+      getResourceServicePath("flowfile_worker"),
       WORKER_PORT,
       (data) => {
         if (data.includes("Server started")) {
