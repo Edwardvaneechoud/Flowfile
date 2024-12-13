@@ -54,7 +54,7 @@ build_electron_linux:
 # Clean up build artifacts
 clean:
 	@echo "Cleaning up build artifacts..."
-	rm -rf dist/ build/ $(ELECTRON_DIR)/dist/ $(ELECTRON_DIR)/build/ $(ELECTRON_DIR)/node_modules/
+	rm -rf services_dist/ build/ $(ELECTRON_DIR)/dist/ $(ELECTRON_DIR)/build/ $(ELECTRON_DIR)/node_modules/
 	@echo "Clean up done."
 
 # Phony targets
