@@ -8,12 +8,10 @@ function copyLoadingHtml() {
     console.log(Chalk.blueBright('Copying loading.html...'));
     const sourcePath = Path.join(__dirname, '..', 'src', 'main', 'loading.html');
     const destPath = Path.join(__dirname, '..', 'build', 'main', 'loading.html');
-    
+
     try {
-        // Ensure the destination directory exists
         FileSystem.mkdirSync(Path.dirname(destPath), { recursive: true });
-        
-        // Copy the file
+
         FileSystem.copyFileSync(sourcePath, destPath);
         console.log(Chalk.greenBright('Successfully copied loading.html'));
         console.log(Chalk.gray(`From: ${sourcePath}`));
