@@ -143,8 +143,8 @@ def combine_packages():
         src_dir = os.path.join(dist_dir, project)
         if os.path.exists(src_dir) and os.path.isdir(src_dir):
             # Move executable
-            exe_name = project
-            src_exe = os.path.join(src_dir, project)
+            exe_name = project + ".exe" if platform.system() == "Windows" else ''
+            src_exe = os.path.join(src_dir, exe_name)
             temp_target_exe = os.path.join(dist_dir, "_" + exe_name)
             target_exe = os.path.join(dist_dir,  exe_name)
             if os.path.exists(src_exe) and os.path.isfile(src_exe):
@@ -153,7 +153,8 @@ def combine_packages():
             if os.path.exists(target_exe) and os.path.isdir(target_exe):
                 shutil.rmtree(target_exe)
             shutil.move(temp_target_exe, target_exe)
-
+            if platform.system() == "Windows" and os.path.exists(os.path.join(dist_dir, project)):
+                shutil.rmtree(os.path.join(dist_dir, project))
 
 def main():
     # Clean previous builds
@@ -202,9 +203,9 @@ def main():
 
     if builds_successful:
         print("Reorganizing services_dist directory...")
-        combine_packages()
+        # combine_packages()
         print("Build complete! Final structure created in services_dist/")
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

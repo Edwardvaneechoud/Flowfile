@@ -26,8 +26,9 @@ module.exports = {
     'no-debugger': process.env.NODE_ENV === 'production' ? 'warn' : 'off',
     'prettier/prettier': ['warn', {}, { usePrettierrc: true }],
     '@typescript-eslint/no-non-null-assertion': 0,
-    '@typescript-eslint/no-explicit-any': 0, // allow explicit any's because of the legacy code and ts-less deps, but still prohibit IMplicit any's
+    '@typescript-eslint/no-explicit-any': 0,
     'vue/multi-word-component-names': 0,
     'vue/no-lone-template': 0,
+    'linebreak-style': ['error', 'unix'] 
   },
 }
