@@ -9,10 +9,8 @@ export function loadWindow(window: BrowserWindow) {
       console.error("Failed to load URL in development mode:", err);
     });
   } else {
-    window
-      .loadFile(join(app.getAppPath(), "renderer", "index.html"))
-      .catch((err) => {
-        console.error("Failed to load file in production mode:", err);
-      });
+    window.loadFile(join(app.getAppPath(), "renderer", "index.html")).catch((err) => {
+      console.error("Failed to load file in production mode:", err);
+    });
   }
 }

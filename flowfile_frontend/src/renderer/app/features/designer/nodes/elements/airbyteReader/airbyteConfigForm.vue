@@ -1,11 +1,7 @@
 <template>
   <div class="form-container">
     <div class="form-grid">
-      <div
-        v-for="(item, index) in computedSchema"
-        :key="index"
-        class="form-item-wrapper"
-      >
+      <div v-for="(item, index) in computedSchema" :key="index" class="form-item-wrapper">
         <!-- Handle array fields -->
         <div v-if="item.type === 'array'" class="single-item">
           <div
@@ -26,13 +22,7 @@
                 :placeholder="`Add new ${item.title || item.key}`"
                 @keyup.enter="addArrayValue(item)"
               />
-              <button
-                class="add-btn"
-                type="button"
-                @click="addArrayValue(item)"
-              >
-                Add
-              </button>
+              <button class="add-btn" type="button" @click="addArrayValue(item)">Add</button>
             </div>
 
             <div class="items-container">
@@ -42,11 +32,7 @@
                 class="item-box"
               >
                 {{ value }}
-                <span
-                  class="remove-btn"
-                  @click="removeArrayValue(item, valueIndex)"
-                  >x</span
-                >
+                <span class="remove-btn" @click="removeArrayValue(item, valueIndex)">x</span>
               </div>
             </div>
           </div>
@@ -68,15 +54,12 @@
             :option-list="item.oneOf.map((opt: OneOfOption) => opt.title)"
             :allow-other="false"
             style="width: 100%; margin-bottom: 8px"
-            @change="
-              (value: string) => updateSelectedOption(item, value, index)
-            "
+            @change="(value: string) => updateSelectedOption(item, value, index)"
           />
 
           <div v-if="item.selectedOption !== undefined" class="nested-content">
             <div
-              v-for="(property, propKey) in item.oneOf[item.selectedOption]
-                .properties"
+              v-for="(property, propKey) in item.oneOf[item.selectedOption].properties"
               :key="propKey"
               class="nested-item"
             >
@@ -87,9 +70,7 @@
                   @mouseleave="hidePopover"
                 >
                   {{ property.title || propKey }}
-                  <span
-                    v-if="isRequired(item.oneOf[item.selectedOption], propKey)"
-                    class="tag"
+                  <span v-if="isRequired(item.oneOf[item.selectedOption], propKey)" class="tag"
                     >*</span
                   >
                 </div>
@@ -105,10 +86,7 @@
         </div>
 
         <!-- Handle regular fields -->
-        <div
-          v-else-if="!item.properties || item.properties.length === 0"
-          class="single-item"
-        >
+        <div v-else-if="!item.properties || item.properties.length === 0" class="single-item">
           <div
             class="compact-header"
             @mouseover="showPopover(item.description ?? '', $event)"
@@ -127,11 +105,7 @@
 
         <!-- Handle nested properties -->
         <div v-else class="collapsible-section">
-          <button
-            class="minimal-header"
-            :class="{ 'is-open': item.isOpen }"
-            @click="toggle(index)"
-          >
+          <button class="minimal-header" :class="{ 'is-open': item.isOpen }" @click="toggle(index)">
             <span class="minimal-chevron">{{ item.isOpen ? "−" : "+" }}</span>
             {{ item.title }}
             <span v-if="item.required" class="tag">*</span>
@@ -201,15 +175,11 @@ const popover = ref<Popover>({
 });
 
 const localConfig = ref([...props.parsedConfig]);
-const selectedValues = ref<string[]>(
-  new Array(props.parsedConfig.length).fill(""),
-);
+const selectedValues = ref<string[]>(new Array(props.parsedConfig.length).fill(""));
 const newArrayValue = ref<Record<string, string>>({});
 
 function isStringArray(value: any): value is string[] {
-  return (
-    Array.isArray(value) && value.every((item) => typeof item === "string")
-  );
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 // Array handling functions
@@ -248,11 +218,7 @@ const removeArrayValue = (item: Field, index: number) => {
 // Initialize selected values from existing configuration
 onMounted(() => {
   props.parsedConfig.forEach((item, index) => {
-    if (
-      item.oneOf &&
-      typeof item.selectedOption === "number" &&
-      item.selectedOption >= 0
-    ) {
+    if (item.oneOf && typeof item.selectedOption === "number" && item.selectedOption >= 0) {
       selectedValues.value[index] = item.oneOf[item.selectedOption].title;
       console.log(item.oneOf[item.selectedOption].title);
       console.log("selecting a value");
@@ -283,16 +249,10 @@ const isRequired = (schema: any, fieldName: string) => {
   return schema.required?.includes(fieldName) || false;
 };
 
-const updateSelectedOption = (
-  item: Field,
-  selectedValue: string,
-  index: number,
-) => {
+const updateSelectedOption = (item: Field, selectedValue: string, index: number) => {
   if (!item.oneOf) return;
 
-  const optionIndex = item.oneOf.findIndex(
-    (opt) => opt.title === selectedValue,
-  );
+  const optionIndex = item.oneOf.findIndex((opt) => opt.title === selectedValue);
   if (optionIndex === -1) return;
 
   selectedValues.value[index] = selectedValue;
@@ -310,11 +270,7 @@ const updateSelectedOption = (
     Object.entries(selectedOption.properties).forEach(([key, prop]) => {
       if (key === "auth_type") {
         newInputValue[key] = prop.const;
-      } else if (
-        previousValue &&
-        typeof previousValue === "object" &&
-        key in previousValue
-      ) {
+      } else if (previousValue && typeof previousValue === "object" && key in previousValue) {
         newInputValue[key] = previousValue[key];
       } else {
         newInputValue[key] = prop.input_value ?? prop.default ?? "";

@@ -1,13 +1,7 @@
 <template>
   <div v-if="dataLoaded">
-    <div
-      v-if="hasMissingFields"
-      class="remove-missing-fields"
-      @click="removeMissingFields"
-    >
-      <unavailable-field
-        tooltip-text="Field not available click for removing them for memory"
-      />
+    <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
+      <unavailable-field tooltip-text="Field not available click for removing them for memory" />
       <span>Remove Missing Fields</span>
     </div>
     <div v-if="props.showTitle" class="listbox-subtitle">{{ props.title }}</div>
@@ -16,30 +10,14 @@
         <table class="styled-table">
           <thead>
             <tr v-if="props.showHeaders">
-              <th
-                v-if="props.showOldColumns"
-                :style="{ width: standardColumnWidth }"
-              >
+              <th v-if="props.showOldColumns" :style="{ width: standardColumnWidth }">
                 {{ originalColumnHeader }}
               </th>
-              <th
-                v-if="props.showNewColumns"
-                :style="{ width: standardColumnWidth }"
-              >
+              <th v-if="props.showNewColumns" :style="{ width: standardColumnWidth }">
                 New column name
               </th>
-              <th
-                v-if="props.showDataType"
-                :style="{ width: standardColumnWidth }"
-              >
-                Data type
-              </th>
-              <th
-                v-if="props.showKeepOption"
-                :style="{ width: selectColumnWidth }"
-              >
-                Select
-              </th>
+              <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">Data type</th>
+              <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
             </tr>
           </thead>
           <tbody>
@@ -57,9 +35,7 @@
                 v-if="props.showOldColumns"
                 :class="{ 'highlight-row': isSelected(column.old_name) }"
                 @click="handleItemClick(index, column.old_name, $event)"
-                @contextmenu.prevent="
-                  openContextMenu(index, column.old_name, $event)
-                "
+                @contextmenu.prevent="openContextMenu(index, column.old_name, $event)"
               >
                 <div v-if="!column.is_available" class="unavailable-field">
                   <unavailable-field />
@@ -73,11 +49,7 @@
                 v-if="props.showNewColumns"
                 :class="{ 'highlight-row': isSelected(column.old_name) }"
               >
-                <el-input
-                  v-model="column.new_name"
-                  size="small"
-                  class="smaller-el-input"
-                />
+                <el-input v-model="column.new_name" size="small" class="smaller-el-input" />
               </td>
               <td
                 v-if="props.showDataType"
@@ -118,14 +90,7 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  defineProps,
-  computed,
-  onMounted,
-  onUnmounted,
-  watchEffect,
-} from "vue";
+import { ref, defineProps, computed, onMounted, onUnmounted, watchEffect } from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";
 import unavailableField from "./UnavailableFields.vue";
@@ -207,11 +172,7 @@ watchEffect(() => {
 });
 
 const standardColumnCount = computed(() => {
-  return [
-    props.showOldColumns,
-    props.showNewColumns,
-    props.showDataType,
-  ].filter(Boolean).length;
+  return [props.showOldColumns, props.showNewColumns, props.showDataType].filter(Boolean).length;
 });
 
 const standardColumnWidth = computed(() => {
@@ -220,14 +181,11 @@ const standardColumnWidth = computed(() => {
 });
 
 const selectColumnWidth = computed(() => {
-  return standardColumnCount.value > 0
-    ? 50 / (standardColumnCount.value + 0.5) + "%"
-    : "0%";
+  return standardColumnCount.value > 0 ? 50 / (standardColumnCount.value + 0.5) + "%" : "0%";
 });
 
 // Methods
-const isSelected = (columnName: string) =>
-  selectedColumns.value.includes(columnName);
+const isSelected = (columnName: string) => selectedColumns.value.includes(columnName);
 
 const handleDragStart = (index: number, event: DragEvent) => {
   draggingIndex.value = index;
@@ -255,11 +213,7 @@ const getRange = (start: number, end: number) => {
   return range;
 };
 
-const openContextMenu = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-) => {
+const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   showContextMenu.value = true;
   event.stopPropagation();
   handleItemClick(clickedIndex, columnName, event, true);
@@ -322,9 +276,7 @@ const handleClickOutside = (event: MouseEvent) => {
 const emit = defineEmits(["updateSelectInputs"]);
 
 const removeMissingFields = () => {
-  const availableColumns = localSelectInputs.value.filter(
-    (column) => column.is_available,
-  );
+  const availableColumns = localSelectInputs.value.filter((column) => column.is_available);
   localSelectInputs.value = availableColumns;
   emit("updateSelectInputs", availableColumns);
 };

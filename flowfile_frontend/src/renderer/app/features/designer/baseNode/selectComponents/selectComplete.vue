@@ -22,15 +22,10 @@
             </div>
           </div>
           <el-divider />
-          <div
-            v-for="column in nodeSelect?.select_input"
-            :key="column.old_name"
-          >
+          <div v-for="column in nodeSelect?.select_input" :key="column.old_name">
             <el-row :gutter="20">
               <el-col :span="6">
-                <el-text class="mx-1" size="small">{{
-                  column.old_name
-                }}</el-text>
+                <el-text class="mx-1" size="small">{{ column.old_name }}</el-text>
               </el-col>
               <el-col :span="6">
                 <el-input v-model="column.new_name" size="small" />
@@ -74,20 +69,13 @@ const loadNodeData = async () => {
 
   if (result) {
     dataLoaded.value = true;
-    nodeSelect.value = createNodeSelect(
-      nodeStore.flow_id,
-      nodeStore.node_id,
-    ).value;
+    nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
     console.log("logging node select");
     console.log(nodeSelect.value);
     const main_input = result.main_input;
     try {
       // Try to parse the result.value.setting_input
-      if (
-        result?.setting_input &&
-        main_input &&
-        result?.setting_input.is_setup
-      ) {
+      if (result?.setting_input && main_input && result?.setting_input.is_setup) {
         console.log("parsing main result");
         nodeSelect.value = result.setting_input;
         keepMissing.value = nodeSelect.value.keep_missing;
@@ -119,8 +107,7 @@ const pushNodeData = async () => {
   if (originalData) {
     newColumnSettings.forEach((newColumnSetting, index) => {
       let original_object = originalData.main_input?.table_schema[index];
-      newColumnSetting.is_altered =
-        original_object?.data_type !== newColumnSetting.data_type;
+      newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
       newColumnSetting.data_type_change = newColumnSetting.is_altered;
     });
   }

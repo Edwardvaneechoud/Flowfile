@@ -3,11 +3,7 @@
     <!-- Row for Has Headers -->
     <div class="row">
       <label for="has-headers">Has Headers:</label>
-      <el-checkbox
-        v-model="localCsvTable.has_headers"
-        size="large"
-        @change="updateParent"
-      />
+      <el-checkbox v-model="localCsvTable.has_headers" size="large" @change="updateParent" />
     </div>
 
     <!-- Row for Delimiter -->
@@ -113,11 +109,7 @@
     <!-- Row for Ignore Errors -->
     <div class="row">
       <label for="ignore-errors">Ignore Errors:</label>
-      <el-checkbox
-        v-model="localCsvTable.ignore_errors"
-        size="large"
-        @change="updateParent"
-      />
+      <el-checkbox v-model="localCsvTable.ignore_errors" size="large" @change="updateParent" />
     </div>
   </div>
 </template>

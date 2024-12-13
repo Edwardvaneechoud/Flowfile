@@ -8,8 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Select data" intro="Select columns from the data">
-      </NodeTitle>
+      <NodeTitle title="Select data" intro="Select columns from the data"> </NodeTitle>
       <selectComplete ref="childComp" :node-id="nodeId"> </selectComplete>
     </teleport>
   </div>

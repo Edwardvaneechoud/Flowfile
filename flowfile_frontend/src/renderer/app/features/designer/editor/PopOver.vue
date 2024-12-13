@@ -1,10 +1,6 @@
 <template>
   <div class="popover-container">
-    <div
-      class="popover-reference"
-      @mouseenter="showPopover"
-      @mouseleave="hidePopover"
-    >
+    <div class="popover-reference" @mouseenter="showPopover" @mouseleave="hidePopover">
       <slot></slot>
     </div>
     <div v-if="visible" :style="popoverStyle" class="popover">

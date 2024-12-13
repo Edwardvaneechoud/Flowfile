@@ -59,14 +59,7 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  onMounted,
-  onUnmounted,
-  computed,
-  nextTick,
-  defineProps,
-} from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { GraphSolverInput, NodeGraphSolver } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -78,9 +71,7 @@ const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const selectedColumns = ref<string[]>([]);
-const contextMenuOptions = ref<
-  { label: string; action: string; disabled: boolean }[]
->([]);
+const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeData = ref<null | NodeData>(null);
 const draggedColumnName = ref<string | null>(null);
@@ -110,9 +101,7 @@ const onDrop = (index: number) => {
   if (draggedColumnName.value) {
     const colSchema = nodeData.value?.main_input?.table_schema;
     if (colSchema) {
-      const fromIndex = colSchema.findIndex(
-        (col) => col.name === draggedColumnName.value,
-      );
+      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
       if (fromIndex !== -1 && fromIndex !== index) {
         const [movedColumn] = colSchema.splice(fromIndex, 1);
         colSchema.splice(index, 0, movedColumn);
@@ -128,10 +117,7 @@ const onDropInSection = (section: "from" | "to") => {
     removeColumnIfExists(draggedColumnName.value);
 
     // Assign the dragged column to the appropriate section
-    if (
-      section === "from" &&
-      graphSolverInput.value.col_from !== draggedColumnName.value
-    ) {
+    if (section === "from" && graphSolverInput.value.col_from !== draggedColumnName.value) {
       graphSolverInput.value.col_from = draggedColumnName.value;
     } else if (section === "to") {
       graphSolverInput.value.col_to = draggedColumnName.value;
@@ -174,8 +160,7 @@ const handleContextMenuSelect = (action: "from" | "to") => {
 
 const isColumnAssigned = (columnName: string): boolean => {
   return (
-    graphSolverInput.value.col_from === columnName ||
-    graphSolverInput.value.col_to === columnName
+    graphSolverInput.value.col_from === columnName || graphSolverInput.value.col_to === columnName
   );
 };
 

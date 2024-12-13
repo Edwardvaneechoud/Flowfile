@@ -11,10 +11,7 @@
           "
           class="error-msg"
         >
-          <unavailableField
-            tooltip-text="Setup is not valid"
-            class="error-icon"
-          />
+          <unavailableField tooltip-text="Setup is not valid" class="error-icon" />
           Check the column you want to split
         </div>
 
@@ -26,9 +23,7 @@
               <column-selector
                 v-model="nodeTextToRows.text_to_rows_input.column_to_split"
                 :column-options="result?.main_input?.columns"
-                @update:value="
-                  (value: string) => handleChange(value, 'columnToSplit')
-                "
+                @update:value="(value: string) => handleChange(value, 'columnToSplit')"
               />
             </div>
           </el-row>
@@ -45,10 +40,7 @@
           </el-radio-group>
         </div>
         <!-- Split by Fixed Value -->
-        <div
-          v-if="nodeTextToRows.text_to_rows_input.split_by_fixed_value"
-          class="row"
-        >
+        <div v-if="nodeTextToRows.text_to_rows_input.split_by_fixed_value" class="row">
           <el-col :span="10">
             <label>Split by value</label>
           </el-col>
@@ -62,10 +54,7 @@
         </div>
 
         <!-- Split by Column -->
-        <div
-          v-if="!nodeTextToRows.text_to_rows_input.split_by_fixed_value"
-          class="row"
-        >
+        <div v-if="!nodeTextToRows.text_to_rows_input.split_by_fixed_value" class="row">
           <el-col :span="10">
             <label>Column that contains the value to split</label>
           </el-col>
@@ -74,9 +63,7 @@
               v-model="nodeTextToRows.text_to_rows_input.split_by_column"
               :column-options="result?.main_input?.columns"
               :allow-other="false"
-              @update:value="
-                (value: string) => handleChange(value, 'splitValueColumn')
-              "
+              @update:value="(value: string) => handleChange(value, 'splitValueColumn')"
             />
           </el-col>
         </div>
@@ -143,10 +130,7 @@ const loadNodeData = async (nodeId: number) => {
   isLoaded.value = true;
 };
 
-const handleChange = (
-  newValue: string,
-  type: "columnToSplit" | "splitValueColumn",
-) => {
+const handleChange = (newValue: string, type: "columnToSplit" | "splitValueColumn") => {
   if (nodeTextToRows.value?.text_to_rows_input)
     if (type === "columnToSplit") {
       nodeTextToRows.value.text_to_rows_input.column_to_split = newValue;

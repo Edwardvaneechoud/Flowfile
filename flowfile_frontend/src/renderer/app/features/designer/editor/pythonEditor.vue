@@ -25,11 +25,7 @@ import { ref, shallowRef, defineExpose, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
-import {
-  autocompletion,
-  CompletionSource,
-  acceptCompletion,
-} from "@codemirror/autocomplete";
+import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore } from "@codemirror/commands";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 

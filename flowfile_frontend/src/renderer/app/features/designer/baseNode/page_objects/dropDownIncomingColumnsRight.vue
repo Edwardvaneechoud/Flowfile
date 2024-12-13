@@ -9,11 +9,7 @@
       @blur="hideOptions"
     />
     <ul v-if="showOptions" class="options-list">
-      <li
-        v-for="option in filteredOptions"
-        :key="option"
-        @click="selectOption(option)"
-      >
+      <li v-for="option in filteredOptions" :key="option" @click="selectOption(option)">
         {{ option }}
       </li>
     </ul>

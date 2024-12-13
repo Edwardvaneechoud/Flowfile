@@ -3,10 +3,7 @@
     <div v-for="error in errors" :key="error.index" class="error-box">
       <i class="error-icon">&#9888;</i>
       <!-- Unicode warning sign -->
-      <span
-        ><strong>Warning:</strong> {{ error.type }} at index
-        {{ error.index }}.</span
-      >
+      <span><strong>Warning:</strong> {{ error.type }} at index {{ error.index }}.</span>
     </div>
   </div>
 </template>

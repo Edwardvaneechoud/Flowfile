@@ -2,16 +2,8 @@
 import { app, ipcMain, globalShortcut, BrowserWindow, dialog } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
-import {
-  startServices,
-  cleanupProcesses,
-  setupProcessMonitoring,
-} from "./services";
-import {
-  createWindow,
-  getMainWindow,
-  createLoadingWindow,
-} from "./windowManager";
+import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
+import { createWindow, getMainWindow, createLoadingWindow } from "./windowManager";
 import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
 import { loadWindow } from "./windowLoader";
@@ -44,8 +36,7 @@ async function checkDocker(): Promise<{
       if (!stdout) {
         resolve({
           isAvailable: false,
-          error:
-            "Docker is not available. Some features may have limited functionality.",
+          error: "Docker is not available. Some features may have limited functionality.",
         });
         return;
       }

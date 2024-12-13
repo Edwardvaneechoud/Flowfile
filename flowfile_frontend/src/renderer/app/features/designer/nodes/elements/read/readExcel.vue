@@ -19,11 +19,7 @@
 
         <!-- Checkboxes Group -->
         <div class="row">
-          <el-checkbox
-            v-model="localExcelTable.has_headers"
-            label="Has headers"
-            size="large"
-          />
+          <el-checkbox v-model="localExcelTable.has_headers" label="Has headers" size="large" />
           <el-checkbox
             v-model="localExcelTable.type_inference"
             label="Type inference"

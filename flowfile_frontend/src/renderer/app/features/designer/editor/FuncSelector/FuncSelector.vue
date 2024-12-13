@@ -1,34 +1,21 @@
 <template>
-  <div
-    v-for="expressionGroup in apiData"
-    :key="expressionGroup.expression_type"
-    class="tree-node"
-  >
+  <div v-for="expressionGroup in apiData" :key="expressionGroup.expression_type" class="tree-node">
     <div @click="toggle(expressionGroup)">
       <span>{{ expressionGroup.expression_type }}</span>
       <span v-if="expressionGroup.expressions" class="toggle-icon">
         {{ isOpen(expressionGroup) ? "▼" : "▶" }}
       </span>
     </div>
-    <ul
-      v-if="expressionGroup.expressions && isOpen(expressionGroup)"
-      class="tree-subview"
-    >
+    <ul v-if="expressionGroup.expressions && isOpen(expressionGroup)" class="tree-subview">
       <li
         v-for="expression in expressionGroup.expressions"
         :key="expression.name"
         class="tree-leaf"
       >
         <div>
-          <pop-over
-            :content="formatDoc(expression.doc)"
-            :title="expression.name"
-          >
+          <pop-over :content="formatDoc(expression.doc)" :title="expression.name">
             <div class="cool-button-container">
-              <button
-                class="cool-button"
-                @click="handleButtonClick(expression.name)"
-              >
+              <button class="cool-button" @click="handleButtonClick(expression.name)">
                 {{ expression.name }}
               </button>
             </div>

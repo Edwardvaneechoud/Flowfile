@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Join"
-        intro="Combine datasets based on one or more columns."
-      />
+      <NodeTitle title="Join" intro="Combine datasets based on one or more columns." />
       <joinInput ref="childComp" :node-id="nodeId"> </joinInput>
     </teleport>
   </div>

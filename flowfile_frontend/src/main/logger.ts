@@ -15,10 +15,7 @@ export function setupLogging() {
   }
 
   // Log startup
-  appendFileSync(
-    logFile,
-    `\n\n=== App Started at ${new Date().toISOString()} ===\n`,
-  );
+  appendFileSync(logFile, `\n\n=== App Started at ${new Date().toISOString()} ===\n`);
 
   // Override console.log and console.error
   const originalLog = console.log;
@@ -26,18 +23,12 @@ export function setupLogging() {
 
   console.log = (...args) => {
     originalLog.apply(console, args);
-    appendFileSync(
-      logFile,
-      `${new Date().toISOString()} [LOG] ${format(...args)}\n`,
-    );
+    appendFileSync(logFile, `${new Date().toISOString()} [LOG] ${format(...args)}\n`);
   };
 
   console.error = (...args) => {
     originalError.apply(console, args);
-    appendFileSync(
-      logFile,
-      `${new Date().toISOString()} [ERROR] ${format(...args)}\n`,
-    );
+    appendFileSync(logFile, `${new Date().toISOString()} [ERROR] ${format(...args)}\n`);
   };
 
   return logFile;

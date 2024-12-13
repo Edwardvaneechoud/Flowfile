@@ -8,8 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Graph Solver" intro="Find groups in your data">
-      </NodeTitle>
+      <NodeTitle title="Graph Solver" intro="Find groups in your data"> </NodeTitle>
       <readInput ref="childComp" :node-id="nodeId"> </readInput>
     </teleport>
   </div>

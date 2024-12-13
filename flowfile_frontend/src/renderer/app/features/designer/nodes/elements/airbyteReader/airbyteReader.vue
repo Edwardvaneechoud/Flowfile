@@ -25,21 +25,14 @@
     <div class="listbox-subtitle flex justify-between items-center">
       <div class="flex items-center gap-2">
         <span>Config settings</span>
-        <button
-          class="icon-button"
-          @click="isConfigCollapsed = !isConfigCollapsed"
-        >
+        <button class="icon-button" @click="isConfigCollapsed = !isConfigCollapsed">
           <span class="material-icons">
             {{ isConfigCollapsed ? "expand_more" : "expand_less" }}
           </span>
         </button>
       </div>
       <div class="flex gap-2">
-        <button
-          v-if="airbyteConfig?.parsed_config"
-          class="secondary-button"
-          @click="resetConfig"
-        >
+        <button v-if="airbyteConfig?.parsed_config" class="secondary-button" @click="resetConfig">
           Reset settings
           <span class="material-icons">restart_alt</span>
         </button>
@@ -50,17 +43,12 @@
           @click="validateConfig"
         >
           {{ isValidating ? "Validating..." : "Validate" }}
-          <span class="material-icons" :class="{ spin: isValidating }"
-            >check_circle</span
-          >
+          <span class="material-icons" :class="{ spin: isValidating }">check_circle</span>
         </button>
       </div>
     </div>
 
-    <div
-      v-if="validationMessage"
-      :class="['validation-banner', validationStatus]"
-    >
+    <div v-if="validationMessage" :class="['validation-banner', validationStatus]">
       <span class="material-icons">{{
         validationStatus === "success" ? "check_circle" : "warning"
       }}</span>
@@ -74,21 +62,10 @@
         :parsed-config="airbyteConfig.parsed_config"
       />
 
-      <div
-        v-if="!airbyteConfigTemplate?.available_streams"
-        class="stream-section"
-      >
-        <button
-          class="primary-button"
-          :disabled="isFetchingStreams"
-          @click="fetchAvailableStreams"
-        >
-          {{
-            isFetchingStreams ? "Loading streams..." : "Load available streams"
-          }}
-          <span class="material-icons" :class="{ spin: isFetchingStreams }"
-            >refresh</span
-          >
+      <div v-if="!airbyteConfigTemplate?.available_streams" class="stream-section">
+        <button class="primary-button" :disabled="isFetchingStreams" @click="fetchAvailableStreams">
+          {{ isFetchingStreams ? "Loading streams..." : "Load available streams" }}
+          <span class="material-icons" :class="{ spin: isFetchingStreams }">refresh</span>
         </button>
       </div>
 
@@ -134,12 +111,7 @@ import {
   getAirbyteAvailableConfigs,
 } from "./utils";
 import AirbyteForm from "./airbyteConfigForm.vue";
-import {
-  SchemaProperty,
-  AirbyteConfig,
-  AirbyteConfigTemplate,
-  NodeExternalSource,
-} from "./types";
+import { SchemaProperty, AirbyteConfig, AirbyteConfigTemplate, NodeExternalSource } from "./types";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { CodeLoader } from "vue-content-loader";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
@@ -190,8 +162,7 @@ const validateConfig = async () => {
     validationMessage.value = "Configuration validated successfully";
   } catch (error) {
     validationStatus.value = "error";
-    validationMessage.value =
-      error instanceof Error ? error.message : "Validation failed";
+    validationMessage.value = error instanceof Error ? error.message : "Validation failed";
   } finally {
     isValidating.value = false;
     setTimeout(() => {
@@ -202,9 +173,7 @@ const validateConfig = async () => {
 
 const resetConfig = async () => {
   if (
-    !confirm(
-      "Are you sure you want to reset all settings? This cannot be undone.",
-    ) ||
+    !confirm("Are you sure you want to reset all settings? This cannot be undone.") ||
     !backupAirbyteConfig.value
   )
     return;
@@ -218,9 +187,7 @@ const resetConfig = async () => {
   selectedConnector.value = backupAirbyteConfig.value.source_name;
   initialSelectedStream.value = backupAirbyteConfig.value.selected_stream;
 
-  const connectorInputData = await getAirbyteConnectorTemplate(
-    selectedConnector.value,
-  );
+  const connectorInputData = await getAirbyteConnectorTemplate(selectedConnector.value);
   if (!connectorInputData) return;
 
   airbyteConfigTemplate.value = connectorInputData;
@@ -235,9 +202,7 @@ const fetchAvailableStreams = async () => {
     inputValues.value = getConfigSettings(airbyteConfig.value.parsed_config);
     airbyteConfig.value.mapped_config_spec = inputValues.value;
     await setAirbyteConfigGetStreams(airbyteConfig.value);
-    airbyteConfigTemplate.value = await getAirbyteConnectorTemplate(
-      selectedConnector.value,
-    );
+    airbyteConfigTemplate.value = await getAirbyteConnectorTemplate(selectedConnector.value);
   } catch (error) {
     console.error("Error fetching streams:", error);
   } finally {
@@ -249,11 +214,7 @@ const loadNodeData = async (nodeId: number) => {
   const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
   nodeExternalSource.value = nodeResult?.setting_input;
 
-  if (
-    !nodeExternalSource.value?.is_setup ||
-    !nodeExternalSource.value.source_settings
-  )
-    return;
+  if (!nodeExternalSource.value?.is_setup || !nodeExternalSource.value.source_settings) return;
   airbyteConfig.value = nodeExternalSource.value.source_settings;
   backupAirbyteConfig.value = { ...airbyteConfig.value };
 
@@ -261,23 +222,16 @@ const loadNodeData = async (nodeId: number) => {
   sourceSelected.value = true;
   initialSelectedStream.value = airbyteConfig.value.selected_stream;
 
-  const connectorInputData = await getAirbyteConnectorTemplate(
-    selectedConnector.value,
-  );
+  const connectorInputData = await getAirbyteConnectorTemplate(selectedConnector.value);
   if (!connectorInputData) return;
 
   airbyteConfigTemplate.value = connectorInputData;
 
   if (!airbyteConfig.value.parsed_config) {
-    airbyteConfig.value.parsed_config = computeSchema(
-      airbyteConfigTemplate.value.config_spec,
-    );
+    airbyteConfig.value.parsed_config = computeSchema(airbyteConfigTemplate.value.config_spec);
   }
 
-  if (
-    !connectorInputData.available_streams &&
-    airbyteConfig.value.parsed_config
-  ) {
+  if (!connectorInputData.available_streams && airbyteConfig.value.parsed_config) {
     await fetchAvailableStreams();
   }
 };
@@ -300,9 +254,7 @@ const getConfig = async () => {
   connectorSelected.value = false;
   sourceSelected.value = true;
 
-  const connectorInputData = await getAirbyteConnectorTemplate(
-    selectedConnector.value,
-  );
+  const connectorInputData = await getAirbyteConnectorTemplate(selectedConnector.value);
   if (!connectorInputData) return;
 
   airbyteConfigTemplate.value = connectorInputData;
@@ -318,13 +270,13 @@ const getConfig = async () => {
 };
 
 const validateSelection = async () => {
-  if (!nodeExternalSource.value || !airbyteConfig.value)
-    throw new Error("Invalid configuration");
+  if (!nodeExternalSource.value || !airbyteConfig.value) throw new Error("Invalid configuration");
 
   nodeExternalSource.value.is_setup = true;
   nodeExternalSource.value.source_settings = airbyteConfig.value;
-  nodeExternalSource.value.source_settings.mapped_config_spec =
-    getConfigSettings(airbyteConfig.value.parsed_config);
+  nodeExternalSource.value.source_settings.mapped_config_spec = getConfigSettings(
+    airbyteConfig.value.parsed_config,
+  );
 
   if (initialSelectedStream.value != airbyteConfig.value.selected_stream) {
     nodeExternalSource.value.source_settings.fields = [];
@@ -338,8 +290,9 @@ const pushNodeData = async () => {
 
   nodeExternalSource.value.is_setup = true;
   nodeExternalSource.value.source_settings = airbyteConfig.value;
-  nodeExternalSource.value.source_settings.mapped_config_spec =
-    getConfigSettings(airbyteConfig.value.parsed_config);
+  nodeExternalSource.value.source_settings.mapped_config_spec = getConfigSettings(
+    airbyteConfig.value.parsed_config,
+  );
 
   if (initialSelectedStream.value != airbyteConfig.value.selected_stream) {
     nodeExternalSource.value.source_settings.fields = [];

@@ -27,11 +27,7 @@
           </div>
           <div v-if="nodeFilter?.filter_input.basic_filter">
             <column-selector
-              :value="
-                translateSymbolToDes(
-                  nodeFilter.filter_input.basic_filter.filter_type,
-                )
-              "
+              :value="translateSymbolToDes(nodeFilter.filter_input.basic_filter.filter_type)"
               :column-options="comparisonOptions"
               @update:value="(value: string) => handleFilterTypeChange(value)"
             />
@@ -121,8 +117,7 @@ const loadNodeData = async (nodeId: number) => {
     if (nodeFilter.value?.filter_input.advanced_filter) {
       editorString.value = nodeFilter.value?.filter_input.advanced_filter;
     }
-    isAdvancedFilter.value =
-      nodeFilter.value?.filter_input.filter_type === "advanced";
+    isAdvancedFilter.value = nodeFilter.value?.filter_input.filter_type === "advanced";
   }
   isLoaded.value = true;
 };

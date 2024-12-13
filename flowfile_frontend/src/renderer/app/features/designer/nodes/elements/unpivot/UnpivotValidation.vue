@@ -7,9 +7,7 @@
     content="Some required fields are missing"
   >
     <div class="validation-wrapper">
-      <p v-if="!unpivotInput.index_columns" class="error-message">
-        Index Column cannot be empty.
-      </p>
+      <p v-if="!unpivotInput.index_columns" class="error-message">Index Column cannot be empty.</p>
     </div>
     <template #reference>
       <el-icon color="#FF6B6B" class="warning-icon">

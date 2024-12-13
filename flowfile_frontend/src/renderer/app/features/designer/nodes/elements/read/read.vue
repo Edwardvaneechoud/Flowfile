@@ -17,18 +17,11 @@
         <div class="listbox-subtitle">File Specs</div>
         <ExcelTableConfig v-if="isExcelFile" v-model="receivedExcelTable" />
         <CsvTableConfig v-if="isCsvFile" v-model="receivedCsvTable" />
-        <ParquetTableConfig
-          v-if="isParquetFile"
-          v-model="receivedParquetTable"
-        />
+        <ParquetTableConfig v-if="isParquetFile" v-model="receivedParquetTable" />
       </div>
     </div>
 
-    <el-dialog
-      v-model="modalVisibleForOpen"
-      title="Select a file to Read"
-      width="70%"
-    >
+    <el-dialog v-model="modalVisibleForOpen" title="Select a file to Read" width="70%">
       <file-browser
         :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
         mode="open"
@@ -172,10 +165,7 @@ const loadNodeData = async (nodeId: number) => {
 
     nodeRead.value = nodeResult.setting_input;
 
-    if (
-      nodeResult.setting_input?.is_setup &&
-      nodeResult.setting_input.received_file
-    ) {
+    if (nodeResult.setting_input?.is_setup && nodeResult.setting_input.received_file) {
       const { file_type } = nodeResult.setting_input.received_file;
 
       // Reset all flags

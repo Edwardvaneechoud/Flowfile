@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Text to rows"
-        intro="Split text into rows based on a delimiter"
-      />
+      <NodeTitle title="Text to rows" intro="Split text into rows based on a delimiter" />
       <joinInput ref="childComp" :node-id="nodeId"> </joinInput>
     </teleport>
   </div>

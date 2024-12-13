@@ -8,8 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Formula" intro="Create a new column with a formula">
-      </NodeTitle>
+      <NodeTitle title="Formula" intro="Create a new column with a formula"> </NodeTitle>
       <editorInput ref="childComp"> </editorInput>
     </teleport>
   </div>

@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="External source"
-        intro="Import data from an external source"
-      />
+      <NodeTitle title="External source" intro="Import data from an external source" />
       <externalSource ref="childComp" :node-id="nodeId"> </externalSource>
     </teleport>
   </div>

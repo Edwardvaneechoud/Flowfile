@@ -175,9 +175,7 @@ const handleNodeChange = (nodeChangesEvent: any) => {
   }
 };
 
-const convertEdgeChangeToNodeConnection = (
-  edgeChange: EdgeChange,
-): NodeConnection => {
+const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnection => {
   return {
     input_connection: {
       node_id: Number(edgeChange.target),

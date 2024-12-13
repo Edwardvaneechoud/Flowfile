@@ -2,10 +2,7 @@
   <div class="app-layout">
     <Header />
     <div class="app-layout__content">
-      <div
-        class="app-layout__sidebar-wrapper"
-        :class="{ minimized: isCollapse }"
-      >
+      <div class="app-layout__sidebar-wrapper" :class="{ minimized: isCollapse }">
         <Sidebar :is-collapse="isCollapse" @toggle-collapse="toggleCollapse" />
       </div>
       <div class="app-layout__page">

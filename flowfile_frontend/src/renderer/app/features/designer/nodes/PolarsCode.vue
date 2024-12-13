@@ -8,11 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Polars code"
-        intro="Use custom Polars code to transform data."
-      >
-      </NodeTitle>
+      <NodeTitle title="Polars code" intro="Use custom Polars code to transform data."> </NodeTitle>
       <polarsCode ref="childComp" :node-id="nodeId"> </polarsCode>
     </teleport>
   </div>

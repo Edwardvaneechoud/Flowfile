@@ -86,11 +86,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import {
-  NodeUnpivot,
-  DataTypeSelector,
-  UnpivotInput,
-} from "../../../baseNode/nodeInput";
+import { NodeUnpivot, DataTypeSelector, UnpivotInput } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
@@ -100,20 +96,12 @@ const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const selectedColumns = ref<string[]>([]);
-const contextMenuOptions = ref<
-  { label: string; action: string; disabled: boolean }[]
->([]);
+const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeData = ref<null | NodeData>(null);
 const draggedColumnName = ref<string | null>(null);
 
-const dataTypeSelectorOptions: DataTypeSelector[] = [
-  "all",
-  "numeric",
-  "string",
-  "date",
-  "all",
-];
+const dataTypeSelectorOptions: DataTypeSelector[] = ["all", "numeric", "string", "date", "all"];
 
 const unpivotInput = ref<UnpivotInput>({
   index_columns: [],
@@ -137,9 +125,7 @@ const onDrop = (index: number) => {
   if (draggedColumnName.value) {
     const colSchema = nodeData.value?.main_input?.table_schema;
     if (colSchema) {
-      const fromIndex = colSchema.findIndex(
-        (col) => col.name === draggedColumnName.value,
-      );
+      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
       if (fromIndex !== -1 && fromIndex !== index) {
         const [movedColumn] = colSchema.splice(fromIndex, 1);
         colSchema.splice(index, 0, movedColumn);
@@ -184,8 +170,7 @@ const openContextMenu = (columnName: string, event: MouseEvent) => {
       label: "Add to Value",
       action: "value",
       disabled:
-        isColumnAssigned(columnName) ||
-        !(unpivotInput.value.data_type_selector_mode === "column"),
+        isColumnAssigned(columnName) || !(unpivotInput.value.data_type_selector_mode === "column"),
     },
   ];
 
@@ -194,16 +179,10 @@ const openContextMenu = (columnName: string, event: MouseEvent) => {
 
 const handleContextMenuSelect = (action: "index" | "value") => {
   const column = selectedColumns.value[0];
-  if (
-    action === "index" &&
-    !unpivotInput.value.index_columns.includes(column)
-  ) {
+  if (action === "index" && !unpivotInput.value.index_columns.includes(column)) {
     removeColumnIfExists(column);
     unpivotInput.value.index_columns.push(column);
-  } else if (
-    action === "value" &&
-    !unpivotInput.value.index_columns.includes(column)
-  ) {
+  } else if (action === "value" && !unpivotInput.value.index_columns.includes(column)) {
     removeColumnIfExists(column);
     unpivotInput.value.value_columns.push(column);
   }

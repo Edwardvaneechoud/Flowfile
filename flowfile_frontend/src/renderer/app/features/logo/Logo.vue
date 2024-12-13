@@ -1,16 +1,9 @@
 <template>
   <div
-    :class="[
-      'logo-container',
-      { 'column-layout': positionAppName === 'below' },
-    ]"
+    :class="['logo-container', { 'column-layout': positionAppName === 'below' }]"
     @click="OnClick"
   >
-    <img
-      src="/images/flowfile.svg"
-      :alt="altText"
-      :style="{ width: width, height: height }"
-    />
+    <img src="/images/flowfile.svg" :alt="altText" :style="{ width: width, height: height }" />
     <span v-if="appName" class="app-name">{{ appName }}</span>
   </div>
 </template>

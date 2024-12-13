@@ -102,32 +102,21 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
-const getMissingColumns = (
-  availableColumns: string[],
-  usedColumns: string[],
-): string[] => {
+const getMissingColumns = (availableColumns: string[], usedColumns: string[]): string[] => {
   const availableSet = new Set(availableColumns);
-  return Array.from(
-    new Set(usedColumns.filter((usedColumn) => !availableSet.has(usedColumn))),
-  );
+  return Array.from(new Set(usedColumns.filter((usedColumn) => !availableSet.has(usedColumn))));
 };
 
 const missingColumns = computed(() => {
   if (nodeData.value && nodeData.value.main_input?.columns) {
-    return getMissingColumns(
-      nodeData.value.main_input?.columns,
-      uniqueInput.value.columns,
-    );
+    return getMissingColumns(nodeData.value.main_input?.columns, uniqueInput.value.columns);
   }
   return [];
 });
 
 const calculateMissingColumns = (): string[] => {
   if (nodeData.value && nodeData.value.main_input?.columns) {
-    return getMissingColumns(
-      nodeData.value.main_input?.columns,
-      uniqueInput.value.columns,
-    );
+    return getMissingColumns(nodeData.value.main_input?.columns, uniqueInput.value.columns);
   }
   return [];
 };

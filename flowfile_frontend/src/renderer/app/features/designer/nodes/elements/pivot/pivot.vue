@@ -77,20 +77,9 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  onMounted,
-  onUnmounted,
-  computed,
-  nextTick,
-  defineProps,
-} from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import {
-  PivotInput,
-  NodePivot,
-  PivotAggOption,
-} from "../../../baseNode/nodeInput";
+import { PivotInput, NodePivot, PivotAggOption } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
@@ -101,21 +90,11 @@ const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const selectedColumns = ref<string[]>([]);
-const contextMenuOptions = ref<
-  { label: string; action: string; disabled: boolean }[]
->([]);
+const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeData = ref<null | NodeData>(null);
 const draggedColumnName = ref<string | null>(null);
-const aggOptions: PivotAggOption[] = [
-  "sum",
-  "count",
-  "min",
-  "max",
-  "n_unique",
-  "mean",
-  "median",
-];
+const aggOptions: PivotAggOption[] = ["sum", "count", "min", "max", "n_unique", "mean", "median"];
 
 const pivotInput = ref<PivotInput>({
   index_columns: [],
@@ -143,9 +122,7 @@ const onDrop = (index: number) => {
   if (draggedColumnName.value) {
     const colSchema = nodeData.value?.main_input?.table_schema;
     if (colSchema) {
-      const fromIndex = colSchema.findIndex(
-        (col) => col.name === draggedColumnName.value,
-      );
+      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
       if (fromIndex !== -1 && fromIndex !== index) {
         const [movedColumn] = colSchema.splice(fromIndex, 1);
         colSchema.splice(index, 0, movedColumn);
@@ -161,10 +138,7 @@ const onDropInSection = (section: "index" | "pivot" | "value") => {
     removeColumnIfExists(draggedColumnName.value);
 
     // Assign the dragged column to the appropriate section
-    if (
-      section === "index" &&
-      !pivotInput.value.index_columns.includes(draggedColumnName.value)
-    ) {
+    if (section === "index" && !pivotInput.value.index_columns.includes(draggedColumnName.value)) {
       pivotInput.value.index_columns.push(draggedColumnName.value);
     } else if (section === "pivot") {
       pivotInput.value.pivot_column = draggedColumnName.value;
@@ -225,19 +199,14 @@ const isColumnAssigned = (columnName: string): boolean => {
 };
 
 const removeColumnIfExists = (column: string) => {
-  pivotInput.value.index_columns = pivotInput.value.index_columns.filter(
-    (col) => col !== column,
-  );
-  if (pivotInput.value.pivot_column === column)
-    pivotInput.value.pivot_column = null;
+  pivotInput.value.index_columns = pivotInput.value.index_columns.filter((col) => col !== column);
+  if (pivotInput.value.pivot_column === column) pivotInput.value.pivot_column = null;
   if (pivotInput.value.value_col === column) pivotInput.value.value_col = null;
 };
 
 const removeColumn = (type: "index" | "pivot" | "value", column: string) => {
   if (type === "index") {
-    pivotInput.value.index_columns = pivotInput.value.index_columns.filter(
-      (col) => col !== column,
-    );
+    pivotInput.value.index_columns = pivotInput.value.index_columns.filter((col) => col !== column);
   } else if (type === "pivot") {
     pivotInput.value.pivot_column = null;
   } else if (type === "value") {

@@ -5,11 +5,7 @@
       <span class="caret"></span>
     </div>
     <ul v-show="showOptions" class="options-list">
-      <li
-        v-for="option in options"
-        :key="option.value"
-        @click="selectOption(option)"
-      >
+      <li v-for="option in options" :key="option.value" @click="selectOption(option)">
         {{ option.label }}
       </li>
     </ul>
@@ -48,8 +44,7 @@ const selectedOption = ref<Option | null>(null);
 watch(
   () => props.modelValue,
   (newVal) => {
-    selectedOption.value =
-      props.options.find((option) => option.value === newVal) || null;
+    selectedOption.value = props.options.find((option) => option.value === newVal) || null;
   },
 );
 

@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="explore data"
-        intro="Explore data based on Tableau like experience"
-      />
+      <NodeTitle title="explore data" intro="Explore data based on Tableau like experience" />
       <graphicWalker ref="childComp" :node-id="nodeId"> </graphicWalker>
     </teleport>
   </div>

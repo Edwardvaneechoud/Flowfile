@@ -1,22 +1,11 @@
 <template>
   <div class="container">
-    <div
-      v-if="showSideBar"
-      class="options-container"
-      :style="{ width: treeNodeWidth }"
-    >
+    <div v-if="showSideBar" class="options-container" :style="{ width: treeNodeWidth }">
       <sidebar v-model="optionSelection" :options="radioOptions" />
       <div class="divider" />
       <div class="selector">
-        <column-selector
-          v-if="optionSelection === 'fields'"
-          @value-selected="handleNodeSelected"
-        />
-        <func-selector
-          v-else
-          ref="func-selector"
-          @value-selected="handleNodeSelected"
-        />
+        <column-selector v-if="optionSelection === 'fields'" @value-selected="handleNodeSelected" />
+        <func-selector v-else ref="func-selector" @value-selected="handleNodeSelected" />
       </div>
     </div>
     <div class="resizer" @mousedown="initResize"></div>
@@ -29,23 +18,11 @@
       />
     </div>
   </div>
-  <instant-func-results
-    ref="instantFuncResultsRef"
-    :node-id="nodeStore.node_id"
-  />
+  <instant-func-results ref="instantFuncResultsRef" :node-id="nodeStore.node_id" />
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  Ref,
-  defineExpose,
-  defineProps,
-  watch,
-  onMounted,
-  nextTick,
-  computed,
-} from "vue";
+import { ref, Ref, defineExpose, defineProps, watch, onMounted, nextTick, computed } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
 import SqlEditor from "./SqlEditor.vue";
@@ -80,9 +57,7 @@ const showHideOptions = () => {
   showTools.value = !showTools.value;
 };
 
-const showSideBar = computed(
-  () => parseInt(treeNodeWidth.value.replace("px", "")) > 50,
-);
+const showSideBar = computed(() => parseInt(treeNodeWidth.value.replace("px", "")) > 50);
 
 const handleCodeChange = (newCode: string) => {
   code.value = newCode;

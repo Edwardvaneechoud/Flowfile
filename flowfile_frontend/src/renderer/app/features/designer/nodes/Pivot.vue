@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Pivot data"
-        intro="Pivot rows to columns, to understand your data better"
-      >
+      <NodeTitle title="Pivot data" intro="Pivot rows to columns, to understand your data better">
       </NodeTitle>
       <readInput ref="childComp" :node-id="nodeId"> </readInput>
     </teleport>

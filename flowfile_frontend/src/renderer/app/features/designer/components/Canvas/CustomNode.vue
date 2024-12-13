@@ -1,17 +1,9 @@
 <template>
   <div v-bind="$attrs">
-    <div
-      class="custom-node-header"
-      data="description_display"
-      @contextmenu="onTitleClick"
-    >
+    <div class="custom-node-header" data="description_display" @contextmenu="onTitleClick">
       <div>
         <div v-if="!editMode" class="description-display">
-          <div
-            class="edit-icon"
-            title="Edit description"
-            @click.stop="toggleEditMode(true)"
-          >
+          <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
             <svg
               width="12"
               height="12"
@@ -22,19 +14,12 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <path
-                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-              ></path>
-              <path
-                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-              ></path>
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
           </div>
           <pre class="description-text">{{ descriptionSummary }}</pre>
-          <span
-            v-if="isTruncated"
-            class="truncated-indicator"
-            title="Click to see full description"
+          <span v-if="isTruncated" class="truncated-indicator" title="Click to see full description"
             >...</span
           >
         </div>
@@ -103,8 +88,7 @@ const handleClickOutside = (event: MouseEvent) => {
   const target_data = target.getAttribute("data");
   console.log(event);
   if (
-    (target_data == "description_display" ||
-      target_data == "description_input") &&
+    (target_data == "description_display" || target_data == "description_input") &&
     target.id == props.data.id.toLocaleString()
   ) {
     return;

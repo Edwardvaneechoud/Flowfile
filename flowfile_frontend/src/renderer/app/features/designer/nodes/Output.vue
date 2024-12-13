@@ -9,8 +9,7 @@
     />
 
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Write data" intro="Write data to a file or database">
-      </NodeTitle>
+      <NodeTitle title="Write data" intro="Write data to a file or database"> </NodeTitle>
       <outputPage ref="childComp" :node-id="nodeId"> </outputPage>
     </teleport>
   </div>

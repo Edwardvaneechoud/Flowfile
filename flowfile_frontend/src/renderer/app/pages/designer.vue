@@ -1,10 +1,6 @@
 <template>
   <div class="header">
-    <HeaderButtons
-      ref="headerButtons"
-      @open-flow="openFlow"
-      @refresh-flow="refreshFlow"
-    />
+    <HeaderButtons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
     <div class="spacer"></div>
     <Status />
   </div>
@@ -21,11 +17,7 @@
         <span class="material-icons empty-icon">account_tree</span>
         <h2>No Active Flows</h2>
         <p>There are currently no active flows in the system.</p>
-        <el-button
-          type="primary"
-          class="action-button"
-          @click="createFlowDialog"
-        >
+        <el-button type="primary" class="action-button" @click="createFlowDialog">
           <span class="material-icons">add_circle</span>
           Create new flow
         </el-button>

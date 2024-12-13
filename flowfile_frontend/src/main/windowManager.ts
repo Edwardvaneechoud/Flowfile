@@ -10,8 +10,7 @@ let loadingWindow: BrowserWindow | null = null;
 
 export function createLoadingWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } =
-    primaryDisplay.workAreaSize;
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
 
   // Calculate window size based on screen size
   const windowWidth = Math.min(700, screenWidth * 0.5); // Max 700px or 50% of screen width

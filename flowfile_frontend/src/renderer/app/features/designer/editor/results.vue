@@ -4,9 +4,7 @@
       <span>Flow ID: {{ runInformation?.flow_id }}</span>
       <span class="flow-summary">
         - {{ runInformation?.success ? "Succeeded" : "Failed" }}, Nodes:
-        {{ runInformation?.nodes_completed }}/{{
-          runInformation?.number_of_nodes
-        }}
+        {{ runInformation?.nodes_completed }}/{{ runInformation?.number_of_nodes }}
       </span>
     </div>
     <br />
@@ -21,21 +19,13 @@
         >
           <el-card class="node-card">
             <h4 v-if="nodeStore.nodeDescriptions[node.node_id]">
-              {{ nodeStore.nodeDescriptions[node.node_id] }} ({{
-                node.node_name
-              }})
+              {{ nodeStore.nodeDescriptions[node.node_id] }} ({{ node.node_name }})
             </h4>
             <h4 v-else>{{ `Node ${node.node_id}` }}: {{ node.node_name }}</h4>
             <div class="node-details">
               <p>
                 Duration:
-                {{
-                  formatRunTime(
-                    node.run_time,
-                    node.start_timestamp,
-                    node.is_running,
-                  )
-                }}
+                {{ formatRunTime(node.run_time, node.start_timestamp, node.is_running) }}
               </p>
               <p>
                 Status:
@@ -46,18 +36,10 @@
                     failure: node.success === false,
                   }"
                 >
-                  {{
-                    node.success === null
-                      ? "Running"
-                      : node.success
-                        ? "Success"
-                        : "Failure"
-                  }}
+                  {{ node.success === null ? "Running" : node.success ? "Success" : "Failure" }}
                 </span>
               </p>
-              <p v-if="node.success === false" class="failure">
-                Error: {{ node.error }}
-              </p>
+              <p v-if="node.success === false" class="failure">Error: {{ node.error }}</p>
             </div>
           </el-card>
         </el-timeline-item>
@@ -95,11 +77,7 @@ const calculateColor = (success: boolean | undefined) => {
   if (success === null) return "#0909ca";
   return success ? "green" : "red";
 };
-const formatRunTime = (
-  runTime: number,
-  startTimestamp: number,
-  isRunning: boolean,
-) => {
+const formatRunTime = (runTime: number, startTimestamp: number, isRunning: boolean) => {
   if (isRunning && startTimestamp > 0) {
     const currentTime = Date.now() / 1000; // Convert to seconds
     runTime = currentTime - startTimestamp;
@@ -119,9 +97,7 @@ const formatRunTime = (
   } else {
     const minutes = Math.floor(runTime / 60);
     const seconds = Math.round(runTime % 60);
-    return seconds > 0
-      ? `${minutes} minutes, ${seconds} seconds`
-      : `${minutes} minutes`;
+    return seconds > 0 ? `${minutes} minutes, ${seconds} seconds` : `${minutes} minutes`;
   }
 };
 

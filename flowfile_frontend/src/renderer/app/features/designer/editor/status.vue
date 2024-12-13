@@ -1,15 +1,7 @@
 <template>
   <div class="status-wrapper">
-    <div
-      class="flow-card"
-      @mouseenter="showTooltip = true"
-      @mouseleave="showTooltip = false"
-    >
-      <svg
-        viewBox="0 0 100 100"
-        class="flow-animation"
-        :class="{ 'is-flowing': isRunning }"
-      >
+    <div class="flow-card" @mouseenter="showTooltip = true" @mouseleave="showTooltip = false">
+      <svg viewBox="0 0 100 100" class="flow-animation" :class="{ 'is-flowing': isRunning }">
         <!-- Gradient Definitions -->
         <defs>
           <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -23,18 +15,9 @@
 
         <!-- Thick Gradient Lines -->
         <g class="flow-lines">
-          <path
-            d="M-10 25 Q 25 45, 60 25 T 130 25"
-            class="flow-line flow-line-1"
-          />
-          <path
-            d="M-10 50 Q 25 70, 60 50 T 130 50"
-            class="flow-line flow-line-2"
-          />
-          <path
-            d="M-10 75 Q 25 95, 60 75 T 130 75"
-            class="flow-line flow-line-3"
-          />
+          <path d="M-10 25 Q 25 45, 60 25 T 130 25" class="flow-line flow-line-1" />
+          <path d="M-10 50 Q 25 70, 60 50 T 130 50" class="flow-line flow-line-2" />
+          <path d="M-10 75 Q 25 95, 60 75 T 130 75" class="flow-line flow-line-3" />
         </g>
 
         <!-- Flow Particles (only visible when running) -->
@@ -46,11 +29,7 @@
       </svg>
 
       <!-- Status Tooltip -->
-      <div
-        v-if="showTooltip"
-        class="status-tooltip"
-        :class="{ 'tooltip-active': isRunning }"
-      >
+      <div v-if="showTooltip" class="status-tooltip" :class="{ 'tooltip-active': isRunning }">
         <div class="tooltip-content">
           <div class="status-text">
             {{ isRunning ? "Processing Flow" : "Flow Idle" }}
@@ -93,9 +72,7 @@ const formattedTime = computed(() => {
   });
 });
 
-const buttonText = computed(() =>
-  showFlowResult.value ? "Hide Results" : "Show Results",
-);
+const buttonText = computed(() => (showFlowResult.value ? "Hide Results" : "Show Results"));
 
 const toggleResults = () => {
   nodeStore.showFlowResult = !nodeStore.showFlowResult;

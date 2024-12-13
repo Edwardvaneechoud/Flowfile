@@ -40,23 +40,13 @@
       >
         {{ option }}
       </li>
-      <li v-if="displayedOptions.length === 0" class="no-options">
-        No options found
-      </li>
+      <li v-if="displayedOptions.length === 0" class="no-options">No options found</li>
     </ul>
   </div>
 </template>
 
 <script lang="ts" setup>
-import {
-  defineProps,
-  defineEmits,
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onUnmounted,
-} from "vue";
+import { defineProps, defineEmits, ref, computed, watch, onMounted, onUnmounted } from "vue";
 
 const props = defineProps({
   modelValue: {
@@ -137,9 +127,7 @@ const filteredOptions = computed(() => {
 });
 
 const activeDescendant = computed(() =>
-  activeIndex.value >= 0
-    ? `${uniqueId}-option-${activeIndex.value}`
-    : undefined,
+  activeIndex.value >= 0 ? `${uniqueId}-option-${activeIndex.value}` : undefined,
 );
 
 const selectOption = (option: string) => {
@@ -176,10 +164,7 @@ const onKeyDown = (event: KeyboardEvent) => {
       if (!showOptions.value) {
         showOptions.value = true;
       }
-      activeIndex.value = Math.min(
-        activeIndex.value + 1,
-        filteredOptions.value.length - 1,
-      );
+      activeIndex.value = Math.min(activeIndex.value + 1, filteredOptions.value.length - 1);
       break;
     case "ArrowUp":
       event.preventDefault();

@@ -35,9 +35,7 @@
     <div class="listbox-title">Selected File</div>
     <div class="file-item">
       <img
-        v-if="
-          selectedFile.mimeType === 'application/vnd.google-apps.spreadsheet'
-        "
+        v-if="selectedFile.mimeType === 'application/vnd.google-apps.spreadsheet'"
         src="/images/sheets.png"
         alt="Google Sheets icon"
         class="file-icon"
@@ -110,12 +108,8 @@
         </div>
       </div>
       <div class="pagination-buttons">
-        <button v-if="currentPage > 1" @click="changePage(-1)">
-          Previous page
-        </button>
-        <button v-if="nextPageAvailable" @click="changePage(1)">
-          Next page
-        </button>
+        <button v-if="currentPage > 1" @click="changePage(-1)">Previous page</button>
+        <button v-if="nextPageAvailable" @click="changePage(1)">Next page</button>
       </div>
     </div>
   </div>
@@ -207,14 +201,12 @@ const fetchSheetDetails = async (spreadsheetId: string) => {
       throw new Error("Failed to fetch spreadsheet details");
     }
     const spreadsheetData = await response.json();
-    const sheetsInfo: SheetInfo[] = spreadsheetData.sheets.map(
-      (sheet: any) => ({
-        id: sheet.properties.sheetId, // The Sheets API uses 'sheetId' to refer to a sheet's unique identifier
-        name: sheet.properties.title,
-        rows: sheet.properties.gridProperties.rowCount,
-        columns: sheet.properties.gridProperties.columnCount,
-      }),
-    );
+    const sheetsInfo: SheetInfo[] = spreadsheetData.sheets.map((sheet: any) => ({
+      id: sheet.properties.sheetId, // The Sheets API uses 'sheetId' to refer to a sheet's unique identifier
+      name: sheet.properties.title,
+      rows: sheet.properties.gridProperties.rowCount,
+      columns: sheet.properties.gridProperties.columnCount,
+    }));
 
     googleSheetDetails.value = {
       id: spreadsheetData.spreadsheetId,
@@ -252,9 +244,7 @@ const fetchDriveFiles = async (nextToken: string | null = null) => {
 
   try {
     // Make the request to the Google Drive API
-    if (
-      Object.prototype.hasOwnProperty.call(pageResults.value, currentPage.value)
-    ) {
+    if (Object.prototype.hasOwnProperty.call(pageResults.value, currentPage.value)) {
       files.value = pageResults.value[currentPage.value];
       return;
     }
@@ -334,17 +324,12 @@ const fetchInitialFiles = async () => {
 };
 
 const pageFetched = () => {
-  return Object.prototype.hasOwnProperty.call(
-    pageResults.value,
-    currentPage.value,
-  );
+  return Object.prototype.hasOwnProperty.call(pageResults.value, currentPage.value);
 };
 
 const nextPageAvailable = computed(() => {
   const all_pages = Object.keys(pageResults.value).map((key) => Number(key));
-  return (
-    nextPageToken.value !== null || Math.max(...all_pages) > currentPage.value
-  );
+  return nextPageToken.value !== null || Math.max(...all_pages) > currentPage.value;
 });
 
 const changePage = async (pageChange: number) => {
@@ -393,8 +378,7 @@ const initGoogleAuth = async () => {
   try {
     await new Promise((resolve) => gapi.load("auth2", resolve));
     await gapi.auth2.init({
-      client_id:
-        "752151734213-6oetksv4gjcenkrdsr9jjk7omm5qbt7n.apps.googleusercontent.com",
+      client_id: "752151734213-6oetksv4gjcenkrdsr9jjk7omm5qbt7n.apps.googleusercontent.com",
       scope:
         "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets",
     });

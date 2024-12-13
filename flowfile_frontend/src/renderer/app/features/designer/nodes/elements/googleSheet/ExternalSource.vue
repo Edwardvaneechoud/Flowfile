@@ -8,12 +8,7 @@
       size="small"
       @change="loadTemplateValue"
     >
-      <el-option
-        v-for="item in writingOptions"
-        :key="item"
-        :label="item"
-        :value="item"
-      />
+      <el-option v-for="item in writingOptions" :key="item" :label="item" :value="item" />
     </el-select>
   </div>
   <div class="listbox-wrapper">
@@ -38,11 +33,7 @@ import { ref, watch, watchEffect } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import GoogleSheets from "./googleSheet.vue";
 import { get_template_source_type } from "./createTemplateExternalSource";
-import {
-  SampleUsers,
-  NodeExternalSource,
-  GoogleSheet,
-} from "../../../baseNode/nodeInput";
+import { SampleUsers, NodeExternalSource, GoogleSheet } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { WatchStopHandle } from "vue";
 const nodeStore = useNodeStore();
@@ -81,12 +72,10 @@ const loadNodeData = async (nodeId: number) => {
   nodeExternalSource.value = nodeResult?.setting_input;
   if (nodeExternalSource.value?.is_setup)
     if (nodeExternalSource.value?.identifier == "sample_users") {
-      sampleUsers.value = nodeExternalSource.value
-        ?.source_settings as SampleUsers;
+      sampleUsers.value = nodeExternalSource.value?.source_settings as SampleUsers;
       selectedExternalSource.value = "sample_users";
     } else if (nodeExternalSource.value?.identifier == "google_sheet") {
-      googleSheet.value = nodeExternalSource.value
-        ?.source_settings as GoogleSheet;
+      googleSheet.value = nodeExternalSource.value?.source_settings as GoogleSheet;
       selectedExternalSource.value = "google_sheet";
       console.log("donig this");
     }
@@ -106,9 +95,7 @@ const loadTemplateValue = () => {
   } else if (selectedExternalSource.value === "google_sheet") {
     if (!googleSheet.value) {
       console.log("this is the google sheet");
-      googleSheet.value = get_template_source_type(
-        "GOOGLE_SHEET",
-      ) as GoogleSheet;
+      googleSheet.value = get_template_source_type("GOOGLE_SHEET") as GoogleSheet;
     }
     if (nodeExternalSource.value) {
       nodeExternalSource.value.source_settings = googleSheet.value;
@@ -134,11 +121,7 @@ const pushNodeDataAction = async () => {
   console.log("pushed");
   if (nodeExternalSource.value) {
     console.log("pushing");
-    await nodeStore.getNodeData(
-      1,
-      Number(nodeExternalSource.value.node_id),
-      false,
-    );
+    await nodeStore.getNodeData(1, Number(nodeExternalSource.value.node_id), false);
   }
   console.log("pushed");
 };

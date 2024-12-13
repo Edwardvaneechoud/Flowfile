@@ -31,34 +31,24 @@
                   v-model="selector.left_col"
                   :value="selector.left_col"
                   :column-options="result?.main_input?.columns"
-                  @update:value="
-                    (value: string) => handleChange(value, index, 'left')
-                  "
+                  @update:value="(value: string) => handleChange(value, index, 'left')"
                 />
                 <drop-down
                   v-model="selector.right_col"
                   :value="selector.right_col"
                   :column-options="result?.right_input?.columns"
-                  @update:value="
-                    (value: string) => handleChange(value, index, 'right')
-                  "
+                  @update:value="(value: string) => handleChange(value, index, 'right')"
                 />
                 <div class="action-buttons">
                   <button
-                    v-if="
-                      index !==
-                      (nodeJoin?.join_input.join_mapping.length ?? 0) - 1
-                    "
+                    v-if="index !== (nodeJoin?.join_input.join_mapping.length ?? 0) - 1"
                     class="action-button remove-button"
                     @click="removeJoinCondition(index)"
                   >
                     -
                   </button>
                   <button
-                    v-if="
-                      index ===
-                      (nodeJoin?.join_input.join_mapping?.length ?? 0) - 1
-                    "
+                    v-if="index === (nodeJoin?.join_input.join_mapping?.length ?? 0) - 1"
                     class="action-button add-button"
                     @click="addJoinCondition"
                   >
@@ -77,9 +67,7 @@
         :show-headers="true"
         :show-data="true"
         title="Left data"
-        @update-select-inputs="
-          (updatedInputs) => updateSelectInputsHandler(updatedInputs, true)
-        "
+        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
       />
       <select-dynamic
         :select-inputs="nodeJoin?.join_input.right_select.renames"
@@ -88,9 +76,7 @@
         :show-title="true"
         :show-data="true"
         title="Right data"
-        @update-select-inputs="
-          (updatedInputs) => updateSelectInputsHandler(updatedInputs, true)
-        "
+        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
       />
     </div>
   </div>
@@ -119,10 +105,7 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeJoin = ref<NodeJoin | null>(null);
 
-const updateSelectInputsHandler = (
-  updatedInputs: SelectInput[],
-  isLeft: boolean,
-) => {
+const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
   if (isLeft && nodeJoin.value) {
     nodeJoin.value.join_input.left_select.renames = updatedInputs;
   } else if (nodeJoin.value) {

@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Drop duplicates"
-        intro="Make the table unique by one or more columns"
-      >
+      <NodeTitle title="Drop duplicates" intro="Make the table unique by one or more columns">
       </NodeTitle>
       <uniqueInput ref="childComp" :node-id="nodeId"> </uniqueInput>
     </teleport>

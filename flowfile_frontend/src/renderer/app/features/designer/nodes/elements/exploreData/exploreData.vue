@@ -49,9 +49,7 @@ const loadNodeData = async (nodeId: number) => {
   console.log("method available");
   await nextTick();
   if (graphicWalkerInput.value.specList && graphicWalkerStore.current) {
-    graphicWalkerStore.current.importCode(
-      JSON.parse(JSON.stringify(chartList.value)),
-    );
+    graphicWalkerStore.current.importCode(JSON.parse(JSON.stringify(chartList.value)));
     console.log("specList found and imported");
   } else {
     console.log("No specList found");
@@ -68,9 +66,7 @@ const pushNodeData = async () => {
   console.log("pushNodeData");
   if (nodeGraphicWalker.value && graphicWalkerStore.current) {
     const d = toRaw(graphicWalkerStore.current.exportCode()[0]);
-    nodeGraphicWalker.value.graphic_walker_input.specList = JSON.parse(
-      JSON.stringify([d]),
-    );
+    nodeGraphicWalker.value.graphic_walker_input.specList = JSON.parse(JSON.stringify([d]));
     nodeGraphicWalker.value.graphic_walker_input.dataModel.data = [];
     nodeGraphicWalker.value.graphic_walker_input.dataModel.fields = [];
   }

@@ -16,11 +16,7 @@
     <el-button
       v-if="nodeStore.isRunning"
       size="small"
-      style="
-        background-color: rgb(220, 53, 69);
-        color: white;
-        font-weight: bold;
-      "
+      style="background-color: rgb(220, 53, 69); color: white; font-weight: bold"
       round
       @click="cancelFlow()"
     >
@@ -59,11 +55,7 @@ interface NotificationConfig {
 }
 
 // Exposed notification functions
-const showNotification = (
-  title: string,
-  message: string,
-  type?: "success" | "error",
-) => {
+const showNotification = (title: string, message: string, type?: "success" | "error") => {
   ElNotification({
     title,
     message,
@@ -75,10 +67,7 @@ const showNotification = (
 // Exposed polling control functions
 const startPolling = (checkFn: () => Promise<void>) => {
   if (pollingInterval.value === null && props.pollingConfig.enabled) {
-    pollingInterval.value = setInterval(
-      checkFn,
-      props.pollingConfig.interval,
-    ) as unknown as number;
+    pollingInterval.value = setInterval(checkFn, props.pollingConfig.interval) as unknown as number;
   }
 };
 
@@ -89,9 +78,7 @@ const stopPolling = () => {
   }
 };
 
-const createNotificationConfig = (
-  runInfo: RunInformation,
-): NotificationConfig => ({
+const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
   title: runInfo.success ? "Success" : "Error",
   message: runInfo.success
     ? "The flow has completed"

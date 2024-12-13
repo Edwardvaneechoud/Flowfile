@@ -38,10 +38,7 @@ watch(
 );
 
 const handleButtonClick = (columnSelector: ColumnSelectorInterface) => {
-  const val =
-    columnSelector.node_type === "c"
-      ? `[${columnSelector.label}]`
-      : columnSelector.label;
+  const val = columnSelector.node_type === "c" ? `[${columnSelector.label}]` : columnSelector.label;
   ranVal.value++;
   emit("value-selected", val);
 };

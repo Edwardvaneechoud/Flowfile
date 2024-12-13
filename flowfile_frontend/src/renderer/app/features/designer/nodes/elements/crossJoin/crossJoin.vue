@@ -8,9 +8,7 @@
         :show-headers="true"
         :show-data="true"
         title="Left data"
-        @update-select-inputs="
-          (updatedInputs) => updateSelectInputsHandler(updatedInputs, true)
-        "
+        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
       />
       <select-dynamic
         :select-inputs="nodeCrossJoin?.cross_join_input.right_select.renames"
@@ -19,9 +17,7 @@
         :show-title="true"
         :show-data="true"
         title="Right data"
-        @update-select-inputs="
-          (updatedInputs) => updateSelectInputsHandler(updatedInputs, true)
-        "
+        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
       />
     </div>
   </div>
@@ -41,10 +37,7 @@ const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeCrossJoin = ref<NodeCrossJoin | null>(null);
 
-const updateSelectInputsHandler = (
-  updatedInputs: SelectInput[],
-  isLeft: boolean,
-) => {
+const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
   if (isLeft && nodeCrossJoin.value) {
     nodeCrossJoin.value.cross_join_input.left_select.renames = updatedInputs;
   } else if (nodeCrossJoin.value) {

@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, defineProps, onBeforeUpdate, watch, toRaw } from "vue";
 import { embedGraphicWalker } from "@kanaries/graphic-walker";
-import type {
-  IVizAppProps,
-  ILocalComputationProps,
-} from "@kanaries/graphic-walker";
+import type { IVizAppProps, ILocalComputationProps } from "@kanaries/graphic-walker";
 
 type ILocalVizAppProps = IVizAppProps & ILocalComputationProps;
 
@@ -35,9 +32,7 @@ function waitForMethodToBeAvailable(timeout = 10000) {
     const timeoutId = setTimeout(() => {
       console.log("Timeout reached without finding importCode method.");
       unwatch(); // Ensure to clean up even in the timeout case
-      reject(
-        new Error("Timeout waiting for importCode method to be available."),
-      );
+      reject(new Error("Timeout waiting for importCode method to be available."));
     }, timeout);
   });
 }

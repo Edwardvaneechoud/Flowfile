@@ -9,8 +9,7 @@
     />
 
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Read data" intro="Read data from a file or database">
-      </NodeTitle>
+      <NodeTitle title="Read data" intro="Read data from a file or database"> </NodeTitle>
       <readInput ref="childComp" :node-id="nodeId"> </readInput>
     </teleport>
   </div>

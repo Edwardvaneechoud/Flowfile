@@ -7,12 +7,8 @@
     content="Some required fields are missing"
   >
     <div class="validation-wrapper">
-      <p v-if="!pivotInput.pivot_column" class="error-message">
-        Pivot Column cannot be empty.
-      </p>
-      <p v-if="!pivotInput.value_col" class="error-message">
-        Value Column cannot be empty.
-      </p>
+      <p v-if="!pivotInput.pivot_column" class="error-message">Pivot Column cannot be empty.</p>
+      <p v-if="!pivotInput.value_col" class="error-message">Value Column cannot be empty.</p>
       <p v-if="pivotInput.aggregations.length === 0" class="error-message">
         At least one aggregation must be selected.
       </p>

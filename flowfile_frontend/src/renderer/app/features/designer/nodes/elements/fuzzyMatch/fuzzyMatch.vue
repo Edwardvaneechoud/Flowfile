@@ -14,14 +14,8 @@
                 <unavailableField
                   v-if="
                     !(
-                      containsVal(
-                        result?.main_input?.columns ?? [],
-                        fuzzyMap.left_col,
-                      ) &&
-                      containsVal(
-                        result?.right_input?.columns ?? [],
-                        fuzzyMap.right_col,
-                      )
+                      containsVal(result?.main_input?.columns ?? [], fuzzyMap.left_col) &&
+                      containsVal(result?.right_input?.columns ?? [], fuzzyMap.right_col)
                     )
                   "
                   tooltip-text="Join is not valid"
@@ -37,9 +31,7 @@
                       v-model="fuzzyMap.left_col"
                       :value="fuzzyMap.left_col"
                       :column-options="result?.main_input?.columns"
-                      @update:value="
-                        (value: string) => handleChange(value, index, 'left')
-                      "
+                      @update:value="(value: string) => handleChange(value, index, 'left')"
                     />
                   </div>
                   <div class="grid-content">
@@ -48,9 +40,7 @@
                       v-model="fuzzyMap.right_col"
                       :value="fuzzyMap.right_col"
                       :column-options="result?.right_input?.columns"
-                      @update:value="
-                        (value: string) => handleChange(value, index, 'right')
-                      "
+                      @update:value="(value: string) => handleChange(value, index, 'right')"
                     />
                   </div>
                 </el-row>
@@ -68,9 +58,7 @@
                 /></el-col>
               </el-row>
               <el-row>
-                <el-col :span="10" class="grid-content"
-                  >Type of matching</el-col
-                >
+                <el-col :span="10" class="grid-content">Type of matching</el-col>
                 <el-col :span="8" class="grid-content"
                   ><select v-model="fuzzyMap.fuzzy_type">
                     <option
@@ -94,9 +82,7 @@
             </div>
           </div>
           <div class="action-buttons">
-            <button class="add-setting" @click="addJoinCondition()">
-              Add setting
-            </button>
+            <button class="add-setting" @click="addJoinCondition()">Add setting</button>
           </div>
         </div>
       </div>
@@ -112,9 +98,7 @@
       :show-title="true"
       :show-data="true"
       title="Right data"
-      @update-select-inputs="
-        (updatedInputs) => updateSelectInputsHandler(updatedInputs, false)
-      "
+      @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
     />
 
     <select-dynamic
@@ -126,9 +110,7 @@
       :show-new-columns="false"
       :show-data="true"
       title="Left data"
-      @update-select-inputs="
-        (updatedInputs) => updateSelectInputsHandler(updatedInputs, true)
-      "
+      @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
     />
   </div>
   <CodeLoader v-else />
@@ -137,12 +119,7 @@
 import { ref, onMounted, nextTick, computed } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import {
-  NodeJoin,
-  FuzzyJoinSettings,
-  SelectInput,
-  FuzzyMap,
-} from "../../../baseNode/nodeInput";
+import { NodeJoin, FuzzyJoinSettings, SelectInput, FuzzyMap } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
@@ -169,10 +146,7 @@ const createSelectInput = (field: string): SelectInput => {
     is_available: true,
   };
 };
-const updateSelectInputsHandler = (
-  updatedInputs: SelectInput[],
-  isLeft: boolean,
-) => {
+const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
   if (isLeft && nodeFuzzyJoin.value) {
     nodeFuzzyJoin.value.join_input.left_select.renames = updatedInputs;
   } else if (nodeFuzzyJoin.value) {
@@ -191,22 +165,13 @@ const hasInvalidFields = computed(() => {
     return false;
   }
   return nodeFuzzyJoin.value.join_input.join_mapping.some((fuzzyMap) => {
-    const leftValid = containsVal(
-      result.value?.main_input?.columns ?? [],
-      fuzzyMap.left_col,
-    );
-    const rightValid = containsVal(
-      result.value?.right_input?.columns ?? [],
-      fuzzyMap.right_col,
-    );
+    const leftValid = containsVal(result.value?.main_input?.columns ?? [], fuzzyMap.left_col);
+    const rightValid = containsVal(result.value?.right_input?.columns ?? [], fuzzyMap.right_col);
     return !(leftValid && rightValid);
   });
 });
 
-const getEmptySetup = (
-  left_fields: string[],
-  right_fields: string[],
-): FuzzyJoinSettings => {
+const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoinSettings => {
   return {
     join_mapping: [
       {
@@ -234,10 +199,7 @@ const loadNodeData = async (nodeId: number) => {
   if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
     console.log("doing the initial set up again ");
     if (nodeFuzzyJoin.value) {
-      if (
-        result.value?.main_input.columns &&
-        result.value?.right_input?.columns
-      ) {
+      if (result.value?.main_input.columns && result.value?.right_input?.columns) {
         nodeFuzzyJoin.value.join_input = getEmptySetup(
           result.value.main_input.columns,
           result.value.right_input.columns,

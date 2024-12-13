@@ -31,12 +31,7 @@
         placeholder="Select run mode"
         @change="pushFlowSettings"
       >
-        <el-option
-          v-for="eM in executionModes"
-          :key="eM"
-          :label="eM"
-          :value="eM"
-        />
+        <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
       </el-select>
       <pop-over
         title="Execution mode"
@@ -49,23 +44,11 @@
     </div>
   </div>
 
-  <el-dialog
-    v-model="modalVisibleForOpen"
-    title="Select or Enter a Flow File"
-    width="70%"
-  >
-    <file-browser
-      :allowed-file-types="['flowfile']"
-      mode="open"
-      @file-selected="openFlowAction"
-    >
+  <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
+    <file-browser :allowed-file-types="['flowfile']" mode="open" @file-selected="openFlowAction">
     </file-browser>
   </el-dialog>
-  <el-dialog
-    v-model="modalVisibleForSave"
-    title="Select save location"
-    width="50%"
-  >
+  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="50%">
     <file-browser
       ref="fileBrowserRef"
       :allowed-file-types="['flowfile']"
@@ -77,11 +60,7 @@
     </file-browser>
   </el-dialog>
 
-  <el-dialog
-    v-model="modalVisibleForCreate"
-    title="Select save location"
-    width="50%"
-  >
+  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="50%">
     <file-browser
       :allowed-file-types="['flowfile']"
       mode="create"

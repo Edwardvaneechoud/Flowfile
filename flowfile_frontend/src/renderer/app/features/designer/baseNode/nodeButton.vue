@@ -15,11 +15,7 @@
     data="description_input"
   >
     <div class="overlay-content">
-      <p
-        :id="props.nodeId.toLocaleString()"
-        class="overlay-prompt"
-        data="description_input"
-      >
+      <p :id="props.nodeId.toLocaleString()" class="overlay-prompt" data="description_input">
         Provide a description for the node:
       </p>
       <textarea
@@ -93,8 +89,7 @@ const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
   const target_data = target.getAttribute("data");
   if (
-    (target_data == "description_display" ||
-      target_data == "description_input") &&
+    (target_data == "description_display" || target_data == "description_input") &&
     target.id == props.nodeId.toLocaleString()
   ) {
     return;
@@ -219,15 +214,9 @@ const tooltipContent = computed(() => {
     case "success":
       return "Operation successful";
     case "failure":
-      return (
-        "Operation failed: \n" +
-        (nodeResult.value?.error || "No error message available")
-      );
+      return "Operation failed: \n" + (nodeResult.value?.error || "No error message available");
     case "warning":
-      return (
-        "Operation warning: \n" +
-        (nodeResult.value?.error || "No warning message available")
-      );
+      return "Operation warning: \n" + (nodeResult.value?.error || "No warning message available");
     case "running":
       return "Operation in progress...";
     case "unknown":

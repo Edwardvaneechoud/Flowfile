@@ -8,10 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Fuzzy match"
-        intro="Match data based on string similarity"
-      />
+      <NodeTitle title="Fuzzy match" intro="Match data based on string similarity" />
       <joinInput ref="childComp" :node-id="nodeId"> </joinInput>
     </teleport>
   </div>

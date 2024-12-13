@@ -8,12 +8,7 @@
       size="small"
       @change="loadTemplateValue"
     >
-      <el-option
-        v-for="item in writingOptions"
-        :key="item"
-        :label="item"
-        :value="item"
-      />
+      <el-option v-for="item in writingOptions" :key="item" :label="item" :value="item" />
     </el-select>
   </div>
   <div class="listbox-wrapper">
@@ -57,8 +52,7 @@ const loadNodeData = async (nodeId: number) => {
   nodeExternalSource.value = nodeResult?.setting_input;
   if (nodeExternalSource.value?.is_setup)
     if (nodeExternalSource.value?.identifier == "sample_users") {
-      sampleUsers.value = nodeExternalSource.value
-        ?.source_settings as SampleUsers;
+      sampleUsers.value = nodeExternalSource.value?.source_settings as SampleUsers;
       selectedExternalSource.value = "sample_users";
     }
   typeSelected.value = true;
@@ -94,11 +88,7 @@ const pushNodeDataAction = async () => {
   console.log("pushed");
   if (nodeExternalSource.value) {
     console.log("pushing");
-    await nodeStore.getNodeData(
-      1,
-      Number(nodeExternalSource.value.node_id),
-      false,
-    );
+    await nodeStore.getNodeData(1, Number(nodeExternalSource.value.node_id), false);
   }
   console.log("pushed");
 };

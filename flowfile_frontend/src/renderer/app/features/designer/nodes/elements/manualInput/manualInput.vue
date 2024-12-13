@@ -19,11 +19,7 @@
           <tbody>
             <tr v-for="row in rows" :key="row.id">
               <td v-for="col in columns" :key="col.id">
-                <input
-                  v-model="row.values[col.id]"
-                  class="input-cell"
-                  type="text"
-                />
+                <input v-model="row.values[col.id]" class="input-cell" type="text" />
               </td>
               <td>
                 <button class="delete-button" @click="deleteRow(row.id)" />
@@ -37,9 +33,7 @@
       <div class="controls">
         <button class="control-button" @click="addColumn">Add Column</button>
         <button class="control-button" @click="addRow">Add Row</button>
-        <button class="control-button" @click="hideShowRaw">
-          {{ showDataText }} raw data
-        </button>
+        <button class="control-button" @click="hideShowRaw">{{ showDataText }} raw data</button>
       </div>
       <!-- Display and Edit Raw Data -->
       <div v-if="showRawData">
@@ -47,9 +41,7 @@
 
         <!-- Button below textarea -->
         <div>
-          <button class="control-button" @click="updateTableFromRawData">
-            Update Table
-          </button>
+          <button class="control-button" @click="updateTableFromRawData">Update Table</button>
         </div>
       </div>
     </div>
@@ -116,10 +108,7 @@ const loadNodeData = async (nodeId: number) => {
         rows.value.push(row);
       });
     } else {
-      manualInput.value = createManualInput(
-        nodeStore.flow_id,
-        nodeStore.node_id,
-      ).value;
+      manualInput.value = createManualInput(nodeStore.flow_id, nodeStore.node_id).value;
       rows.value = [{ id: 1, values: { "1": "" } }];
       columns.value = [{ id: 1, name: "Column 1" }];
       manualInput.value.raw_data = [];

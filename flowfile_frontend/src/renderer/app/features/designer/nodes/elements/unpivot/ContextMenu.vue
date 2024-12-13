@@ -1,8 +1,5 @@
 <template>
-  <div
-    class="context-menu"
-    :style="{ top: position.y + 'px', left: position.x + 'px' }"
-  >
+  <div class="context-menu" :style="{ top: position.y + 'px', left: position.x + 'px' }">
     <ul>
       <li
         v-for="option in options"

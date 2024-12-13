@@ -17,22 +17,10 @@
       </button>
     </div>
     <div id="nodesettings" class="content"></div>
-    <div
-      class="draggable-line vertical"
-      @mousedown.stop="startResizeWidth"
-    ></div>
-    <div
-      class="draggable-line horizontal"
-      @mousedown.stop="startResizeHeight"
-    ></div>
-    <div
-      class="draggable-line top-horizontal"
-      @mousedown.stop="startResizeTop"
-    ></div>
-    <div
-      class="draggable-line left-vertical"
-      @mousedown.stop="startResizeLeft"
-    ></div>
+    <div class="draggable-line vertical" @mousedown.stop="startResizeWidth"></div>
+    <div class="draggable-line horizontal" @mousedown.stop="startResizeHeight"></div>
+    <div class="draggable-line top-horizontal" @mousedown.stop="startResizeTop"></div>
+    <div class="draggable-line left-vertical" @mousedown.stop="startResizeLeft"></div>
   </div>
 </template>
 

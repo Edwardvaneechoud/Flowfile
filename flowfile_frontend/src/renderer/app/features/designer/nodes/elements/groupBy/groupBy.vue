@@ -22,43 +22,23 @@
         left: contextMenuPosition.x + 'px',
       }"
     >
-      <button @click="setAggregations('groupby', selectedColumns)">
-        Group by
-      </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setAggregations('count', selectedColumns)"
-      >
+      <button @click="setAggregations('groupby', selectedColumns)">Group by</button>
+      <button v-if="singleColumnSelected" @click="setAggregations('count', selectedColumns)">
         Count
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setAggregations('max', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setAggregations('max', selectedColumns)">
         Max
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setAggregations('median', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setAggregations('median', selectedColumns)">
         Median
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setAggregations('min', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setAggregations('min', selectedColumns)">
         Min
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setAggregations('sum', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setAggregations('sum', selectedColumns)">
         Sum
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setAggregations('n_unique', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setAggregations('n_unique', selectedColumns)">
         N_unique
       </button>
     </div>
@@ -113,14 +93,7 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  onMounted,
-  onUnmounted,
-  computed,
-  nextTick,
-  defineProps,
-} from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
 import { GroupByInput, NodeGroupBy } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -135,15 +108,7 @@ const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
 const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
-const aggOptions = [
-  "groupby",
-  "sum",
-  "max",
-  "median",
-  "min",
-  "count",
-  "n_unique",
-];
+const aggOptions = ["groupby", "sum", "max", "median", "min", "count", "n_unique"];
 const firstSelectedIndex = ref<number | null>(null);
 const props = defineProps({ nodeId: { type: Number, required: true } });
 
@@ -170,11 +135,7 @@ const contextMenuRowIndex = ref<number | null>(null); // New ref to keep track o
 
 const singleColumnSelected = computed(() => selectedColumns.value.length == 1);
 
-const openContextMenu = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-) => {
+const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   event.preventDefault();
   event.stopPropagation(); // Stop click event from propagating
   if (!selectedColumns.value.includes(columnName)) {
@@ -187,8 +148,7 @@ const openContextMenu = (
 const setAggregations = (aggType: string, columns: string[] | null) => {
   if (columns) {
     columns.forEach((column) => {
-      const new_column_name =
-        aggType !== "groupby" ? column + "_" + aggType : column;
+      const new_column_name = aggType !== "groupby" ? column + "_" + aggType : column;
 
       groupByInput.value.agg_cols.push({
         old_name: column,
@@ -201,11 +161,7 @@ const setAggregations = (aggType: string, columns: string[] | null) => {
   contextMenuColumn.value = null;
 };
 
-const handleItemClick = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-) => {
+const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   if (event.shiftKey && firstSelectedIndex.value !== null) {
     const range = getRange(firstSelectedIndex.value, clickedIndex);
     selectedColumns.value = range
@@ -255,14 +211,9 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
-const getMissingColumns = (
-  availableColumns: string[],
-  usedColumns: string[],
-): string[] => {
+const getMissingColumns = (availableColumns: string[], usedColumns: string[]): string[] => {
   const availableSet = new Set(availableColumns);
-  return Array.from(
-    new Set(usedColumns.filter((usedColumn) => !availableSet.has(usedColumn))),
-  );
+  return Array.from(new Set(usedColumns.filter((usedColumn) => !availableSet.has(usedColumn))));
 };
 
 const missingColumns = computed(() => {

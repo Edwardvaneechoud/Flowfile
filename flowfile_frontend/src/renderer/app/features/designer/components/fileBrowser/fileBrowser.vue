@@ -13,11 +13,7 @@
       <!-- Navigation and Search Section -->
       <div class="browser-toolbar">
         <div class="path-navigation">
-          <button
-            class="nav-button"
-            :disabled="loading"
-            @click="navigateUpDirectory"
-          >
+          <button class="nav-button" :disabled="loading" @click="navigateUpDirectory">
             <span class="material-icons">arrow_upward</span>
             <span>Up</span>
           </button>
@@ -28,11 +24,7 @@
 
         <div class="controls-row">
           <div class="search-container">
-            <el-input
-              v-model="searchTerm"
-              placeholder="Search files..."
-              class="search-input"
-            >
+            <el-input v-model="searchTerm" placeholder="Search files..." class="search-input">
               <template #prefix>
                 <span class="material-icons">search</span>
               </template>
@@ -40,26 +32,15 @@
           </div>
 
           <div class="sort-controls">
-            <el-select
-              v-model="sortBy"
-              placeholder="Sort by"
-              size="small"
-              class="sort-select"
-            >
+            <el-select v-model="sortBy" placeholder="Sort by" size="small" class="sort-select">
               <el-option label="Name" value="name" />
               <el-option label="Size" value="size" />
               <el-option label="Modified" value="last_modified" />
               <el-option label="Created" value="created_date" />
             </el-select>
-            <el-button
-              class="sort-direction-button"
-              size="small"
-              @click="toggleSortDirection"
-            >
+            <el-button class="sort-direction-button" size="small" @click="toggleSortDirection">
               <span class="material-icons">
-                {{
-                  sortDirection === "asc" ? "arrow_upward" : "arrow_downward"
-                }}
+                {{ sortDirection === "asc" ? "arrow_upward" : "arrow_downward" }}
               </span>
             </el-button>
           </div>
@@ -117,10 +98,7 @@
                 </span>
               </div>
               <div class="file-details">
-                <div
-                  class="file-name"
-                  :class="{ 'hidden-file': file.is_hidden }"
-                >
+                <div class="file-name" :class="{ 'hidden-file': file.is_hidden }">
                   {{ file.name }}
                 </div>
                 <div class="file-info">
@@ -136,11 +114,7 @@
       <div class="browser-actions">
         <template v-if="mode === 'create'">
           <el-button
-            v-if="
-              selectedFile &&
-              !selectedFile.is_directory &&
-              showWarningOnOverwrite
-            "
+            v-if="selectedFile && !selectedFile.is_directory && showWarningOnOverwrite"
             type="warning"
             :disabled="loading"
             size="small"
@@ -169,11 +143,7 @@
           type="primary"
           :disabled="loading"
           size="small"
-          style="
-            background-color: rgb(92, 92, 92);
-            color: white;
-            margin-right: auto;
-          "
+          style="background-color: rgb(92, 92, 92); color: white; margin-right: auto"
           @click="handleSelectDirectory"
         >
           <span class="material-icons">folder</span>
@@ -226,11 +196,7 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="showCreateDialog = false">Cancel</el-button>
-          <el-button
-            type="primary"
-            :disabled="!newFileName.trim()"
-            @click="handleCreateFile"
-          >
+          <el-button type="primary" :disabled="!newFileName.trim()" @click="handleCreateFile">
             Create
           </el-button>
         </span>
@@ -305,18 +271,8 @@ const handleInitialFileSelection = async () => {
 const emit = defineEmits<{
   (e: "fileSelected", file: FileInfo): void;
   (e: "update:modelValue", value: FileInfo | null): void;
-  (
-    e: "createFile",
-    file_path: string,
-    currentPath: string,
-    fileName: string,
-  ): void;
-  (
-    e: "overwriteFile",
-    file_path: string,
-    currentPath: string,
-    fileName: string,
-  ): void;
+  (e: "createFile", file_path: string, currentPath: string, fileName: string): void;
+  (e: "overwriteFile", file_path: string, currentPath: string, fileName: string): void;
   (e: "directorySelected", path: string): void; // New emit
 }>();
 
@@ -339,9 +295,7 @@ const DATA_FILE_TYPES = ["xlsx", "parquet", "csv", "txt"];
 // Methods
 const isDataFile = (file: FileInfo): boolean => {
   if (file.is_directory) return false;
-  return DATA_FILE_TYPES.some((type) =>
-    file.name.toLowerCase().endsWith(`.${type.toLowerCase()}`),
-  );
+  return DATA_FILE_TYPES.some((type) => file.name.toLowerCase().endsWith(`.${type.toLowerCase()}`));
 };
 
 const isFlowfile = (file: FileInfo): boolean => {
@@ -352,8 +306,7 @@ const isFlowfile = (file: FileInfo): boolean => {
 const formatFileSize = (bytes: number): string => {
   if (bytes < 1024) return bytes + " B";
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  if (bytes < 1024 * 1024 * 1024)
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   return (bytes / (1024 * 1024 * 1024)).toFixed(1) + " GB";
 };
 
@@ -459,11 +412,7 @@ const validateFileName = (fileName: string): boolean => {
     return false;
   }
 
-  if (
-    files.value.some(
-      (file) => file.name.toLowerCase() === fileName.toLowerCase(),
-    )
-  ) {
+  if (files.value.some((file) => file.name.toLowerCase() === fileName.toLowerCase())) {
     fileNameError.value = "A file with this name already exists";
     return false;
   }
@@ -524,17 +473,13 @@ const calculateSortedFiles = () => {
     .filter((file) => {
       // For directories, only apply search and hidden filters
       if (file.is_directory) {
-        const matchesSearch = file.name
-          .toLowerCase()
-          .includes(searchTerm.value.toLowerCase());
+        const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
         const matchesHidden = showHidden.value || !file.is_hidden;
         return matchesSearch && matchesHidden;
       }
 
       // For files, apply all filters
-      const matchesSearch = file.name
-        .toLowerCase()
-        .includes(searchTerm.value.toLowerCase());
+      const matchesSearch = file.name.toLowerCase().includes(searchTerm.value.toLowerCase());
       const matchesHidden = showHidden.value || !file.is_hidden;
       const matchesType =
         props.allowedFileTypes.length === 0 ||
@@ -555,14 +500,10 @@ const calculateSortedFiles = () => {
           break;
         }
         case "last_modified":
-          comparison =
-            new Date(a.last_modified).getTime() -
-            new Date(b.last_modified).getTime();
+          comparison = new Date(a.last_modified).getTime() - new Date(b.last_modified).getTime();
           break;
         case "created_date":
-          comparison =
-            new Date(a.created_date).getTime() -
-            new Date(b.created_date).getTime();
+          comparison = new Date(a.created_date).getTime() - new Date(b.created_date).getTime();
           break;
         case "name":
         default:

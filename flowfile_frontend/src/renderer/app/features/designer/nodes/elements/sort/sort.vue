@@ -23,22 +23,13 @@
         left: contextMenuPosition.x + 'px',
       }"
     >
-      <button
-        v-if="!singleColumnSelected"
-        @click="setSortSettings('Ascending', selectedColumns)"
-      >
+      <button v-if="!singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
         Ascending
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setSortSettings('Ascending', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
         Ascending
       </button>
-      <button
-        v-if="singleColumnSelected"
-        @click="setSortSettings('Descending', selectedColumns)"
-      >
+      <button v-if="singleColumnSelected" @click="setSortSettings('Descending', selectedColumns)">
         Descending
       </button>
     </div>
@@ -93,14 +84,7 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  onMounted,
-  onUnmounted,
-  computed,
-  nextTick,
-  defineProps,
-} from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
 import { NodeSort } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -138,11 +122,7 @@ const contextMenuRowIndex = ref<number | null>(null); // New ref to keep track o
 
 const singleColumnSelected = computed(() => selectedColumns.value.length == 1);
 
-const openContextMenu = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-) => {
+const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   event.preventDefault();
   event.stopPropagation(); // Stop click event from propagating
   if (!selectedColumns.value.includes(columnName)) {
@@ -162,11 +142,7 @@ const setSortSettings = (sortType: string, columns: string[] | null) => {
   contextMenuColumn.value = null;
 };
 
-const handleItemClick = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-) => {
+const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   if (event.shiftKey && firstSelectedIndex.value !== null) {
     const range = getRange(firstSelectedIndex.value, clickedIndex);
     selectedColumns.value = range

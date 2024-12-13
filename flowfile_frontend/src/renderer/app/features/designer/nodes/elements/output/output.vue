@@ -1,8 +1,5 @@
 <template>
-  <div
-    v-if="dataLoaded && nodeOutput && nodeOutput.output_settings"
-    class="listbox-wrapper"
-  >
+  <div v-if="dataLoaded && nodeOutput && nodeOutput.output_settings" class="listbox-wrapper">
     <div class="main-part">
       <div class="file-upload-row">
         <label class="file-upload-label" @click="showFileSelectionModal = true">
@@ -61,9 +58,7 @@
         :disabled="!nodeOutput.output_settings.file_type"
       >
         <el-option
-          v-for="option in getWriteOptions(
-            nodeOutput.output_settings.file_type,
-          )"
+          v-for="option in getWriteOptions(nodeOutput.output_settings.file_type)"
           :key="option"
           :label="option"
           :value="option"
@@ -132,9 +127,7 @@ const hasFileExtension = computed(() => {
 });
 
 function getWriteOptions(fileType: string): string[] {
-  return fileType === "csv"
-    ? ["overwrite", "new file", "append"]
-    : ["overwrite", "new file"];
+  return fileType === "csv" ? ["overwrite", "new file", "append"] : ["overwrite", "new file"];
 }
 
 async function fetchFiles() {
@@ -162,10 +155,7 @@ function detectFileType(fileName: string) {
     return;
   }
   const verifiedExtension = extension as "csv" | "xlsx" | "xls" | "parquet";
-  const fileTypeMap: Record<
-    "csv" | "xlsx" | "xls" | "parquet",
-    "csv" | "excel" | "parquet"
-  > = {
+  const fileTypeMap: Record<"csv" | "xlsx" | "xls" | "parquet", "csv" | "excel" | "parquet"> = {
     csv: "csv",
     xlsx: "excel",
     xls: "excel",
@@ -210,11 +200,7 @@ function handleDirectorySelected(directoryPath: string) {
   fetchFiles();
 }
 
-function handleFileSelected(
-  filePath: string,
-  currentPath: string,
-  fileName: string,
-) {
+function handleFileSelected(filePath: string, currentPath: string, fileName: string) {
   if (!nodeOutput.value) return;
 
   nodeOutput.value.output_settings.name = fileName;
@@ -226,10 +212,7 @@ function handleFolderChange() {
   fetchFiles();
 }
 
-const querySearch = (
-  queryString: string,
-  cb: (suggestions: LocalFileInfo[]) => void,
-) => {
+const querySearch = (queryString: string, cb: (suggestions: LocalFileInfo[]) => void) => {
   const results = queryString
     ? localFileInfos.value.filter((item) =>
         item.file_name.toLowerCase().startsWith(queryString.toLowerCase()),

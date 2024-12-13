@@ -44,8 +44,7 @@ const loadNodeData = async (nodeId: number) => {
     nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
     if (nodeData.value) {
       const hasValidSetup = Boolean(
-        nodeData.value?.setting_input?.is_setup &&
-          nodeData.value?.setting_input?.polars_code_input,
+        nodeData.value?.setting_input?.is_setup && nodeData.value?.setting_input?.polars_code_input,
       );
 
       nodePolarsCode.value = hasValidSetup
@@ -63,10 +62,7 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const pushNodeData = async () => {
-  if (
-    !nodePolarsCode.value ||
-    !nodePolarsCode.value.polars_code_input.polars_code
-  ) {
+  if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
     return;
   }
   nodePolarsCode.value.is_setup = true;

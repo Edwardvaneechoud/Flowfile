@@ -5,19 +5,13 @@
       <el-row>
         <el-col :span="10" class="grid-content">Offset</el-col>
         <el-col :span="8" class="grid-content"
-          ><input
-            v-model="nodeRecordId.record_id_input.offset"
-            type="number"
-            min="0"
-            step="1"
+          ><input v-model="nodeRecordId.record_id_input.offset" type="number" min="0" step="1"
         /></el-col>
       </el-row>
       <el-row>
         <el-col :span="10" class="grid-content">Output name</el-col>
         <el-col :span="8" class="grid-content"
-          ><input
-            v-model="nodeRecordId.record_id_input.output_column_name"
-            type="text"
+          ><input v-model="nodeRecordId.record_id_input.output_column_name" type="text"
         /></el-col>
       </el-row>
     </div>
@@ -83,9 +77,7 @@ const dataLoaded = ref(false);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeRecordId = ref<null | NodeRecordId>(null);
 const nodeData = ref<null | NodeData>(null);
-const contextMenuOptions = ref<
-  { label: string; action: string; disabled: boolean }[]
->([]);
+const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
 const draggedColumnName = ref<string | null>(null);
 const selectedColumns = ref<string[]>([]);
 
@@ -97,13 +89,9 @@ const onDropInSection = (section: "add") => {
   if (draggedColumnName.value) {
     if (
       section === "add" &&
-      !nodeRecordId.value?.record_id_input.group_by_columns.includes(
-        draggedColumnName.value,
-      )
+      !nodeRecordId.value?.record_id_input.group_by_columns.includes(draggedColumnName.value)
     ) {
-      nodeRecordId.value?.record_id_input.group_by_columns.push(
-        draggedColumnName.value,
-      );
+      nodeRecordId.value?.record_id_input.group_by_columns.push(draggedColumnName.value);
     }
     draggedColumnName.value = null;
   }
@@ -143,9 +131,7 @@ const onDrop = (index: number) => {
   if (draggedColumnName.value) {
     const colSchema = nodeData.value?.main_input?.table_schema;
     if (colSchema) {
-      const fromIndex = colSchema.findIndex(
-        (col) => col.name === draggedColumnName.value,
-      );
+      const fromIndex = colSchema.findIndex((col) => col.name === draggedColumnName.value);
       if (fromIndex !== -1 && fromIndex !== index) {
         const [movedColumn] = colSchema.splice(fromIndex, 1);
         colSchema.splice(index, 0, movedColumn);
@@ -177,9 +163,7 @@ const handleClickOutside = (event: MouseEvent) => {
 
 const isColumnAssigned = (columnName: string): boolean => {
   if (nodeRecordId.value) {
-    return nodeRecordId.value.record_id_input.group_by_columns.includes(
-      columnName,
-    );
+    return nodeRecordId.value.record_id_input.group_by_columns.includes(columnName);
   }
   return false;
 };
@@ -200,9 +184,7 @@ const removeColumn = (type: "add", column: string) => {
   if (nodeRecordId.value)
     if (type === "add") {
       nodeRecordId.value.record_id_input.group_by_columns =
-        nodeRecordId.value.record_id_input.group_by_columns.filter(
-          (col) => col !== column,
-        );
+        nodeRecordId.value.record_id_input.group_by_columns.filter((col) => col !== column);
     }
 };
 

@@ -8,11 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Count records"
-        intro="Get the count of the number of reocrds"
-      >
-      </NodeTitle>
+      <NodeTitle title="Count records" intro="Get the count of the number of reocrds"> </NodeTitle>
       <readInput ref="childComp" :node-id="nodeId"> </readInput>
     </teleport>
   </div>

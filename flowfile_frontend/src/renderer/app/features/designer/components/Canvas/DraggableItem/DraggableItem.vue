@@ -96,21 +96,11 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  onMounted,
-  onBeforeUnmount,
-  defineProps,
-  getCurrentInstance,
-  nextTick,
-} from "vue";
+import { ref, onMounted, onBeforeUnmount, defineProps, getCurrentInstance, nextTick } from "vue";
 import { useItemStore } from "./stateStore";
 
 const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
-const resizeOnEnter = (
-  e: MouseEvent,
-  position: "top" | "bottom" | "left" | "right",
-) => {
+const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
   if (resizeDelay.value) clearTimeout(resizeDelay.value);
   resizeDelay.value = setTimeout(() => {
     if (itemStore.inResizing && !isResizing.value) {
@@ -475,10 +465,7 @@ const applyStickyPosition = () => {
 const calculateWidth = () => {
   if (props.initialWidth) {
     return props.initialWidth;
-  } else if (
-    props.initialPosition === "top" ||
-    props.initialPosition === "bottom"
-  ) {
+  } else if (props.initialPosition === "top" || props.initialPosition === "bottom") {
     return instance?.parent?.vnode.el?.offsetWidth || 300;
   } else return 300;
 };
@@ -486,10 +473,7 @@ const calculateWidth = () => {
 const calculateHeight = () => {
   if (props.initialHeight) {
     return props.initialHeight;
-  } else if (
-    props.initialPosition === "left" ||
-    props.initialPosition === "right"
-  ) {
+  } else if (props.initialPosition === "left" || props.initialPosition === "right") {
     return instance?.parent?.vnode.el?.offsetHeight || 300;
   } else return 300;
 };

@@ -9,10 +9,7 @@
     />
 
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle
-        title="Sort data"
-        intro="Sort rows in the data based on one or more columns"
-      >
+      <NodeTitle title="Sort data" intro="Sort rows in the data based on one or more columns">
       </NodeTitle>
       <readInput ref="childComp" :node-id="nodeId"> </readInput>
     </teleport>

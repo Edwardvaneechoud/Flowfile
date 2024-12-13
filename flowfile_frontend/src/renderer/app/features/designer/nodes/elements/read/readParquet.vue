@@ -2,10 +2,7 @@
   <div class="parquet-table-settings">
     <div class="message">
       <h2>You are ready to flow!</h2>
-      <p>
-        Your Parquet table setup is complete. Enjoy the smooth data processing
-        experience.
-      </p>
+      <p>Your Parquet table setup is complete. Enjoy the smooth data processing experience.</p>
     </div>
   </div>
 </template>
