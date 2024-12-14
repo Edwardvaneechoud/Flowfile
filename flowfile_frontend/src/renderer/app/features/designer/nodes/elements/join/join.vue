@@ -210,13 +210,19 @@ defineExpose({
 
 .selectors-container {
   padding: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  justify-content: space-between; /* This puts maximum space between the children */
 }
 
 .selectors-row {
   display: flex;
   gap: 12px;
-  align-items: center;
   margin-bottom: 8px;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
 }
 
 .selectors-row:last-child {
