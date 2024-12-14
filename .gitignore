@@ -39,4 +39,5 @@ docs/.venv/
 print_structure.py
 /venv_flowfile/**
 services_dist/
-shared_data/*
+shared_data/
+saved_flows/

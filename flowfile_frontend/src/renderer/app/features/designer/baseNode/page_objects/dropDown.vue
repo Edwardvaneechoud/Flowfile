@@ -1,5 +1,4 @@
 <template>
-  test 
   <div v-if="isLoaded" ref="dropdownRef" class="dropdown-container">
     <label :for="uniqueId" class="sr-only">{{ label }}</label>
     <div class="input-wrapper">
@@ -235,7 +234,7 @@ watch(
 
 .select-box {
   width: 100%;
-  box-sizing: border-box; /* Add this */
+  box-sizing: border-box;
   padding: 8px 12px;
   font-size: 14px;
   line-height: 1.4;
@@ -246,25 +245,22 @@ watch(
   transition:
     border-color 0.2s,
     box-shadow 0.2s;
+  position: relative;
 }
-
 .options-list {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  width: 100%;
+  position: fixed;
   border: 1px solid #eee;
-  border-top: none;
-  border-radius: 0 0 4px 4px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   max-height: 200px;
   overflow-y: auto;
   list-style: none;
   margin: 0;
   padding: 0;
   background: #fff;
-  z-index: 1000;
+  z-index: 9999;
 }
+
 
 .option-item {
   padding: 8px 12px;

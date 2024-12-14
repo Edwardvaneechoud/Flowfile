@@ -34,6 +34,8 @@ EXPOSE 63578
 # Set Python path to recognize the package
 ENV PYTHONPATH=/app
 
+ENV RUNNING_IN_DOCKER=true
+
 # Change working directory to where the module is located
 WORKDIR /app
 

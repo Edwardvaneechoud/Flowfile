@@ -67,7 +67,9 @@
         :show-headers="true"
         :show-data="true"
         title="Left data"
-        @update-select-inputs="(updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)"
+        @update-select-inputs="
+          (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
+        "
       />
       <select-dynamic
         :select-inputs="nodeJoin?.join_input.right_select.renames"
@@ -76,7 +78,9 @@
         :show-title="true"
         :show-data="true"
         title="Right data"
-        @update-select-inputs="(updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)"
+        @update-select-inputs="
+          (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
+        "
       />
     </div>
   </div>
