@@ -12,8 +12,7 @@
     "lint": "eslint --fix ./src/**/*.{ts,vue}",
     "build:win": "node scripts/build.js && electron-builder --win",
     "build:mac": "node scripts/build.js && electron-builder --mac",
-    "build:linux": "node scripts/build.js && electron-builder --linux",
-    "generate-icons": "electron-icon-builder --input=./src/renderer/public/icons/flowfile.png --output=./src/assets/icons"
+    "build:linux": "node scripts/build.js && electron-builder --linux"
   },
   "repository": "https://github.com/deluze/electron-vue-template",
   "author": {
@@ -36,7 +35,6 @@
     "concurrently": "^8.2.2",
     "electron": "^28.1.1",
     "electron-builder": "^24.9.1",
-    "electron-icon-builder": "^2.0.1",
     "eslint": "^8.13.0",
     "eslint-plugin-vue": "^8.7.0",
     "lint-staged": "^13.0.1",
@@ -76,7 +74,7 @@
     "pinia": "^2.0.16",
     "prettier": "^3.2.5",
     "prismjs": "^1.29.0",
-    "vue": "^3.4.27",
+    "vue": "^3.5.13",
     "vue-chartjs": "^4.1.1",
     "vue-codemirror": "^6.1.1",
     "vue-content-loader": "^2.0.1",

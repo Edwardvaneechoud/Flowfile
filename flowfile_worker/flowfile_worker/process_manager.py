@@ -1,4 +1,4 @@
-import threading
+from threading import Lock
 from multiprocessing import Process
 from typing import Dict
 
@@ -6,7 +6,7 @@ from typing import Dict
 class ProcessManager:
     def __init__(self):
         self.process_dict: Dict[str, Process] = {}
-        self.lock = threading.Lock()
+        self.lock = Lock()
 
     def add_process(self, task_id: str, process: Process):
         """Add a process to the manager."""

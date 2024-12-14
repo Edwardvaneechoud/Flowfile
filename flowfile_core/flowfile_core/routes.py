@@ -8,6 +8,7 @@ from pathlib import Path
 
 # Core modules
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
 from flowfile_core.configs.node_store import nodes
 
 # File handling
@@ -44,7 +45,7 @@ from polars_expr_transformer.function_overview import get_all_expressions, get_e
 router = APIRouter()
 
 # Initialize services
-file_explorer = FileExplorer()
+file_explorer = FileExplorer('/app/shared' if IS_RUNNING_IN_DOCKER else None)
 flow_file_handler = FlowfileHandler()
 
 

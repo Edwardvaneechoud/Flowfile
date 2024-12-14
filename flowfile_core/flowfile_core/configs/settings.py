@@ -1,4 +1,5 @@
 import platform
+import os
 
 from databases import DatabaseURL
 from passlib.context import CryptContext
@@ -7,6 +8,13 @@ from starlette.datastructures import Secret
 
 
 def get_default_worker_url():
+    # Check for Docker environment first
+    worker_host = os.getenv('WORKER_HOST', None)
+    print('worker host', worker_host)
+    if worker_host:
+        return f"http://{worker_host}:63579"
+
+    # Fall back to default behavior
     if platform.system() == "Windows":
         return "http://127.0.0.1:63579"
     else:
@@ -24,13 +32,11 @@ USER: str = config("MYSQL_USER", cast=str, default="root")
 PWD: str = config("MYSQL_PASSWORD", cast=str, default="")
 DB: str = config("DB", cast=str, default="")
 DATABASE: str = config("MYSQL_DATABASE", cast=str, default="MYSQL_DATABASE")
-SECRET_KEY: Secret = config("SECRET_KEY", cast=Secret, default='edward')
+SECRET_KEY: Secret = config("SECRET_KEY", cast=Secret, default=Secret('secret_key'))
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("WORKER_URL", cast=str, default=get_default_worker_url())
-
-
-PORT = '7879'
+IS_RUNNING_IN_DOCKER = os.getenv('RUNNING_IN_DOCKER', 'false').lower() == 'true'
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120

@@ -54,9 +54,6 @@ app.add_middleware(
 # Include the router with all endpoints
 app.include_router(router)
 
-# Register the default flow
-# register_flow(schemas.FlowSettings(flow_id=1))
-
 
 @app.post("/shutdown")
 async def shutdown():

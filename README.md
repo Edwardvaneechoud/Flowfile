@@ -53,43 +53,67 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 - Python 3.10+
 - Node.js 16+
 - Poetry (Python package manager)
+- Docker & Docker Compose (for Docker setup)
 - Make (optional, for build automation)
 
-### Installation & Running
+### Installation Options
 
-Using Make:
+#### 1. Desktop Application (Recommended)
+The desktop version offers the best experience with a native interface and integrated services. You can either:
+
+**Option A: Download Pre-built Application** 
+- Download the latest release from [GitHub Releases](https://github.com/Edwardvaneechoud/Flowfile/releases)
+- Run the installer for your platform (Windows, macOS, or Linux)
+
+**Option B: Build from Source:**
 ```bash
-make all               # Install and build everything
-make clean            # Clean build artifacts
+git clone https://github.com/edwardvaneechoud/Flowfile.git
+cd Flowfile
+
+# Build packaged executable
+make    # Creates platform-specific executable
+
+# Or manually:
+poetry install
+poetry run build_backends
+cd flowfile_frontend
+npm install
+npm run build      # All platforms
 ```
 
-Manual installation:
+### 2. Docker Setup
+Perfect for quick testing or deployment scenarios. Runs all services in containers with proper networking and volume management:
 ```bash
+# Clone and start all services
+git clone https://github.com/edwardvaneechoud/Flowfile.git
+cd Flowfile
+docker compose up -d
+
+# Access services:
+Frontend: http://localhost:8080 # main service
+Core API: http://localhost:63578/docs
+Worker API: http://localhost:63579/docs
+```
+
+
+### 3. Manual Setup (Development)
+Ideal for development work when you need direct access to all services and hot-reloading:
+
+```bash
+git clone https://github.com/edwardvaneechoud/Flowfile.git
+cd Flowfile
+
 # Install Python dependencies
 poetry install
 
-# Start services (in separate terminals)
+# Start backend services
 poetry run flowfile_worker  # Starts worker on :63579
 poetry run flowfile_core   # Starts core on :63578
 
-# Start desktop app
+# Start web frontend
 cd flowfile_frontend
 npm install
-npm run dev               # Starts Electron app (frontend on :3000)
-```
-
-### Development
-
-```bash
-# Python dependencies
-poetry shell
-poetry add <package>
-
-# Build desktop app
-npm run build        # All platforms
-npm run build:win    # Windows
-npm run build:mac    # macOS
-npm run build:linux  # Linux
+npm run dev:web  # Starts web interface on :8080
 ```
 
 ## 📋 TODO
