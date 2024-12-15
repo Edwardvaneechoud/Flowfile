@@ -3,6 +3,7 @@ import tempfile
 import threading
 import multiprocessing
 import os
+import shutil
 multiprocessing.set_start_method('spawn', force=True)
 
 
@@ -27,8 +28,13 @@ class SharedTempDirectory:
         return self._path
 
     def cleanup(self):
-        # Could implement actual cleanup if needed
-        pass
+        """Remove all contents of the temp directory"""
+        try:
+            shutil.rmtree(self._path)
+            os.makedirs(self._path, exist_ok=True)
+            print(f"Cleaned up temporary directory: {self._path}")
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
 
     def __enter__(self):
         return self.name

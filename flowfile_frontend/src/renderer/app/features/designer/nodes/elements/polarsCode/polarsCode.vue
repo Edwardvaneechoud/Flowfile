@@ -1,12 +1,15 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
-    <pythonEditor
-      v-if="showEditor && nodePolarsCode"
-      ref="editorChild"
-      :editor-string="nodePolarsCode.polars_code_input.polars_code"
-      @update-editor-string="handleEditorUpdate"
-    />
+  <div v-if="dataLoaded && nodePolarsCode" class="listbox-wrapper">
+    <generic-node-settings :model-value="nodePolarsCode">
+      <pythonEditor
+        v-if="showEditor && nodePolarsCode"
+        ref="editorChild"
+        :editor-string="nodePolarsCode.polars_code_input.polars_code"
+        @update-editor-string="handleEditorUpdate"
+      />
+    </generic-node-settings>
   </div>
+
   <CodeLoader v-else />
 </template>
 
@@ -19,6 +22,7 @@ import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
 
 import { NodePolarsCode } from "../../../baseNode/nodeInput";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const showEditor = ref<boolean>(false);
 const nodeStore = useNodeStore();

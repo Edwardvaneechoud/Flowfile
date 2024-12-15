@@ -1,27 +1,29 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
-    <div v-if="nodeStore.is_loaded">
-      <div v-if="formulaInput && formulaNode" class="selector-container">
-        <DropDownGeneric
-          v-model="formulaInput.field.name"
-          title="Output field"
-          :allow-other="true"
-          :option-list="nodeData?.main_input?.columns ?? []"
-          placeholder="Select or create field"
-        />
-        <DropDownGeneric
-          v-model="formulaInput.field.data_type"
-          :option-list="dataTypes"
-          title="Data type"
-          :allow-other="false"
+  <div v-if="dataLoaded && nodeFormula" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeFormula">
+      <div v-if="nodeStore.is_loaded">
+        <div v-if="formulaInput && nodeFormula" class="selector-container">
+          <DropDownGeneric
+            v-model="formulaInput.field.name"
+            title="Output field"
+            :allow-other="true"
+            :option-list="nodeData?.main_input?.columns ?? []"
+            placeholder="Select or create field"
+          />
+          <DropDownGeneric
+            v-model="formulaInput.field.data_type"
+            :option-list="dataTypes"
+            title="Data type"
+            :allow-other="false"
+          />
+        </div>
+        <mainEditorRef
+          v-if="showEditor && formulaInput"
+          ref="editorChild"
+          :editor-string="formulaInput.function"
         />
       </div>
-      <mainEditorRef
-        v-if="showEditor && formulaInput"
-        ref="editorChild"
-        :editor-string="formulaInput.function"
-      />
-    </div>
+    </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -34,6 +36,7 @@ import mainEditorRef from "../../../editor/fullEditor.vue";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
 import { createFormulaNode } from "./formula";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 import { NodeFormula, FormulaInput } from "../../../baseNode/nodeInput";
 
@@ -53,7 +56,7 @@ const outputColumnSelector = ref<OutputColumnSelectorType>({
   selectedValue: "",
 });
 const editorChild = ref<EditorChildType | null>(null);
-const formulaNode = ref<NodeFormula | null>(null);
+const nodeFormula = ref<NodeFormula | null>(null);
 const formulaInput = ref<FormulaInput | null>(null);
 const dataTypes = nodeStore.getDataTypes();
 const nodeData = ref<null | NodeData>(null);
@@ -61,28 +64,28 @@ const nodeData = ref<null | NodeData>(null);
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
   if (nodeData.value && nodeData.value.setting_input && nodeData.value.setting_input.is_setup) {
-    formulaNode.value = nodeData.value.setting_input;
-    if (formulaNode.value && formulaNode.value.function) {
-      formulaInput.value = formulaNode.value.function;
+    nodeFormula.value = nodeData.value.setting_input;
+    if (nodeFormula.value && nodeFormula.value.function) {
+      formulaInput.value = nodeFormula.value.function;
       outputColumnSelector.value.selectedValue = formulaInput.value.field.name;
     }
   } else {
-    formulaNode.value = createFormulaNode(nodeStore.flow_id, nodeStore.node_id);
-    formulaNode.value.depending_on_id = nodeData.value?.main_input?.node_id;
-    formulaInput.value = formulaNode.value.function;
+    nodeFormula.value = createFormulaNode(nodeStore.flow_id, nodeStore.node_id);
+    nodeFormula.value.depending_on_id = nodeData.value?.main_input?.node_id;
+    formulaInput.value = nodeFormula.value.function;
   }
   showEditor.value = true;
   dataLoaded.value = true;
 };
 
 const pushNodeData = async () => {
-  if (!formulaNode.value || !formulaInput.value) {
+  if (!nodeFormula.value || !formulaInput.value) {
     return;
   }
-  formulaNode.value.cache_results = false;
-  formulaNode.value.is_setup = true;
-  formulaNode.value.function.function = nodeStore.inputCode;
-  nodeStore.updateSettings(formulaNode);
+  nodeFormula.value.cache_results = false;
+  nodeFormula.value.is_setup = true;
+  nodeFormula.value.function.function = nodeStore.inputCode;
+  nodeStore.updateSettings(nodeFormula);
   showEditor.value = false;
   dataLoaded.value = false;
 };

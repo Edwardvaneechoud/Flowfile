@@ -1,64 +1,66 @@
 <template>
   <div v-if="dataLoaded && nodeRecordId" class="listbox-wrapper">
-    <div class="listbox-wrapper">
-      <div class="listbox-subtitle">Settings</div>
-      <el-row>
-        <el-col :span="10" class="grid-content">Offset</el-col>
-        <el-col :span="8" class="grid-content"
-          ><input v-model="nodeRecordId.record_id_input.offset" type="number" min="0" step="1"
-        /></el-col>
-      </el-row>
-      <el-row>
-        <el-col :span="10" class="grid-content">Output name</el-col>
-        <el-col :span="8" class="grid-content"
-          ><input v-model="nodeRecordId.record_id_input.output_column_name" type="text"
-        /></el-col>
-      </el-row>
-    </div>
-    <div class="listbox-wrapper">
-      <el-checkbox
-        v-model="nodeRecordId.record_id_input.group_by"
-        label="Assign record id by group"
-        size="large"
-      />
-      <div v-if="nodeRecordId.record_id_input.group_by">
-        <div class="listbox-subtitle">Optional Settings</div>
-        <ul class="listbox">
-          <div class="column-options">
-            <li
-              v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-              :key="col_schema.name"
-              :class="getColumnClass(col_schema.name)"
-              draggable="true"
-              @click="handleItemClick(col_schema.name)"
-              @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
-              @dragstart="onDragStart(col_schema.name, $event)"
-              @dragover.prevent
-              @drop="onDrop(index)"
-            >
-              {{ col_schema.name }} ({{ col_schema.data_type }})
-            </li>
-          </div>
-          <ContextMenu
-            v-if="showContextMenu"
-            id="record-id-menu"
-            ref="contextMenuRef"
-            :position="contextMenuPosition"
-            :options="contextMenuOptions"
-            @select="handleContextMenuSelect"
-            @close="closeContextMenu"
-          />
-          <SettingsSection
-            title="Group by columns"
-            :items="nodeRecordId.record_id_input.group_by_columns"
-            droppable="true"
-            @remove-item="removeColumn('add', $event)"
-            @dragover.prevent
-            @drop="onDropInSection('add')"
-          />
-        </ul>
+    <generic-node-settings v-model="nodeRecordId">
+      <div class="listbox-wrapper">
+        <div class="listbox-subtitle">Settings</div>
+        <el-row>
+          <el-col :span="10" class="grid-content">Offset</el-col>
+          <el-col :span="8" class="grid-content"
+            ><input v-model="nodeRecordId.record_id_input.offset" type="number" min="0" step="1"
+          /></el-col>
+        </el-row>
+        <el-row>
+          <el-col :span="10" class="grid-content">Output name</el-col>
+          <el-col :span="8" class="grid-content"
+            ><input v-model="nodeRecordId.record_id_input.output_column_name" type="text"
+          /></el-col>
+        </el-row>
       </div>
-    </div>
+      <div class="listbox-wrapper">
+        <el-checkbox
+          v-model="nodeRecordId.record_id_input.group_by"
+          label="Assign record id by group"
+          size="large"
+        />
+        <div v-if="nodeRecordId.record_id_input.group_by">
+          <div class="listbox-subtitle">Optional Settings</div>
+          <ul class="listbox">
+            <div class="column-options">
+              <li
+                v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
+                :key="col_schema.name"
+                :class="getColumnClass(col_schema.name)"
+                draggable="true"
+                @click="handleItemClick(col_schema.name)"
+                @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
+                @dragstart="onDragStart(col_schema.name, $event)"
+                @dragover.prevent
+                @drop="onDrop(index)"
+              >
+                {{ col_schema.name }} ({{ col_schema.data_type }})
+              </li>
+            </div>
+            <ContextMenu
+              v-if="showContextMenu"
+              id="record-id-menu"
+              ref="contextMenuRef"
+              :position="contextMenuPosition"
+              :options="contextMenuOptions"
+              @select="handleContextMenuSelect"
+              @close="closeContextMenu"
+            />
+            <SettingsSection
+              title="Group by columns"
+              :items="nodeRecordId.record_id_input.group_by_columns"
+              droppable="true"
+              @remove-item="removeColumn('add', $event)"
+              @dragover.prevent
+              @drop="onDropInSection('add')"
+            />
+          </ul>
+        </div>
+      </div>
+    </generic-node-settings>
   </div>
 </template>
 
@@ -69,6 +71,7 @@ import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "../pivot/ContextMenu.vue";
 import SettingsSection from "../pivot/SettingsSection.vue";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

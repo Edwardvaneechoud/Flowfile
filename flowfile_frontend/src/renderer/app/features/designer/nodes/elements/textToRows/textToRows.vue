@@ -1,86 +1,88 @@
 <template>
-  <div v-if="isLoaded" class="listbox">
-    <div class="table">
-      <div v-if="nodeTextToRows?.text_to_rows_input" class="selectors">
-        <div
-          v-if="
-            !containsVal(
-              result?.main_input?.columns ?? [],
-              nodeTextToRows.text_to_rows_input.column_to_split,
-            )
-          "
-          class="error-msg"
-        >
-          <unavailableField tooltip-text="Setup is not valid" class="error-icon" />
-          Check the column you want to split
-        </div>
-
-        <!-- Column to Split Input -->
-        <div class="row">
-          <el-row>
-            <div class="input-wrapper">
-              <label>Column to split</label>
-              <column-selector
-                v-model="nodeTextToRows.text_to_rows_input.column_to_split"
-                :column-options="result?.main_input?.columns"
-                @update:value="(value: string) => handleChange(value, 'columnToSplit')"
-              />
-            </div>
-          </el-row>
-        </div>
-
-        <!-- Radio Buttons to Switch Between Split Options -->
-        <div class="row">
-          <el-radio-group
-            v-model="nodeTextToRows.text_to_rows_input.split_by_fixed_value"
-            size="large"
+  <div v-if="isLoaded && nodeTextToRows" class="listbox">
+    <generic-node-settings v-model="nodeTextToRows">
+      <div class="table">
+        <div v-if="nodeTextToRows?.text_to_rows_input" class="selectors">
+          <div
+            v-if="
+              !containsVal(
+                result?.main_input?.columns ?? [],
+                nodeTextToRows.text_to_rows_input.column_to_split,
+              )
+            "
+            class="error-msg"
           >
-            <el-radio :label="true">Split by a fixed value</el-radio>
-            <el-radio :label="false">Split by a column</el-radio>
-          </el-radio-group>
-        </div>
-        <!-- Split by Fixed Value -->
-        <div v-if="nodeTextToRows.text_to_rows_input.split_by_fixed_value" class="row">
-          <el-col :span="10">
-            <label>Split by value</label>
-          </el-col>
-          <el-col :span="8">
-            <input
-              v-model="nodeTextToRows.text_to_rows_input.split_fixed_value"
-              type="text"
-              placeholder="Enter split value"
-            />
-          </el-col>
-        </div>
+            <unavailableField tooltip-text="Setup is not valid" class="error-icon" />
+            Check the column you want to split
+          </div>
 
-        <!-- Split by Column -->
-        <div v-if="!nodeTextToRows.text_to_rows_input.split_by_fixed_value" class="row">
-          <el-col :span="10">
-            <label>Column that contains the value to split</label>
-          </el-col>
-          <el-col :span="8">
-            <column-selector
-              v-model="nodeTextToRows.text_to_rows_input.split_by_column"
-              :column-options="result?.main_input?.columns"
-              :allow-other="false"
-              @update:value="(value: string) => handleChange(value, 'splitValueColumn')"
-            />
-          </el-col>
-        </div>
-        <!-- Output Column Name Input -->
-        <div class="row">
-          <el-col :span="10"><label>Output column name</label></el-col>
-          <el-col :span="8">
-            <column-selector
-              v-model="nodeTextToRows.text_to_rows_input.output_column_name"
-              :column-options="result?.main_input?.columns"
-              :allow-other="true"
-              placeholder="Enter output column name"
-            />
-          </el-col>
+          <!-- Column to Split Input -->
+          <div class="row">
+            <el-row>
+              <div class="input-wrapper">
+                <label>Column to split</label>
+                <column-selector
+                  v-model="nodeTextToRows.text_to_rows_input.column_to_split"
+                  :column-options="result?.main_input?.columns"
+                  @update:value="(value: string) => handleChange(value, 'columnToSplit')"
+                />
+              </div>
+            </el-row>
+          </div>
+
+          <!-- Radio Buttons to Switch Between Split Options -->
+          <div class="row">
+            <el-radio-group
+              v-model="nodeTextToRows.text_to_rows_input.split_by_fixed_value"
+              size="large"
+            >
+              <el-radio :label="true">Split by a fixed value</el-radio>
+              <el-radio :label="false">Split by a column</el-radio>
+            </el-radio-group>
+          </div>
+          <!-- Split by Fixed Value -->
+          <div v-if="nodeTextToRows.text_to_rows_input.split_by_fixed_value" class="row">
+            <el-col :span="10">
+              <label>Split by value</label>
+            </el-col>
+            <el-col :span="8">
+              <input
+                v-model="nodeTextToRows.text_to_rows_input.split_fixed_value"
+                type="text"
+                placeholder="Enter split value"
+              />
+            </el-col>
+          </div>
+
+          <!-- Split by Column -->
+          <div v-if="!nodeTextToRows.text_to_rows_input.split_by_fixed_value" class="row">
+            <el-col :span="10">
+              <label>Column that contains the value to split</label>
+            </el-col>
+            <el-col :span="8">
+              <column-selector
+                v-model="nodeTextToRows.text_to_rows_input.split_by_column"
+                :column-options="result?.main_input?.columns"
+                :allow-other="false"
+                @update:value="(value: string) => handleChange(value, 'splitValueColumn')"
+              />
+            </el-col>
+          </div>
+          <!-- Output Column Name Input -->
+          <div class="row">
+            <el-col :span="10"><label>Output column name</label></el-col>
+            <el-col :span="8">
+              <column-selector
+                v-model="nodeTextToRows.text_to_rows_input.output_column_name"
+                :column-options="result?.main_input?.columns"
+                :allow-other="true"
+                placeholder="Enter output column name"
+              />
+            </el-col>
+          </div>
         </div>
       </div>
-    </div>
+    </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -92,7 +94,7 @@ import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeTextToRows, TextToRowsInput } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
-
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CodeLoader } from "vue-content-loader";
 
 const containsVal = (arr: string[], val: string) => {

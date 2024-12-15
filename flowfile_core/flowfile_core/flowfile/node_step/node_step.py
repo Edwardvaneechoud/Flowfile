@@ -99,7 +99,6 @@ class NodeStep:
                  output_schema: List[FlowfileColumn] = None,
                  drop_columns: List[str] = None,
                  renew_schema: bool = True,
-                 cache_results: bool = False,
                  pos_x: float = 0,
                  pos_y: float = 0,
                  schema_callback: Callable = None,
@@ -115,7 +114,6 @@ class NodeStep:
                          output_schema=output_schema,
                          drop_columns=drop_columns,
                          setting_input=setting_input,
-                         cache_results=cache_results,
                          name=name,
                          pos_x=pos_x,
                          pos_y=pos_y,
@@ -129,7 +127,6 @@ class NodeStep:
                     drop_columns: List[str] = None,
                     name: str = None,
                     setting_input: Any = None,
-                    cache_results: bool = False,
                     pos_x: float = 0,
                     pos_y: float = 0,
                     schema_callback: Callable = None,
@@ -138,13 +135,14 @@ class NodeStep:
         self.node_information.y_position = pos_y
         self.node_information.x_position = pos_x
         self.node_information.setting_input = setting_input
-        self.node_settings.cache_results = self.node_settings.cache_results or cache_results
         self.name = self.node_type if name is None else name
         self._function = function
         self.node_schema.input_columns = [] if input_columns is None else input_columns
         self.node_schema.output_columns = [] if output_schema is None else output_schema
         self.node_schema.drop_columns = [] if drop_columns is None else drop_columns
         self.node_settings.renew_schema = True
+        if hasattr(setting_input, 'cache_results'):
+            self.node_settings.cache_results = setting_input.cache_results
         self.setting_input = setting_input
         self.results.errors = None
         self.add_lead_to_in_depend_source()
@@ -307,7 +305,7 @@ class NodeStep:
         return self.node_information.is_setup
 
     def print(self, v: Any):
-        print(f'{self.node_type}, node_id: {self.node_id}: {v}')
+        logger.info(f'{self.node_type}, node_id: {self.node_id}: {v}')
 
     def get_resulting_data(self) -> FlowfileTable:
         if self.is_setup:
@@ -352,7 +350,7 @@ class NodeStep:
             logger.warning(e)
 
     def get_predicted_resulting_data(self) -> FlowfileTable:
-        if self.needs_run() and self.schema_callback is not None or self.node_schema.result_schema is not None:
+        if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print('Getting data based on the schema')
             _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
             return FlowfileTable.create_from_schema(_s)
@@ -408,15 +406,20 @@ class NodeStep:
         if results_exists(self.hash):
             logger.warning('Not implemented')
 
-    def needs_run(self) -> bool:
+    def needs_run(self, performance_mode: bool) -> bool:
+        cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run:
+            logger.info('Node has not run, needs to run')
             return True
-        if self.node_settings.cache_results and results_exists(self.hash):
+        if self.node_settings.cache_results and cache_result_exists:
+
             return False
-        elif self.node_settings.cache_results and not results_exists(self.hash):
+        elif self.node_settings.cache_results and not cache_result_exists:
             return True
+        elif not performance_mode and cache_result_exists:
+            return False
         else:
-            return False
+            return True
 
     def __call__(self, *args, **kwargs):
         self.execute_node(*args, **kwargs)
@@ -515,13 +518,17 @@ class NodeStep:
             self.node_stats.has_run = False
         if self.is_setup:
             logger.info(f'Starting to run {self.__name__}')
-            if self.needs_run():
+            if self.needs_run(performance_mode):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
                             and not run_location == 'local')) or self.node_settings.cache_results:
                         logger.info('Running the node remotely')
-                        self.execute_remote(performance_mode=performance_mode)
+                        if self.node_settings.cache_results:
+                            performance_mode = False
+                        self.execute_remote(performance_mode=(performance_mode if not self.node_settings.cache_results
+                                                              else False)
+                                            )
                     else:
                         logger.info('Running the node locally')
                         self.execute_local(performance_mode=performance_mode)

@@ -2,7 +2,7 @@
   <div v-bind="$attrs">
     <div class="custom-node-header" data="description_display" @contextmenu="onTitleClick">
       <div>
-        <div v-if="!editMode" class="description-display">
+        <div v-if="!editMode" class="description-display" :style="descriptionTextStyle">
           <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
             <svg
               width="12"
@@ -63,9 +63,8 @@
 </template>
 
 <script setup lang="ts">
-// Script section remains the same
 import { Handle } from "@vue-flow/core";
-import { computed, ref, defineProps, onMounted, nextTick } from "vue";
+import { computed, ref, defineProps, onMounted, nextTick, watch } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 
 const nodeStore = useNodeStore();
@@ -82,6 +81,20 @@ const onTitleClick = (event: MouseEvent) => {
   mouseX.value = event.clientX;
   mouseY.value = event.clientY;
 };
+
+const descriptionTextStyle = computed(() => {
+  const textLength = description.value.length;
+  let minWidth = "200px"; // default
+
+  if (textLength < 20) {
+    minWidth = "100px";
+  } else if (textLength < 30) {
+    minWidth = "150px";
+  }
+  return {
+    minWidth: minWidth,
+  };
+});
 
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
@@ -183,6 +196,15 @@ function getHandleStyle(index: number, total: number) {
 onMounted(async () => {
   await nextTick();
   await getNodeDescription();
+
+  watch(
+    () => nodeStore.nodeDescriptions[props.data.id],
+    (newDescription) => {
+      if (newDescription !== undefined) {
+        description.value = newDescription;
+      }
+    },
+  );
 });
 </script>
 
@@ -213,15 +235,18 @@ onMounted(async () => {
 
 .description-display {
   position: relative;
-  white-space: pre-wrap;
-  min-width: 100px;
+  white-space: normal;
+  min-width: 100px; /* Default minimum width */
+  max-width: 300px;
+  width: auto; /* Allow dynamic width */
   padding: 2px 4px;
   cursor: pointer;
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(185, 185, 185, 0.117);
   font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
   display: flex;
   align-items: flex-start;
   gap: 4px;
+  border-radius: 4px;
 }
 
 .edit-icon {

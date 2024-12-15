@@ -1,84 +1,86 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
-    <div class="listbox-wrapper">
-      <div class="listbox-subtitle">Columns</div>
-      <ul v-if="dataLoaded" class="listbox">
-        <li
-          v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-          :key="col_schema.name"
-          :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
-          @click="handleItemClick(index, col_schema.name, $event)"
-          @contextmenu="openContextMenu(index, col_schema.name, $event)"
-        >
-          {{ col_schema.name }} ({{ col_schema.data_type }})
-        </li>
-      </ul>
-    </div>
-    <div
-      v-if="showContextMenu"
-      ref="contextMenuRef"
-      class="context-menu"
-      :style="{
-        top: contextMenuPosition.y + 'px',
-        left: contextMenuPosition.x + 'px',
-      }"
-    >
-      <button v-if="!singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
-        Ascending
-      </button>
-      <button v-if="singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
-        Ascending
-      </button>
-      <button v-if="singleColumnSelected" @click="setSortSettings('Descending', selectedColumns)">
-        Descending
-      </button>
-    </div>
-
-    <div class="listbox-wrapper">
-      <div class="listbox-subtitle">Settings</div>
-
-      <div v-if="dataLoaded" class="table-wrapper">
-        <table class="styled-table">
-          <thead>
-            <tr>
-              <th>Field</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <div v-if="nodeSort">
-              <tr
-                v-for="(item, index) in nodeSort.sort_input"
-                :key="index"
-                @contextmenu.prevent="openRowContextMenu($event, index)"
-              >
-                <td>{{ item.column }}</td>
-                <td>
-                  <el-select v-model="item.how" size="small">
-                    <el-option
-                      v-for="aggOption in sortOptions"
-                      :key="aggOption"
-                      :label="aggOption"
-                      :value="aggOption"
-                    />
-                  </el-select>
-                </td>
-              </tr>
-            </div>
-          </tbody>
-        </table>
+  <div v-if="dataLoaded && nodeSort" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeSort">
+      <div class="listbox-wrapper">
+        <div class="listbox-subtitle">Columns</div>
+        <ul v-if="dataLoaded" class="listbox">
+          <li
+            v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
+            :key="col_schema.name"
+            :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
+            @click="handleItemClick(index, col_schema.name, $event)"
+            @contextmenu="openContextMenu(index, col_schema.name, $event)"
+          >
+            {{ col_schema.name }} ({{ col_schema.data_type }})
+          </li>
+        </ul>
       </div>
       <div
-        v-if="showContextMenuRemove"
+        v-if="showContextMenu"
+        ref="contextMenuRef"
         class="context-menu"
         :style="{
           top: contextMenuPosition.y + 'px',
           left: contextMenuPosition.x + 'px',
         }"
       >
-        <button @click="removeRow">Remove</button>
+        <button v-if="!singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
+          Ascending
+        </button>
+        <button v-if="singleColumnSelected" @click="setSortSettings('Ascending', selectedColumns)">
+          Ascending
+        </button>
+        <button v-if="singleColumnSelected" @click="setSortSettings('Descending', selectedColumns)">
+          Descending
+        </button>
       </div>
-    </div>
+
+      <div class="listbox-wrapper">
+        <div class="listbox-subtitle">Settings</div>
+
+        <div v-if="dataLoaded" class="table-wrapper">
+          <table class="styled-table">
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <div v-if="nodeSort">
+                <tr
+                  v-for="(item, index) in nodeSort.sort_input"
+                  :key="index"
+                  @contextmenu.prevent="openRowContextMenu($event, index)"
+                >
+                  <td>{{ item.column }}</td>
+                  <td>
+                    <el-select v-model="item.how" size="small">
+                      <el-option
+                        v-for="aggOption in sortOptions"
+                        :key="aggOption"
+                        :label="aggOption"
+                        :value="aggOption"
+                      />
+                    </el-select>
+                  </td>
+                </tr>
+              </div>
+            </tbody>
+          </table>
+        </div>
+        <div
+          v-if="showContextMenuRemove"
+          class="context-menu"
+          :style="{
+            top: contextMenuPosition.y + 'px',
+            left: contextMenuPosition.x + 'px',
+          }"
+        >
+          <button @click="removeRow">Remove</button>
+        </div>
+      </div>
+    </generic-node-settings>
   </div>
   <code-loader v-else />
 </template>
@@ -89,6 +91,8 @@ import { NodeSort } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { CodeLoader } from "vue-content-loader";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
@@ -101,7 +105,6 @@ const nodeSort = ref<null | NodeSort>(null);
 const nodeData = ref<null | NodeData>(null);
 const sortOptions = ["Ascending", "Descending"];
 const firstSelectedIndex = ref<number | null>(null);
-const props = defineProps({ nodeId: { type: Number, required: true } });
 
 const openRowContextMenu = (event: MouseEvent, index: number) => {
   event.preventDefault();

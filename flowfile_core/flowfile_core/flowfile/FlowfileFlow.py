@@ -606,7 +606,6 @@ class EtlGraph:
                                 setting_input=setting_input,
                                 node_type=node_type,
                                 name=function.__name__,
-                                cache_results=cache_results,
                                 schema_callback=schema_callback,
                                 parent_uuid=self.uuid)
             else:
@@ -615,7 +614,6 @@ class EtlGraph:
                                           input_columns=input_columns,
                                           drop_columns=drop_columns,
                                           setting_input=setting_input,
-                                          cache_results=cache_results,
                                           schema_callback=schema_callback)
                 node = existing_node
         elif node_type == 'input_data':

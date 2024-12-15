@@ -1,25 +1,27 @@
 <template>
-  <div v-if="dataLoaded">
-    <div class="listbox-wrapper">
-      <select-dynamic
-        :select-inputs="nodeCrossJoin?.cross_join_input.left_select.renames"
-        :show-keep-option="true"
-        :show-title="true"
-        :show-headers="true"
-        :show-data="true"
-        title="Left data"
-        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
-      />
-      <select-dynamic
-        :select-inputs="nodeCrossJoin?.cross_join_input.right_select.renames"
-        :show-keep-option="true"
-        :show-headers="true"
-        :show-title="true"
-        :show-data="true"
-        title="Right data"
-        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
-      />
-    </div>
+  <div v-if="dataLoaded && nodeCrossJoin">
+    <generic-node-settings v-model="nodeCrossJoin">
+      <div class="listbox-wrapper">
+        <select-dynamic
+          :select-inputs="nodeCrossJoin?.cross_join_input.left_select.renames"
+          :show-keep-option="true"
+          :show-title="true"
+          :show-headers="true"
+          :show-data="true"
+          title="Left data"
+          @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
+        />
+        <select-dynamic
+          :select-inputs="nodeCrossJoin?.cross_join_input.right_select.renames"
+          :show-keep-option="true"
+          :show-headers="true"
+          :show-title="true"
+          :show-data="true"
+          title="Right data"
+          @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
+        />
+      </div>
+    </generic-node-settings>
   </div>
   <code-loader v-else />
 </template>
@@ -28,9 +30,9 @@ import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { SelectInput } from "../../../baseNode/nodeInput";
-import { NodeCrossJoin } from "./joinInterfaces";
+import { SelectInput, NodeCrossJoin } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
