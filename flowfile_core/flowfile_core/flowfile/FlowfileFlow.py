@@ -770,32 +770,8 @@ class EtlGraph:
             input_data.name = input_file.received_file.name
             return input_data
 
-        # Define the schema callback function
-        if len(received_file.fields) > 0:
-            # If the file has fields defined, we can use them to create the schema
-            def schema_callback():
-                return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
-
-        elif input_file.received_file.file_type in ('csv', 'json', 'parquet'):
-            # everything that can be scanned by polars
-            def schema_callback():
-                input_data = FlowfileTable.create_from_path(input_file.received_file)
-                return input_data.schema
-
-        elif input_file.received_file.file_type in ('xlsx', 'excel'):
-            # If the file is an Excel file, we need to use the openpyxl engine to read the schema
-            schema_callback = get_xlsx_schema_callback(engine='openpyxl',
-                                                       file_path=received_file.file_path,
-                                                       sheet_name=received_file.sheet_name,
-                                                       start_row=received_file.start_row,
-                                                       end_row=received_file.end_row,
-                                                       start_column=received_file.start_column,
-                                                       end_column=received_file.end_column,
-                                                       has_headers=received_file.has_headers)
-        else:
-            schema_callback = None
-
         node = self.get_node(input_file.node_id)
+        schema_callback = None
         if node:
             start_hash = node.hash
             node.node_type = 'read'
@@ -804,9 +780,32 @@ class EtlGraph:
             node.setting_input = input_file
             if input_file.node_id not in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
-            if start_hash == node.hash:
-                schema_callback = None
 
+            if start_hash != node.hash:
+                logger.info('Hash changed, updating schema')
+                if len(received_file.fields) > 0:
+                    # If the file has fields defined, we can use them to create the schema
+                    def schema_callback():
+                        return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
+
+                elif input_file.received_file.file_type in ('csv', 'json', 'parquet'):
+                    # everything that can be scanned by polars
+                    def schema_callback():
+                        input_data = FlowfileTable.create_from_path(input_file.received_file)
+                        return input_data.schema
+
+                elif input_file.received_file.file_type in ('xlsx', 'excel'):
+                    # If the file is an Excel file, we need to use the openpyxl engine to read the schema
+                    schema_callback = get_xlsx_schema_callback(engine='openpyxl',
+                                                               file_path=received_file.file_path,
+                                                               sheet_name=received_file.sheet_name,
+                                                               start_row=received_file.start_row,
+                                                               end_row=received_file.end_row,
+                                                               start_column=received_file.start_column,
+                                                               end_column=received_file.end_column,
+                                                               has_headers=received_file.has_headers)
+                else:
+                    schema_callback = None
         else:
             node = NodeStep(input_file.node_id, function=_func,
                             setting_input=input_file,
@@ -817,7 +816,6 @@ class EtlGraph:
 
         if schema_callback is not None:
             node.schema_callback = schema_callback
-
         return self
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
