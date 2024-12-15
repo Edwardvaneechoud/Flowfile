@@ -235,10 +235,6 @@ export interface NodeSelect extends NodeSingleInput {
   select_input: SelectInput[]
 }
 
-export interface NodeFormula extends NodeSingleInput {
-  function: FormulaInput
-}
-
 export interface NodeFilter extends NodeSingleInput {
   filter_input: FilterInput
 }
@@ -349,4 +345,8 @@ export interface NodeUnique extends NodeSingleInput {
 
 export interface NodeGraphSolver extends NodeSingleInput {
   graph_solver_input: GraphSolverInput
+}
+
+export interface NodeFormula extends NodeSingleInput {
+  function: FormulaInput
 }
