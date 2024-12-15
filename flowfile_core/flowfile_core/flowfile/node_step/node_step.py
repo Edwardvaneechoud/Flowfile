@@ -350,7 +350,7 @@ class NodeStep:
             logger.warning(e)
 
     def get_predicted_resulting_data(self) -> FlowfileTable:
-        if self.needs_run() and self.schema_callback is not None or self.node_schema.result_schema is not None:
+        if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print('Getting data based on the schema')
             _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
             return FlowfileTable.create_from_schema(_s)

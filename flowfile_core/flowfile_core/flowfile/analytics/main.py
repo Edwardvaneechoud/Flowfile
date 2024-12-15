@@ -13,7 +13,7 @@ class AnalyticsProcessor:
         node_graphic_walker: NodeExploreData = node_step.setting_input
         if not isinstance(node_graphic_walker, GraphicWalkerInput):
             logger.warning(f"NodeExploreData is not an instance of GraphicWalkerInput. ")
-        _needs_run = node_step.needs_run()
+        _needs_run = node_step.needs_run(False)
         if _needs_run:
             raw_fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
             data_model = DataModel(data=[], fields=raw_fields)
@@ -44,7 +44,7 @@ class AnalyticsProcessor:
     @staticmethod
     def create_graphic_walker_input(node_step: NodeStep,
                                     graphic_walker_input: GraphicWalkerInput = None) -> GraphicWalkerInput:
-        if node_step.needs_run():
+        if node_step.needs_run(False):
             fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
             data_model = DataModel(data=[], fields=fields)
         else:
