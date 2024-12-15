@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodeSample" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeSample">
     <div class="listbox-wrapper">
       <div class="listbox-subtitle">Settings</div>
       <el-row>
@@ -9,14 +10,18 @@
         /></el-col>
       </el-row>
     </div>
+    </generic-node-settings>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted, nextTick, defineProps } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeSample } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+
+
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
@@ -25,7 +30,6 @@ const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeSample = ref<null | NodeSample>(null);
 const nodeData = ref<null | NodeData>(null);
-const props = defineProps({ nodeId: { type: Number, required: true } });
 const sampleSize = ref<number>(1000);
 
 const loadNodeData = async (nodeId: number) => {

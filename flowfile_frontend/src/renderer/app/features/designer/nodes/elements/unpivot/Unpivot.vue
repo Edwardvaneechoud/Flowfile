@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodeUnpivot" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeUnpivot">
     <div class="listbox-wrapper">
       <ul class="listbox">
         <li
@@ -80,6 +81,7 @@
         </div>
       </div>
     </div>
+    </generic-node-settings>  
   </div>
 </template>
 
@@ -90,6 +92,7 @@ import { NodeUnpivot, DataTypeSelector, UnpivotInput } from "../../../baseNode/n
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

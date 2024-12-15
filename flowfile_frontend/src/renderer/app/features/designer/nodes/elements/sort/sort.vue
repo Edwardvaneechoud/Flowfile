@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodeSort" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeSort">
     <div class="listbox-wrapper">
       <div class="listbox-subtitle">Columns</div>
       <ul v-if="dataLoaded" class="listbox">
@@ -79,6 +80,7 @@
         <button @click="removeRow">Remove</button>
       </div>
     </div>
+    </generic-node-settings>
   </div>
   <code-loader v-else />
 </template>
@@ -89,6 +91,8 @@ import { NodeSort } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { CodeLoader } from "vue-content-loader";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
@@ -101,7 +105,7 @@ const nodeSort = ref<null | NodeSort>(null);
 const nodeData = ref<null | NodeData>(null);
 const sortOptions = ["Ascending", "Descending"];
 const firstSelectedIndex = ref<number | null>(null);
-const props = defineProps({ nodeId: { type: Number, required: true } });
+
 
 const openRowContextMenu = (event: MouseEvent, index: number) => {
   event.preventDefault();

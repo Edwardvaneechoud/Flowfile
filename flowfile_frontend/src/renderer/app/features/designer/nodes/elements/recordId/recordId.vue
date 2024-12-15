@@ -1,5 +1,6 @@
 <template>
   <div v-if="dataLoaded && nodeRecordId" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeRecordId">
     <div class="listbox-wrapper">
       <div class="listbox-subtitle">Settings</div>
       <el-row>
@@ -59,6 +60,7 @@
         </ul>
       </div>
     </div>
+    </generic-node-settings>
   </div>
 </template>
 
@@ -69,6 +71,7 @@ import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "../pivot/ContextMenu.vue";
 import SettingsSection from "../pivot/SettingsSection.vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

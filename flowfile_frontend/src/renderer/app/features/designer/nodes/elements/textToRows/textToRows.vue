@@ -1,5 +1,6 @@
 <template>
-  <div v-if="isLoaded" class="listbox">
+  <div v-if="isLoaded && nodeTextToRows" class="listbox">
+    <generic-node-settings v-model="nodeTextToRows">
     <div class="table">
       <div v-if="nodeTextToRows?.text_to_rows_input" class="selectors">
         <div
@@ -81,6 +82,7 @@
         </div>
       </div>
     </div>
+  </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -92,7 +94,7 @@ import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeTextToRows, TextToRowsInput } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
-
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 import { CodeLoader } from "vue-content-loader";
 
 const containsVal = (arr: string[], val: string) => {

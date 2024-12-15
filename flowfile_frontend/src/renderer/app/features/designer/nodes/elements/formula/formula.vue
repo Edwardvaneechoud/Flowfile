@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded && NodeFormula" class="listbox-wrapper">
+    <generic-node-settings v-model="NodeFormula">
     <div v-if="nodeStore.is_loaded">
       <div v-if="formulaInput && formulaNode" class="selector-container">
         <DropDownGeneric
@@ -22,6 +23,7 @@
         :editor-string="formulaInput.function"
       />
     </div>
+  </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -34,6 +36,7 @@ import mainEditorRef from "../../../editor/fullEditor.vue";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
 import { createFormulaNode } from "./formula";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 
 import { NodeFormula, FormulaInput } from "../../../baseNode/nodeInput";
 

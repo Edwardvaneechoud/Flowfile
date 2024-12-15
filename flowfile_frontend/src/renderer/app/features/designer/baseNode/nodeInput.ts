@@ -107,7 +107,7 @@ export interface UnpivotInput {
 
 export interface NodeBase {
   flow_id: string | number
-  node_id: string | number
+  node_id: number
   cache_results: boolean
   pos_x: number
   pos_y: number
@@ -265,6 +265,24 @@ export interface NodeMultiInput extends NodeBase {
 export interface NodeJoin extends NodeMultiInput {
   join_input: FuzzyJoinSettings
 }
+
+export interface NodeCrossJoin extends NodeMultiInput {
+  auto_generate_selection: boolean
+  verify_integrity: boolean
+  cross_join_input: CrossJoinInput
+}
+
+export interface JoinMap {
+  left_col: string
+  right_col: string
+}
+
+export interface CrossJoinInput {
+  left_select: SelectInputs
+  right_select: SelectInputs
+  how: string
+}
+
 
 export interface FuzzyMap {
   left_col: string

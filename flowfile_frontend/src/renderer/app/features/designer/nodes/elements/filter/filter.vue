@@ -1,5 +1,6 @@
 <template>
-  <div v-if="isLoaded">
+  <div v-if="isLoaded && nodeFilter">
+    <generic-node-settings v-model="nodeFilter">
     <div class="listbox-wrapper">
       <div style="border-radius: 20px">
         <el-switch
@@ -43,6 +44,7 @@
         </div>
       </div>
     </div>
+  </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -56,6 +58,7 @@ import { useNodeStore } from "../../../../../stores/column-store";
 import mainEditorRef from "../../../editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 
 const editorString = ref<string>("");
 const isLoaded = ref<boolean>(false);

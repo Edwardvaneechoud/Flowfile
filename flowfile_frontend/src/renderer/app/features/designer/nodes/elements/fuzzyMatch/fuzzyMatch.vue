@@ -1,5 +1,6 @@
 <template>
-  <div v-if="isLoaded" class="listbox-wrapper">
+  <div v-if="isLoaded && nodeFuzzyJoin" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeFuzzyJoin">
     <div class="listbox-wrapper">
       <div class="listbox-subtitle">Fuzzy match settings</div>
       <div class="table-wrapper">
@@ -112,6 +113,7 @@
       title="Left data"
       @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
     />
+  </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -123,7 +125,7 @@ import { NodeJoin, FuzzyJoinSettings, SelectInput, FuzzyMap } from "../../../bas
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
-
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 import { CodeLoader } from "vue-content-loader";
 
 const containsVal = (arr: string[], val: string) => {

@@ -1,4 +1,6 @@
 <template>
+  <div v-if="nodeExternalSource">
+  <generic-node-settings v-model="nodeExternalSource">
   <div class="listbox-wrapper">
     <div class="listbox-subtitle">
       <img src="/images/airbyte.png" alt="Airbyte Icon" class="file-icon" />
@@ -98,6 +100,8 @@
       <span class="material-icons file-icon">refresh</span>
     </button>
   </div>
+</generic-node-settings>
+</div>
 </template>
 
 <script setup lang="ts">
@@ -115,11 +119,13 @@ import { SchemaProperty, AirbyteConfig, AirbyteConfigTemplate, NodeExternalSourc
 import { useNodeStore } from "../../../../../stores/column-store";
 import { CodeLoader } from "vue-content-loader";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+
 
 defineProps<{ nodeId?: number }>();
 
 const nodeStore = useNodeStore();
-const nodeExternalSource = ref<null | NodeExternalSource>(null);
+const nodeExternalSource = ref<NodeExternalSource | null>(null);
 const backupAirbyteConfig = ref<null | AirbyteConfig>(null);
 const sourceSelected = ref<boolean>(false);
 const availableConnectors = ref<string[]>([]);

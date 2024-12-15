@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded">
+  <div v-if="dataLoaded && nodeGroupBy">
+    <generic-node-settings v-model="nodeGroupBy">
     <div class="listbox-wrapper">
       <ul v-if="dataLoaded" class="listbox">
         <li
@@ -88,6 +89,7 @@
     >
       <button @click="removeRow">Remove</button>
     </div>
+  </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -98,6 +100,8 @@ import { GroupByInput, NodeGroupBy } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
@@ -110,7 +114,6 @@ const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
 const aggOptions = ["groupby", "sum", "max", "median", "min", "count", "n_unique"];
 const firstSelectedIndex = ref<number | null>(null);
-const props = defineProps({ nodeId: { type: Number, required: true } });
 
 const groupByInput = ref<GroupByInput>({
   agg_cols: [],

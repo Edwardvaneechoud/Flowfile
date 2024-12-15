@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodeGraphSolver" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeGraphSolver">
     <div class="listbox-wrapper">
       <ul class="listbox">
         <li
@@ -53,8 +54,8 @@
           placeholder="Please input"
         />
       </div>
-      <!-- <PivotValidation :pivotInput="pivotInput" /> -->
     </div>
+    </generic-node-settings>
   </div>
 </template>
 
@@ -65,6 +66,7 @@ import { GraphSolverInput, NodeGraphSolver } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

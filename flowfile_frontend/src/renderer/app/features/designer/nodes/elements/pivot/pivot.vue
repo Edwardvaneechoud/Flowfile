@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+  <div v-if="dataLoaded && nodePivot" class="listbox-wrapper">
+    <generic-node-settings v-model="nodePivot">
     <div class="listbox-wrapper">
       <ul class="listbox">
         <li
@@ -73,6 +74,7 @@
       </div>
       <PivotValidation :pivot-input="pivotInput" />
     </div>
+    </generic-node-settings>
   </div>
 </template>
 
@@ -84,6 +86,7 @@ import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import PivotValidation from "./PivotValidation.vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

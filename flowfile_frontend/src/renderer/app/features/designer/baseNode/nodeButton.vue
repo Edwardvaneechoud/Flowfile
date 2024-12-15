@@ -6,26 +6,7 @@
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
       <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
     </button>
-  </div>
-  <div
-    v-if="editMode"
-    :id="props.nodeId.toLocaleString()"
-    class="overlay"
-    :style="overlayStyle"
-    data="description_input"
-  >
-    <div class="overlay-content">
-      <p :id="props.nodeId.toLocaleString()" class="overlay-prompt" data="description_input">
-        Provide a description for the node:
-      </p>
-      <textarea
-        :id="props.nodeId.toLocaleString()"
-        v-model="description"
-        class="description-input"
-        data="description_input"
-        @blur="toggleEditMode(false)"
-      ></textarea>
-    </div>
+
   </div>
 </template>
 
@@ -37,15 +18,13 @@ import {
   onMounted,
   ref,
   nextTick,
-  watch,
-  onUnmounted,
+  watch
 } from "vue";
 import { getImageUrl } from "../utils";
 import { useNodeStore } from "../../../stores/column-store";
 const description = ref<string>("");
 const mouseX = ref(0);
 const mouseY = ref(0);
-const editMode = ref(false); // Add this line
 const nodeStore = useNodeStore();
 const props = defineProps({
   nodeId: { type: Number, required: true },
@@ -85,29 +64,6 @@ const overlayStyle = computed(() => {
   };
 });
 
-const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement;
-  const target_data = target.getAttribute("data");
-  if (
-    (target_data == "description_display" || target_data == "description_input") &&
-    target.id == props.nodeId.toLocaleString()
-  ) {
-    return;
-  } else if (editMode.value) {
-    toggleEditMode(false);
-  }
-};
-
-const toggleEditMode = (state: boolean) => {
-  editMode.value = state;
-  if (state) {
-    window.addEventListener("click", handleClickOutside);
-  }
-  if (!state) {
-    window.removeEventListener("click", handleClickOutside);
-    nodeStore.setNodeDescription(props.nodeId, description.value);
-  }
-};
 
 interface ResultOutput {
   success?: boolean;
@@ -246,12 +202,9 @@ onMounted(() => {
       }
     },
   );
-  //window.addEventListener('click', handleClickOutside)
 });
 
-onUnmounted(() => {
-  //window.removeEventListener('click', handleClickOutside)
-});
+
 </script>
 
 <style scoped>

@@ -397,5 +397,9 @@ export const useNodeStore = defineStore('node', {
         throw error
       }
     },
+    updateNodeDescription(nodeId: number, description: string) {
+      // Update cache first for immediate feedback
+      this.cacheNodeDescriptionDict(nodeId, description);
+    }
   },
 })

@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded" class="listbox-wrapper">
+<div v-if="dataLoaded && nodeExternalSource" class="listbox-wrapper">
+  <generic-node-settings v-model="nodeExternalSource">
     <div class="listbox-subtitle">Select the type of external source</div>
     <el-select
       v-model="selectedExternalSource"
@@ -10,16 +11,16 @@
     >
       <el-option v-for="item in writingOptions" :key="item" :label="item" :value="item" />
     </el-select>
-  </div>
-  <div class="listbox-wrapper">
+
     <div v-if="typeSelected" class="file-upload-container">
       <div
         v-if="selectedExternalSource === 'sample_users' && sampleUsers"
         class="file-upload-wrapper"
-      ></div>
+      />
     </div>
     <CodeLoader v-else />
-  </div>
+  </generic-node-settings>
+</div>
 </template>
 
 <script lang="ts" setup>
@@ -29,6 +30,8 @@ import { get_template_source_type } from "./createTemplateExternalSource";
 import { SampleUsers, NodeExternalSource } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { WatchStopHandle } from "vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+
 const nodeStore = useNodeStore();
 const sampleUsers = ref<SampleUsers | null>(null);
 const nodeExternalSource = ref<null | NodeExternalSource>(null);

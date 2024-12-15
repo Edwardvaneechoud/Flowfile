@@ -1,5 +1,6 @@
 <template>
-  <div v-if="dataLoaded">
+  <div v-if="dataLoaded && nodeJoin">
+    <generic-node-settings v-model="nodeJoin">
     <div class="listbox-wrapper">
       <div class="listbox-subtitle">Join columns</div>
       <div class="join-content">
@@ -83,6 +84,8 @@
         "
       />
     </div>
+  </generic-node-settings>
+
   </div>
   <code-loader v-else />
 </template>
@@ -96,6 +99,8 @@ import { SelectInput } from "../../../baseNode/nodeInput";
 import { NodeJoin } from "./joinInterfaces";
 import DropDown from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
+import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+
 
 const joinTypes = ["inner", "left", "right", "full", "semi", "anti", "cross"];
 
