@@ -53,7 +53,7 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 - Python 3.10+
 - Node.js 16+
 - Poetry (Python package manager)
-- Docker & Docker Compose (for Docker setup)
+- Docker & Docker Compose (option, for Docker setup)
 - Make (optional, for build automation)
 
 ### Installation Options
