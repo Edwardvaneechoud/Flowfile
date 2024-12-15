@@ -94,6 +94,7 @@ Frontend: http://localhost:8080 # main service
 Core API: http://localhost:63578/docs
 Worker API: http://localhost:63579/docs
 ```
+Just place your files that you want to transform in the directory in shared_data and you're all set!
 
 
 ### 3. Manual Setup (Development)
