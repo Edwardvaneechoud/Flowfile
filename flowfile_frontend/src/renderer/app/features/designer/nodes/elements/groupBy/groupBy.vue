@@ -1,95 +1,95 @@
 <template>
   <div v-if="dataLoaded && nodeGroupBy">
     <generic-node-settings v-model="nodeGroupBy">
-    <div class="listbox-wrapper">
-      <ul v-if="dataLoaded" class="listbox">
-        <li
-          v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-          :key="col_schema.name"
-          :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
-          @click="handleItemClick(index, col_schema.name, $event)"
-          @contextmenu="openContextMenu(index, col_schema.name, $event)"
-        >
-          {{ col_schema.name }} ({{ col_schema.data_type }})
-        </li>
-      </ul>
-    </div>
-    <div
-      v-if="showContextMenu"
-      ref="contextMenuRef"
-      class="context-menu"
-      :style="{
-        top: contextMenuPosition.y + 'px',
-        left: contextMenuPosition.x + 'px',
-      }"
-    >
-      <button @click="setAggregations('groupby', selectedColumns)">Group by</button>
-      <button v-if="singleColumnSelected" @click="setAggregations('count', selectedColumns)">
-        Count
-      </button>
-      <button v-if="singleColumnSelected" @click="setAggregations('max', selectedColumns)">
-        Max
-      </button>
-      <button v-if="singleColumnSelected" @click="setAggregations('median', selectedColumns)">
-        Median
-      </button>
-      <button v-if="singleColumnSelected" @click="setAggregations('min', selectedColumns)">
-        Min
-      </button>
-      <button v-if="singleColumnSelected" @click="setAggregations('sum', selectedColumns)">
-        Sum
-      </button>
-      <button v-if="singleColumnSelected" @click="setAggregations('n_unique', selectedColumns)">
-        N_unique
-      </button>
-    </div>
-
-    <div class="listbox-subtitle">Settings</div>
-
-    <div v-if="dataLoaded" class="table-wrapper">
-      <table class="styled-table">
-        <thead>
-          <tr>
-            <th>Field</th>
-            <th>Action</th>
-            <th>Output Field Name</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="(item, index) in groupByInput.agg_cols"
-            :key="index"
-            @contextmenu.prevent="openRowContextMenu($event, index)"
+      <div class="listbox-wrapper">
+        <ul v-if="dataLoaded" class="listbox">
+          <li
+            v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
+            :key="col_schema.name"
+            :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
+            @click="handleItemClick(index, col_schema.name, $event)"
+            @contextmenu="openContextMenu(index, col_schema.name, $event)"
           >
-            <td>{{ item.old_name }}</td>
-            <td>
-              <el-select v-model="item.agg" size="small">
-                <el-option
-                  v-for="aggOption in aggOptions"
-                  :key="aggOption"
-                  :label="aggOption"
-                  :value="aggOption"
-                />
-              </el-select>
-            </td>
-            <td>
-              <el-input v-model="item.new_name" class="w-50 m-2" size="small" />
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <div
-      v-if="showContextMenuRemove"
-      class="context-menu"
-      :style="{
-        top: contextMenuPosition.y + 'px',
-        left: contextMenuPosition.x + 'px',
-      }"
-    >
-      <button @click="removeRow">Remove</button>
-    </div>
-  </generic-node-settings>
+            {{ col_schema.name }} ({{ col_schema.data_type }})
+          </li>
+        </ul>
+      </div>
+      <div
+        v-if="showContextMenu"
+        ref="contextMenuRef"
+        class="context-menu"
+        :style="{
+          top: contextMenuPosition.y + 'px',
+          left: contextMenuPosition.x + 'px',
+        }"
+      >
+        <button @click="setAggregations('groupby', selectedColumns)">Group by</button>
+        <button v-if="singleColumnSelected" @click="setAggregations('count', selectedColumns)">
+          Count
+        </button>
+        <button v-if="singleColumnSelected" @click="setAggregations('max', selectedColumns)">
+          Max
+        </button>
+        <button v-if="singleColumnSelected" @click="setAggregations('median', selectedColumns)">
+          Median
+        </button>
+        <button v-if="singleColumnSelected" @click="setAggregations('min', selectedColumns)">
+          Min
+        </button>
+        <button v-if="singleColumnSelected" @click="setAggregations('sum', selectedColumns)">
+          Sum
+        </button>
+        <button v-if="singleColumnSelected" @click="setAggregations('n_unique', selectedColumns)">
+          N_unique
+        </button>
+      </div>
+
+      <div class="listbox-subtitle">Settings</div>
+
+      <div v-if="dataLoaded" class="table-wrapper">
+        <table class="styled-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Action</th>
+              <th>Output Field Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(item, index) in groupByInput.agg_cols"
+              :key="index"
+              @contextmenu.prevent="openRowContextMenu($event, index)"
+            >
+              <td>{{ item.old_name }}</td>
+              <td>
+                <el-select v-model="item.agg" size="small">
+                  <el-option
+                    v-for="aggOption in aggOptions"
+                    :key="aggOption"
+                    :label="aggOption"
+                    :value="aggOption"
+                  />
+                </el-select>
+              </td>
+              <td>
+                <el-input v-model="item.new_name" class="w-50 m-2" size="small" />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div
+        v-if="showContextMenuRemove"
+        class="context-menu"
+        :style="{
+          top: contextMenuPosition.y + 'px',
+          left: contextMenuPosition.x + 'px',
+        }"
+      >
+        <button @click="removeRow">Remove</button>
+      </div>
+    </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -100,7 +100,7 @@ import { GroupByInput, NodeGroupBy } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

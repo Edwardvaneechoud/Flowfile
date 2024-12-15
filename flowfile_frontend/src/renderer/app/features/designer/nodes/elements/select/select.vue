@@ -1,19 +1,19 @@
 <template>
   <div v-if="dataLoaded">
     <generic-node-settings v-model="nodeSelect">
-    <select-dynamic
-      :select-inputs="nodeSelect.select_input"
-      :show-keep-option="true"
-      :show-data-type="true"
-      :show-new-columns="true"
-      :show-old-columns="true"
-      :show-headers="true"
-      :show-title="false"
-      :show-data="true"
-      title="Select data"
-      @update-select-inputs="updateSelectInputsHandler"
-    />
-  </generic-node-settings>
+      <select-dynamic
+        :select-inputs="nodeSelect.select_input"
+        :show-keep-option="true"
+        :show-data-type="true"
+        :show-new-columns="true"
+        :show-old-columns="true"
+        :show-headers="true"
+        :show-title="false"
+        :show-data="true"
+        title="Select data"
+        @update-select-inputs="updateSelectInputsHandler"
+      />
+    </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -29,7 +29,7 @@ import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const keepMissing = ref(false);
 const nodeStore = useNodeStore();

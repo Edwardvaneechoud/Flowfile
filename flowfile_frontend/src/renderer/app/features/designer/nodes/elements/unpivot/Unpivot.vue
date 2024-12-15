@@ -1,87 +1,87 @@
 <template>
   <div v-if="dataLoaded && nodeUnpivot" class="listbox-wrapper">
     <generic-node-settings v-model="nodeUnpivot">
-    <div class="listbox-wrapper">
-      <ul class="listbox">
-        <li
-          v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-          :key="col_schema.name"
-          :class="getColumnClass(col_schema.name)"
-          draggable="true"
-          @click="handleItemClick(col_schema.name)"
-          @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
-          @dragstart="onDragStart(col_schema.name, $event)"
-          @dragover.prevent
-          @drop="onDrop(index)"
-        >
-          {{ col_schema.name }} ({{ col_schema.data_type }})
-        </li>
-      </ul>
-    </div>
+      <div class="listbox-wrapper">
+        <ul class="listbox">
+          <li
+            v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
+            :key="col_schema.name"
+            :class="getColumnClass(col_schema.name)"
+            draggable="true"
+            @click="handleItemClick(col_schema.name)"
+            @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
+            @dragstart="onDragStart(col_schema.name, $event)"
+            @dragover.prevent
+            @drop="onDrop(index)"
+          >
+            {{ col_schema.name }} ({{ col_schema.data_type }})
+          </li>
+        </ul>
+      </div>
 
-    <ContextMenu
-      v-if="showContextMenu"
-      id="pivot-context-menu"
-      ref="contextMenuRef"
-      :position="contextMenuPosition"
-      :options="contextMenuOptions"
-      @select="handleContextMenuSelect"
-      @close="closeContextMenu"
-    />
-    <div class="listbox-wrapper">
-      <SettingsSection
-        title="Index Keys"
-        :items="unpivotInput.index_columns"
-        droppable="true"
-        @remove-item="removeColumn('index', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('index')"
+      <ContextMenu
+        v-if="showContextMenu"
+        id="pivot-context-menu"
+        ref="contextMenuRef"
+        :position="contextMenuPosition"
+        :options="contextMenuOptions"
+        @select="handleContextMenuSelect"
+        @close="closeContextMenu"
       />
-    </div>
-    <div class="listbox-wrapper">
-      <div class="switch-container">
-        <span>Value selector</span>
-        <el-switch
-          v-model="unpivotInput.data_type_selector_mode"
-          active-value="column"
-          inactive-value="data_type"
-          active-text="Column"
-          inactive-text="Data Type"
-          inline-prompt
+      <div class="listbox-wrapper">
+        <SettingsSection
+          title="Index Keys"
+          :items="unpivotInput.index_columns"
+          droppable="true"
+          @remove-item="removeColumn('index', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('index')"
         />
       </div>
+      <div class="listbox-wrapper">
+        <div class="switch-container">
+          <span>Value selector</span>
+          <el-switch
+            v-model="unpivotInput.data_type_selector_mode"
+            active-value="column"
+            inactive-value="data_type"
+            active-text="Column"
+            inactive-text="Data Type"
+            inline-prompt
+          />
+        </div>
 
-      <SettingsSection
-        v-if="unpivotInput.data_type_selector_mode === 'column'"
-        title="Columns to unpivot"
-        title-font-size="14px"
-        :items="unpivotInput.value_columns"
-        droppable="true"
-        @remove-item="removeColumn('value', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('value')"
-      />
-      <div v-else class="listbox-wrapper">
-        <div class="listbox-subtitle">Dynamic data type selector</div>
-        <div class="listbox-wrapper">
-          <el-select
-            v-model="unpivotInput.data_type_selector"
-            placeholder="Select"
-            size="small"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="item in dataTypeSelectorOptions"
-              :key="item"
-              :label="item"
-              :value="item"
-              style="width: 400px"
-            />
-          </el-select>
+        <SettingsSection
+          v-if="unpivotInput.data_type_selector_mode === 'column'"
+          title="Columns to unpivot"
+          title-font-size="14px"
+          :items="unpivotInput.value_columns"
+          droppable="true"
+          @remove-item="removeColumn('value', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('value')"
+        />
+        <div v-else class="listbox-wrapper">
+          <div class="listbox-subtitle">Dynamic data type selector</div>
+          <div class="listbox-wrapper">
+            <el-select
+              v-model="unpivotInput.data_type_selector"
+              placeholder="Select"
+              size="small"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="item in dataTypeSelectorOptions"
+                :key="item"
+                :label="item"
+                :value="item"
+                style="width: 400px"
+              />
+            </el-select>
+          </div>
         </div>
       </div>
-    </div>
-    </generic-node-settings>  
+    </generic-node-settings>
   </div>
 </template>
 
@@ -92,7 +92,7 @@ import { NodeUnpivot, DataTypeSelector, UnpivotInput } from "../../../baseNode/n
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

@@ -1,8 +1,8 @@
 <template>
   <div v-if="dataLoaded && nodeUnion" class="listbox-wrapper">
     <generic-node-settings v-model="nodeUnion">
-    'Union multiple tables into one table, this node does not have settings'
-  </generic-node-settings>
+      'Union multiple tables into one table, this node does not have settings'
+    </generic-node-settings>
   </div>
 </template>
 
@@ -11,7 +11,7 @@ import { ref, onMounted, onUnmounted, nextTick, defineProps } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { UnionInput, NodeUnion } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

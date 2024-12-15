@@ -1,60 +1,60 @@
 <template>
   <div v-if="dataLoaded && nodeGraphSolver" class="listbox-wrapper">
     <generic-node-settings v-model="nodeGraphSolver">
-    <div class="listbox-wrapper">
-      <ul class="listbox">
-        <li
-          v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-          :key="col_schema.name"
-          :class="getColumnClass(col_schema.name)"
-          draggable="true"
-          @click="handleItemClick(col_schema.name)"
-          @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
-          @dragstart="onDragStart(col_schema.name, $event)"
-          @dragover.prevent
-          @drop="onDrop(index)"
-        >
-          {{ col_schema.name }} ({{ col_schema.data_type }})
-        </li>
-      </ul>
-    </div>
-
-    <ContextMenu
-      v-if="showContextMenu"
-      id="pivot-context-menu"
-      ref="contextMenuRef"
-      :position="contextMenuPosition"
-      :options="contextMenuOptions"
-      @select="handleContextMenuSelect"
-      @close="closeContextMenu"
-    />
-
-    <div class="listbox-wrapper">
-      <SettingsSection
-        title="From Column"
-        :item="graphSolverInput.col_from ?? ''"
-        droppable="true"
-        @remove-item="removeColumn('from', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('from')"
-      />
-      <SettingsSection
-        title="To Column"
-        :item="graphSolverInput.col_to ?? ''"
-        droppable="true"
-        @remove-item="removeColumn('to', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('to')"
-      />
       <div class="listbox-wrapper">
-        <div class="listbox-subtitle">Select Output column name</div>
-        <el-input
-          v-model="graphSolverInput.output_column_name"
-          style="width: 240px"
-          placeholder="Please input"
-        />
+        <ul class="listbox">
+          <li
+            v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
+            :key="col_schema.name"
+            :class="getColumnClass(col_schema.name)"
+            draggable="true"
+            @click="handleItemClick(col_schema.name)"
+            @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
+            @dragstart="onDragStart(col_schema.name, $event)"
+            @dragover.prevent
+            @drop="onDrop(index)"
+          >
+            {{ col_schema.name }} ({{ col_schema.data_type }})
+          </li>
+        </ul>
       </div>
-    </div>
+
+      <ContextMenu
+        v-if="showContextMenu"
+        id="pivot-context-menu"
+        ref="contextMenuRef"
+        :position="contextMenuPosition"
+        :options="contextMenuOptions"
+        @select="handleContextMenuSelect"
+        @close="closeContextMenu"
+      />
+
+      <div class="listbox-wrapper">
+        <SettingsSection
+          title="From Column"
+          :item="graphSolverInput.col_from ?? ''"
+          droppable="true"
+          @remove-item="removeColumn('from', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('from')"
+        />
+        <SettingsSection
+          title="To Column"
+          :item="graphSolverInput.col_to ?? ''"
+          droppable="true"
+          @remove-item="removeColumn('to', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('to')"
+        />
+        <div class="listbox-wrapper">
+          <div class="listbox-subtitle">Select Output column name</div>
+          <el-input
+            v-model="graphSolverInput.output_column_name"
+            style="width: 240px"
+            placeholder="Please input"
+          />
+        </div>
+      </div>
     </generic-node-settings>
   </div>
 </template>
@@ -66,7 +66,7 @@ import { GraphSolverInput, NodeGraphSolver } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

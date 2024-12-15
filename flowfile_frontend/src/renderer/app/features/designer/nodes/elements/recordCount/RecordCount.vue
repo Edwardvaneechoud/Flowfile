@@ -1,11 +1,12 @@
 <template>
   <div v-if="dataLoaded && nodeRecordCount" class="listbox-wrapper">
     <generic-node-settings v-model="nodeRecordCount">
-    <p>
-      This node helps you quickly retrieve the total number of records from the selected table. It's
-      a simple yet powerful tool to keep track of the data volume as you work through your tasks.
-    </p>
-    <p>This node does not need a setup</p>
+      <p>
+        This node helps you quickly retrieve the total number of records from the selected table.
+        It's a simple yet powerful tool to keep track of the data volume as you work through your
+        tasks.
+      </p>
+      <p>This node does not need a setup</p>
     </generic-node-settings>
   </div>
 </template>
@@ -15,13 +16,12 @@ import { ref, onMounted, nextTick, defineProps } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeBase } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeData = ref<null | NodeData>(null);
 const nodeRecordCount = ref<NodeBase | null>(null);
-
 
 const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(1, nodeId, false);

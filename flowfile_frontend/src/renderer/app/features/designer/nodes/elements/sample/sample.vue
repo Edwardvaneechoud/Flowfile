@@ -1,15 +1,15 @@
 <template>
   <div v-if="dataLoaded && nodeSample" class="listbox-wrapper">
     <generic-node-settings v-model="nodeSample">
-    <div class="listbox-wrapper">
-      <div class="listbox-subtitle">Settings</div>
-      <el-row>
-        <el-col :span="10" class="grid-content">Offset</el-col>
-        <el-col :span="8" class="grid-content"
-          ><input v-model="sampleSize" type="number" min="0" step="1"
-        /></el-col>
-      </el-row>
-    </div>
+      <div class="listbox-wrapper">
+        <div class="listbox-subtitle">Settings</div>
+        <el-row>
+          <el-col :span="10" class="grid-content">Offset</el-col>
+          <el-col :span="8" class="grid-content"
+            ><input v-model="sampleSize" type="number" min="0" step="1"
+          /></el-col>
+        </el-row>
+      </div>
     </generic-node-settings>
   </div>
 </template>
@@ -19,8 +19,7 @@ import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeSample } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
-
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

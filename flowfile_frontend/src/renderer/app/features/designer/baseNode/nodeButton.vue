@@ -6,20 +6,11 @@
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
       <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
     </button>
-
   </div>
 </template>
 
 <script setup lang="ts">
-import {
-  defineProps,
-  defineEmits,
-  computed,
-  onMounted,
-  ref,
-  nextTick,
-  watch
-} from "vue";
+import { defineProps, defineEmits, computed, onMounted, ref, nextTick, watch } from "vue";
 import { getImageUrl } from "../utils";
 import { useNodeStore } from "../../../stores/column-store";
 const description = ref<string>("");
@@ -63,7 +54,6 @@ const overlayStyle = computed(() => {
     left: `${left}px`,
   };
 });
-
 
 interface ResultOutput {
   success?: boolean;
@@ -203,8 +193,6 @@ onMounted(() => {
     },
   );
 });
-
-
 </script>
 
 <style scoped>

@@ -1,50 +1,50 @@
 <template>
   <div v-if="isLoaded && nodeFilter">
     <generic-node-settings v-model="nodeFilter">
-    <div class="listbox-wrapper">
-      <div style="border-radius: 20px">
-        <el-switch
-          v-model="isAdvancedFilter"
-          class="mb-2"
-          active-text="Advanced filter options"
-          inactive-text="Basic filter"
-        />
-      </div>
-      <div v-if="isAdvancedFilter">
-        Advanced filter
-        <mainEditorRef ref="editorChild" :editor-string="editorString" />
-      </div>
-      <div v-if="!isAdvancedFilter">
-        Standard Filter
+      <div class="listbox-wrapper">
+        <div style="border-radius: 20px">
+          <el-switch
+            v-model="isAdvancedFilter"
+            class="mb-2"
+            active-text="Advanced filter options"
+            inactive-text="Basic filter"
+          />
+        </div>
+        <div v-if="isAdvancedFilter">
+          Advanced filter
+          <mainEditorRef ref="editorChild" :editor-string="editorString" />
+        </div>
+        <div v-if="!isAdvancedFilter">
+          Standard Filter
 
-        <div class="selectors-row">
-          <div v-if="nodeFilter?.filter_input.basic_filter">
-            <column-selector
-              v-model="nodeFilter.filter_input.basic_filter.field"
-              :value="nodeFilter.filter_input.basic_filter.field"
-              :column-options="nodeData?.main_input?.columns"
-              @update:value="(value: string) => handleFieldChange(value)"
-            />
-          </div>
-          <div v-if="nodeFilter?.filter_input.basic_filter">
-            <column-selector
-              :value="translateSymbolToDes(nodeFilter.filter_input.basic_filter.filter_type)"
-              :column-options="comparisonOptions"
-              @update:value="(value: string) => handleFilterTypeChange(value)"
-            />
-          </div>
-          <div v-if="nodeFilter?.filter_input.basic_filter">
-            <input
-              v-model="nodeFilter.filter_input.basic_filter.filter_value"
-              type="text"
-              class="input-field"
-              @focus="showOptions = true"
-            />
+          <div class="selectors-row">
+            <div v-if="nodeFilter?.filter_input.basic_filter">
+              <column-selector
+                v-model="nodeFilter.filter_input.basic_filter.field"
+                :value="nodeFilter.filter_input.basic_filter.field"
+                :column-options="nodeData?.main_input?.columns"
+                @update:value="(value: string) => handleFieldChange(value)"
+              />
+            </div>
+            <div v-if="nodeFilter?.filter_input.basic_filter">
+              <column-selector
+                :value="translateSymbolToDes(nodeFilter.filter_input.basic_filter.filter_type)"
+                :column-options="comparisonOptions"
+                @update:value="(value: string) => handleFilterTypeChange(value)"
+              />
+            </div>
+            <div v-if="nodeFilter?.filter_input.basic_filter">
+              <input
+                v-model="nodeFilter.filter_input.basic_filter.filter_value"
+                type="text"
+                class="input-field"
+                @focus="showOptions = true"
+              />
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </generic-node-settings>
+    </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -58,7 +58,7 @@ import { useNodeStore } from "../../../../../stores/column-store";
 import mainEditorRef from "../../../editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const editorString = ref<string>("");
 const isLoaded = ref<boolean>(false);

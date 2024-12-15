@@ -63,7 +63,6 @@
 </template>
 
 <script setup lang="ts">
-
 import { Handle } from "@vue-flow/core";
 import { computed, ref, defineProps, onMounted, nextTick, watch } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
@@ -85,12 +84,12 @@ const onTitleClick = (event: MouseEvent) => {
 
 const descriptionTextStyle = computed(() => {
   const textLength = description.value.length;
-  let minWidth = '200px'; // default
+  let minWidth = "200px"; // default
 
   if (textLength < 20) {
-    minWidth = '100px';
+    minWidth = "100px";
   } else if (textLength < 30) {
-    minWidth = '150px';
+    minWidth = "150px";
   }
   return {
     minWidth: minWidth,
@@ -178,7 +177,6 @@ const props = defineProps({
   },
 });
 
-
 function getHandleStyle(index: number, total: number) {
   const topMargin = 30;
   const bottomMargin = 25;
@@ -199,16 +197,14 @@ onMounted(async () => {
   await nextTick();
   await getNodeDescription();
 
-watch(
-  () => nodeStore.nodeDescriptions[props.data.id],
-  (newDescription) => {
-    if (newDescription !== undefined) {
-      description.value = newDescription;
-    }
-  }
-);
-
-
+  watch(
+    () => nodeStore.nodeDescriptions[props.data.id],
+    (newDescription) => {
+      if (newDescription !== undefined) {
+        description.value = newDescription;
+      }
+    },
+  );
 });
 </script>
 
@@ -237,7 +233,6 @@ watch(
   font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 }
 
-
 .description-display {
   position: relative;
   white-space: normal;
@@ -251,7 +246,7 @@ watch(
   display: flex;
   align-items: flex-start;
   gap: 4px;
-  border-radius: 4px; 
+  border-radius: 4px;
 }
 
 .edit-icon {

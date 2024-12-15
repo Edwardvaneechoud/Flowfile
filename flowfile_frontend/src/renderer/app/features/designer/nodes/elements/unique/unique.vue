@@ -1,19 +1,19 @@
 <template>
   <div v-if="dataLoaded && nodeUnique" class="listbox-wrapper">
     <generic-node-settings v-model="nodeUnique">
-    <select-dynamic
-      :select-inputs="selection"
-      :show-keep-option="true"
-      :show-data-type="false"
-      :show-new-columns="false"
-      :show-old-columns="true"
-      :show-headers="true"
-      :show-title="false"
-      :show-data="true"
-      title="Select data"
-      original-column-header="Column"
-      @update-select-inputs="calculateSelects"
-    />
+      <select-dynamic
+        :select-inputs="selection"
+        :show-keep-option="true"
+        :show-data-type="false"
+        :show-new-columns="false"
+        :show-old-columns="true"
+        :show-headers="true"
+        :show-title="false"
+        :show-data="true"
+        title="Select data"
+        original-column-header="Column"
+        @update-select-inputs="calculateSelects"
+      />
     </generic-node-settings>
   </div>
   <CodeLoader v-else />
@@ -31,7 +31,7 @@ import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

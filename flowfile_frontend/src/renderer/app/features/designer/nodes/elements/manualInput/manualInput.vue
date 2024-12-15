@@ -44,7 +44,7 @@
               <template #icon>
                 <i :class="showRawData ? 'fas fa-eye-slash' : 'fas fa-eye'" />
               </template>
-              {{ showRawData ? 'Hide' : 'Show' }} Raw Data
+              {{ showRawData ? "Hide" : "Show" }} Raw Data
             </el-button>
           </div>
         </div>
@@ -71,12 +71,12 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, nextTick } from 'vue';
-import { useNodeStore } from '../../../../../stores/column-store';
-import { createManualInput } from './manualInputLogic';
-import type { NodeManualInput } from '../../../baseNode/nodeInput';
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
-import { ElNotification } from 'element-plus'
+import { ref, computed, watch, nextTick } from "vue";
+import { useNodeStore } from "../../../../../stores/column-store";
+import { createManualInput } from "./manualInputLogic";
+import type { NodeManualInput } from "../../../baseNode/nodeInput";
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { ElNotification } from "element-plus";
 
 // Types
 interface Column {
@@ -103,7 +103,7 @@ const nodeManualInput = ref<NodeManualInput | null>(null);
 const columns = ref<Column[]>([]);
 const rows = ref<Row[]>([]);
 const showRawData = ref(false);
-const rawDataString = ref('');
+const rawDataString = ref("");
 
 let nextColumnId = 1;
 let nextRowId = 1;
@@ -121,8 +121,8 @@ const rawData = computed(() => {
 
 // Methods
 const initializeEmptyTable = () => {
-  rows.value = [{ id: 1, values: { 1: '' } }];
-  columns.value = [{ id: 1, name: 'Column 1' }];
+  rows.value = [{ id: 1, values: { 1: "" } }];
+  columns.value = [{ id: 1, name: "Column 1" }];
   nextColumnId = 2;
   nextRowId = 2;
 };
@@ -130,7 +130,7 @@ const initializeEmptyTable = () => {
 const populateTableFromData = (data: Record<string, string>[]) => {
   rows.value = [];
   columns.value = [];
-  
+
   data.forEach((item, rowIndex) => {
     const row: Row = { id: rowIndex + 1, values: {} };
     Object.keys(item).forEach((key, colIndex) => {
@@ -148,10 +148,10 @@ const populateTableFromData = (data: Record<string, string>[]) => {
 
 const loadNodeData = async (nodeId: number) => {
   const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
-  
+
   if (nodeResult?.setting_input) {
     nodeManualInput.value = nodeResult.setting_input;
-    
+
     if (nodeResult.setting_input.raw_data) {
       populateTableFromData(nodeResult.setting_input.raw_data);
     } else {
@@ -173,25 +173,25 @@ const addColumn = () => {
 
 const addRow = () => {
   const newRow: Row = { id: nextRowId, values: {} };
-  columns.value.forEach(col => {
-    newRow.values[col.id] = '';
+  columns.value.forEach((col) => {
+    newRow.values[col.id] = "";
   });
   rows.value.push(newRow);
   nextRowId++;
 };
 
 const deleteColumn = (id: number) => {
-  const index = columns.value.findIndex(col => col.id === id);
+  const index = columns.value.findIndex((col) => col.id === id);
   if (index !== -1) {
     columns.value.splice(index, 1);
-    rows.value.forEach(row => {
+    rows.value.forEach((row) => {
       delete row.values[id];
     });
   }
 };
 
 const deleteRow = (id: number) => {
-  const index = rows.value.findIndex(row => row.id === id);
+  const index = rows.value.findIndex((row) => row.id === id);
   if (index !== -1) {
     rows.value.splice(index, 1);
   }
@@ -206,23 +206,23 @@ const updateTableFromRawData = () => {
     const newData = JSON.parse(rawDataString.value);
     if (!Array.isArray(newData)) {
       ElNotification({
-        title: 'Error',
-        message: 'Data must be an array of objects',
-        type: 'error',
+        title: "Error",
+        message: "Data must be an array of objects",
+        type: "error",
       });
       return;
     }
     populateTableFromData(newData);
     ElNotification({
-      title: 'Success',
-      message: 'Table updated successfully',
-      type: 'success',
+      title: "Success",
+      message: "Table updated successfully",
+      type: "success",
     });
   } catch (error) {
     ElNotification({
-      title: 'Error',
-      message: 'Invalid JSON format. Please check your input.',
-      type: 'error',
+      title: "Error",
+      message: "Invalid JSON format. Please check your input.",
+      type: "error",
     });
   }
 };
@@ -237,10 +237,10 @@ const pushNodeData = async () => {
 // In Airbyte component
 // In Manual Input component
 const handleModelUpdate = (newValue: NodeManualInput) => {
-  console.log('Manual Input received update:', newValue);
+  console.log("Manual Input received update:", newValue);
   nodeManualInput.value = {
     ...nodeManualInput.value,
-    ...newValue
+    ...newValue,
   };
 };
 

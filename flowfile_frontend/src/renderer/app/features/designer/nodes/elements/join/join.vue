@@ -1,91 +1,90 @@
 <template>
   <div v-if="dataLoaded && nodeJoin">
     <generic-node-settings v-model="nodeJoin">
-    <div class="listbox-wrapper">
-      <div class="listbox-subtitle">Join columns</div>
-      <div class="join-content">
-        <div class="join-type-selector">
-          <label class="join-type-label">Join Type:</label>
-          <drop-down
-            v-if="nodeJoin"
-            v-model="nodeJoin.join_input.how"
-            :column-options="joinTypes"
-            placeholder="Select join type"
-            :allow-other="false"
-            @error="handleJoinTypeError"
-          />
-        </div>
-        <div class="join-mapping-section">
-          <div class="table-wrapper">
-            <div class="selectors-header">
-              <div class="selectors-title">L</div>
-              <div class="selectors-title">R</div>
-              <div class="selectors-title"></div>
-            </div>
-            <div class="selectors-container">
-              <div
-                v-for="(selector, index) in nodeJoin?.join_input.join_mapping"
-                :key="index"
-                class="selectors-row"
-              >
-                <drop-down
-                  v-model="selector.left_col"
-                  :value="selector.left_col"
-                  :column-options="result?.main_input?.columns"
-                  @update:value="(value: string) => handleChange(value, index, 'left')"
-                />
-                <drop-down
-                  v-model="selector.right_col"
-                  :value="selector.right_col"
-                  :column-options="result?.right_input?.columns"
-                  @update:value="(value: string) => handleChange(value, index, 'right')"
-                />
-                <div class="action-buttons">
-                  <button
-                    v-if="index !== (nodeJoin?.join_input.join_mapping.length ?? 0) - 1"
-                    class="action-button remove-button"
-                    @click="removeJoinCondition(index)"
-                  >
-                    -
-                  </button>
-                  <button
-                    v-if="index === (nodeJoin?.join_input.join_mapping?.length ?? 0) - 1"
-                    class="action-button add-button"
-                    @click="addJoinCondition"
-                  >
-                    +
-                  </button>
+      <div class="listbox-wrapper">
+        <div class="listbox-subtitle">Join columns</div>
+        <div class="join-content">
+          <div class="join-type-selector">
+            <label class="join-type-label">Join Type:</label>
+            <drop-down
+              v-if="nodeJoin"
+              v-model="nodeJoin.join_input.how"
+              :column-options="joinTypes"
+              placeholder="Select join type"
+              :allow-other="false"
+              @error="handleJoinTypeError"
+            />
+          </div>
+          <div class="join-mapping-section">
+            <div class="table-wrapper">
+              <div class="selectors-header">
+                <div class="selectors-title">L</div>
+                <div class="selectors-title">R</div>
+                <div class="selectors-title"></div>
+              </div>
+              <div class="selectors-container">
+                <div
+                  v-for="(selector, index) in nodeJoin?.join_input.join_mapping"
+                  :key="index"
+                  class="selectors-row"
+                >
+                  <drop-down
+                    v-model="selector.left_col"
+                    :value="selector.left_col"
+                    :column-options="result?.main_input?.columns"
+                    @update:value="(value: string) => handleChange(value, index, 'left')"
+                  />
+                  <drop-down
+                    v-model="selector.right_col"
+                    :value="selector.right_col"
+                    :column-options="result?.right_input?.columns"
+                    @update:value="(value: string) => handleChange(value, index, 'right')"
+                  />
+                  <div class="action-buttons">
+                    <button
+                      v-if="index !== (nodeJoin?.join_input.join_mapping.length ?? 0) - 1"
+                      class="action-button remove-button"
+                      @click="removeJoinCondition(index)"
+                    >
+                      -
+                    </button>
+                    <button
+                      v-if="index === (nodeJoin?.join_input.join_mapping?.length ?? 0) - 1"
+                      class="action-button add-button"
+                      @click="addJoinCondition"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
+        <select-dynamic
+          :select-inputs="nodeJoin?.join_input.left_select.renames"
+          :show-keep-option="true"
+          :show-title="true"
+          :show-headers="true"
+          :show-data="true"
+          title="Left data"
+          @update-select-inputs="
+            (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
+          "
+        />
+        <select-dynamic
+          :select-inputs="nodeJoin?.join_input.right_select.renames"
+          :show-keep-option="true"
+          :show-headers="true"
+          :show-title="true"
+          :show-data="true"
+          title="Right data"
+          @update-select-inputs="
+            (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
+          "
+        />
       </div>
-      <select-dynamic
-        :select-inputs="nodeJoin?.join_input.left_select.renames"
-        :show-keep-option="true"
-        :show-title="true"
-        :show-headers="true"
-        :show-data="true"
-        title="Left data"
-        @update-select-inputs="
-          (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
-        "
-      />
-      <select-dynamic
-        :select-inputs="nodeJoin?.join_input.right_select.renames"
-        :show-keep-option="true"
-        :show-headers="true"
-        :show-title="true"
-        :show-data="true"
-        title="Right data"
-        @update-select-inputs="
-          (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
-        "
-      />
-    </div>
-  </generic-node-settings>
-
+    </generic-node-settings>
   </div>
   <code-loader v-else />
 </template>
@@ -99,8 +98,7 @@ import { SelectInput } from "../../../baseNode/nodeInput";
 import { NodeJoin } from "./joinInterfaces";
 import DropDown from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
-
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const joinTypes = ["inner", "left", "right", "full", "semi", "anti", "cross"];
 

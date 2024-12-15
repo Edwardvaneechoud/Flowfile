@@ -1,119 +1,119 @@
 <template>
   <div v-if="isLoaded && nodeFuzzyJoin" class="listbox-wrapper">
     <generic-node-settings v-model="nodeFuzzyJoin">
-    <div class="listbox-wrapper">
-      <div class="listbox-subtitle">Fuzzy match settings</div>
-      <div class="table-wrapper">
-        <div v-if="nodeFuzzyJoin?.join_input" class="selectors-container">
-          <div
-            v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping"
-            :key="index"
-            class="selectors-row"
-          >
-            <div class="listbox-wrapper">
-              <div class="listbox-subtitle">
-                <unavailableField
-                  v-if="
-                    !(
-                      containsVal(result?.main_input?.columns ?? [], fuzzyMap.left_col) &&
-                      containsVal(result?.right_input?.columns ?? [], fuzzyMap.right_col)
-                    )
-                  "
-                  tooltip-text="Join is not valid"
-                  class="unavailable-field"
-                />
-                Setting {{ index + 1 }}
-              </div>
-              <div class="selectors-row">
-                <el-row style="overflow: visible">
-                  <div class="grid-content">
-                    Left column
-                    <column-selector
-                      v-model="fuzzyMap.left_col"
-                      :value="fuzzyMap.left_col"
-                      :column-options="result?.main_input?.columns"
-                      @update:value="(value: string) => handleChange(value, index, 'left')"
-                    />
-                  </div>
-                  <div class="grid-content">
-                    Right column
-                    <column-selector
-                      v-model="fuzzyMap.right_col"
-                      :value="fuzzyMap.right_col"
-                      :column-options="result?.right_input?.columns"
-                      @update:value="(value: string) => handleChange(value, index, 'right')"
-                    />
-                  </div>
+      <div class="listbox-wrapper">
+        <div class="listbox-subtitle">Fuzzy match settings</div>
+        <div class="table-wrapper">
+          <div v-if="nodeFuzzyJoin?.join_input" class="selectors-container">
+            <div
+              v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping"
+              :key="index"
+              class="selectors-row"
+            >
+              <div class="listbox-wrapper">
+                <div class="listbox-subtitle">
+                  <unavailableField
+                    v-if="
+                      !(
+                        containsVal(result?.main_input?.columns ?? [], fuzzyMap.left_col) &&
+                        containsVal(result?.right_input?.columns ?? [], fuzzyMap.right_col)
+                      )
+                    "
+                    tooltip-text="Join is not valid"
+                    class="unavailable-field"
+                  />
+                  Setting {{ index + 1 }}
+                </div>
+                <div class="selectors-row">
+                  <el-row style="overflow: visible">
+                    <div class="grid-content">
+                      Left column
+                      <column-selector
+                        v-model="fuzzyMap.left_col"
+                        :value="fuzzyMap.left_col"
+                        :column-options="result?.main_input?.columns"
+                        @update:value="(value: string) => handleChange(value, index, 'left')"
+                      />
+                    </div>
+                    <div class="grid-content">
+                      Right column
+                      <column-selector
+                        v-model="fuzzyMap.right_col"
+                        :value="fuzzyMap.right_col"
+                        :column-options="result?.right_input?.columns"
+                        @update:value="(value: string) => handleChange(value, index, 'right')"
+                      />
+                    </div>
+                  </el-row>
+                </div>
+
+                <el-row>
+                  <el-col :span="10" class="grid-content">Threshold score</el-col>
+                  <el-col :span="8" class="grid-content"
+                    ><input
+                      v-model="fuzzyMap.threshold_score"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                  /></el-col>
                 </el-row>
-              </div>
+                <el-row>
+                  <el-col :span="10" class="grid-content">Type of matching</el-col>
+                  <el-col :span="8" class="grid-content"
+                    ><select v-model="fuzzyMap.fuzzy_type">
+                      <option
+                        v-for="option in fuzzyMatchOptions"
+                        :key="option.value"
+                        :value="option.value"
+                      ></option>
+                    </select>
+                  </el-col>
+                </el-row>
 
-              <el-row>
-                <el-col :span="10" class="grid-content">Threshold score</el-col>
-                <el-col :span="8" class="grid-content"
-                  ><input
-                    v-model="fuzzyMap.threshold_score"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                /></el-col>
-              </el-row>
-              <el-row>
-                <el-col :span="10" class="grid-content">Type of matching</el-col>
-                <el-col :span="8" class="grid-content"
-                  ><select v-model="fuzzyMap.fuzzy_type">
-                    <option
-                      v-for="option in fuzzyMatchOptions"
-                      :key="option.value"
-                      :value="option.value"
-                    ></option>
-                  </select>
-                </el-col>
-              </el-row>
-
-              <div class="action-buttons">
-                <button
-                  v-if="nodeFuzzyJoin?.join_input.join_mapping.length > 1"
-                  class="remove-setting"
-                  @click="removeJoinCondition(index)"
-                >
-                  Remove setting
-                </button>
+                <div class="action-buttons">
+                  <button
+                    v-if="nodeFuzzyJoin?.join_input.join_mapping.length > 1"
+                    class="remove-setting"
+                    @click="removeJoinCondition(index)"
+                  >
+                    Remove setting
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="action-buttons">
-            <button class="add-setting" @click="addJoinCondition()">Add setting</button>
+            <div class="action-buttons">
+              <button class="add-setting" @click="addJoinCondition()">Add setting</button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-    <div class="listbox-subtitle">Select fields</div>
+      <div class="listbox-subtitle">Select fields</div>
 
-    <select-dynamic
-      v-if="nodeFuzzyJoin?.join_input"
-      :select-inputs="nodeFuzzyJoin?.join_input.right_select.renames"
-      :show-keep-option="true"
-      :show-headers="true"
-      :show-new-columns="false"
-      :show-title="true"
-      :show-data="true"
-      title="Right data"
-      @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
-    />
+      <select-dynamic
+        v-if="nodeFuzzyJoin?.join_input"
+        :select-inputs="nodeFuzzyJoin?.join_input.right_select.renames"
+        :show-keep-option="true"
+        :show-headers="true"
+        :show-new-columns="false"
+        :show-title="true"
+        :show-data="true"
+        title="Right data"
+        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
+      />
 
-    <select-dynamic
-      v-if="nodeFuzzyJoin?.join_input"
-      :select-inputs="nodeFuzzyJoin?.join_input.left_select.renames"
-      :show-keep-option="true"
-      :show-title="true"
-      :show-headers="true"
-      :show-new-columns="false"
-      :show-data="true"
-      title="Left data"
-      @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
-    />
-  </generic-node-settings>
+      <select-dynamic
+        v-if="nodeFuzzyJoin?.join_input"
+        :select-inputs="nodeFuzzyJoin?.join_input.left_select.renames"
+        :show-keep-option="true"
+        :show-title="true"
+        :show-headers="true"
+        :show-new-columns="false"
+        :show-data="true"
+        title="Left data"
+        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
+      />
+    </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
@@ -125,7 +125,7 @@ import { NodeJoin, FuzzyJoinSettings, SelectInput, FuzzyMap } from "../../../bas
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CodeLoader } from "vue-content-loader";
 
 const containsVal = (arr: string[], val: string) => {

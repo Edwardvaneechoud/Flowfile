@@ -1,79 +1,79 @@
 <template>
   <div v-if="dataLoaded && nodePivot" class="listbox-wrapper">
     <generic-node-settings v-model="nodePivot">
-    <div class="listbox-wrapper">
-      <ul class="listbox">
-        <li
-          v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
-          :key="col_schema.name"
-          :class="getColumnClass(col_schema.name)"
-          draggable="true"
-          @click="handleItemClick(col_schema.name)"
-          @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
-          @dragstart="onDragStart(col_schema.name, $event)"
-          @dragover.prevent
-          @drop="onDrop(index)"
-        >
-          {{ col_schema.name }} ({{ col_schema.data_type }})
-        </li>
-      </ul>
-    </div>
-
-    <ContextMenu
-      v-if="showContextMenu"
-      id="pivot-context-menu"
-      ref="contextMenuRef"
-      :position="contextMenuPosition"
-      :options="contextMenuOptions"
-      @select="handleContextMenuSelect"
-      @close="closeContextMenu"
-    />
-
-    <div class="listbox-wrapper">
-      <SettingsSection
-        title="Index Keys"
-        :items="pivotInput.index_columns"
-        droppable="true"
-        @remove-item="removeColumn('index', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('index')"
-      />
-      <SettingsSection
-        title="Pivot Column"
-        :items="[pivotInput.pivot_column ?? '']"
-        droppable="true"
-        @remove-item="removeColumn('pivot', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('pivot')"
-      />
-      <SettingsSection
-        title="Value Column"
-        :items="[pivotInput.value_col ?? '']"
-        droppable="true"
-        @remove-item="removeColumn('value', $event)"
-        @dragover.prevent
-        @drop="onDropInSection('value')"
-      />
-      <div class="list-wrapper">
-        <div class="listbox-subtitle">Select aggregations</div>
-        <el-select
-          v-model="pivotInput.aggregations"
-          multiple
-          placeholder="Select"
-          size="small"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="item in aggOptions"
-            :key="item"
-            :label="item"
-            :value="item"
-            style="width: 400px"
-          />
-        </el-select>
+      <div class="listbox-wrapper">
+        <ul class="listbox">
+          <li
+            v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
+            :key="col_schema.name"
+            :class="getColumnClass(col_schema.name)"
+            draggable="true"
+            @click="handleItemClick(col_schema.name)"
+            @contextmenu.prevent="openContextMenu(col_schema.name, $event)"
+            @dragstart="onDragStart(col_schema.name, $event)"
+            @dragover.prevent
+            @drop="onDrop(index)"
+          >
+            {{ col_schema.name }} ({{ col_schema.data_type }})
+          </li>
+        </ul>
       </div>
-      <PivotValidation :pivot-input="pivotInput" />
-    </div>
+
+      <ContextMenu
+        v-if="showContextMenu"
+        id="pivot-context-menu"
+        ref="contextMenuRef"
+        :position="contextMenuPosition"
+        :options="contextMenuOptions"
+        @select="handleContextMenuSelect"
+        @close="closeContextMenu"
+      />
+
+      <div class="listbox-wrapper">
+        <SettingsSection
+          title="Index Keys"
+          :items="pivotInput.index_columns"
+          droppable="true"
+          @remove-item="removeColumn('index', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('index')"
+        />
+        <SettingsSection
+          title="Pivot Column"
+          :items="[pivotInput.pivot_column ?? '']"
+          droppable="true"
+          @remove-item="removeColumn('pivot', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('pivot')"
+        />
+        <SettingsSection
+          title="Value Column"
+          :items="[pivotInput.value_col ?? '']"
+          droppable="true"
+          @remove-item="removeColumn('value', $event)"
+          @dragover.prevent
+          @drop="onDropInSection('value')"
+        />
+        <div class="list-wrapper">
+          <div class="listbox-subtitle">Select aggregations</div>
+          <el-select
+            v-model="pivotInput.aggregations"
+            multiple
+            placeholder="Select"
+            size="small"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="item in aggOptions"
+              :key="item"
+              :label="item"
+              :value="item"
+              style="width: 400px"
+            />
+          </el-select>
+        </div>
+        <PivotValidation :pivot-input="pivotInput" />
+      </div>
     </generic-node-settings>
   </div>
 </template>
@@ -86,7 +86,7 @@ import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import PivotValidation from "./PivotValidation.vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const showContextMenu = ref(false);

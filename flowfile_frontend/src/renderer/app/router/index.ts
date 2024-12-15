@@ -1,24 +1,20 @@
-import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
+import { createRouter, createWebHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import RouteViewComponent from "../layouts/RouterBypass.vue";
 
 const routes: Array<RouteRecordRaw> = [
   {
     path: "/",
-    redirect: "/main"  // Redirect directly to /main
+    redirect: { name: "designer" }  // First redirect to admin
   },
   {
-    path: "/main",
+    name: "admin",
+    path: "/admin",
     component: AppLayout,
     children: [
       {
-        path: "",  // Empty path for default child
-        name: "main",
-        redirect: { name: "designer" }  // Explicitly redirect to designer
-      },
-      {
-        path: "designer",
         name: "designer",
+        path: "",  // Make this the default child route
         component: () => import("../pages/designer.vue"),
       },
       {
@@ -39,8 +35,9 @@ const routes: Array<RouteRecordRaw> = [
   }
 ];
 
+
 const router = createRouter({
-  history: createWebHashHistory(import.meta.env.BASE_URL as string),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
 });
 

@@ -1,26 +1,26 @@
 <template>
-<div v-if="dataLoaded && nodeExternalSource" class="listbox-wrapper">
-  <generic-node-settings v-model="nodeExternalSource">
-    <div class="listbox-subtitle">Select the type of external source</div>
-    <el-select
-      v-model="selectedExternalSource"
-      class="m-2"
-      placeholder="Select type of external source"
-      size="small"
-      @change="loadTemplateValue"
-    >
-      <el-option v-for="item in writingOptions" :key="item" :label="item" :value="item" />
-    </el-select>
+  <div v-if="dataLoaded && nodeExternalSource" class="listbox-wrapper">
+    <generic-node-settings v-model="nodeExternalSource">
+      <div class="listbox-subtitle">Select the type of external source</div>
+      <el-select
+        v-model="selectedExternalSource"
+        class="m-2"
+        placeholder="Select type of external source"
+        size="small"
+        @change="loadTemplateValue"
+      >
+        <el-option v-for="item in writingOptions" :key="item" :label="item" :value="item" />
+      </el-select>
 
-    <div v-if="typeSelected" class="file-upload-container">
-      <div
-        v-if="selectedExternalSource === 'sample_users' && sampleUsers"
-        class="file-upload-wrapper"
-      />
-    </div>
-    <CodeLoader v-else />
-  </generic-node-settings>
-</div>
+      <div v-if="typeSelected" class="file-upload-container">
+        <div
+          v-if="selectedExternalSource === 'sample_users' && sampleUsers"
+          class="file-upload-wrapper"
+        />
+      </div>
+      <CodeLoader v-else />
+    </generic-node-settings>
+  </div>
 </template>
 
 <script lang="ts" setup>
@@ -30,7 +30,7 @@ import { get_template_source_type } from "./createTemplateExternalSource";
 import { SampleUsers, NodeExternalSource } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { WatchStopHandle } from "vue";
-import GenericNodeSettings from '../../../baseNode/genericNodeSettings.vue'
+import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
 const sampleUsers = ref<SampleUsers | null>(null);
