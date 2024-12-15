@@ -406,13 +406,18 @@ class NodeStep:
         if results_exists(self.hash):
             logger.warning('Not implemented')
 
-    def needs_run(self) -> bool:
+    def needs_run(self, performance_mode: bool) -> bool:
+        cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run:
+            logger.info('Node has not run, needs to run')
             return True
-        if self.node_settings.cache_results and results_exists(self.hash):
+        if self.node_settings.cache_results and cache_result_exists:
+
             return False
-        elif self.node_settings.cache_results and not results_exists(self.hash):
+        elif self.node_settings.cache_results and not cache_result_exists:
             return True
+        elif not performance_mode and cache_result_exists:
+            return False
         else:
             return True
 
@@ -513,7 +518,7 @@ class NodeStep:
             self.node_stats.has_run = False
         if self.is_setup:
             logger.info(f'Starting to run {self.__name__}')
-            if self.needs_run():
+            if self.needs_run(performance_mode):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
