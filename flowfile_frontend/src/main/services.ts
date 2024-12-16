@@ -54,6 +54,10 @@ function findProjectRoot(startPath: string): string {
 }
 
 export function getResourceServicePath(resourceName: string): string {
+  const basePath = join(process.resourcesPath, "flowfile-services");
+  const isWindows = platform() === "win32";
+  const executableName = isWindows ? `${resourceName}.exe` : resourceName;
+
   if (process.env.NODE_ENV === "development") {
     const projectRoot = findProjectRoot(app.getAppPath());
     console.log(projectRoot);
@@ -62,7 +66,7 @@ export function getResourceServicePath(resourceName: string): string {
       return "";
     }
 
-    const devPath = join(projectRoot, "..", "services_dist", resourceName);
+    const devPath = join(projectRoot, "..", "services_dist", executableName);
     if (existsSync(devPath)) {
       console.log(`Using development executable at: ${devPath}`);
       return devPath;
@@ -72,9 +76,7 @@ export function getResourceServicePath(resourceName: string): string {
   }
 
   // Production path handling remains the same...
-  const basePath = join(process.resourcesPath, "flowfile-services");
-  const isWindows = platform() === "win32";
-  const executableName = isWindows ? `${resourceName}.exe` : resourceName;
+
   const executablePath = join(basePath, executableName);
 
   if (existsSync(basePath) && existsSync(executablePath)) {
