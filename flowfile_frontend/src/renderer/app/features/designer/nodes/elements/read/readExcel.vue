@@ -11,13 +11,15 @@
                 v-model="localExcelTable.sheet_name"
                 placeholder="Select or type sheet name"
                 :column-options="sheetNames"
+                :is-loading="!sheetNamesLoaded"
               />
               <span v-if="showWarning" class="warning-sign">⚠️</span>
             </div>
           </el-row>
         </div>
+        
 
-        <!-- Checkboxes Group -->
+        <!-- Checkboxes Group  -->
         <div class="row">
           <el-checkbox v-model="localExcelTable.has_headers" label="Has headers" size="large" />
           <el-checkbox
