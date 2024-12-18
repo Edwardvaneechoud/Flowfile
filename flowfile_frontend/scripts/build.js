@@ -3,6 +3,8 @@ const Chalk = require('chalk');
 const FileSystem = require('fs');
 const Vite = require('vite');
 const compileTs = require('./private/tsc');
+const buildDocs = require('./build-docs');
+
 
 function copyLoadingHtml() {
     console.log(Chalk.blueBright('Copying loading.html...'));
@@ -42,12 +44,14 @@ FileSystem.rmSync(Path.join(__dirname, '..', 'build'), {
 
 console.log(Chalk.blueBright('Transpiling renderer & main...'));
 
+
 Promise.allSettled([
+    buildDocs(),
     buildRenderer(),
     buildMain(),
 ]).then(async () => {
     try {
-        await copyLoadingHtml();
+        copyLoadingHtml();
         console.log(Chalk.greenBright('Build process completed successfully!'));
     } catch (error) {
         console.error(Chalk.redBright('Build process failed:'), error);

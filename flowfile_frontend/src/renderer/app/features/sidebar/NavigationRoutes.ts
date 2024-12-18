@@ -19,19 +19,12 @@ export default {
         icon: "fa-solid fa-diagram-project", // Flow designer icon
       },
     },
-    // {
-    //   name: "nodeData",
-    //   displayName: "nodeData",
-    //   meta: {
-    //     icon: "fa-solid fa-database", // Data icon
-    //   },
-    // },
-    // {
-    //   name: "Documentation",
-    //   displayName: "menu.documentation",
-    //   meta: {
-    //     icon: "fa-solid fa-book", // Documentation icon
-    //   },
-    // },
+    {
+      name: "documentation",  // This should match the route name in your router
+      displayName: "menu.documentation",
+      meta: {
+        icon: "fa-solid fa-book", // Documentation icon
+      },
+    },
   ] as INavigationRoute[],
 };

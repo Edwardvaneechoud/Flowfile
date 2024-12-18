@@ -113,6 +113,10 @@ const emit = defineEmits(["openFlow", "refreshFlow"]);
 
 const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);
+  if (!flowSettings.value) return ;
+  if (flowSettings.value) {
+    flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
+  }
   if (flowSettings.value.is_running) {
     if (runButton.value) {
       nodeStore.isRunning = true;
@@ -163,6 +167,7 @@ function openFlowAction(inputSelectedFile: FileInfo | null) {
 
 const openSaveModal = async () => {
   let flowSettings = await getFlowSettings(props.flowId);
+  if (!flowSettings) return ;
   if (flowSettings && flowSettings.path) {
     savePath.value = flowSettings.path;
   }

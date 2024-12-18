@@ -59,23 +59,23 @@ export async function createFlow(flowPath: string): Promise<Number> {
   throw Error('Error creating flow')
 }
 
-export async function getFlowSettings(flow_id: number): Promise<FlowSettings> {
+export async function getFlowSettings(flow_id: number): Promise<FlowSettings | null> {
   try {
     const response = await axios.get('/editor/flow', {
       headers: { accept: 'application/json' },
       params: { flow_id: flow_id },
+      validateStatus: (status) => {
+        return status === 200 || status === 404;
+      }
     })
+
     if (response.status === 200) {
-      return response.data
-    } else if (response.status === 404) {
-      return {} as FlowSettings  // Return an empty FlowSettings object or some default value
+      return response.data;
     }
-    throw Error('Error fetching flow data')
+    return null;
+
   } catch (error) {
-    if (axios.isAxiosError(error) && error.response?.status === 404) {
-      return {} as FlowSettings  // Handle the 404 case if it reaches here
-    }
-    throw Error('Error fetching flow data')
+    return null;
   }
 }
 
@@ -159,7 +159,7 @@ export async function deleteNode(flow_id: number, node_id: number): Promise<any>
   }
 }
 
-const isResponseSuccessful = (status: number): boolean => 
+const isResponseSuccessful = (status: number): boolean =>
   status >= 200 && status < 300;
 
 
@@ -172,15 +172,15 @@ export const getRunStatus = async (flowId: number): Promise<AxiosResponse<RunInf
 };
 
 export const updateRunStatus = async (
-  flowId: number, 
+  flowId: number,
   nodeStore: { insertRunResult: (result: RunInformation, showRunResults: boolean) => void },
   showRunResults: boolean = true
 ): Promise<AxiosResponse<RunInformation>> => {
   const response = await getRunStatus(flowId);
-  
+
   if (isResponseSuccessful(response.status)) {
     nodeStore.insertRunResult(response.data, showRunResults);
   }
-  
+
   return response;
 };
