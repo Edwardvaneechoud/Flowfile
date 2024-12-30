@@ -512,7 +512,8 @@ class NodeStep:
 
     # @profile
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
-                     performance_mode: bool = False, retry: bool = True):
+                     performance_mode: bool = False, retry: bool = True,
+                     ):
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run = False

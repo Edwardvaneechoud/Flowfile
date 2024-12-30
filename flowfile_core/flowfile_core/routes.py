@@ -1,13 +1,18 @@
-from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body
-from fastapi.responses import JSONResponse, Response, RedirectResponse
-from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body, Request
+from fastapi.responses import JSONResponse, Response, RedirectResponse, StreamingResponse
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import logging
 import os
 import inspect
 from pathlib import Path
+import asyncio
+import time
+import json
+
 
 # Core modules
 from flowfile_core.configs import logger
+from flowfile_core.configs.flow_logger import FlowLogger, cleanup_old_logs, clear_all_flow_logs
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
 from flowfile_core.configs.node_store import nodes
 
@@ -144,7 +149,6 @@ async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
 def run_flow(flow_id: int, background_tasks: BackgroundTasks):
     logger.info('starting to run...')
     flow = flow_file_handler.get_flow(flow_id)
-    print(flow.flow_settings)
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
     background_tasks.add_task(flow.run_graph)
@@ -490,3 +494,100 @@ async def get_excel_sheet_names(path: str) -> List[str] | None:
         return sheet_names
     else:
         raise HTTPException(404, 'File not found')
+
+
+@router.post("/clear-logs", tags=['flow_logging'])
+async def clear_logs():
+    clear_all_flow_logs()
+    return {"message": "All flow logs have been cleared."}
+
+
+async def format_sse_message(data: str) -> str:
+    """Format the data as a proper SSE message"""
+    return f"data: {json.dumps(data)}\n\n"
+
+
+async def stream_log_file(log_file_path: Path, is_running_callable: callable) -> AsyncGenerator[str, None]:
+    """
+    Streams the content of a log file as it's being written.
+    Ensures all lines are sent, even after is_running_callable becomes False.
+
+    Args:
+        log_file_path: The path to the log file.
+        is_running_callable: Callable that determines if streaming should continue.
+
+    Yields:
+        str: Formatted SSE messages containing log lines.
+    """
+    print(f"Streaming log file: {log_file_path}")
+    try:
+        with open(log_file_path, "r") as file:
+            file.seek(0)
+            # Stream while running
+            while is_running_callable():
+                line = file.readline()
+                if line:
+                    formatted_message = await format_sse_message(line.strip())
+                    print(f'Yielding line: {line.strip()}')
+                    yield formatted_message
+                else:
+                    await asyncio.sleep(0.1)
+
+            # Read any remaining lines after stopping
+            while True:
+                line = file.readline()
+                if not line:
+                    break
+                formatted_message = await format_sse_message(line.strip())
+                print(f'Yielding final line: {line.strip()}')
+                yield formatted_message
+
+            print("Streaming completed")
+
+    except FileNotFoundError:
+        error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
+        yield error_msg
+        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}")
+    except Exception as e:
+        error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
+        yield error_msg
+        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}")
+
+async def fake_data_streamer():
+    for i in range(10):
+        yield b'some fake data\n\n'
+        await asyncio.sleep(0.5)
+
+
+@router.get("/logs/{flow_id}", tags=['flow_logging'])
+async def stream_logs(flow_id: int):
+    """
+    Streams logs for a given flow_id using Server-Sent Events.
+    Streaming continues until the client disconnects.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+
+    log_file_path = flow.flow_logger.get_log_filepath()
+
+    class RunningState:
+        def __init__(self):
+            self.has_started = False
+
+        def is_running(self):
+            if flow.flow_settings.is_running:
+                self.has_started = True
+            return flow.flow_settings.is_running or not self.has_started
+
+    running_state = RunningState()
+
+    return StreamingResponse(
+        stream_log_file(log_file_path, running_state.is_running),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+        }
+    )

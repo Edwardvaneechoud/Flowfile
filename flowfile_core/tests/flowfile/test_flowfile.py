@@ -26,6 +26,18 @@ def test_create_flowfile_handler():
     return handler
 
 
+def test_import_flow(handler: FlowfileHandler):
+    flow_path = "flowfile_core/tests/support_files/flows/airbyte_example.flowfile"
+    flow_id = handler.import_flow(flow_path)
+    return flow_id
+
+
+def get_status_of_flow():
+    handler = test_create_flowfile_handler()
+    flow_id = test_import_flow(handler)
+    flow = handler.get_flow(flow_id)
+
+
 def test_create_graph():
     handler = test_create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.'))
@@ -259,14 +271,6 @@ def test_add_cross_join():
                                    {'name': 'courtney', 'right_name': 'eduward'}]
                                   )
     output_data.assert_equal(expected_data)
-
-
-def test_import_flow():
-    flow_file_handler = test_create_flowfile_handler()
-    flow_file_handler.import_flow('saved_flows/1')
-    flow = flow_file_handler.get_flow(1)
-    flow.run_graph()
-    flow.get_node(1).get_node_data(1, True)
 
 
 def test_add_external_source():

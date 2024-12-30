@@ -1,5 +1,6 @@
 from flowfile_core.routes import *
 import threading
+import requests
 
 register_flow(schemas.FlowSettings(flow_id=1, path='./'))
 
@@ -186,3 +187,13 @@ async def test_instant_function_result_after_run():
     flow.run_graph()
     result = await get_instant_function_result(1, 2, '[name]')
     assert result.success, 'Instant function result failed: ' + result.result
+
+
+def test_get_stream_data():
+    with requests.get("http://0.0.0.0:63578/logs/1", stream=True) as r:
+        print('streaming')
+        for chunk in r.iter_content(1024):  # or, for line in r.iter_lines():
+            print('getting chunk')
+            print(chunk)
+
+test_get_stream_data()

@@ -33,6 +33,7 @@ class FlowfileHandler:
             self._flows[new_id] = existing_flow
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
+        imported_flow.flow_settings.is_running = False
         return imported_flow.flow_id
 
     def register_flow(self, flow_settings: FlowSettings):
