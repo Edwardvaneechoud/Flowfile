@@ -7,7 +7,7 @@ export const useItemStore = defineStore('itemStore', () => {
     height: number;
     left: number;
     top: number;
-    stickynessPosition: 'top' | 'bottom' | 'left' | 'right' | 'free';
+    stickynessPosition: 'top' | 'bottom' | 'left' | 'right' | 'free' | 'bottom-center';
     fullWidth: boolean;
     fullHeight: boolean;
     zIndex: number;

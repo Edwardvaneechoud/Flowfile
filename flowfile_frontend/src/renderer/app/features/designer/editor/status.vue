@@ -1,6 +1,8 @@
 <template>
   <div class="status-wrapper">
-    <div class="flow-card" @mouseenter="showTooltip = true" @mouseleave="showTooltip = false">
+    <pop-over :content="tooltipContent" :title="isRunning ? 'Processing Flow' : 'Flow Idle'" placement="left">
+
+    <div class="flow-card">
       <svg viewBox="0 0 100 100" class="flow-animation" :class="{ 'is-flowing': isRunning }">
         <!-- Gradient Definitions -->
         <defs>
@@ -27,38 +29,35 @@
           <circle cx="60" cy="50" r="4" class="flow-particle particle-3" />
         </g>
       </svg>
-
-      <!-- Status Tooltip -->
-      <div v-if="showTooltip" class="status-tooltip" :class="{ 'tooltip-active': isRunning }">
-        <div class="tooltip-content">
-          <div class="status-text">
-            {{ isRunning ? "Processing Flow" : "Flow Idle" }}
-          </div>
-          <div class="status-time">Last updated: {{ formattedTime }}</div>
-        </div>
-      </div>
     </div>
+  </pop-over>
 
     <!-- Control Button -->
+    <!-- Control Button with Glasses icon -->
+    <pop-over content="Show or hide logs and status" placement="left">
+
     <button
       class="control-button"
       :class="{ 'is-active': showFlowResult }"
       :title="buttonText"
       @click="toggleResults"
+
     >
-      <span class="button-icon">
-        {{ showFlowResult ? "−" : "✓" }}
-      </span>
+      <el-icon v-if="!showFlowResult"><View /></el-icon>
+      <el-icon v-if="showFlowResult"><Minus /></el-icon>
     </button>
+  </pop-over>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { View, Minus } from '@element-plus/icons-vue';
+import PopOver from "../editor/PopOver.vue";
+
 
 const nodeStore = useNodeStore();
-const showTooltip = ref(false);
 const lastStatusChange = ref(new Date());
 
 const isRunning = computed(() => nodeStore.isRunning);
@@ -72,10 +71,39 @@ const formattedTime = computed(() => {
   });
 });
 
+
+const popoverTitle = computed(() => {
+  return isRunning.value ? "Processing Flow" : "Flow Idle"; 
+});
+
+const tooltipContent = computed(() => {
+    let content = `Last updated: ${formattedTime.value}<br>`;
+    // Get current run result for this flow if available
+    const currentRunResult = nodeStore.getRunResult(nodeStore.flow_id);
+
+
+    if (isRunning.value) {
+      content += "Currently processing data..."; 
+    } else {
+      content += "Flow is waiting to start.";
+
+       // Check if there are any run results for this flow
+      if(currentRunResult) {  
+        const thisNodeResult = currentRunResult.node_step_result.find(result=> result.node_id === nodeStore.node_id);
+
+           if(thisNodeResult?.error){
+            content = `Last Error: ${thisNodeResult.error}<br>`; // existing error handling
+          } 
+        }
+    }
+    return content;
+});
+
 const buttonText = computed(() => (showFlowResult.value ? "Hide Results" : "Show Results"));
 
 const toggleResults = () => {
   nodeStore.showFlowResult = !nodeStore.showFlowResult;
+  nodeStore.isShowingLogViewer = nodeStore.showFlowResult;
 };
 </script>
 
@@ -155,38 +183,6 @@ const toggleResults = () => {
 .particle-3 {
   animation-delay: -2s;
 }
-
-/* Modern Tooltip */
-.status-tooltip {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: #8c8caa;
-  border: 1px solid #4834d4;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  white-space: nowrap;
-  z-index: 10;
-}
-
-.tooltip-active {
-  border-color: #686de0;
-  box-shadow: 0 4px 20px rgba(104, 109, 224, 0.3);
-}
-
-.status-text {
-  font-weight: 600;
-  color: #686de0;
-}
-
-.status-time {
-  color: #9999aa;
-  font-size: 11px;
-  margin-top: 4px;
-}
-
 /* Control Button */
 .control-button {
   display: flex;

@@ -54,7 +54,6 @@ interface NotificationConfig {
   type: "success" | "error";
 }
 
-// Exposed notification functions
 const showNotification = (title: string, message: string, type?: "success" | "error") => {
   ElNotification({
     title,
@@ -64,7 +63,6 @@ const showNotification = (title: string, message: string, type?: "success" | "er
   });
 };
 
-// Exposed polling control functions
 const startPolling = (checkFn: () => Promise<void>) => {
   if (pollingInterval.value === null && props.pollingConfig.enabled) {
     pollingInterval.value = setInterval(checkFn, props.pollingConfig.interval) as unknown as number;
@@ -110,7 +108,6 @@ const checkRunStatus = async () => {
   }
 };
 
-// Main run function
 const runFlow = async () => {
   nodeStore.resetNodeResult();
   console.log("start run");
@@ -122,6 +119,7 @@ const runFlow = async () => {
       headers: { accept: "application/json" },
     });
     nodeStore.isRunning = true;
+    nodeStore.showLogViewer();
     startPolling(checkRunStatus);
   } catch (error) {
     console.error("Error starting run:", error);
@@ -142,6 +140,8 @@ const cancelFlow = async () => {
     showNotification("Error", "Failed to cancel the flow", "error");
   }
 };
+
+const emit = defineEmits(['logs-start', 'logs-stop']);
 
 onUnmounted(() => {
   stopPolling();

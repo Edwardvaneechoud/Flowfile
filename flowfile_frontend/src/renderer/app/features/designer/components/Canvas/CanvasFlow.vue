@@ -23,6 +23,7 @@ import {
 import DraggableItem from "./DraggableItem/DraggableItem.vue";
 import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
+import LogViewer from "./canvasFlow/LogViewer.vue"
 
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
@@ -42,6 +43,7 @@ const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
 const selectedNodeIdInTable = ref(0);
+const logViewer = ref<InstanceType<typeof LogViewer>>();
 
 interface NodeChange {
   id: string;
@@ -80,6 +82,7 @@ interface EdgeChange {
 const closeDrawer = () => {
   nodeStore.closeDrawer();
   showTablePreview.value = false;
+  nodeStore.hideLogViewer();
 };
 
 const toggleShowTablePreview = () => {
@@ -175,6 +178,7 @@ const handleNodeChange = (nodeChangesEvent: any) => {
   }
 };
 
+
 const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnection => {
   return {
     input_connection: {
@@ -207,6 +211,11 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
     }
   }
 };
+
+const toggleShowRunResult = () => {
+  nodeStore.showFlowResult = !nodeStore.showFlowResult;
+};
+
 </script>
 
 <template>
@@ -231,6 +240,27 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
       </VueFlow>
     </main>
     <draggable-item
+      id="dataActions"
+      :show-left="true"
+      :initial-width="200"
+      initial-position="left"
+      title="Data actions"
+      :allow-free-move="true"
+    >
+      <NodeList @dragstart="onDragStart" />
+    </draggable-item>
+    <draggable-item 
+    v-if="nodeStore.isShowingLogViewer"
+    :show-bottom="true" 
+    title="Log overview"
+    id="logViewer"
+    :allow-full-screen="true"
+    initial-position="bottom"
+    :on-minize="nodeStore.toggleLogViewer"
+    >
+      <LogViewer :flow-id="1"/>
+    </draggable-item>
+    <draggable-item
       v-if="nodeStore.showFlowResult"
       id="flowresults"
       :show-right="true"
@@ -240,16 +270,6 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
       :initial-top="-50"
     >
       <FlowResults :on-click="selectNodeExternally" />
-    </draggable-item>
-    <draggable-item
-      id="dataActions"
-      :show-left="true"
-      :initial-width="200"
-      initial-position="left"
-      title="Data actions"
-      :allow-free-move="true"
-    >
-      <NodeList @dragstart="onDragStart" />
     </draggable-item>
     <draggable-item
       v-if="showTablePreview"
@@ -277,6 +297,7 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
     >
       <div id="nodesettings" class="content"></div>
     </draggable-item>
+
   </div>
 </template>
 
