@@ -16,7 +16,6 @@ def get_temp_dir() -> str:
     if docker_temp:
         return docker_temp
 
-    # Fall back to system temp directory
     return tempfile.gettempdir()
 
 
