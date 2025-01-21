@@ -155,8 +155,10 @@ export function startProcess(
   path: string,
   port: number,
   onData?: (data: string) => void,
-): Promise<ChildProcess | null> {  // Changed return type to allow null
-  return new Promise((resolve) => { // Changed to only resolve, since we'll handle errors
+): Promise<ChildProcess | null> {
+  // Changed return type to allow null
+  return new Promise((resolve) => {
+    // Changed to only resolve, since we'll handle errors
     if (!path) {
       console.log(`No path provided for ${name}, skipping process start`);
       resolve(null);
@@ -167,9 +169,7 @@ export function startProcess(
     console.log(`Starting ${name} from ${path}`);
 
     try {
-      const workingDirectory = path.endsWith(name)
-        ? join(path, "..") 
-        : join(path, "../..");
+      const workingDirectory = path.endsWith(name) ? join(path, "..") : join(path, "../..");
 
       const childProcess = spawn(path, [], {
         env: getProcessEnv(),
@@ -221,7 +221,9 @@ export async function startServices(retry = true): Promise<void> {
     const corePath = getResourceServicePath("flowfile_core");
     const workerPath = getResourceServicePath("flowfile_worker");
 
-    console.log(`Starting services with paths - Core: ${corePath || 'Not found'}, Worker: ${workerPath || 'Not found'}`);
+    console.log(
+      `Starting services with paths - Core: ${corePath || "Not found"}, Worker: ${workerPath || "Not found"}`,
+    );
 
     const [newCoreProcess, newWorkerProcess] = await Promise.all([
       startProcess("flowfile_core", corePath, CORE_PORT, (data) => {

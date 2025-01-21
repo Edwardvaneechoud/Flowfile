@@ -17,7 +17,6 @@
             </div>
           </el-row>
         </div>
-        
 
         <!-- Checkboxes Group  -->
         <div class="row">
