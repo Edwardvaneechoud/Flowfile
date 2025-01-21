@@ -302,11 +302,11 @@ const toggleShowRunResult = () => {
 </template>
 
 <style>
-@import "https://cdn.jsdelivr.net/npm/@vue-flow/core@1.34.1/dist/style.css";
-@import "https://cdn.jsdelivr.net/npm/@vue-flow/core@1.34.1/dist/theme-default.css";
-@import "https://cdn.jsdelivr.net/npm/@vue-flow/controls@latest/dist/style.css";
-@import "https://cdn.jsdelivr.net/npm/@vue-flow/minimap@latest/dist/style.css";
-@import "https://cdn.jsdelivr.net/npm/@vue-flow/node-resizer@latest/dist/style.css";
+@import "@vue-flow/core/dist/style.css";
+@import "@vue-flow/core/dist/theme-default.css";
+@import "@vue-flow/controls/dist/style.css";
+@import "@vue-flow/minimap/dist/style.css";
+@import "@vue-flow/node-resizer/dist/style.css";
 
 html,
 body,
