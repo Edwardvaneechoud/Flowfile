@@ -559,6 +559,18 @@ async def fake_data_streamer():
         await asyncio.sleep(0.5)
 
 
+@router.post("logs/{flow_id}", tags=['flow_logging'])
+async def add_log(flow_id: int, log_message: str):
+    """
+    Adds a log message to the log file for a given flow_id.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    flow.flow_logger.info(log_message)
+    return {"message": "Log added successfully"}
+
+
 @router.get("/logs/{flow_id}", tags=['flow_logging'])
 async def stream_logs(flow_id: int):
     """

@@ -5,7 +5,7 @@ from flowfile_core.configs.settings import get_temp_dir
 import os
 
 # Base logger setup
-main_logger = logging.getLogger('PipelineHandler')
+main_logger = logging.getLogger('FlowfileWorker')
 
 
 class FlowLogger:
@@ -29,7 +29,6 @@ class FlowLogger:
         self.log_file_path = get_flow_log_file(self.flow_id)
         self.setup_logging()
 
-        # Store this instance
         self._instances[flow_id] = self
 
     def setup_logging(self):
@@ -53,19 +52,6 @@ class FlowLogger:
             self.info("Log file cleared - starting new flow execution")
         except Exception as e:
             main_logger.error(f"Error clearing log file {self.log_file_path}: {e}")
-
-    @classmethod
-    def cleanup_instance(cls, flow_id: int):
-        """Clean up a specific instance by flow_id"""
-        if flow_id in cls._instances:
-            instance = cls._instances[flow_id]
-            instance.cleanup_logging()
-            del cls._instances[flow_id]
-
-    @classmethod
-    def get_instance(cls, flow_id: int):
-        """Get existing instance if it exists"""
-        return cls._instances.get(flow_id)
 
     def info(self, msg: str):
         self.logger.info(msg, extra={'flow_id': self.flow_id})

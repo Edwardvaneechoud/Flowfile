@@ -3,69 +3,94 @@ from pathlib import Path
 from datetime import datetime
 from flowfile_core.configs.settings import get_temp_dir
 import os
+import logging.handlers
+import multiprocessing
+import threading
 
-# Base logger setup
+_process_safe_queue = multiprocessing.Queue(-1)
 main_logger = logging.getLogger('PipelineHandler')
 
 
 class FlowLogger:
-    """Helper class to automatically add flow_id to logs, manage flow-specific loggers, and store log file location."""
-
-    # Class-level dictionary to track instances by flow_id
     _instances = {}
+    _instances_lock = threading.RLock()
+    _queue_listener = None
+    _queue_listener_lock = threading.Lock()
 
-    def __init__(self, flow_id: int):
+    def __new__(cls, flow_id: int, clear_existing_logs: bool = False):
+        with cls._instances_lock:
+            if flow_id not in cls._instances:
+                instance = super().__new__(cls)
+                instance._initialize(flow_id, clear_existing_logs)
+                cls._instances[flow_id] = instance
+            else:
+                instance = cls._instances[flow_id]
+                if clear_existing_logs:
+                    instance.clear_log_file()  # Only clear file, not handlers
+            return instance
+
+    def _initialize(self, flow_id: int, clear_existing_logs: bool):
         self.flow_id = flow_id
+        self._setup_new_logger()
 
-        # If an instance with this flow_id exists, clean it up first
-        if flow_id in self._instances:
-            old_instance = self._instances[flow_id]
-            old_instance.cleanup_logging()
-            old_instance.clear_log_file()
+        with self._queue_listener_lock:
+            if not FlowLogger._queue_listener:
+                FlowLogger._start_queue_listener()
 
-        # Create new logger and setup
-        self.logger = logging.getLogger(f'FlowExecution.{flow_id}')
+    def _setup_new_logger(self):
+        self.logger = logging.getLogger(f'FlowExecution.{self.flow_id}')
         self.logger.setLevel(logging.INFO)
         self.log_file_path = get_flow_log_file(self.flow_id)
+        self._file_lock = threading.Lock()
         self.setup_logging()
 
-        # Store this instance
-        self._instances[flow_id] = self
+    def clear_previous_logs(self):
+        self.clear_log_file()
+
+    @classmethod
+    def _start_queue_listener(cls):
+        queue_handler = logging.handlers.QueueHandler(_process_safe_queue)
+        cls._queue_listener = logging.handlers.QueueListener(
+            _process_safe_queue,
+            queue_handler,
+            respect_handler_level=True
+        )
+        cls._queue_listener.start()
 
     def setup_logging(self):
-        """Set up logging for a specific flow"""
-        file_handler = logging.FileHandler(self.log_file_path)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
-        self.logger.addHandler(file_handler)
-
-    def cleanup_logging(self):
-        """Clean up logging for a specific flow"""
-        for handler in self.logger.handlers[:]:
-            handler.close()
-            self.logger.removeHandler(handler)
+        with self._file_lock:
+            file_handler = logging.FileHandler(self.log_file_path)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
 
     def clear_log_file(self):
-        """Clear the contents of the log file without deleting it"""
-        try:
-            with open(self.log_file_path, 'w') as f:
-                pass
-            self.info("Log file cleared - starting new flow execution")
-        except Exception as e:
-            main_logger.error(f"Error clearing log file {self.log_file_path}: {e}")
+        with self._file_lock:
+            try:
+                with open(self.log_file_path, 'w') as f:
+                    pass
+                main_logger.info("Log file cleared - starting new flow execution")
+            except Exception as e:
+                main_logger.error(f"Error clearing log file {self.log_file_path}: {e}")
 
     @classmethod
     def cleanup_instance(cls, flow_id: int):
-        """Clean up a specific instance by flow_id"""
-        if flow_id in cls._instances:
-            instance = cls._instances[flow_id]
-            instance.cleanup_logging()
-            del cls._instances[flow_id]
+        with cls._instances_lock:
+            if flow_id in cls._instances:
+                instance = cls._instances[flow_id]
+                instance.cleanup_logging()
+                del cls._instances[flow_id]
+
+    def cleanup_logging(self):
+        with self._file_lock:
+            for handler in self.logger.handlers[:]:
+                handler.close()
+                self.logger.removeHandler(handler)
 
     @classmethod
     def get_instance(cls, flow_id: int):
-        """Get existing instance if it exists"""
-        return cls._instances.get(flow_id)
+        with cls._instances_lock:
+            return cls._instances.get(flow_id)
 
     def info(self, msg: str):
         self.logger.info(msg, extra={'flow_id': self.flow_id})
@@ -83,11 +108,32 @@ class FlowLogger:
         return str(self.log_file_path)
 
     def read_from_line(self, start_line: int = 0):
-        return read_log_from_line(self.log_file_path, start_line)
+        with self._file_lock:
+            return read_log_from_line(self.log_file_path, start_line)
+
+    @classmethod
+    def global_cleanup(cls):
+        """Cleanup all loggers, handlers and queue listener."""
+        with cls._instances_lock:
+            # Cleanup all instances
+            for flow_id in list(cls._instances.keys()):
+                cls.cleanup_instance(flow_id)
+
+            # Stop queue listener
+            with cls._queue_listener_lock:
+                if cls._queue_listener:
+                    cls._queue_listener.stop()
+                    cls._queue_listener = None
+
+            # Clear instances
+            cls._instances.clear()
+
+    def __del__(self):
+        """Cleanup instance on deletion."""
+        self.cleanup_instance(self.flow_id)
 
 
 def get_logs_dir() -> Path:
-    """Get the logs directory path, respecting Docker environment"""
     base_dir = Path(get_temp_dir())
     logs_dir = base_dir / "flowfile_logs"
     logs_dir.mkdir(exist_ok=True, parents=True)
@@ -95,15 +141,13 @@ def get_logs_dir() -> Path:
 
 
 def get_flow_log_file(flow_id: int) -> Path:
-    """Get the path to a flow's current log file"""
     return get_logs_dir() / f"flow_{flow_id}.log"
 
 
 def cleanup_old_logs(max_age_days: int = 7):
-    """Clean up log files older than max_age_days"""
     logs_dir = get_logs_dir()
-
     now = datetime.now().timestamp()
+
     for log_file in logs_dir.glob("flow_*.log"):
         try:
             if (now - log_file.stat().st_mtime) > (max_age_days * 24 * 60 * 60):
@@ -113,10 +157,9 @@ def cleanup_old_logs(max_age_days: int = 7):
 
 
 def clear_all_flow_logs():
-    """Deletes all .log files within the flowfile_logs directory."""
     logs_dir = get_logs_dir()
     try:
-        for log_file in logs_dir.glob("*.log"):  # Only match .log files
+        for log_file in logs_dir.glob("*.log"):
             os.remove(log_file)
         main_logger.info(f"Successfully deleted all flow log files in {logs_dir}")
     except Exception as e:
@@ -124,18 +167,6 @@ def clear_all_flow_logs():
 
 
 def read_log_from_line(log_file_path: Path, start_line: int = 0):
-    """
-    Reads a log file from a specific line number.
-
-    Args:
-        log_file_path: The path to the log file.
-        start_line: The line number to start reading from (0-indexed).
-
-    Returns:
-        A list of strings, where each string is a line from the log file
-        starting from `start_line`.
-    """
-
     lines = []
     try:
         with open(log_file_path, "r") as file:
@@ -144,9 +175,8 @@ def read_log_from_line(log_file_path: Path, start_line: int = 0):
                     lines.append(line)
     except FileNotFoundError:
         main_logger.error(f"Log file not found: {log_file_path}")
-        return []  # Or raise an exception, depending on how you want to handle it
+        return []
     except Exception as e:
         main_logger.error(f"Error reading log file {log_file_path}: {e}")
-        return []  # Or raise an exception
-
+        return []
     return lines

@@ -42,10 +42,9 @@ class SharedTempDirectory:
     def __exit__(self, exc, value, tb):
         self.cleanup()
 
-# Shared dictionaries
 
-# Define the cache expiration time (1 day in seconds)
 CACHE_EXPIRATION_TIME = 24 * 60 * 60
+
 
 TEMP_DIR = os.getenv('TEMP_DIR')
 if TEMP_DIR:
