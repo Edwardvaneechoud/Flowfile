@@ -51,6 +51,7 @@ def process_and_cache(polars_serializable_object: io.BytesIO, progress: Value, e
     try:
         # flowfile_logger.info("Starting process and cache operation")
         lf = pl.LazyFrame.deserialize(polars_serializable_object)
+        flowfile_logger.info(lf.explain(format='tree'))
         lf.collect(streaming=True).write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
         with progress.get_lock():
