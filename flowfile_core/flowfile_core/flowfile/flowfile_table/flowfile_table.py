@@ -103,6 +103,10 @@ class FlowfileTable:
     _number_of_records_callback: Callable = None
     _data_callback: Callable = None
 
+    # Tracking info
+    # node_id: int = None  # TODO: Implement node_id
+    # flow_id: int = None  # TODO: Implement flow_id
+
     def __init__(self,
                  raw_data: Union[List[Dict], List[Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame] = None,
                  path_ref: str = None,
@@ -1310,13 +1314,14 @@ class FlowfileTable:
 
         return FlowfileTable(df, number_of_records=self.number_of_records)
 
-    # File Operations
-    def output(self, output_fs: input_schema.OutputSettings) -> "FlowfileTable":
+    def output(self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str) -> "FlowfileTable":
         """
         Write DataFrame to output file.
 
         Args:
             output_fs: Output settings
+            flow_id: Flow ID for tracking
+            node_id: Node ID for tracking
 
         Returns:
             FlowfileTable: Self for chaining
@@ -1328,7 +1333,9 @@ class FlowfileTable:
             path=output_fs.directory + os.sep + output_fs.name,
             write_mode=output_fs.write_mode,
             sheet_name=output_fs.output_excel_table.sheet_name,
-            delimiter=output_fs.output_csv_table.delimiter
+            delimiter=output_fs.output_csv_table.delimiter,
+            flow_id=flow_id,
+            node_id=node_id
         )
         tracker = ExternalExecutorTracker(status)
         tracker.get_result()

@@ -49,9 +49,7 @@ def fuzzy_join_task(left_serializable_object: bytes, right_serializable_object: 
 def process_and_cache(polars_serializable_object: io.BytesIO, progress: Value, error_message: Array,
                       file_path: str, flowfile_logger: Logger) -> bytes:
     try:
-        # flowfile_logger.info("Starting process and cache operation")
         lf = pl.LazyFrame.deserialize(polars_serializable_object)
-        flowfile_logger.info(lf.explain(format='tree'))
         lf.collect(streaming=True).write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
         with progress.get_lock():
@@ -196,7 +194,7 @@ def calculate_number_of_records(polars_serializable_object: bytes, progress: Val
 def execute_write_method(write_method: Callable, path: str, data_type: str = None, sheet_name: str = None,
                          delimiter: str = None,
                          write_mode: str = 'create', flowfile_logger: Logger = None):
-    flowfile_logger.info(f'executing write method: {write_method}')
+    flowfile_logger.info('executing write method')
     if data_type == 'excel':
         logger.info('Writing as excel file')
         write_method(path, worksheet=sheet_name)
@@ -222,13 +220,15 @@ def write_output(polars_serializable_object: bytes,
                  write_mode: str,
                  sheet_name: str = None,
                  delimiter: str = None,
-                 flowfile_flow_id: int = 1,
+                 flowfile_flow_id: int = -1,
                  flowfile_node_id: int | str = -1
                  ):
     flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
-    flowfile_logger.info("Starting write operation")
+    flowfile_logger.info(f"Starting write operation to: {path}")
     try:
         df = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        if isinstance(df, pl.LazyFrame):
+            flowfile_logger.info(f'Execution plan explanation:\n{df.explain(format="plain")}')
         flowfile_logger.info("Successfully deserialized dataframe")
         is_lazy = False
         sink_method_str = 'sink_'+data_type

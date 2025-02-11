@@ -34,7 +34,7 @@ class PolarsScriptWrite(BaseModel):
     write_mode: str
     sheet_name: Optional[str] = None
     delimiter: Optional[str] = None
-    flowfile_flow_id: Optional[int] = 1
+    flowfile_flow_id: Optional[int] = -1
     flowfile_node_id: Optional[int | str] = -1
 
     def polars_serializable_object(self):

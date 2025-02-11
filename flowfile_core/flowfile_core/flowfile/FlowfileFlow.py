@@ -637,7 +637,7 @@ class EtlGraph:
 
     def add_output(self, output_file: input_schema.NodeOutput):
         def _func(df: FlowfileTable):
-            df.output(output_fs=output_file.output_settings)
+            df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id)
             return df
 
         self.add_node_step(node_id=output_file.node_id,
@@ -652,6 +652,8 @@ class EtlGraph:
         source_settings: input_schema.AirbyteReader = external_source_input.source_settings
         airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
                                                         node_id=external_source_input.node_id)
+
+        logger.info("Airbyte settings created")
         airbyte_settings.fields = source_settings.fields
         external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
 

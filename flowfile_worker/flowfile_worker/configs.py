@@ -8,11 +8,12 @@ logging.basicConfig(format='%(asctime)s: %(message)s')
 logger = logging.getLogger('FlowfileWorker')
 logger.setLevel(logging.INFO)
 
+
 def get_default_core_url():
     # Check for Docker environment first
-    worker_host = os.getenv('WORKER_HOST', None)
-    if worker_host:
-        return f"http://{worker_host}:63579"
+    core_host = os.getenv('CORE_HOST', None)
+    if core_host:
+        return f"http://{core_host}:63578"
 
     # Fall back to default behavior
     if platform.system() == "Windows":
@@ -22,6 +23,3 @@ def get_default_core_url():
 
 
 FLOWFILE_CORE_URI = get_default_core_url()
-
-if __name__ == "__main__":
-    get_default_core_url()

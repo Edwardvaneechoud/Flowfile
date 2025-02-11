@@ -26,11 +26,11 @@ const routes: Array<RouteRecordRaw> = [
         path: "nodeData",
         component: () => import("../features/designer/editor/fullEditor.vue"),
       },
-      {
-        name: "documentation",
-        path: "documentation",
-        component: () => import("../pages/documentation.vue"),
-      },
+//       {
+//         name: "documentation",
+//         path: "documentation",
+//         component: () => import("../pages/documentation.vue"),
+//       },
     ],
   },
   {

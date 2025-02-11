@@ -94,7 +94,6 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         models.Status: Status object tracking the write operation
     """
     logger.info(f"Starting write operation to: {polars_script_write.path}")
-
     try:
         task_id = str(uuid.uuid4())
         file_path = polars_script_write.path

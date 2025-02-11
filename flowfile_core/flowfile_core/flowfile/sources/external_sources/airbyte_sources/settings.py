@@ -166,5 +166,7 @@ def airbyte_settings_from_config(airbyte_config: AirbyteConfig, flow_id: int, no
     return AirbyteSettings(
         source_name=airbyte_config.full_source_name,
         stream=airbyte_config.selected_stream,
-        config=config
+        config=config,
+        flowfile_flow_id=flow_id,
+        flowfile_node_id=node_id
     )
