@@ -1,18 +1,16 @@
-from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body, Request
+from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body
 from fastapi.responses import JSONResponse, Response, RedirectResponse, StreamingResponse
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator, Literal
 import logging
 import os
 import inspect
 from pathlib import Path
 import asyncio
-import time
 import json
-
 
 # Core modules
 from flowfile_core.configs import logger
-from flowfile_core.configs.flow_logger import FlowLogger, cleanup_old_logs, clear_all_flow_logs
+from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
 from flowfile_core.configs.node_store import nodes
 
@@ -559,7 +557,7 @@ async def fake_data_streamer():
         await asyncio.sleep(0.5)
 
 
-@router.post("logs/{flow_id}", tags=['flow_logging'])
+@router.post("/logs/{flow_id}", tags=['flow_logging'])
 async def add_log(flow_id: int, log_message: str):
     """
     Adds a log message to the log file for a given flow_id.
@@ -568,6 +566,27 @@ async def add_log(flow_id: int, log_message: str):
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
     flow.flow_logger.info(log_message)
+    return {"message": "Log added successfully"}
+
+
+@router.post("/raw_logs", tags=['flow_logging'])
+async def add_raw_log(raw_log_input: schemas.RawLogInput):
+    """
+    Adds a log message to the log file for a given flow_id.
+    """
+    print('Adding raw logs')
+    flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    flow.flow_logger.get_log_filepath()
+    flow_logger = flow.flow_logger
+    flow_logger.get_log_filepath()
+    if raw_log_input.log_type == 'INFO':
+        flow_logger.info(raw_log_input.log_message,
+                         extra=raw_log_input.extra)
+    elif raw_log_input.log_type == 'ERROR':
+        flow_logger.error(raw_log_input.log_message,
+                          extra=raw_log_input.extra)
     return {"message": "Log added successfully"}
 
 

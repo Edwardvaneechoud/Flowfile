@@ -141,7 +141,7 @@ const cancelFlow = async () => {
   }
 };
 
-const emit = defineEmits(['logs-start', 'logs-stop']);
+const emit = defineEmits(["logs-start", "logs-stop"]);
 
 onUnmounted(() => {
   stopPolling();

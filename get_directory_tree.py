@@ -55,3 +55,34 @@ if __name__ == "__main__":
     with open("directory_structure.json", "w") as f:
         json.dump(directory_data, f, indent=4)
     print("File saved to directory_structure.json")
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.types import IntegerType, DoubleType, StringType
+from posman.validations.table_validator import SparkField, Table
+
+def get_spark_session():
+    return SparkSession.builder \
+        .appName("TestingFrameworkDemo") \
+        .master("local[1]") \
+        .getOrCreate()
+class AgeTable(Table):
+    """Sample table definition for age and price data"""
+    age: SparkField
+    price: SparkField
+
+spark = get_spark_session()
+
+age_field = SparkField(field_name="age", data_type=IntegerType(), nullable=False, min_value=18, max_value=59)
+price_field = SparkField(field_name="price", data_type=DoubleType(), nullable=True, min_value=0.0, max_value=100.0)
+
+age_table = AgeTable(fields=[age_field, price_field])
+age_df = age_table.create_test_dataframe(spark, num_rows=3)
+print('age_df:\n', age_df)
+print('age_df selected:\n', age_df.select(age_table.price.cast(StringType())))
+
+
+
+age_field = SparkField(field_name="age", data_type=IntegerType(), nullable=False, min_value=18, max_value=59)
+...
+print('age_df selected:\n', age_df.select(age_field.cast(StringType())))

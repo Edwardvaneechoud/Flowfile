@@ -21,6 +21,8 @@ class FuzzyJoinInput(BaseModel):
     left_df_operation: PolarsOperation
     right_df_operation: PolarsOperation
     fuzzy_maps: list[FuzzyMap]
+    flowfile_node_id: int|str
+    flowfile_flow_id: int
 
 
 class Status(BaseModel):

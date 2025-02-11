@@ -4,11 +4,35 @@ from datetime import datetime
 from flowfile_core.configs.settings import get_temp_dir
 import os
 import logging.handlers
-import multiprocessing
+import queue
 import threading
 
-_process_safe_queue = multiprocessing.Queue(-1)
+_process_safe_queue = queue.Queue(-1)
 main_logger = logging.getLogger('PipelineHandler')
+
+
+class NodeLogger:
+    node_id: str | int
+    flow_id: int
+    logger: logging.Logger
+
+    def __init__(self, logger: logging.Logger, node_id: str | int, flow_id: int):
+        self.flow_id = flow_id
+        self.node_id = node_id
+        self.logger = logger
+
+    def info(self, msg: str):
+        self.logger.info(f"Node ID: {self.node_id} - {msg}")
+
+    def error(self, msg: str):
+        self.logger.error(f"Node ID: {self.node_id} - {msg}")
+
+    def warning(self, msg: str):
+        self.logger.warning(f"Node ID: {self.node_id} - {msg}")
+
+    def debug(self, msg: str):
+        self.logger.debug(f"Node ID: {self.node_id} - {msg}")
+
 
 
 class FlowLogger:
@@ -16,6 +40,13 @@ class FlowLogger:
     _instances_lock = threading.RLock()
     _queue_listener = None
     _queue_listener_lock = threading.Lock()
+
+    @staticmethod
+    def handle_extra_log_info(flow_id: int, extra: dict = None) -> dict:
+        if extra is None:
+            extra = {}
+        extra['flow_id'] = flow_id
+        return extra
 
     def __new__(cls, flow_id: int, clear_existing_logs: bool = False):
         with cls._instances_lock:
@@ -60,7 +91,7 @@ class FlowLogger:
     def setup_logging(self):
         with self._file_lock:
             file_handler = logging.FileHandler(self.log_file_path)
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             file_handler.setFormatter(formatter)
             self.logger.addHandler(file_handler)
 
@@ -92,17 +123,32 @@ class FlowLogger:
         with cls._instances_lock:
             return cls._instances.get(flow_id)
 
-    def info(self, msg: str):
-        self.logger.info(msg, extra={'flow_id': self.flow_id})
+    def get_node_logger(self, node_id: str | int) -> NodeLogger:
+        return NodeLogger(self.logger, node_id, flow_id=self.flow_id)
 
-    def error(self, msg: str):
-        self.logger.error(msg, extra={'flow_id': self.flow_id})
+    def info(self, msg: str, extra: dict = None, node_id: str | int = -1):
+        if node_id != -1:
+            msg = f"Node ID: {node_id} - {msg}"
+        extra = self.handle_extra_log_info(self.flow_id, extra)
+        self.logger.info(msg, extra=extra)
 
-    def warning(self, msg: str):
-        self.logger.warning(msg, extra={'flow_id': self.flow_id})
+    def error(self, msg: str, extra: dict = None, node_id: str | int = -1):
+        if node_id != -1:
+            msg = f"Node ID: {node_id} - {msg}"
+        extra = self.handle_extra_log_info(self.flow_id, extra)
+        self.logger.error(msg, extra=extra)
 
-    def debug(self, msg: str):
-        self.logger.debug(msg, extra={'flow_id': self.flow_id})
+    def warning(self, msg: str, extra: dict = None, node_id: str | int = -1):
+        if node_id != -1:
+            msg = f"Node ID: {node_id} - {msg}"
+        extra = self.handle_extra_log_info(self.flow_id, extra)
+        self.logger.warning(msg, extra=extra)
+
+    def debug(self, msg: str, extra: dict = None, node_id: str | int = -1):
+        if node_id != -1:
+            msg = f"Node ID: {node_id} - {msg}"
+        extra = self.handle_extra_log_info(self.flow_id, extra)
+        self.logger.debug(msg, extra=extra)
 
     def get_log_filepath(self):
         return str(self.log_file_path)

@@ -23,7 +23,7 @@ import {
 import DraggableItem from "./DraggableItem/DraggableItem.vue";
 import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
-import LogViewer from "./canvasFlow/LogViewer.vue"
+import LogViewer from "./canvasFlow/LogViewer.vue";
 
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
@@ -178,7 +178,6 @@ const handleNodeChange = (nodeChangesEvent: any) => {
   }
 };
 
-
 const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnection => {
   return {
     input_connection: {
@@ -215,7 +214,6 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
 const toggleShowRunResult = () => {
   nodeStore.showFlowResult = !nodeStore.showFlowResult;
 };
-
 </script>
 
 <template>
@@ -249,16 +247,16 @@ const toggleShowRunResult = () => {
     >
       <NodeList @dragstart="onDragStart" />
     </draggable-item>
-    <draggable-item 
-    v-if="nodeStore.isShowingLogViewer"
-    :show-bottom="true" 
-    title="Log overview"
-    id="logViewer"
-    :allow-full-screen="true"
-    initial-position="bottom"
-    :on-minize="nodeStore.toggleLogViewer"
+    <draggable-item
+      v-if="nodeStore.isShowingLogViewer"
+      id="logViewer"
+      :show-bottom="true"
+      title="Log overview"
+      :allow-full-screen="true"
+      initial-position="bottom"
+      :on-minize="nodeStore.toggleLogViewer"
     >
-      <LogViewer :flow-id="1"/>
+      <LogViewer :flow-id="1" />
     </draggable-item>
     <draggable-item
       v-if="nodeStore.showFlowResult"
@@ -297,7 +295,6 @@ const toggleShowRunResult = () => {
     >
       <div id="nodesettings" class="content"></div>
     </draggable-item>
-
   </div>
 </template>
 

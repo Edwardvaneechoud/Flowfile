@@ -1,7 +1,7 @@
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 import os
+from pathlib import Path
 
 
 class MinimalFieldInfo(BaseModel):
@@ -23,15 +23,23 @@ class ReceivedTableBase(BaseModel):
     @classmethod
     def create_from_path(cls, path: str):
         filename = os.path.basename(path)
-        # Create an instance of ReceivedCsvTable with the extracted filename and path
         return cls(name=filename, path=path)
 
     @property
     def file_path(self) -> str:
-        if not self.name in self.path:
+        if self.name not in self.path:
             return os.path.join(self.path, self.name)
-        else:
-            return self.path
+        return self.path
+
+    @model_validator(mode="after")
+    def set_abs_file_path(cls, values):
+        abs_file_path = getattr(values, "abs_file_path", None)
+        if abs_file_path is None:
+            path = getattr(values, "path", None)
+            if not path:
+                raise ValueError("Field 'path' is required to compute abs_file_path")
+            setattr(values, "abs_file_path", str(Path(path).absolute()))
+        return values
 
 
 class ReceivedCsvTable(ReceivedTableBase):

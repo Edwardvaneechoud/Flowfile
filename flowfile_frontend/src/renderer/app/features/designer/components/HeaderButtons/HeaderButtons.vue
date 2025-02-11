@@ -111,7 +111,6 @@ const props = withDefaults(
 );
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
-
 const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);
   if (flowSettings.value.is_running) {

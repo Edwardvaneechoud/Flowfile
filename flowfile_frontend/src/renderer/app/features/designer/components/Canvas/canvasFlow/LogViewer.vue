@@ -1,169 +1,126 @@
-// LogViewer.vue
 <script setup lang="ts">
-import { ref, onUnmounted, nextTick, onMounted, watch, stop } from 'vue';
-import { useNodeStore } from '../../../../../stores/column-store';
-import { flowfileCorebaseURL } from '../../../../../../config/constants';
+import { ref, onUnmounted, nextTick, onMounted, watch } from "vue";
+import { useNodeStore } from "../../../../../stores/column-store";
+import { flowfileCorebaseURL } from "../../../../../../config/constants";
 
-// Props with TypeScript interface
+// Props
 interface Props {
   flowId: number;
 }
-const nodeStore = useNodeStore();
-
 const props = defineProps<Props>();
 
-// Store and refs
-const logs = ref<string>('');
+// Store & Refs
+const nodeStore = useNodeStore();
+const logs = ref<string>("");
 const eventSourceRef = ref<EventSource | null>(null);
 const autoScroll = ref(true);
 
-// Function to handle auto-scrolling
+// Scroll to bottom function
 const scrollToBottom = () => {
   if (!autoScroll.value) return;
-  
-  const container = document.querySelector('.log-container');
-  if (container) {
-    container.scrollTop = container.scrollHeight;
-  }
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const container = document.querySelector(".log-container");
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+  });
 };
 
-
-watch(() => nodeStore.isRunning, (newVal) => {
-  if (newVal) {
-    startStreamingLogs();
-  } else {
-    stopStreamingLogs();
+// Watch for node state changes
+watch(
+  () => nodeStore.isRunning,
+  (isRunning) => {
+    isRunning ? startStreamingLogs() : stopStreamingLogs();
   }
-});
+);
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-
-const initialLogViewer = async () => {
-
-  if (nodeStore.isRunning) {
-    startStreamingLogs();
-  }
-  else {
-    startStreamingLogs();
-    await sleep(2000);
-    stopStreamingLogs();
-  }
-}
+// Start & Stop Log Streaming
 const startStreamingLogs = () => {
-  if (eventSourceRef.value) {
-    eventSourceRef.value.close();
-  }
+  if (eventSourceRef.value) eventSourceRef.value.close();
 
-  console.log('Starting log streaming');
-  logs.value = '';
-  
+  logs.value = "";
+  console.log("Starting log streaming");
   const eventSource = new EventSource(`${flowfileCorebaseURL}logs/${props.flowId}`);
   eventSourceRef.value = eventSource;
-  console.log('Event source created');
-  let hasReceivedMessage = false;
 
-  eventSource.onopen = () => {
-  };
+  let hasReceivedMessage = false;
 
   eventSource.onmessage = (event) => {
     hasReceivedMessage = true;
     try {
-      const logData = JSON.parse(event.data);
-      logs.value += logData + '\n';
-      nextTick(() => {
-        scrollToBottom();
-      });
+      logs.value += JSON.parse(event.data) + "\n";
+      scrollToBottom();
     } catch (error) {
+      console.error("Error parsing log data:", error);
     }
   };
 
-  eventSource.onerror = (error) => {
-    // If we never received a message, the endpoint might not be ready yet
+  eventSource.onerror = () => {
     if (!hasReceivedMessage && nodeStore.isRunning) {
-      console.log("Connection failed - endpoint might not be ready yet. Retrying...");
+      console.log("Retrying log connection...");
       stopStreamingLogs();
-      // Retry after a short delay
       setTimeout(startStreamingLogs, 1000);
-      return;
-    }
-
-    // If we had messages but now got an error, the endpoint probably closed
-    if (hasReceivedMessage) {
-      console.log("Log connection closed after receiving messages");
     } else {
-      console.log("Log connection failed to establish");
+      console.log("Log connection closed.");
+      stopStreamingLogs();
     }
-    
-    stopStreamingLogs();
   };
 };
 
 const stopStreamingLogs = () => {
-  if (eventSourceRef.value) {
-    eventSourceRef.value.close();
-    eventSourceRef.value = null;
-    console.log("Event source closed");
-  }
+  eventSourceRef.value?.close();
+  eventSourceRef.value = null;
+  console.log("Log streaming stopped");
 };
 
-// Handle scroll events to toggle auto-scroll
+// UI Handlers
 const handleScroll = (event: Event) => {
   const element = event.target as HTMLElement;
-  const isAtBottom = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
-  autoScroll.value = isAtBottom;
+  autoScroll.value = element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
 };
 
-// Clear logs
-const clearLogs = () => {
-  logs.value = '';
+const clearLogs = () => (logs.value = "");
+
+// Lifecycle Hooks
+onMounted(startStreamingLogs);
+onUnmounted(stopStreamingLogs);
+
+// Expose functions to parent component
+defineExpose({ startStreamingLogs, stopStreamingLogs, clearLogs, logs });
+
+// Computed property to split logs into lines and identify errors
+const logLines = ref<string[]>([]);
+watch(logs, (newLogs) => {
+  logLines.value = newLogs.split("\n").map(line => line.trim()).filter(line => line !== "");
+});
+
+const isErrorLine = (line: string): boolean => {
+  return line.toUpperCase().includes("ERROR");
 };
-
-// Cleanup on component unmount
-onUnmounted(() => {
-  if (eventSourceRef.value) {
-    eventSourceRef.value.close();
-  }
-});
-
-onMounted(() => {
-  initialLogViewer();
-});
-
-// Expose methods and properties to parent
-defineExpose({
-  startStreamingLogs,
-  stopStreamingLogs,
-  clearLogs,
-  logs
-});
 </script>
 
 <template>
   <div class="log-container" @scroll="handleScroll">
     <div class="log-header">
       <div class="log-status">
-        <span v-if="eventSourceRef" class="status-indicator active"></span>
-        <span v-else class="status-indicator"></span>
-        {{ eventSourceRef ? 'Connected' : 'Disconnected' }}
+        <span :class="['status-indicator', { active: eventSourceRef }]"></span>
+        {{ eventSourceRef ? "Connected" : "Disconnected" }}
       </div>
       <div class="log-controls">
-        <el-button 
-          size="small" 
-          @click="initialLogViewer"
-          >Fetch logs</el-button>
-        <el-button 
-          size="small" 
-          @click="scrollToBottom"
-          :disabled="!logs || autoScroll"
-        >
+        <el-button size="small" @click="startStreamingLogs">Fetch logs</el-button>
+        <el-button size="small" :disabled="!logs || autoScroll" @click="scrollToBottom">
           Scroll to Bottom
         </el-button>
       </div>
     </div>
-    <pre class="logs" :class="{ 'auto-scroll': autoScroll }">{{ logs }}</pre>
+    <div class="logs" :class="{ 'auto-scroll': autoScroll }">
+      <div v-for="(line, index) in logLines" :key="index" :class="{ 'error-line': isErrorLine(line) }">
+        {{ line }}
+      </div>
+    </div>
   </div>
 </template>
+
 
 <style scoped>
 .log-container {
@@ -172,7 +129,8 @@ defineExpose({
   flex-direction: column;
   background-color: #1e1e1e;
   color: #d4d4d4;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: "Consolas", "Monaco", "Courier New", monospace;
+  overflow-y: auto;
 }
 
 .log-header {
@@ -182,6 +140,9 @@ defineExpose({
   padding: 8px;
   background-color: #252526;
   border-bottom: 1px solid #333;
+  position: sticky;
+  top: 0;
+  z-index: 10; /* Ensures it stays above the logs */
 }
 
 .log-status {
@@ -199,7 +160,7 @@ defineExpose({
 }
 
 .status-indicator.active {
-  background-color: #4CAF50;
+  background-color: #4caf50;
 }
 
 .log-controls {
@@ -211,11 +172,11 @@ defineExpose({
   flex-grow: 1;
   margin: 0;
   padding: 8px;
-  overflow-y: auto;
   white-space: pre-wrap;
   word-wrap: break-word;
   font-size: 0.9em;
-  line-height: 1.4;
+  line-height: 1.8; /* Reduced line height */
+  font-size: small;
 }
 
 .logs.auto-scroll {
@@ -238,5 +199,11 @@ defineExpose({
 
 ::-webkit-scrollbar-thumb:hover {
   background: #4f4f4f;
+}
+
+.error-line {
+  background-color: rgba(255, 0, 0, 0.2); /* Light red background */
+  color: #ffcdd2; /* Light red text for better readability */
+  /* You can also add a border or other visual cues */
 }
 </style>

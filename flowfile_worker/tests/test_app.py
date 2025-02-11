@@ -44,10 +44,12 @@ def create_fuzzy_data() -> models.FuzzyJoinInput:
 
     # Serialize DataFrames
     left_serializable_object = models.PolarsOperation(
-        operation=base64.encodebytes(left_df.serialize())
+        operation=base64.encodebytes(left_df.serialize()),
+        flow_id=1
     )
     right_serializable_object = models.PolarsOperation(
-        operation=base64.encodebytes(right_df.serialize())
+        operation=base64.encodebytes(right_df.serialize()),
+        flow_id=1
     )
 
     # Return the FuzzyJoinInput
@@ -137,7 +139,7 @@ def test_polars_transformation():
 
 
 def test_create_func():
-    received_table = '{"id": null, "name": "cross-verified-database.csv", "path": "/Users/username/Downloads/cross-verified-database.csv", "directory": null, "analysis_file_available": false, "status": null, "file_type": "csv", "fields": [], "reference": "", "starting_from_line": 0, "delimiter": ",", "has_headers": true, "encoding": "ISO-8859-1", "parquet_ref": null, "row_delimiter": "", "quote_char": "", "infer_schema_length": 260000, "truncate_ragged_lines": false, "ignore_errors": false, "sheet_name": null, "start_row": 0, "start_column": 0, "end_row": 0, "end_column": 0, "type_inference": false}'
+    received_table = '{"id": null, "name": "cross-verified-database.csv", "path": "flowfile_core/tests/inputFile/Mall_Customers.csv", "directory": null, "analysis_file_available": false, "status": null, "file_type": "csv", "fields": [], "reference": "", "starting_from_line": 0, "delimiter": ",", "has_headers": true, "encoding": "ISO-8859-1", "parquet_ref": null, "row_delimiter": "", "quote_char": "", "infer_schema_length": 260000, "truncate_ragged_lines": false, "ignore_errors": false, "sheet_name": null, "start_row": 0, "start_column": 0, "end_row": 0, "end_column": 0, "type_inference": false}'
     file_type = 'csv'
 
     v = client.post(f'/create_table/{file_type}', data=received_table)
@@ -159,7 +161,7 @@ def test_create_func():
 def test_write_output_csv():
     data = {
         'operation': 'oWJJUqJndmVyc2lvbhggY2RzbKFtRGF0YUZyYW1lU2NhbqJiZGahZ2NvbHVtbnOBpGRuYW1lZG5h\nbWVoZGF0YXR5cGVmU3RyaW5nbGJpdF9zZXR0aW5ncwBmdmFsdWVzg2dlZHV3YXJkZmVkd2FyZGhj\nb3VydG5leWZzY2hlbWGhZmZpZWxkc6FkbmFtZWZTdHJpbmc=\n',
-        'data_type': 'csv', 'path': '/Users/username/FlowfileDesigner/backend/tests/data/output_csv.csv',
+        'data_type': 'csv', 'path': "flowfile_core/tests/inputFile/Mall_Customers.csv",
         'write_mode': 'overwrite', 'sheet_name': 'Sheet1', 'delimiter': ','}
     v = client.post('/write_results/', json=data)
     polars_script_write = models.PolarsScriptWrite(**data)
@@ -171,7 +173,7 @@ def test_write_output_csv():
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
     df = pl.read_csv(status.file_ref)
-    assert df.count() == 3, f'Expected 3 records, got {df.count()}'
+    assert df.count()[0, 0] == 3, f'Expected 3 records, got {df.count()[0, 0]}'
 
 
 def test_store_airbyte_result():

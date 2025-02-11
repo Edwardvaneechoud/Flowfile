@@ -1,61 +1,61 @@
 <template>
   <div class="status-wrapper">
-    <pop-over :content="tooltipContent" :title="isRunning ? 'Processing Flow' : 'Flow Idle'" placement="left">
+    <pop-over
+      :content="tooltipContent"
+      :title="isRunning ? 'Processing Flow' : 'Flow Idle'"
+      placement="left"
+    >
+      <div class="flow-card">
+        <svg viewBox="0 0 100 100" class="flow-animation" :class="{ 'is-flowing': isRunning }">
+          <!-- Gradient Definitions -->
+          <defs>
+            <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#4834d4" />
+              <stop offset="100%" stop-color="#686de0" />
+            </linearGradient>
+          </defs>
 
-    <div class="flow-card">
-      <svg viewBox="0 0 100 100" class="flow-animation" :class="{ 'is-flowing': isRunning }">
-        <!-- Gradient Definitions -->
-        <defs>
-          <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#4834d4" />
-            <stop offset="100%" stop-color="#686de0" />
-          </linearGradient>
-        </defs>
+          <!-- Background -->
+          <rect width="100" height="100" class="flow-container" />
 
-        <!-- Background -->
-        <rect width="100" height="100" class="flow-container" />
+          <!-- Thick Gradient Lines -->
+          <g class="flow-lines">
+            <path d="M-10 25 Q 25 45, 60 25 T 130 25" class="flow-line flow-line-1" />
+            <path d="M-10 50 Q 25 70, 60 50 T 130 50" class="flow-line flow-line-2" />
+            <path d="M-10 75 Q 25 95, 60 75 T 130 75" class="flow-line flow-line-3" />
+          </g>
 
-        <!-- Thick Gradient Lines -->
-        <g class="flow-lines">
-          <path d="M-10 25 Q 25 45, 60 25 T 130 25" class="flow-line flow-line-1" />
-          <path d="M-10 50 Q 25 70, 60 50 T 130 50" class="flow-line flow-line-2" />
-          <path d="M-10 75 Q 25 95, 60 75 T 130 75" class="flow-line flow-line-3" />
-        </g>
-
-        <!-- Flow Particles (only visible when running) -->
-        <g class="flow-elements">
-          <circle cx="20" cy="50" r="4" class="flow-particle particle-1" />
-          <circle cx="40" cy="50" r="4" class="flow-particle particle-2" />
-          <circle cx="60" cy="50" r="4" class="flow-particle particle-3" />
-        </g>
-      </svg>
-    </div>
-  </pop-over>
+          <!-- Flow Particles (only visible when running) -->
+          <g class="flow-elements">
+            <circle cx="20" cy="50" r="4" class="flow-particle particle-1" />
+            <circle cx="40" cy="50" r="4" class="flow-particle particle-2" />
+            <circle cx="60" cy="50" r="4" class="flow-particle particle-3" />
+          </g>
+        </svg>
+      </div>
+    </pop-over>
 
     <!-- Control Button -->
     <!-- Control Button with Glasses icon -->
     <pop-over content="Show or hide logs and status" placement="left">
-
-    <button
-      class="control-button"
-      :class="{ 'is-active': showFlowResult }"
-      :title="buttonText"
-      @click="toggleResults"
-
-    >
-      <el-icon v-if="!showFlowResult"><View /></el-icon>
-      <el-icon v-if="showFlowResult"><Minus /></el-icon>
-    </button>
-  </pop-over>
+      <button
+        class="control-button"
+        :class="{ 'is-active': showFlowResult }"
+        :title="buttonText"
+        @click="toggleResults"
+      >
+        <el-icon v-if="!showFlowResult"><View /></el-icon>
+        <el-icon v-if="showFlowResult"><Minus /></el-icon>
+      </button>
+    </pop-over>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
-import { View, Minus } from '@element-plus/icons-vue';
+import { View, Minus } from "@element-plus/icons-vue";
 import PopOver from "../editor/PopOver.vue";
-
 
 const nodeStore = useNodeStore();
 const lastStatusChange = ref(new Date());
@@ -71,32 +71,32 @@ const formattedTime = computed(() => {
   });
 });
 
-
 const popoverTitle = computed(() => {
-  return isRunning.value ? "Processing Flow" : "Flow Idle"; 
+  return isRunning.value ? "Processing Flow" : "Flow Idle";
 });
 
 const tooltipContent = computed(() => {
-    let content = `Last updated: ${formattedTime.value}<br>`;
-    // Get current run result for this flow if available
-    const currentRunResult = nodeStore.getRunResult(nodeStore.flow_id);
+  let content = `Last updated: ${formattedTime.value}<br>`;
+  // Get current run result for this flow if available
+  const currentRunResult = nodeStore.getRunResult(nodeStore.flow_id);
 
+  if (isRunning.value) {
+    content += "Currently processing data...";
+  } else {
+    content += "Flow is waiting to start.";
 
-    if (isRunning.value) {
-      content += "Currently processing data..."; 
-    } else {
-      content += "Flow is waiting to start.";
+    // Check if there are any run results for this flow
+    if (currentRunResult) {
+      const thisNodeResult = currentRunResult.node_step_result.find(
+        (result) => result.node_id === nodeStore.node_id,
+      );
 
-       // Check if there are any run results for this flow
-      if(currentRunResult) {  
-        const thisNodeResult = currentRunResult.node_step_result.find(result=> result.node_id === nodeStore.node_id);
-
-           if(thisNodeResult?.error){
-            content = `Last Error: ${thisNodeResult.error}<br>`; // existing error handling
-          } 
-        }
+      if (thisNodeResult?.error) {
+        content = `Last Error: ${thisNodeResult.error}<br>`; // existing error handling
+      }
     }
-    return content;
+  }
+  return content;
 });
 
 const buttonText = computed(() => (showFlowResult.value ? "Hide Results" : "Show Results"));

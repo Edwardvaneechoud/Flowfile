@@ -19,6 +19,13 @@ class FlowSettings(BaseModel):
     is_canceled: bool = False
 
 
+class RawLogInput(BaseModel):
+    flowfile_flow_id: int
+    log_message: str
+    log_type: Literal["INFO", "ERROR"]
+    extra: Optional[dict] = None
+
+
 class NodeTemplate(BaseModel):
     name: str
     item: str

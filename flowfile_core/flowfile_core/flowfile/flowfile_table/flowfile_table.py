@@ -729,7 +729,9 @@ class FlowfileTable:
         Returns:
             FlowfileTable: Self with cached data
         """
-        edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False)
+        edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False,
+                                flow_id=-1,
+                                node_id=-1)
         logger.info('Caching data in background')
         result = edf.get_result()
         if result:
@@ -854,7 +856,7 @@ class FlowfileTable:
 
     # Join Methods
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowfileTable", file_ref: str) -> "FlowfileTable":
+                      other: "FlowfileTable", file_ref: str, flow_id: int = -1, node_id: int | str = -1) -> "FlowfileTable":
         """
         Perform a fuzzy join with another DataFrame.
 
@@ -862,7 +864,8 @@ class FlowfileTable:
             fuzzy_match_input: Fuzzy matching parameters
             other: Right DataFrame for join
             file_ref: Reference for temporary files
-
+            flow_id: Flow ID for tracking
+            node_id: Node ID for tracking
         Returns:
             FlowfileTable: New instance with joined data
         """
@@ -870,7 +873,9 @@ class FlowfileTable:
                                                     fuzzy_match_input=fuzzy_match_input)
         f = ExternalFuzzyMatchFetcher(left_df, right_df, fuzzy_maps=fuzzy_match_input.fuzzy_maps,
                                       file_ref=file_ref + '_fm',
-                                      wait_on_completion=True)
+                                      wait_on_completion=True,
+                                      flow_id=flow_id,
+                                      node_id=node_id)
         return FlowfileTable(f.get_result())
 
     def fuzzy_match(self, right: "FlowfileTable", left_on: str, right_on: str,
@@ -1429,7 +1434,8 @@ class FlowfileTable:
         return self.get_number_of_records()
 
     @classmethod
-    def create_from_path_worker(cls, received_table: input_schema.ReceivedTable):
+    def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
         received_table.set_absolute_filepath()
-        external_fetcher = ExternalCreateFetcher(received_table, received_table.file_type)
+        external_fetcher = ExternalCreateFetcher(received_table=received_table,
+                                                 file_type=received_table.file_type, flow_id=flow_id, node_id=node_id)
         return cls(external_fetcher.get_result())
