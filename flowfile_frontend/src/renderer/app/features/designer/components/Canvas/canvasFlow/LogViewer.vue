@@ -31,7 +31,7 @@ watch(
   () => nodeStore.isRunning,
   (isRunning) => {
     isRunning ? startStreamingLogs() : stopStreamingLogs();
-  }
+  },
 );
 
 // Start & Stop Log Streaming
@@ -91,7 +91,10 @@ defineExpose({ startStreamingLogs, stopStreamingLogs, clearLogs, logs });
 // Computed property to split logs into lines and identify errors
 const logLines = ref<string[]>([]);
 watch(logs, (newLogs) => {
-  logLines.value = newLogs.split("\n").map(line => line.trim()).filter(line => line !== "");
+  logLines.value = newLogs
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
 });
 
 const isErrorLine = (line: string): boolean => {
@@ -114,13 +117,16 @@ const isErrorLine = (line: string): boolean => {
       </div>
     </div>
     <div class="logs" :class="{ 'auto-scroll': autoScroll }">
-      <div v-for="(line, index) in logLines" :key="index" :class="{ 'error-line': isErrorLine(line) }">
+      <div
+        v-for="(line, index) in logLines"
+        :key="index"
+        :class="{ 'error-line': isErrorLine(line) }"
+      >
         {{ line }}
       </div>
     </div>
   </div>
 </template>
-
 
 <style scoped>
 .log-container {
