@@ -150,87 +150,98 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     DOCKER_HOST: "unix:///var/run/docker.sock",
   };
 }
-
 export function startProcess(
   name: string,
   path: string,
   port: number,
   onData?: (data: string) => void,
-): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    const isWindows = platform() === "win32";
-    console.log(`Starting ${name} from ${path}`);
-
-    // Get the working directory (directory containing the executable)
-    const workingDirectory = path.endsWith(name)
-      ? join(path, "..") // New structure
-      : join(path, "../.."); // Legacy structure
-
-    const childProcess = spawn(path, [], {
-      env: getProcessEnv(), // Keep using the original getProcessEnv with all Docker settings
-      shell: isWindows ? true : "/bin/bash",
-      detached: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      cwd: workingDirectory, // Add this line for directory handling
-    });
-
-    if (!childProcess.pid) {
-      reject(new Error(`Failed to start ${name}`));
+): Promise<ChildProcess | null> {
+  // Changed return type to allow null
+  return new Promise((resolve) => {
+    // Changed to only resolve, since we'll handle errors
+    if (!path) {
+      console.log(`No path provided for ${name}, skipping process start`);
+      resolve(null);
       return;
     }
 
-    childProcess.stdout?.on("data", (data) => {
-      console.log(`[${name} stdout]: ${data}`);
-      onData?.(data.toString());
-    });
+    const isWindows = platform() === "win32";
+    console.log(`Starting ${name} from ${path}`);
 
-    childProcess.stderr?.on("data", (data) => {
-      console.error(`[${name} stderr]: ${data}`);
-    });
+    try {
+      const workingDirectory = path.endsWith(name) ? join(path, "..") : join(path, "../..");
 
-    childProcess.on("error", (error) => {
-      console.error(`${name} error:`, error);
-      reject(error);
-    });
+      const childProcess = spawn(path, [], {
+        env: getProcessEnv(),
+        shell: isWindows ? true : "/bin/bash",
+        detached: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: workingDirectory,
+      });
 
-    const checkService = async () => {
-      try {
-        await axios.get(`http://127.0.0.1:${port}/docs`);
-        console.log(`${name} is responsive on port ${port}`);
-        resolve(childProcess);
-      } catch (error) {
-        setTimeout(checkService, 1000);
+      if (!childProcess.pid) {
+        console.log(`Failed to start ${name}, continuing without it`);
+        resolve(null);
+        return;
       }
-    };
-    setTimeout(checkService, 1000);
+
+      childProcess.stdout?.on("data", (data) => {
+        console.log(`[${name} stdout]: ${data}`);
+        onData?.(data.toString());
+      });
+
+      childProcess.stderr?.on("data", (data) => {
+        console.error(`[${name} stderr]: ${data}`);
+      });
+
+      childProcess.on("error", (error) => {
+        console.error(`${name} error:`, error);
+        resolve(null);
+      });
+
+      const checkService = async () => {
+        try {
+          await axios.get(`http://127.0.0.1:${port}/docs`);
+          console.log(`${name} is responsive on port ${port}`);
+          resolve(childProcess);
+        } catch (error) {
+          setTimeout(checkService, 1000);
+        }
+      };
+      setTimeout(checkService, 1000);
+    } catch (error) {
+      console.log(`Error starting ${name}:`, error);
+      resolve(null);
+    }
   });
 }
 
 export async function startServices(retry = true): Promise<void> {
   try {
-    const corePromise = startProcess(
-      "flowfile_core",
-      getResourceServicePath("flowfile_core"),
-      CORE_PORT,
-      (data) => {
+    const corePath = getResourceServicePath("flowfile_core");
+    const workerPath = getResourceServicePath("flowfile_worker");
+
+    console.log(
+      `Starting services with paths - Core: ${corePath || "Not found"}, Worker: ${workerPath || "Not found"}`,
+    );
+
+    const [newCoreProcess, newWorkerProcess] = await Promise.all([
+      startProcess("flowfile_core", corePath, CORE_PORT, (data) => {
         if (data.includes("Core server started")) {
           console.log("Core process is ready");
         }
-      },
-    );
-
-    const workerPromise = startProcess(
-      "flowfile_worker",
-      getResourceServicePath("flowfile_worker"),
-      WORKER_PORT,
-      (data) => {
+      }),
+      startProcess("flowfile_worker", workerPath, WORKER_PORT, (data) => {
         if (data.includes("Server started")) {
           console.log("Worker process is ready");
         }
-      },
-    );
+      }),
+    ]);
 
-    [coreProcess, workerProcess] = await Promise.all([corePromise, workerPromise]);
+    coreProcess = newCoreProcess;
+    workerProcess = newWorkerProcess;
+
+    console.log("Service start attempts completed");
   } catch (error) {
     console.error("Error starting services:", error);
     if (retry) {
@@ -238,7 +249,6 @@ export async function startServices(retry = true): Promise<void> {
       await cleanupProcesses();
       return startServices(false);
     }
-    throw error;
   }
 }
 
