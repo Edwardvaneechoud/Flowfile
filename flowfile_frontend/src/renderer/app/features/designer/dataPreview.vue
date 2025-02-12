@@ -20,12 +20,11 @@ import { ref, onMounted, onUnmounted } from "vue";
 import { TableExample } from "./baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
 import { AgGridVue } from "@ag-grid-community/vue3";
-import "@ag-grid-community/styles/ag-grid.css";
-import "@ag-grid-community/styles/ag-theme-alpine.css";
-import "@ag-grid-community/styles/ag-theme-balham.css";
-import { GridApi } from "@ag-grid-community/core";
+import { GridApi, GridReadyEvent } from "@ag-grid-community/core";
 import { ModuleRegistry } from "@ag-grid-community/core";
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model";
+import "@ag-grid-community/styles/ag-grid.css";
+import "@ag-grid-community/styles/ag-theme-balham.css";
 
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -39,9 +38,20 @@ const dataAvailable = ref(false);
 const dataLength = ref(0);
 const columnLength = ref(0);
 const gridApi = ref<GridApi | null>(null);
+const columnDefs = ref([{}]);
+
+const defaultColDef = {
+  editable: true,
+  filter: true,
+  sortable: true,
+  resizable: true,
+};
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
+  if (gridApi.value) {
+    gridApi.value.sizeColumnsToFit();
+  }
 };
 
 interface Props {
@@ -63,14 +73,6 @@ const calculateGridHeight = () => {
 };
 
 let schema_dict: any = {};
-
-const defaultColDef = ref({
-  editable: true,
-  filter: true,
-  sortable: true,
-});
-
-const columnDefs = ref([{}]);
 
 async function downloadData(nodeId: number) {
   try {

@@ -1,20 +1,20 @@
+// src/renderer/app/router/index.ts
 import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
-import RouteViewComponent from "../layouts/RouterBypass.vue";
 
 const routes: Array<RouteRecordRaw> = [
   {
     path: "/",
-    redirect: "/main"  // Redirect directly to /main
+    redirect: "/main"
   },
   {
     path: "/main",
     component: AppLayout,
     children: [
       {
-        path: "",  // Empty path for default child
+        path: "",
         name: "main",
-        redirect: { name: "designer" }  // Explicitly redirect to designer
+        redirect: { name: "designer" }
       },
       {
         path: "designer",
@@ -29,7 +29,7 @@ const routes: Array<RouteRecordRaw> = [
       {
         name: "documentation",
         path: "documentation",
-        component: RouteViewComponent,
+        component: () => import("../pages/documentation.vue"),
       },
     ],
   },
