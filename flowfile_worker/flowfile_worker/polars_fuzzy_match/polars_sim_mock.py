@@ -1,5 +1,6 @@
 import polars as pl
 from typing import Optional, Union, List, Tuple, Any
+from flowfile_worker.utils import collect_lazy_frame
 
 
 class PolarsSim:
@@ -33,9 +34,9 @@ class PolarsSim:
             pl.DataFrame: Joined DataFrame
         """
         if isinstance(left, pl.LazyFrame):
-            left = left.collect()
+            left = collect_lazy_frame(left)
         if isinstance(right, pl.LazyFrame):
-            right = right.collect()
+            right = collect_lazy_frame(right)
 
         # Default to left_on if right_on not specified
         if right_on is None:

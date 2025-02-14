@@ -1,5 +1,6 @@
 import polars as pl
 from flowfile_worker.configs import logger
+from flowfile_worker.utils import collect_lazy_frame
 import os
 import uuid
 
@@ -29,7 +30,7 @@ def write_polars_frame(_df: pl.LazyFrame | pl.DataFrame, path: str,
             except Exception as e:
                 pass
         if is_lazy:
-            _df = _df.collect()
+            _df = collect_lazy_frame(_df)
     try:
         write_method = getattr(_df, 'write_ipc')
         write_method(path)

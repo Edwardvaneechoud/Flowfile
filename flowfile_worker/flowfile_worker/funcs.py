@@ -9,6 +9,7 @@ from base64 import encodebytes
 from logging import Logger
 import logging
 import os
+from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 
 
 # 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
@@ -41,7 +42,7 @@ def fuzzy_join_task(left_serializable_object: bytes, right_serializable_object: 
             progress.value = -1
         flowfile_logger.error(f'Error during fuzzy join operation: {str(e)}')
     lf = pl.scan_ipc(file_path)
-    number_of_records = lf.select(pl.len()).collect(streaming=True)[0, 0]
+    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f'Number of records after fuzzy match: {number_of_records}')
     queue.put(encodebytes(lf.serialize()))
 
@@ -50,7 +51,7 @@ def process_and_cache(polars_serializable_object: io.BytesIO, progress: Value, e
                       file_path: str, flowfile_logger: Logger) -> bytes:
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object)
-        lf.collect(streaming=True).write_ipc(file_path)
+        collect_lazy_frame(lf).write_ipc(file_path)
         flowfile_logger.info("Process operation completed successfully")
         with progress.get_lock():
             progress.value = 100
@@ -77,7 +78,7 @@ def store_sample(polars_serializable_object: bytes,
     flowfile_logger.info("Starting store sample operation")
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        lf.limit(sample_size).collect(streaming=True).write_ipc(file_path)
+        collect_lazy_frame(lf.limit(sample_size)).write_ipc(file_path)
         flowfile_logger.info("Store sample operation completed successfully")
         with progress.get_lock():
             progress.value = 100
@@ -98,7 +99,7 @@ def store(polars_serializable_object: bytes, progress: Value, error_message: Arr
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
     process_and_cache(polars_serializable_object_io, progress, error_message, file_path, flowfile_logger)
     lf = pl.scan_ipc(file_path)
-    number_of_records = lf.select(pl.len()).collect(streaming=True)[0, 0]
+    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f'Number of records processed: {number_of_records}')
     queue.put(encodebytes(lf.serialize()))
 
@@ -108,15 +109,11 @@ def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True, flowf
     schema_stats = [dict(column_name=k, pl_datatype=str(v), col_index=i) for i, (k, v) in
                     enumerate(schema.items())]
     flowfile_logger.info('Starting to calculate the number of records')
-    try:
-        n_records = df.select(pl.len()).collect(streaming=True)[0, 0]
-        streaming = True
-    except:
-        n_records = df.select(pl.len()).collect(streaming=False)[0, 0]
-        streaming = False
+    collected_streaming_info = collect_lazy_frame_and_get_streaming_info(df.select(pl.len()))
+    n_records = collected_streaming_info.df[0, 0]
     if n_records < 10_000:
         flowfile_logger.info('Collecting the whole dataset')
-        df = df.collect(streaming=True).lazy()
+        df = collect_lazy_frame(df).lazy()
     if optimize_memory and n_records > 1_000_000:
         df = df.head(1_000_000)
     null_cols = [col for col, data_type in schema.items() if data_type is pl.Null]
@@ -126,7 +123,9 @@ def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True, flowf
         else:
             df = df.drop(null_cols)
             pl_stats = df.describe()
-        n_unique_per_cols = list(df.select(pl.all().approx_n_unique()).collect(streaming=streaming).to_dicts()[0].values())
+        n_unique_per_cols = list(df.select(pl.all().approx_n_unique()).collect(
+            streaming=collected_streaming_info.streaming_collect_available).to_dicts()[0].values()
+                                 )
         stats_headers = pl_stats.drop_in_place('statistic').to_list()
         stats = {v['column_name']: v for v in pl_stats.transpose(include_header=True, header_name='column_name',
                                                                  column_names=stats_headers).to_dicts()}
@@ -175,7 +174,7 @@ def calculate_number_of_records(polars_serializable_object: bytes, progress: Val
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object_io)
-        n_records = lf.select(pl.len()).collect(streaming=True)[0, 0]
+        n_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
         queue.put(n_records)
         flowfile_logger.debug("Number of records calculation completed successfully")
         flowfile_logger.debug(f'n_records {n_records}')
@@ -241,12 +240,12 @@ def write_output(polars_serializable_object: bytes,
             write_method = getattr(df, 'sink_' + data_type)
         elif not is_lazy or not has_sink_method:
             if isinstance(df, pl.LazyFrame):
-                df = df.collect(streaming=True)
+                df = collect_lazy_frame(df)
             write_method = getattr(df, write_method_str)
         if write_method is not None:
             execute_write_method(write_method, path=path, data_type=data_type, sheet_name=sheet_name,
                                  delimiter=delimiter, write_mode=write_mode, flowfile_logger=flowfile_logger)
-            number_of_records_written = (df.select(pl.len()).collect(streaming=True)[0, 0]
+            number_of_records_written = (collect_lazy_frame(df.select(pl.len()))[0, 0]
                                          if isinstance(df, pl.LazyFrame) else df.height)
             flowfile_logger.info(f'Number of records written: {number_of_records_written}')
         else:
@@ -272,7 +271,7 @@ def generic_task(func: Callable,
     try:
         df = func(*args, **kwargs)
         if isinstance(df, pl.LazyFrame):
-            df.collect(streaming=True).write_ipc(file_path)
+            collect_lazy_frame(df).write_ipc(file_path)
         elif isinstance(df, pl.DataFrame):
             df.write_ipc(file_path)
         else:
@@ -289,6 +288,6 @@ def generic_task(func: Callable,
             progress.value = -1
 
     lf = pl.scan_ipc(file_path)
-    number_of_records = lf.select(pl.len()).collect(streaming=True)[0, 0]
+    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
     flowfile_logger.info(f'Number of records processed: {number_of_records}')
     queue.put(encodebytes(lf.serialize()))

@@ -34,12 +34,14 @@ class SingleExecutionFuture(Generic[T]):
 
     def cleanup(self) -> None:
         """Clean up resources by clearing the future and shutting down the executor."""
-        if self.future:
-            self.future = None
-        self.executor.shutdown(wait=False)
+        # if self.future:
+        #     self.future = None
+        self.executor.shutdown(wait=True)
 
     def __call__(self) -> Optional[T]:
         """Execute function if not running and return its result."""
+        if self.result_value:
+            return self.result_value
         if not self.future:
             self.start()
         else:

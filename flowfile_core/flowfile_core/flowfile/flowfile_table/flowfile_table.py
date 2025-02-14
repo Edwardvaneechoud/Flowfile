@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 # Third-party imports
 from loky import Future
 import polars as pl
+from polars.exceptions import PanicException
 from polars_grouper import graph_solver
 from polars_expr_transformer import simple_function_to_expr as to_expr
 from pyarrow.parquet import ParquetFile
@@ -316,8 +317,12 @@ class FlowfileTable:
         if n_records is None:
             self.collect_external()
             if self._streamable:
-                logger.info('Collecting data in streaming mode')
-                return self.data_frame.collect(streaming=True)
+                try:
+                    logger.info('Collecting data in streaming mode')
+                    return self.data_frame.collect(streaming=True)
+                except PanicException:
+                    self._streamable = False
+
             logger.info('Collecting data in non-streaming mode')
             return self.data_frame.collect()
 
