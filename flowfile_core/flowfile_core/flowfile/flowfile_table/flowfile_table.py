@@ -1113,7 +1113,7 @@ class FlowfileTable:
         self.number_of_records = 0
         self._lazy = True
 
-    def get_number_of_records(self, warn: bool = False) -> int:
+    def get_number_of_records(self, warn: bool = False, force_calculate: bool = False) -> int:
         """
         Get the total number of records in the DataFrame.
 
