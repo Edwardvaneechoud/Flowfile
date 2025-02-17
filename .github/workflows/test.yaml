@@ -1,0 +1,31 @@
+name: Run Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]  # Test on multiple Python versions
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi
+      - name: Run pytest for flowfile_worker
+        run: poetry run pytest flowfile_worker/tests
+      - name: Run pytest for flowfile_core
+        run: poetry run pytest flowfile_core/tests
