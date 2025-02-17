@@ -31,7 +31,7 @@ jobs:
           pip install https://github.com/Edwardvaneechoud/PyAirbyte/releases/download/v0.20.1.flowfile2/airbyte-0.0.0-py3-none-any.whl
       - name: Install Dependencies (excluding airbyte)
         run: |
-          poetry install --no-interaction --no-ansi --without airbyte
+          poetry install --no-interaction --no-ansi
       - name: Run pytest for flowfile_worker
         run: poetry run pytest flowfile_worker/tests
       - name: Run pytest for flowfile_core
