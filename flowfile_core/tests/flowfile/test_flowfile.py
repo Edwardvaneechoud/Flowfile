@@ -537,6 +537,7 @@ def test_polars_code():
     graph_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/polars_code.flowfile"))
     graph = handler.get_flow(graph_id)
     run_info = graph.run_graph()
+    handler.save_flow(graph_id, "flowfile_core/tests/support_files/flows/polars_code.flowfile")
     handle_run_info(run_info)
 
 
