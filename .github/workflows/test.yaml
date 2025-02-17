@@ -30,6 +30,6 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
       - name: Run pytest for flowfile_worker
-        run: pytest -s flowfile_worker/tests
+        run: poetry run pytest -s flowfile_worker/tests
       - name: Run pytest for flowfile_core
-        run: pytest -s flowfile_worker/tests
+        run: poetry run pytest -s flowfile_worker/tests
