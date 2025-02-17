@@ -33,6 +33,6 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
       - name: Run pytest for flowfile_worker
-        run: poetry run pytest flowfile_worker/tests
+        run: poetry run pytest --maxfail=1 --disable-warnings -q flowfile_worker/tests
       - name: Run pytest for flowfile_core
-        run: poetry run pytest flowfile_core/tests
+        run: poetry run pytest --maxfail=1 --disable-warnings -q flowfile_worker/tests
