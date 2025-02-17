@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 # Third-party imports
 from loky import Future
 import polars as pl
+from polars.exceptions import PanicException
 from polars_grouper import graph_solver
 from polars_expr_transformer import simple_function_to_expr as to_expr
 from pyarrow.parquet import ParquetFile
@@ -102,6 +103,10 @@ class FlowfileTable:
     _future: Future = None
     _number_of_records_callback: Callable = None
     _data_callback: Callable = None
+
+    # Tracking info
+    # node_id: int = None  # TODO: Implement node_id
+    # flow_id: int = None  # TODO: Implement flow_id
 
     def __init__(self,
                  raw_data: Union[List[Dict], List[Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame] = None,
@@ -312,8 +317,12 @@ class FlowfileTable:
         if n_records is None:
             self.collect_external()
             if self._streamable:
-                logger.info('Collecting data in streaming mode')
-                return self.data_frame.collect(streaming=True)
+                try:
+                    logger.info('Collecting data in streaming mode')
+                    return self.data_frame.collect(streaming=True)
+                except PanicException:
+                    self._streamable = False
+
             logger.info('Collecting data in non-streaming mode')
             return self.data_frame.collect()
 
@@ -729,7 +738,9 @@ class FlowfileTable:
         Returns:
             FlowfileTable: Self with cached data
         """
-        edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False)
+        edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False,
+                                flow_id=-1,
+                                node_id=-1)
         logger.info('Caching data in background')
         result = edf.get_result()
         if result:
@@ -854,7 +865,7 @@ class FlowfileTable:
 
     # Join Methods
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowfileTable", file_ref: str) -> "FlowfileTable":
+                      other: "FlowfileTable", file_ref: str, flow_id: int = -1, node_id: int | str = -1) -> "FlowfileTable":
         """
         Perform a fuzzy join with another DataFrame.
 
@@ -862,7 +873,8 @@ class FlowfileTable:
             fuzzy_match_input: Fuzzy matching parameters
             other: Right DataFrame for join
             file_ref: Reference for temporary files
-
+            flow_id: Flow ID for tracking
+            node_id: Node ID for tracking
         Returns:
             FlowfileTable: New instance with joined data
         """
@@ -870,7 +882,9 @@ class FlowfileTable:
                                                     fuzzy_match_input=fuzzy_match_input)
         f = ExternalFuzzyMatchFetcher(left_df, right_df, fuzzy_maps=fuzzy_match_input.fuzzy_maps,
                                       file_ref=file_ref + '_fm',
-                                      wait_on_completion=True)
+                                      wait_on_completion=True,
+                                      flow_id=flow_id,
+                                      node_id=node_id)
         return FlowfileTable(f.get_result())
 
     def fuzzy_match(self, right: "FlowfileTable", left_on: str, right_on: str,
@@ -1099,7 +1113,7 @@ class FlowfileTable:
         self.number_of_records = 0
         self._lazy = True
 
-    def get_number_of_records(self, warn: bool = False) -> int:
+    def get_number_of_records(self, warn: bool = False, force_calculate: bool = False) -> int:
         """
         Get the total number of records in the DataFrame.
 
@@ -1115,7 +1129,7 @@ class FlowfileTable:
         if self.is_future and not self.is_collected:
             return -1
 
-        if self.number_of_records is None or self.number_of_records < 0:
+        if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:
                 self._number_of_records_callback(self)
 
@@ -1305,13 +1319,14 @@ class FlowfileTable:
 
         return FlowfileTable(df, number_of_records=self.number_of_records)
 
-    # File Operations
-    def output(self, output_fs: input_schema.OutputSettings) -> "FlowfileTable":
+    def output(self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str) -> "FlowfileTable":
         """
         Write DataFrame to output file.
 
         Args:
             output_fs: Output settings
+            flow_id: Flow ID for tracking
+            node_id: Node ID for tracking
 
         Returns:
             FlowfileTable: Self for chaining
@@ -1320,10 +1335,12 @@ class FlowfileTable:
         status = utils.write_output(
             self.data_frame,
             data_type=output_fs.file_type,
-            path=output_fs.directory + os.sep + output_fs.name,
+            path=output_fs.abs_file_path,
             write_mode=output_fs.write_mode,
             sheet_name=output_fs.output_excel_table.sheet_name,
-            delimiter=output_fs.output_csv_table.delimiter
+            delimiter=output_fs.output_csv_table.delimiter,
+            flow_id=flow_id,
+            node_id=node_id
         )
         tracker = ExternalExecutorTracker(status)
         tracker.get_result()
@@ -1429,7 +1446,8 @@ class FlowfileTable:
         return self.get_number_of_records()
 
     @classmethod
-    def create_from_path_worker(cls, received_table: input_schema.ReceivedTable):
+    def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
         received_table.set_absolute_filepath()
-        external_fetcher = ExternalCreateFetcher(received_table, received_table.file_type)
+        external_fetcher = ExternalCreateFetcher(received_table=received_table,
+                                                 file_type=received_table.file_type, flow_id=flow_id, node_id=node_id)
         return cls(external_fetcher.get_result())

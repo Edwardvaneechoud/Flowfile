@@ -1,25 +1,34 @@
+# flowfile_core/flowfile_core/configs/__init__.py
 import logging
+import sys
+from pathlib import Path
 from flowfile_core.configs.key_vault import SimpleKeyVault
 
-# Create your custom logger
+# Create and configure the logger
 logger = logging.getLogger('PipelineHandler')
 logger.setLevel(logging.INFO)
-logger.propagate = False  # Add this line to prevent propagation
+logger.propagate = False
 
-# Create a handler that outputs to the console (or a file if needed)
-console_handler = logging.StreamHandler()
+# Create console handler with a specific format
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
 
-# Create a formatter and set it for the handler
+# Create formatter
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
 
-# Remove existing handlers if they were added by an external package
 if logger.hasHandlers():
     logger.handlers.clear()
-
-# Add the custom handler to your logger
 logger.addHandler(console_handler)
 
-# Example usage
+# Create logs directory in temp at startup
+try:
+    from tempfile import gettempdir
+    log_dir = Path(gettempdir()) / "flowfile_logs"
+    log_dir.mkdir(exist_ok=True)
+except Exception as e:
+    logger.warning(f"Failed to create logs directory: {e}")
+
+# Initialize vault
 vault = SimpleKeyVault()
-logger.info("Vault initialized")
+logger.info("Vault and logging system initialized")

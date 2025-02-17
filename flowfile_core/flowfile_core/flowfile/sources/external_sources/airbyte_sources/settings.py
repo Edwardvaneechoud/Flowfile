@@ -152,7 +152,7 @@ class AirbyteHandler:
         )
 
 
-def airbyte_settings_from_config(airbyte_config: AirbyteConfig) -> AirbyteSettings:
+def airbyte_settings_from_config(airbyte_config: AirbyteConfig, flow_id: int, node_id: int|str) -> AirbyteSettings:
     """Create AirbyteSettings from an AirbyteConfig."""
     if airbyte_config.config_mode == 'key_vault':
         connection = connection_manager.get_connection(
@@ -166,5 +166,7 @@ def airbyte_settings_from_config(airbyte_config: AirbyteConfig) -> AirbyteSettin
     return AirbyteSettings(
         source_name=airbyte_config.full_source_name,
         stream=airbyte_config.selected_stream,
-        config=config
+        config=config,
+        flowfile_flow_id=flow_id,
+        flowfile_node_id=node_id
     )

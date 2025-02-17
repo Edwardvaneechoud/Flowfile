@@ -28,7 +28,11 @@ def determine_insertion_order(node_storage: schemas.FlowInformation):
                                                                                    ingest_order_set)]
         if len(input_ids) > 0:
             for input_id in input_ids:
-                new_node = node_storage.data[input_id]
+                new_node = node_storage.data.get(input_id)
+                if new_node is None:
+                    ingest_order.append(current_node.id)
+                    ingest_order_set.add(current_node.id)
+                    continue
                 assure_output_id(new_node, current_node)
                 if new_node.id not in ingest_order_set:
                     determine_order(input_id)

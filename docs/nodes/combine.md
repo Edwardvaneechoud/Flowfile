@@ -18,7 +18,7 @@ The Join node combines two datasets based on matching keys, similar to SQL joins
 1. Connect two input datasets (left and right)
 2. Select join type
 3. Choose columns to join on
-4. Configure column name conflicts
+4. Configure which columns you want to 
 5. Preview joined data
 
 **Common Use Cases:**

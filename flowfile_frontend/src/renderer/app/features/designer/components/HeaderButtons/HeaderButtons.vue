@@ -21,7 +21,7 @@
       @click="modalVisibleForCreate = true"
       >Create</el-button
     >
-    <RunButton ref="runButton" :flow-id="1"></RunButton>
+    <run-button ref="runButton" :flow-id="1"></run-button>
     <div v-if="flowSettings" class="dropdown-container">
       <span>Execution Mode:</span>
       <el-select
@@ -109,7 +109,7 @@ const props = withDefaults(
     flowId: 1,
   },
 );
-const emit = defineEmits(["openFlow", "refreshFlow"]);
+const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);

@@ -4,10 +4,15 @@ from typing import List, Dict, Callable
 from multiprocessing import Array, Value, Queue
 from flowfile_worker.polars_fuzzy_match.matcher import fuzzy_match_dfs
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
+from flowfile_worker.flow_logger import get_worker_logger
 from base64 import encodebytes
+from logging import Logger
 import logging
 import os
+from flowfile_worker.utils import collect_lazy_frame, collect_lazy_frame_and_get_streaming_info
 
+
+# 'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
 
 logging.basicConfig(format='%(asctime)s: %(message)s')
 logger = logging.getLogger('Spawner')
@@ -17,12 +22,15 @@ logger.setLevel(logging.INFO)
 def fuzzy_join_task(left_serializable_object: bytes, right_serializable_object: bytes,
                     fuzzy_maps: List[FuzzyMapping], error_message: Array, file_path: str,
                     progress: Value,
-                    queue: Queue
+                    queue: Queue, flowfile_flow_id: int, flowfile_node_id: int | str,
                     ):
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
     try:
+        flowfile_logger.info("Starting fuzzy join operation")
         left_df = pl.LazyFrame.deserialize(io.BytesIO(left_serializable_object))
         right_df = pl.LazyFrame.deserialize(io.BytesIO(right_serializable_object))
-        fuzzy_match_result = fuzzy_match_dfs(left_df, right_df, fuzzy_maps)
+        fuzzy_match_result = fuzzy_match_dfs(left_df, right_df, fuzzy_maps, flowfile_logger)
+        flowfile_logger.info("Fuzzy join operation completed successfully")
         fuzzy_match_result.write_ipc(file_path)
         with progress.get_lock():
             progress.value = 100
@@ -32,19 +40,24 @@ def fuzzy_join_task(left_serializable_object: bytes, right_serializable_object: 
             error_message[:len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1
+        flowfile_logger.error(f'Error during fuzzy join operation: {str(e)}')
     lf = pl.scan_ipc(file_path)
+    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+    flowfile_logger.info(f'Number of records after fuzzy match: {number_of_records}')
     queue.put(encodebytes(lf.serialize()))
 
 
 def process_and_cache(polars_serializable_object: io.BytesIO, progress: Value, error_message: Array,
-                      file_path: str) -> bytes:
+                      file_path: str, flowfile_logger: Logger) -> bytes:
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object)
-        lf.collect(streaming=True).write_ipc(file_path)
+        collect_lazy_frame(lf).write_ipc(file_path)
+        flowfile_logger.info("Process operation completed successfully")
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
         error_msg = str(e).encode()[:1024]  # Limit error message length
+        flowfile_logger.error(f'Error during process and cache operation: {str(e)}')
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
         with progress.get_lock():
@@ -57,13 +70,20 @@ def store_sample(polars_serializable_object: bytes,
                  error_message: Array,
                  queue: Queue,
                  file_path: str,
-                 sample_size: int):
+                 sample_size: int,
+                 flowfile_flow_id: int,
+                 flowfile_node_id: int | str
+                 ):
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info("Starting store sample operation")
     try:
         lf = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
-        lf.limit(sample_size).collect(streaming=True).write_ipc(file_path)
+        collect_lazy_frame(lf.limit(sample_size)).write_ipc(file_path)
+        flowfile_logger.info("Store sample operation completed successfully")
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
+        flowfile_logger.error(f'Error during store sample operation: {str(e)}')
         error_msg = str(e).encode()[:1024]  # Limit error message length
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
@@ -72,27 +92,30 @@ def store_sample(polars_serializable_object: bytes,
         return error_msg
 
 
-def store(polars_serializable_object: bytes, progress: Value, error_message: Array, queue: Queue,  file_path: str):
+def store(polars_serializable_object: bytes, progress: Value, error_message: Array, queue: Queue,  file_path: str,
+          flowfile_flow_id: int, flowfile_node_id: int | str):
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info("Starting store operation")
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
-    process_and_cache(polars_serializable_object_io, progress, error_message, file_path)
+    process_and_cache(polars_serializable_object_io, progress, error_message, file_path, flowfile_logger)
     lf = pl.scan_ipc(file_path)
+    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+    flowfile_logger.info(f'Number of records processed: {number_of_records}')
     queue.put(encodebytes(lf.serialize()))
 
 
-def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True) -> List[Dict]:
+def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True, flowfile_logger: Logger = None) -> List[Dict]:
+    if flowfile_logger is None:
+        raise ValueError('flowfile_logger is required')
     schema = df.collect_schema()
     schema_stats = [dict(column_name=k, pl_datatype=str(v), col_index=i) for i, (k, v) in
                     enumerate(schema.items())]
-    print('Starting to calculate the number of records')
-    try:
-        n_records = df.select(pl.len()).collect(streaming=True)[0, 0]
-        streaming = True
-    except:
-        n_records = df.select(pl.len()).collect(streaming=False)[0, 0]
-        streaming = False
+    flowfile_logger.info('Starting to calculate the number of records')
+    collected_streaming_info = collect_lazy_frame_and_get_streaming_info(df.select(pl.len()))
+    n_records = collected_streaming_info.df[0, 0]
     if n_records < 10_000:
-        print('Collecting the whole dataset')
-        df = df.collect(streaming=True).lazy()
+        flowfile_logger.info('Collecting the whole dataset')
+        df = collect_lazy_frame(df).lazy()
     if optimize_memory and n_records > 1_000_000:
         df = df.head(1_000_000)
     null_cols = [col for col, data_type in schema.items() if data_type is pl.Null]
@@ -102,7 +125,9 @@ def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True) -> Li
         else:
             df = df.drop(null_cols)
             pl_stats = df.describe()
-        n_unique_per_cols = list(df.select(pl.all().approx_n_unique()).collect(streaming=streaming).to_dicts()[0].values())
+        n_unique_per_cols = list(df.select(pl.all().approx_n_unique()).collect(
+            streaming=collected_streaming_info.streaming_collect_available).to_dicts()[0].values()
+                                 )
         stats_headers = pl_stats.drop_in_place('statistic').to_list()
         stats = {v['column_name']: v for v in pl_stats.transpose(include_header=True, header_name='column_name',
                                                                  column_names=stats_headers).to_dicts()}
@@ -122,33 +147,43 @@ def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True) -> Li
     return schema_stats
 
 
-def calculate_schema(polars_serializable_object: bytes, progress: Value, error_message: Array, queue: Queue, *args, **kwargs):
+def calculate_schema(polars_serializable_object: bytes, progress: Value, error_message: Array, queue: Queue,
+                     flowfile_flow_id: int, flowfile_node_id: int | str, *args, **kwargs):
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info("Starting schema calculation")
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object_io)
-        schema_stats = calculate_schema_logic(lf)
-        print('schema_stats', schema_stats)
+        schema_stats = calculate_schema_logic(lf, flowfile_logger=flowfile_logger)
+        flowfile_logger.info('schema_stats', schema_stats)
         queue.put(schema_stats)
+        flowfile_logger.info("Schema calculation completed successfully")
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
         error_msg = str(e).encode()[:256]  # Limit error message length
-        print('error', e)
+        flowfile_logger.error('error', e)
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
         with progress.get_lock():
             progress.value = -1  # Indicate error
 
 
-def calculate_number_of_records(polars_serializable_object: bytes, progress: Value, error_message: Array, queue: Queue, *args, **kwargs):
+def calculate_number_of_records(polars_serializable_object: bytes, progress: Value, error_message: Array,
+                                queue: Queue, flowfile_flow_id: int, *args, **kwargs):
+    flowfile_logger = get_worker_logger(flowfile_flow_id, -1)
+    flowfile_logger.info("Starting number of records calculation")
     polars_serializable_object_io = io.BytesIO(polars_serializable_object)
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object_io)
-        n_records = lf.select(pl.len()).collect(streaming=True)[0, 0]
+        n_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
         queue.put(n_records)
+        flowfile_logger.debug("Number of records calculation completed successfully")
+        flowfile_logger.debug(f'n_records {n_records}')
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
+        flowfile_logger.error('error', e)
         error_msg = str(e).encode()[:256]  # Limit error message length
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
@@ -159,8 +194,8 @@ def calculate_number_of_records(polars_serializable_object: bytes, progress: Val
 
 def execute_write_method(write_method: Callable, path: str, data_type: str = None, sheet_name: str = None,
                          delimiter: str = None,
-                         write_mode: str = 'create'):
-    print('executing write method')
+                         write_mode: str = 'create', flowfile_logger: Logger = None):
+    flowfile_logger.info('executing write method')
     if data_type == 'excel':
         logger.info('Writing as excel file')
         write_method(path, worksheet=sheet_name)
@@ -179,15 +214,23 @@ def execute_write_method(write_method: Callable, path: str, data_type: str = Non
 def write_output(polars_serializable_object: bytes,
                  progress: Value,
                  error_message: Array,
-                 q: Queue,
-                 file_ref: str,
+                 queue: Queue,
+                 file_path: str,
                  data_type: str,
                  path: str,
                  write_mode: str,
                  sheet_name: str = None,
-                 delimiter: str = None):
+                 delimiter: str = None,
+                 flowfile_flow_id: int = -1,
+                 flowfile_node_id: int | str = -1
+                 ):
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting write operation to: {path}")
     try:
         df = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+        if isinstance(df, pl.LazyFrame):
+            flowfile_logger.info(f'Execution plan explanation:\n{df.explain(format="plain")}')
+        flowfile_logger.info("Successfully deserialized dataframe")
         is_lazy = False
         sink_method_str = 'sink_'+data_type
         write_method_str = 'write_'+data_type
@@ -199,16 +242,20 @@ def write_output(polars_serializable_object: bytes,
             write_method = getattr(df, 'sink_' + data_type)
         elif not is_lazy or not has_sink_method:
             if isinstance(df, pl.LazyFrame):
-                df = df.collect(streaming=True)
+                df = collect_lazy_frame(df)
             write_method = getattr(df, write_method_str)
         if write_method is not None:
             execute_write_method(write_method, path=path, data_type=data_type, sheet_name=sheet_name,
-                                 delimiter=delimiter, write_mode=write_mode)
+                                 delimiter=delimiter, write_mode=write_mode, flowfile_logger=flowfile_logger)
+            number_of_records_written = (collect_lazy_frame(df.select(pl.len()))[0, 0]
+                                         if isinstance(df, pl.LazyFrame) else df.height)
+            flowfile_logger.info(f'Number of records written: {number_of_records_written}')
         else:
             raise Exception('Write method not found')
         with progress.get_lock():
             progress.value = 100
     except Exception as e:
+        logger.info(f'Error during write operation: {str(e)}')
         error_message[:len(str(e))] = str(e).encode()
 
 
@@ -217,20 +264,25 @@ def generic_task(func: Callable,
                  error_message: Array,
                  queue: Queue,
                  file_path: str,
+                 flowfile_flow_id: int,
+                 flowfile_node_id: int | str,
                  *args, **kwargs):
+    print(kwargs)
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info("Starting generic task")
     try:
         df = func(*args, **kwargs)
         if isinstance(df, pl.LazyFrame):
-            df.collect(streaming=True).write_ipc(file_path)
+            collect_lazy_frame(df).write_ipc(file_path)
         elif isinstance(df, pl.DataFrame):
             df.write_ipc(file_path)
         else:
             raise Exception('Returned object is not a DataFrame or LazyFrame')
         with progress.get_lock():
             progress.value = 100
-        logger.info("Task completed successfully")
+        flowfile_logger.info("Task completed successfully")
     except Exception as e:
-        logger.error(f'Error during task execution: {str(e)}')
+        flowfile_logger.error(f'Error during task execution: {str(e)}')
         error_msg = str(e).encode()[:1024]
         with error_message.get_lock():
             error_message[:len(error_msg)] = error_msg
@@ -238,4 +290,6 @@ def generic_task(func: Callable,
             progress.value = -1
 
     lf = pl.scan_ipc(file_path)
+    number_of_records = collect_lazy_frame(lf.select(pl.len()))[0, 0]
+    flowfile_logger.info(f'Number of records processed: {number_of_records}')
     queue.put(encodebytes(lf.serialize()))

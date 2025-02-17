@@ -1,0 +1,229 @@
+{
+    "flowfile_worker": {
+        "flowfile_worker": {
+            "configs.py": null,
+            "models.py": null,
+            "external_sources": {
+                "__init__.py": null,
+                "airbyte_sources": {
+                    "models.py": null,
+                    "cache_manager.py": null,
+                    "__init__.py": null,
+                    "settings.py": null,
+                    "main.py": null
+                }
+            },
+            "__init__.py": null,
+            "polars_fuzzy_match": {
+                "matcher.py": null,
+                "models.py": null,
+                "polars_sim_mock.py": null,
+                "__init__.py": null,
+                "utils.py": null,
+                "process.py": null
+            },
+            "funcs.py": null,
+            "spawner.py": null,
+            "process_manager.py": null,
+            "main.py": null,
+            "create": {
+                "models.py": null,
+                "__init__.py": null,
+                "read_excel_tables.py": null,
+                "funcs.py": null,
+                "utils.py": null,
+                "pl_types.py": null
+            },
+            "routes.py": null
+        },
+        "requirements.txt": null,
+        "Dockerfile": null,
+        "tests": {
+            "__init__.py": null,
+            "test_app.py": null
+        },
+        "README.md": null
+    },
+    "shared_data": {},
+    "build_backends": {},
+    "saved_flows": {},
+    "flowfile_core": {
+        ".DS_Store": null,
+        "requirements.txt": null,
+        "Dockerfile": null,
+        "tests": {
+            "support_files": {
+                ".DS_Store": null,
+                "data": {
+                    "fake_data.csv": null,
+                    ".DS_Store": null,
+                    "excel_file.xlsx": null,
+                    "fake_data.xlsx": null,
+                    "output_xlsx.xlsx": null,
+                    "output_csv.csv": null
+                },
+                "flows": {
+                    "airbyte_example.flowfile": null
+                }
+            },
+            "test_endpoints.py": null,
+            "__init__.py": null,
+            "flowfile": {
+                "test_flowfile.py": null,
+                "external_sources": {
+                    "test_airbyte.py": null
+                },
+                "__init__.py": null,
+                "flowfile_table": {
+                    "test_read_excel_tables.py": null,
+                    "__init__.py": null,
+                    "test_flowfilePolars.py": null
+                }
+            },
+            "sandbox": {
+                "__init__.py": null,
+                "ideas.py": null
+            },
+            "inputFile": {
+                "Mall_Customers.csv": null
+            }
+        },
+        "flowfile_core": {
+            "database": {},
+            "__init__.py": null,
+            "saved_flows": {
+                "cross_join_test.flowfile": null,
+                "external_test.flowfile": null,
+                "Test number of records.flowfile": null,
+                ".DS_Store": null,
+                "test_error_change_excel_file.flowfile": null,
+                "test_string_similarity.flowfile": null,
+                "graph_solver.flowfile": null,
+                "mega_test.flowfile": null,
+                "new.flowfile": null,
+                "1.flowfile": null,
+                "test_external.flowfile": null,
+                "Full_frontend_test.flowfile": null,
+                "full_test.flowfile": null,
+                "test.flowfile": null,
+                "full_test_flow.flowfile": null,
+                "edward.flowfile": null,
+                "sample_data_inflow_churn.flowfile": null,
+                "full_test_completed.flowfile": null,
+                "test_grouped_record_id.flowfile": null
+            },
+            "utils": {
+                "excel_file_manager.py": null,
+                "__init__.py": null,
+                "arrow_reader.py": null,
+                "utils.py": null,
+                "fileManager.py": null,
+                "fl_executor.py": null
+            },
+            "schemas": {
+                "models.py": null,
+                "external_sources": {
+                    "__init__.py": null,
+                    "airbyte_schemas.py": null
+                },
+                "output_model.py": null,
+                "analysis_schemas": {
+                    "graphic_walker_schemas.py": null,
+                    "__init__.py": null
+                },
+                "__init__.py": null,
+                "schemas.py": null,
+                "transform_schema.py": null,
+                "defaults.py": null,
+                "input_schema.py": null
+            },
+            "flowfile": {
+                "handler.py": null,
+                "util": {
+                    "__init__.py": null,
+                    "execution_orderer.py": null
+                },
+                "node_step": {
+                    "node_step.py": null,
+                    "schema_callback.py": null,
+                    "models.py": null,
+                    "__init__.py": null
+                },
+                "__init__.py": null,
+                "FlowfileFlow.py": null,
+                "extensions.py": null,
+                "flowfile_table": {
+                    "threaded_processes.py": null,
+                    "polars_code_parser.py": null,
+                    "subprocess_operations": {},
+                    "join": {},
+                    "__init__.py": null,
+                    "types.py": null,
+                    "pivot_table.py": null,
+                    "read_excel_tables.py": null,
+                    "flowfile_table.py": null,
+                    "sample_data.py": null,
+                    "utils.py": null,
+                    "fuzzy_matching": {},
+                    "create": {},
+                    "flow_file_column": {}
+                },
+                "_extensions": {
+                    "__init__.py": null,
+                    "real_time_interface.py": null
+                },
+                "setting_generator": {
+                    "__init__.py": null,
+                    "setting_generator.py": null,
+                    "settings.py": null
+                },
+                "utils.py": null,
+                "connection_manager": {
+                    "models.py": null,
+                    "_connection_manager.py": null,
+                    "__init__.py": null
+                },
+                "sources": {
+                    "external_sources": {},
+                    "__init__.py": null
+                },
+                "manage": {
+                    "manage_flowfile.py": null,
+                    "open_flowfile.py": null,
+                    "__init__.py": null,
+                    "compatibility_enhancements.py": null
+                },
+                "analytics": {
+                    "graphic_walker.py": null,
+                    "__init__.py": null,
+                    "schemas": {},
+                    "utils.py": null,
+                    "main.py": null
+                }
+            },
+            "fileExplorer": {
+                "__init__.py": null,
+                "funcs.py": null,
+                "utils.py": null
+            },
+            "configs": {
+                "node_store": {
+                    "__init__.py": null,
+                    "nodes.py": null
+                },
+                "flow_logger.py": null,
+                "__init__.py": null,
+                "key_vault.py": null,
+                "settings.py": null
+            },
+            "main.py": null,
+            "routes.py": null
+        },
+        "README.md": null,
+        ".env": null
+    },
+    "docs": {},
+    "flowfile_frontend": {},
+    ".cache": {},
+    "services_dist": {}
+}

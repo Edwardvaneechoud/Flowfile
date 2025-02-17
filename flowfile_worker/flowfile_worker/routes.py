@@ -13,6 +13,7 @@ from flowfile_worker.configs import logger
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 from flowfile_worker.external_sources.airbyte_sources.main import read_airbyte_source
 
+
 router = APIRouter()
 
 
@@ -31,14 +32,25 @@ def submit_query(polars_script: models.PolarsScript, background_tasks: Backgroun
         status_dict[polars_script.task_id] = status
         background_tasks.add_task(start_process, polars_serializable_object=polars_serializable_object,
                                   task_id=polars_script.task_id, operation=polars_script.operation_type,
-                                  file_ref=file_path,
-                                  args=())
+                                  file_ref=file_path, flowfile_flow_id=polars_script.flowfile_flow_id,
+                                  flowfile_node_id=polars_script.flowfile_node_id,
+                                  kwargs={}
+                                  )
         logger.info(f"Started background task: {polars_script.task_id}")
         return status
 
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class BackgroundTaskSample:
+
+
+    def add_task(self, func, **kwargs):
+        return func(**kwargs)
+
+
 
 
 @router.post('/store_sample/')
@@ -57,8 +69,9 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
 
         background_tasks.add_task(start_process, polars_serializable_object=polars_serializable_object,
                                   task_id=polars_script.task_id, operation=polars_script.operation_type,
-                                  file_ref=file_path,
-                                  args=(polars_script.sample_size,))
+                                  file_ref=file_path, flowfile_flow_id=polars_script.flowfile_flow_id,
+                                  flowfile_node_id=polars_script.flowfile_node_id,
+                                  kwargs={'sample_size': polars_script.sample_size})
         logger.info(f"Started sample storage task: {polars_script.task_id}")
 
         return status
@@ -81,7 +94,6 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         models.Status: Status object tracking the write operation
     """
     logger.info(f"Starting write operation to: {polars_script_write.path}")
-
     try:
         task_id = str(uuid.uuid4())
         file_path = polars_script_write.path
@@ -90,11 +102,19 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
                                result_type=result_type)
         status_dict[task_id] = status
-        background_tasks.add_task(start_process, polars_serializable_object, task_id, "write_output",
+        background_tasks.add_task(start_process,
+                                  polars_serializable_object=polars_serializable_object, task_id=task_id,
+                                  operation="write_output",
                                   file_ref=file_path,
-                                  args=(polars_script_write.data_type, polars_script_write.path,
-                                        polars_script_write.write_mode,
-                                        polars_script_write.sheet_name, polars_script_write.delimiter))
+                                  flowfile_flow_id=polars_script_write.flowfile_flow_id,
+                                  flowfile_node_id=polars_script_write.flowfile_node_id,
+                                  kwargs=dict(
+                                      data_type=polars_script_write.data_type,
+                                      path=polars_script_write.path,
+                                      write_mode=polars_script_write.write_mode,
+                                      sheet_name=polars_script_write.sheet_name,
+                                      delimiter=polars_script_write.delimiter)
+                                  )
         logger.info(f"Started write task: {task_id} with type: {polars_script_write.data_type}")
 
         return status
@@ -116,7 +136,7 @@ def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: Ba
     Returns:
         models.Status: Status object tracking the Airbyte source operation
     """
-    logger.info(f"Processing Airbyte source operation")
+    logger.info("Processing Airbyte source operation")
 
     try:
         task_id = str(uuid.uuid4())
@@ -125,7 +145,9 @@ def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: Ba
                                result_type="polars")
         status_dict[task_id] = status
         background_tasks.add_task(start_generic_process, func_ref=read_airbyte_source, file_ref=file_path,
-                                  task_id=task_id, args=(airbyte_settings,))
+                                  flowfile_flow_id=airbyte_settings.flowfile_flow_id,
+                                  flowfile_node_id=airbyte_settings.flowfile_node_id,
+                                  task_id=task_id, kwargs=dict(airbyte_settings=airbyte_settings))
         logger.info(f"Started Airbyte source task: {task_id}")
 
         return status
@@ -136,7 +158,8 @@ def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: Ba
 
 
 @router.post('/create_table/{file_type}')
-def create_table(file_type: FileType, received_table: Dict, background_tasks: BackgroundTasks) -> models.Status:
+def create_table(file_type: FileType, received_table: Dict, background_tasks: BackgroundTasks,
+                 flowfile_flow_id: int = 1, flowfile_node_id: int | str = -1) -> models.Status:
     """
     Create a Polars table from received dictionary data based on specified file type.
 
@@ -144,6 +167,8 @@ def create_table(file_type: FileType, received_table: Dict, background_tasks: Ba
         file_type (FileType): Type of file/format for table creation
         received_table (Dict): Raw table data as dictionary
         background_tasks (BackgroundTasks): FastAPI background tasks handler
+        flowfile_flow_id: Flowfile ID
+        flowfile_node_id: Node ID
 
     Returns:
         models.Status: Status object tracking the table creation
@@ -152,15 +177,17 @@ def create_table(file_type: FileType, received_table: Dict, background_tasks: Ba
 
     try:
         task_id = str(uuid.uuid4())
-        file_path = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
+        file_ref = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
 
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_ref,
                                result_type="polars")
         status_dict[task_id] = status
-        table_creator_func = table_creator_factory_method(file_type)
+        func_ref = table_creator_factory_method(file_type)
         received_table_parsed = received_table_parser(received_table, file_type)
-        background_tasks.add_task(start_generic_process, func_ref=table_creator_func, file_ref=file_path,
-                                  task_id=task_id, args=(received_table_parsed,))
+        background_tasks.add_task(start_generic_process, func_ref=func_ref, file_ref=file_ref,
+                                  task_id=task_id, kwargs={'received_table': received_table_parsed},
+                                  flowfile_flow_id=flowfile_flow_id,
+                                  flowfile_node_id=flowfile_node_id)
         logger.info(f"Started table creation task: {task_id}")
 
         return status
@@ -284,7 +311,7 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
     Raises:
         HTTPException: If error occurs during setup
     """
-    logger.info(f"Starting fuzzy join operation")
+    logger.info("Starting fuzzy join operation")
     try:
         polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
         polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else CACHE_DIR.name
@@ -299,7 +326,9 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
                                   right_serializable_object=right_serializable_object,
                                   file_ref=file_path,
                                   fuzzy_maps=polars_script.fuzzy_maps,
-                                  task_id=polars_script.task_id)
+                                  task_id=polars_script.task_id,
+                                  flowfile_flow_id=polars_script.flowfile_flow_id,
+                                  flowfile_node_id=polars_script.flowfile_node_id)
         logger.info(f"Started fuzzy join task: {polars_script.task_id}")
         return status
     except Exception as e:

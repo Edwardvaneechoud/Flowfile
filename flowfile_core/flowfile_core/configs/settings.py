@@ -1,5 +1,7 @@
+#flowfile_core/flowfile_core/configs/settings.py
 import platform
 import os
+import tempfile
 
 from databases import DatabaseURL
 from passlib.context import CryptContext
@@ -7,10 +9,19 @@ from starlette.config import Config
 from starlette.datastructures import Secret
 
 
+def get_temp_dir() -> str:
+    """Get the appropriate temp directory path based on environment"""
+    # Check for Docker environment variable first
+    docker_temp = os.getenv('TEMP_DIR')
+    if docker_temp:
+        return docker_temp
+
+    return tempfile.gettempdir()
+
+
 def get_default_worker_url():
     # Check for Docker environment first
     worker_host = os.getenv('WORKER_HOST', None)
-    print('worker host', worker_host)
     if worker_host:
         return f"http://{worker_host}:63579"
 
@@ -37,6 +48,7 @@ FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("WORKER_URL", cast=str, default=get_default_worker_url())
 IS_RUNNING_IN_DOCKER = os.getenv('RUNNING_IN_DOCKER', 'false').lower() == 'true'
+TEMP_DIR = get_temp_dir()
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120

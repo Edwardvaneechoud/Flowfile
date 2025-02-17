@@ -1,10 +1,11 @@
-import polars as pl
+
 from typing import List, Union, Callable, Any, Optional, Generator
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
@@ -406,10 +407,11 @@ class NodeStep:
         if results_exists(self.hash):
             logger.warning('Not implemented')
 
-    def needs_run(self, performance_mode: bool) -> bool:
+    def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None) -> bool:
+        flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run:
-            logger.info('Node has not run, needs to run')
+            flow_logger.info('Node has not run, needs to run')
             return True
         if self.node_settings.cache_results and cache_result_exists:
 
@@ -424,12 +426,12 @@ class NodeStep:
     def __call__(self, *args, **kwargs):
         self.execute_node(*args, **kwargs)
 
-    def execute_local(self, performance_mode: bool = False):
+    def execute_local(self, flow_id: int, performance_mode: bool = False):
         try:
             resulting_data = self.get_resulting_data()
             if not performance_mode:
                 external_sampler = ExternalSampler(lf=resulting_data.data_frame, file_ref=self.hash,
-                                                   wait_on_completion=True)
+                                                   wait_on_completion=True, node_id=self.node_id, flow_id=flow_id)
                 self.store_example_data_generator(external_sampler)
                 if self.results.errors is None and not self.node_stats.is_canceled:
                     self.node_stats.has_run = True
@@ -447,14 +449,17 @@ class NodeStep:
                 if not self.node_settings.streamable:
                     step.node_settings.streamable = self.node_settings.streamable
 
-    def execute_remote(self, performance_mode: bool = False):
+    def execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
+        # flow_logger = logger if flow_logger is None else flow_logger
+        if node_logger is None:
+            raise Exception('Node logger is not defined')
         if self.node_settings.cache_results and results_exists(self.hash):
             try:
                 self.results.resulting_data = get_external_df_result(self.hash)
                 self._cache_progress = None
                 return
             except Exception as e:
-                logger.warning('Failed to read the cache, rerunning the code')
+                node_logger.warning('Failed to read the cache, rerunning the code')
         if self.node_type == 'output':
             self.results.resulting_data = self.get_resulting_data()
             self.node_stats.has_run = True
@@ -466,19 +471,22 @@ class NodeStep:
             raise e
         if not performance_mode:
             external_df_fetcher = ExternalDfFetcher(lf=self.get_resulting_data().data_frame,
-                                                    file_ref=self.hash, wait_on_completion=False)
+                                                    file_ref=self.hash, wait_on_completion=False,
+                                                    flow_id=node_logger.flow_id,
+                                                    node_id=self.node_id)
             self._fetch_cached_df = external_df_fetcher
             try:
                 lf = external_df_fetcher.get_result()
                 self.results.resulting_data = FlowfileTable(
-                    lf, number_of_records=ExternalDfFetcher(lf, operation_type='calculate_number_of_records').result
+                    lf, number_of_records=ExternalDfFetcher(lf=lf, operation_type='calculate_number_of_records',
+                                                            flow_id=node_logger.flow_id, node_id=self.node_id).result
                 )
                 if not performance_mode:
                     self.store_example_data_generator(external_df_fetcher)
                     self.node_stats.has_run = True
 
             except Exception as e:
-                logger.error('Error with external process')
+                node_logger.error('Error with external process')
                 if external_df_fetcher.error_code == -1:
                     try:
                         self.results.resulting_data = self.get_resulting_data()
@@ -510,28 +518,31 @@ class NodeStep:
         else:
             logger.warning('No external process to cancel')
 
-    # @profile
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
-                     performance_mode: bool = False, retry: bool = True):
+                     performance_mode: bool = False, retry: bool = True, node_logger: NodeLogger = None):
+        if node_logger is None:
+            raise Exception('Flow logger is not defined')
+        # node_logger = flow_logger.get_node_logger(self.node_id)
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run = False
         if self.is_setup:
-            logger.info(f'Starting to run {self.__name__}')
-            if self.needs_run(performance_mode):
+            node_logger.info(f'Starting to run {self.__name__}')
+            if self.needs_run(performance_mode, node_logger):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
                             and not run_location == 'local')) or self.node_settings.cache_results:
-                        logger.info('Running the node remotely')
+                        node_logger.info('Running the node remotely')
                         if self.node_settings.cache_results:
                             performance_mode = False
                         self.execute_remote(performance_mode=(performance_mode if not self.node_settings.cache_results
-                                                              else False)
+                                                              else False),
+                                            node_logger=node_logger
                                             )
                     else:
-                        logger.info('Running the node locally')
-                        self.execute_local(performance_mode=performance_mode)
+                        node_logger.info('Running the node locally')
+                        self.execute_local(performance_mode=performance_mode, flow_id=node_logger.flow_id)
                 except Exception as e:
                     if 'No such file or directory (os error' in str(e) and retry:
                         logger.warning('Error with the input node, starting to rerun the input node...')
@@ -539,18 +550,20 @@ class NodeStep:
                         for node_input in all_inputs:
                             node_input.execute_node(run_location=run_location,
                                                     performance_mode=performance_mode, retry=True,
-                                                    reset_cache=True)
+                                                    reset_cache=True,
+                                                    node_logger=node_logger)
                         self.execute_node(run_location=run_location,
-                                          performance_mode=performance_mode, retry=False)
+                                          performance_mode=performance_mode, retry=False,
+                                          node_logger=node_logger)
                     else:
                         self.node_stats.has_run = False
                         self.results.errors = str(e)
-                        logger.error(f'Error with running the node: {e}')
+                        node_logger.error(f'Error with running the node: {e}')
 
             else:
-                logger.info('Node has already run, not running the node')
+                node_logger.info('Node has already run, not running the node')
         else:
-            logger.warning(f'Node {self.__name__} is not setup, cannot run the node')
+            node_logger.warning(f'Node {self.__name__} is not setup, cannot run the node')
 
     def get_sample_data_from_cache(self):
         resulting_data = self.results.resulting_data
@@ -692,7 +705,7 @@ class NodeStep:
                     data = []
             else:
                 data = []
-            schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
+            schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             fl = self.get_resulting_data()
             return TableExample(node_id=self.node_id,
                                 name=str(self.node_id), number_of_records=999,
@@ -701,7 +714,7 @@ class NodeStep:
         else:
             logger.warning('getting the table example but the node has not run')
             try:
-                schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
+                schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             except Exception as e:
                 logger.warning(e)
                 schema = []

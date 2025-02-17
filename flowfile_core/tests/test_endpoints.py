@@ -1,188 +1,301 @@
-from flowfile_core.routes import *
+from flowfile_core.routes import (add_node,
+                                  flow_file_handler,
+                                  input_schema,
+                                  connect_node,
+                                  output_model)
+from time import sleep
+import os
 import threading
-
-register_flow(schemas.FlowSettings(flow_id=1, path='./'))
-
-
-def test_add_node():
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
-    assert len(flow_file_handler._flows) == 1, 'Node not added'
+from typing import Dict
+from fastapi.testclient import TestClient
+from flowfile_core import main
+client = TestClient(main.app)
 
 
-def test_connect_node():
+def get_flow_settings() -> Dict:
+    return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
+            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/test_flow.flowfile',
+            'execution_mode': 'Development', 'is_running': False, 'is_canceled': False}
+
+
+def remove_flow(file_path: str):
+    if os.path.exists(file_path):
+        os.remove(file_path)
+
+
+def add_node_placeholder(node_type: str, flow_id: int = 1, node_id: int = 1):
+    client.post("/editor/add_node", params={'flow_id': flow_id, 'node_id': node_id, 'node_type': node_type,
+                                                       'pos_x': 0, 'pos_y': 0})
+
+
+def ensure_no_flow_registered():
+    if flow_file_handler.get_flow(1) is not None:
+        flow_file_handler.delete_flow(1)
+
+
+def ensure_clean_flow():
+    flow_path: str = 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile'
+    remove_flow(flow_path)  # Remove the flow if it exists
+
+    client.post("editor/create_flow", params={'flow_path': flow_path})
+
+
+def create_flow_with_manual_input_and_select():
+    ensure_clean_flow()
     add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
     add_node(1, 2, node_type='select', pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    connect_node(1, connection)
-    assert flow_file_handler.get_node(1, 1).leads_to_nodes[0].node_id == 2, 'Node not connected'
+    client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": 1})
 
 
-def test_add_big_excel():
-    add_node(1, 1, node_type='read', pos_x=0, pos_y=0)
-    settings = input_schema.NodeRead(flow_id=1, node_id=1, cache_results=True, pos_x=466.57009116828044,
-                                     pos_y=108.7232469702331, is_setup=True,
-                                     description='',
-                                     received_file=input_schema.ReceivedTable(file_type='excel', id=None,
-                                                                              name='big_xlsx.xlsx',
-                                                                              path='C:\\Users\\edwar\\Downloads\\big_xlsx.xlsx',
-                                                                              directory=None,
-                                                                              analysis_file_available=False,
-                                                                              status=None,
-                                                                              fields=[],
-                                                                              abs_file_path='C:\\Users\\edwar\\Downloads\\big_xlsx.xlsx',
-                                                                              reference='', starting_from_line=0,
-                                                                              delimiter=',',
-                                                                              has_headers=True, encoding='utf-8',
-                                                                              parquet_ref=None,
-                                                                              row_delimiter='\n', quote_char='"',
-                                                                              infer_schema_length=1000,
-                                                                              truncate_ragged_lines=False,
-                                                                              ignore_errors=False,
-                                                                              sheet_name='Sheet1', start_row=0,
-                                                                              start_column=0, end_row=0,
-                                                                              end_column=0,
-                                                                              type_inference=False)).__dict__
-    add_generic_settings(settings, 'read')
+def create_flow_with_manual_input():
+    ensure_clean_flow()
+    add_node_placeholder('manual_input', node_id=1, flow_id=1)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
+                                              raw_data=[{'name': 'John', 'city': 'New York'},
+                                                        {'name': 'Jane', 'city': 'Los Angeles'},
+                                                        {'name': 'Edward', 'city': 'Chicago'},
+                                                        {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
+    client.post("/update_settings/", json=input_file, params={ "node_type": "manual_input"})
+
+
+def test_register_flow():
+    ensure_no_flow_registered()
+    flow_path: str = 'flowfile_core/tests/support_files/flows/test_flow.flowfile'
+    response = client.post("editor/create_flow", params={'flow_path': flow_path})
+    assert response.status_code == 200, 'Flow not registered'
     flow = flow_file_handler.get_flow(1)
-    flow.get_node_data(1)
+    if flow is None:
+        raise Exception('Flow could not be opened')
+    flow_response = client.get("editor/flow", params={'flow_id': 1})
+    if flow_response.status_code != 200:
+        raise Exception('Flow not retrieved')
+    assert flow_response.json()['flow_id'] == 1, 'Flow not retrieved'
 
 
-def test_open_flowfile():
-    flow_id = flow_file_handler.import_flow('C:/Users//edwar//big_excel_test.flowfile')
-    flow = flow_file_handler.get_flow(flow_id)
-    node = flow.get_node(1)
-    thread = threading.Thread(target=flow.run_graph)
-    thread.start()
-    flow.cancel()
+def test_get_flow():
+    ensure_clean_flow()
+    response = client.get("editor/flow", params={'flow_id': 1})
+    assert response.status_code == 200, 'Flow not retrieved'
+    assert response.json()['flow_id'] == 1, 'Flow not retrieved'
 
 
-def test_remove_connection():
-    ...
+def test_add_node():
+    ensure_clean_flow()
+    response = client.post("/editor/add_node", params={'flow_id': 1, 'node_id': 1, 'node_type': 'manual_input', 'pos_x': 0, 'pos_y': 0})
+    assert response.status_code == 200, 'Node not added'
+    assert flow_file_handler.get_node(1, 1).node_type == 'manual_input', 'Node type not set'
+
+
+def test_add_generic_settings():
+    ensure_clean_flow()
+    add_node_placeholder('manual_input')
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
+                                              raw_data=[{'name': 'John', 'city': 'New York'},
+                                                        {'name': 'Jane', 'city': 'Los Angeles'},
+                                                        {'name': 'Edward', 'city': 'Chicago'},
+                                                        {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
+    r = client.post("/update_settings/", json=input_file, params={ "node_type": "manual_input"})
+    assert r.status_code == 200, 'Settings not added'
+    assert flow_file_handler.get_node(1, 1).setting_input.raw_data == input_file['raw_data'], 'Settings not set'
+
+
+def test_connect_node():
+    ensure_clean_flow()
+    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    add_node(1, 2, node_type='select', pos_x=0, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    r = client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": 1})
+    assert r.status_code == 200, 'Node not connected'
+    assert flow_file_handler.get_node(1, 1).leads_to_nodes[0].node_id == 2, 'Node from to not connected'
+    assert flow_file_handler.get_node(1, 2).all_inputs[0].node_id == 1, 'Node to from not connected'
+
+
+def test_import_flow():
+    if flow_file_handler.get_flow(1):
+
+        flow_file_handler.delete_flow(1)
+    flow_path = 'flowfile_core/tests/support_files/flows/test_flow.flowfile'
+    response = client.get("/import_flow", params={'flow_path': flow_path})
+    assert response.status_code == 200, 'Flow not imported'
+    assert flow_file_handler.get_flow(1).flow_id == 1, 'Flow not set'
+    assert flow_file_handler.get_flow(1).flow_settings.path == flow_path, 'Flow path not set'
+
+
+def test_delete_connection():
+    create_flow_with_manual_input_and_select()
+    if not flow_file_handler.get_node(1, 1).leads_to_nodes:
+        raise Exception('Node not connected, breaking off test')
+    node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    response = client.post("/editor/delete_connection", data=node_connection.json(), params={"flow_id": 1})
+    assert response.status_code == 200, 'Connection not deleted'
+    assert 2 not in flow_file_handler.get_node(1, 1).leads_to_nodes, 'Connection not deleted'
+    assert 1 not in flow_file_handler.get_node(1, 2).all_inputs, 'Connection not deleted'
+
+
+def test_delete_node():
+    create_flow_with_manual_input_and_select()
+    response = client.post("/editor/delete_node", params={"flow_id": 1, "node_id": 2})
+    assert response.status_code == 200, 'Node not deleted'
+    assert flow_file_handler.get_flow(1).get_node(2) is None, 'Node not deleted'
 
 
 def test_get_flow_data_v2():
     test_connect_node()
-    data = get_vue_flow_data(1)
+    response = client.get('/flow_data/v2', params={'flow_id': 1})
+    assert response.status_code == 200, 'Flow data not retrieved'
+    expected_data = {'node_edges': [{'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}], 'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1, 'image': 'manual_input.png', 'multi': False, 'node_group': 'input', 'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0}, {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1, 'image': 'select.png', 'multi': False, 'node_group': 'transform', 'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
+    assert response.json() == expected_data, 'Flow data not correct'
 
 
-def test_add_node_analysis():
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
-    add_node(flow_id=1, node_id=2, node_type='explore_data', pos_x=0, pos_y=0)
+def create_flow_with_graphic_walker_input():
+    create_flow_with_manual_input()
+    add_node(flow_id=1, node_id=2, node_type='explore_data')
+    assert flow_file_handler.get_node(1, 2) is not None, 'Node not added stopping test'
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(1, connection)
 
 
 def test_get_graphic_walker_input():
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
-    add_node(flow_id=1, node_id=2, node_type='explore_data', pos_x=0, pos_y=0)
-    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
-                                              raw_data=[{'name': 'John', 'city': 'New York'},
-                                                        {'name': 'Jane', 'city': 'Los Angeles'},
-                                                        {'name': 'Edward', 'city': 'Chicago'},
-                                                        {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
-    add_generic_settings(input_file, 'manual_input')
-    connect_node(1, connection)
+    create_flow_with_graphic_walker_input()
+    response = client.get('/analysis_data/graphic_walker_input', params={'flow_id': 1, 'node_id': 2})
+    assert response.status_code == 200, 'Graphic walker input not retrieved'
     try:
-        data = get_graphic_walker_input(1, 2)
+        input_schema.NodeExploreData(**response.json())
     except Exception as e:
-        print(e)
-        assert False, 'Error in get_graphic_walker_input'
+        raise Exception('Invalid response: ' + str(e))
 
 
-def test_add_generic_settings_polars_code():
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
-    add_node(flow_id=1, node_id=2, node_type='explore_data', pos_x=0, pos_y=0)
-    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
-                                              raw_data=[{'name': 'John', 'city': 'New York'},
-                                                        {'name': 'Jane', 'city': 'Los Angeles'},
-                                                        {'name': 'Edward', 'city': 'Chicago'},
-                                                        {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
-    add_generic_settings(input_file, 'manual_input')
+def test_update_flow_with_settings_polars_code():
+    create_flow_with_manual_input()
     add_node(1, 2, node_type='polars_code', pos_x=0, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(1, connection)
     settings = {'flow_id': 1, 'node_id': 2, 'pos_x': 668, 'pos_y': 450,
                 'polars_code_input': {'polars_code': '# Add your polars code here\ninput_df.select(pl.col("name"))'},
                 'cache_results': False, 'is_setup': True}
-    add_generic_settings(settings, 'polars_code')
+    response = client.post('/update_settings/', json=settings, params={'node_type': 'polars_code'})
+    assert response.status_code == 200, 'Settings not updated'
+    assert (flow_file_handler.get_node(1, 2).setting_input.polars_code_input.polars_code ==
+            settings['polars_code_input']['polars_code']), 'Settings not set'
 
 
-async def test_instant_function_result():
+def test_instant_function_result():
     # Setup nodes
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    create_flow_with_manual_input()
     add_node(flow_id=1, node_id=2, node_type='formula', pos_x=0, pos_y=0)
-
-    # Create connection
-    node_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-
-    # Setup input data
-    input_file = input_schema.NodeManualInput(
-        flow_id=1,
-        node_id=1,
-        raw_data=[
-            {'name': 'John', 'city': 'New York'},
-            {'name': 'Jane', 'city': 'Los Angeles'},
-            {'name': 'Edward', 'city': 'Chicago'},
-            {'name': 'Courtney', 'city': 'Chicago'}
-        ]
-    ).__dict__
-
-    # Add settings and connect nodes
-    add_generic_settings(input_file, 'manual_input')
-    connect_node(1, node_connection)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(1, connection)
 
     # Await the result
-    result = await get_instant_function_result(1, 2, '[name]')
-    assert result.success, 'Instant function result failed'
+    response = client.get("/custom_functions/instant_result", params={'flow_id': 1, 'node_id': 2, 'func_string': '[name]'})
+    assert response.status_code == 200, 'Instant function result failed'
+    assert response.json()['success'], 'Instant function result failed'
 
 
-async def test_instant_function_result_fail():
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+def test_instant_function_result_fail():
+    create_flow_with_manual_input()
     add_node(flow_id=1, node_id=2, node_type='formula', pos_x=0, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(1, connection)
 
-    # Create connection
-    node_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-
-    # Setup input data
-    input_file = input_schema.NodeManualInput(
-        flow_id=1,
-        node_id=1,
-        raw_data=[
-            {'name': 'John', 'city': 'New York'},
-            {'name': 'Jane', 'city': 'Los Angeles'},
-            {'name': 'Edward', 'city': 'Chicago'},
-            {'name': 'Courtney', 'city': 'Chicago'}
-        ]
-    ).__dict__
-
-    add_generic_settings(input_file, 'manual_input')
-    connect_node(1, node_connection)
-
-    result = await get_instant_function_result(1, 2, 'name')
-    assert not result.success, 'Instant function result did not fail'
+    # Await the result
+    response = client.get("/custom_functions/instant_result", params={'flow_id': 1, 'node_id': 2,
+                                                                      'func_string': 'name'})
+    assert response.status_code == 200, 'Instant function result failed'
+    assert not response.json().get('success'), 'Instant function result did not fail'
 
 
-async def test_instant_function_result_after_run():
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+def test_flow_run():
+    create_flow_with_manual_input()
+    response = client.post("/flow/run/", params={'flow_id': 1})
+    assert response.status_code in (200, 202), 'Flow not Started'
+    assert flow_file_handler.get_flow(1).get_run_info().start_time is not None, 'Flow did not run'
+
+
+def test_instant_function_result_after_run():
+    create_flow_with_manual_input()
     add_node(flow_id=1, node_id=2, node_type='formula', pos_x=0, pos_y=0)
-
-    # Create connection
-    node_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-
-    # Setup input data
-    input_file = input_schema.NodeManualInput(
-        flow_id=1,
-        node_id=1,
-        raw_data=[
-            {'name': 'John', 'city': 'New York'},
-            {'name': 'Jane', 'city': 'Los Angeles'},
-            {'name': 'Edward', 'city': 'Chicago'},
-            {'name': 'Courtney', 'city': 'Chicago'}
-        ]
-    ).__dict__
-
-    add_generic_settings(input_file, 'manual_input')
-    connect_node(1, node_connection)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(1, connection)
     flow = flow_file_handler.get_flow(1)
     flow.run_graph()
-    result = await get_instant_function_result(1, 2, '[name]')
-    assert result.success, 'Instant function result failed: ' + result.result
+    response = client.get("/custom_functions/instant_result", params={'flow_id': 1, 'node_id': 2, 'func_string': '[name]'})
+    assert response.status_code == 200, 'Instant function result failed'
+    assert response.json().get('success'), 'Instant function result did not fail'
+
+
+def test_get_node():
+    create_flow_with_manual_input()
+    response = client.get("/node", params={'flow_id': 1, 'node_id': 1})
+    assert response.status_code == 200, 'Node not retrieved'
+    assert response.json()['node_id'] == 1, 'Node not retrieved'
+    try:
+        output_model.NodeData(**response.json())
+    except Exception as e:
+        raise Exception('Invalid response: ' + str(e))
+
+
+def test_get_node_data_not_run():
+    create_flow_with_manual_input()
+    response = client.get("/node", params={'flow_id': 1, 'node_id': 1, 'get_data': True})
+    assert response.status_code == 200, 'Node not retrieved'
+    assert response.json()['node_id'] == 1, 'Node not retrieved'
+    try:
+        output_model.NodeData(**response.json())
+    except Exception as e:
+        raise Exception('Invalid response: ' + str(e))
+    node_data_parsed = output_model.NodeData(**response.json())
+    assert node_data_parsed.main_output.columns == ['name', 'city'], 'Node data not correct'
+    assert node_data_parsed.main_output.data == [], "Node data should be empty"
+
+
+def test_get_node_data_after_run():
+    create_flow_with_manual_input()
+    flow_file_handler.get_flow(1).run_graph()
+    response = client.get("/node", params={'flow_id': 1, 'node_id': 1, 'get_data': True})
+    assert response.status_code == 200, 'Node not retrieved'
+    assert response.json()['node_id'] == 1, 'Node not retrieved'
+    try:
+        output_model.NodeData(**response.json())
+    except Exception as e:
+        raise Exception('Invalid response: ' + str(e))
+    node_data_parsed = output_model.NodeData(**response.json())
+    assert node_data_parsed.main_output.columns == ['name', 'city'], 'Node data not correct'
+    assert node_data_parsed.main_output.data == [{'name': 'John', 'city': 'New York'},
+                                                 {'name': 'Jane', 'city': 'Los Angeles'},
+                                                 {'name': 'Edward', 'city': 'Chicago'},
+                                                 {'name': 'Courtney', 'city': 'Chicago'}], "Node data should be filled"
+
+
+def create_slow_flow():
+    create_flow_with_manual_input()
+    add_node(1, 2, node_type='polars_code', pos_x=0, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    connect_node(1, connection)
+    settings = {'flow_id': 1, 'node_id': 2, 'pos_x': 668, 'pos_y': 450,
+                'polars_code_input': {
+                    'polars_code': '# Add your polars code here\ntime.sleep(10)\noutput_df = input_df.select(pl.col("name"))'},
+                'cache_results': False, 'is_setup': True}
+    response = client.post('/update_settings/', json=settings, params={'node_type': 'polars_code'})
+    assert response.status_code == 200, 'Settings not updated'
+
+
+def test_flow_cancel():
+    create_slow_flow()
+    flow = flow_file_handler.get_flow(1)
+    thread = threading.Thread(target=flow.run_graph)
+    thread.start()
+    sleep(1)
+    # actual start of the test
+    response = client.post("/flow/cancel/", params={'flow_id': 1})
+    print('Response:', response.json())
+    thread.join()
+    assert response.status_code == 200, 'Flow not canceled: ' + str(response.json())
+
+
+def test_flow_cancel_when_not_running():
+    create_slow_flow()
+    response = client.post("/flow/cancel/", params={'flow_id': 1})
+    assert response.status_code == 422, 'Flow should not be able to cancel'
+

@@ -32,7 +32,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
         flow_settings = schemas.FlowSettings(flow_id=flow_storage_obj.flow_id, path=flow_path,
                                              name=flow_storage_obj.flow_name)
         setattr(flow_storage_obj, 'flow_settings', flow_settings)
-        flow_storage_obj = schemas.FlowInformation.parse_obj(flow_storage_obj)
+        flow_storage_obj = schemas.FlowInformation.model_validate(flow_storage_obj)
     elif not hasattr(flow_storage_obj.flow_settings, 'is_running'):
         setattr(flow_storage_obj.flow_settings, 'is_running', False)
         setattr(flow_storage_obj.flow_settings, 'is_canceled', False)

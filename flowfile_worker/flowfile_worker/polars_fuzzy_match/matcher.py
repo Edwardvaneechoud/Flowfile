@@ -6,6 +6,8 @@ from flowfile_worker.polars_fuzzy_match.process import calculate_and_parse_fuzzy
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
 from flowfile_worker.polars_fuzzy_match.utils import cache_polars_frame_to_temp
 from flowfile_worker.polars_fuzzy_match.polars_sim_mock import PolarsSim
+from logging import Logger
+from flowfile_worker.utils import collect_lazy_frame
 
 try:
     import polars_sim as ps
@@ -22,8 +24,8 @@ def cross_join_large_files(left_fuzzy_frame: pl.LazyFrame,
                            ) -> pl.LazyFrame:
     if not HAS_POLARS_SIM:
         raise Exception('The polars-sim library is required to perform this operation.')
-    matches: pl.DataFrame = ps.join_sim(left=left_fuzzy_frame.collect(),
-                                        right=right_fuzzy_frame.collect(),
+    matches: pl.DataFrame = ps.join_sim(left=collect_lazy_frame(left_fuzzy_frame),
+                                        right=collect_lazy_frame(right_fuzzy_frame),
                                         right_on=right_col_name,
                                         left_on=left_col_name,
                                         ntop=100,
@@ -69,7 +71,7 @@ def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.Laz
 
 def unique_df_large(_df: pl.DataFrame | pl.LazyFrame, cols: Optional[List[str]] = None) -> pl.DataFrame:
     if isinstance(_df, pl.LazyFrame):
-        _df = _df.collect()
+        _df = collect_lazy_frame(_df)
     from tqdm import tqdm
     partition_col = cols[0] if cols is not None else _df.columns[0]
     other_cols = cols[1:] if cols is not None else _df.columns[1:]
@@ -89,7 +91,7 @@ def combine_matches(matching_dfs: List[pl.LazyFrame], temp_dir_ref: str):
                                      on=['__left_index', '__right_index'])
         outcome_dfs.append(cache_polars_frame_to_temp(new_df, temp_dir_ref))
     concat_mappings = pl.concat([df.select('__left_index', '__right_index') for df in outcome_dfs])
-    count = concat_mappings.select(pl.len()).collect()[0, 0]
+    count = collect_lazy_frame(concat_mappings.select(pl.len()))[0, 0]
     if count > 10_000_000:
         all_matching_indexes = unique_df_large(concat_mappings).lazy()
     else:
@@ -103,7 +105,9 @@ def add_index_column(df: pl.LazyFrame, column_name: str, tempdir: str):
     return cache_polars_frame_to_temp(df.with_row_index(name=column_name), tempdir)
 
 
-def fuzzy_match_dfs(left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: List[FuzzyMapping]) -> pl.DataFrame:
+def fuzzy_match_dfs(left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: List[FuzzyMapping],
+                    flowfile_logger: Logger) -> pl.DataFrame:
+
     matching_dfs = []
     local_temp_dir = tempfile.TemporaryDirectory()
     local_temp_dir_ref = local_temp_dir.name
@@ -112,14 +116,18 @@ def fuzzy_match_dfs(left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: L
     existing_matches: Optional[pl.LazyFrame] = None
     for i, fuzzy_map in enumerate(fuzzy_maps):
         if existing_matches is not None:
+            flowfile_logger.info(f'Filtering existing fuzzy matches for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
             cross_join_frame = cross_join_filter_existing_fuzzy_results(left_df, right_df, existing_matches,
                                                                         left_col_name=fuzzy_map.left_col,
                                                                         right_col_name=fuzzy_map.right_col)
+
         else:
+            flowfile_logger.info(f'Performing fuzzy match for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
             cross_join_frame = cross_join_no_existing_fuzzy_results(left_df, right_df,
                                                                     left_col_name=fuzzy_map.left_col,
                                                                     right_col_name=fuzzy_map.right_col,
                                                                     temp_dir_ref=local_temp_dir_ref)
+        flowfile_logger.info(f'Calculating fuzzy match for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
         matching_df = calculate_and_parse_fuzzy(cross_join_frame, left_col_name=fuzzy_map.left_col,
                                                 right_col_name=fuzzy_map.right_col, fuzzy_method=fuzzy_map.fuzzy_type,
                                                 th_score=fuzzy_map.reversed_threshold_score)
@@ -132,10 +140,14 @@ def fuzzy_match_dfs(left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: L
                 existing_matches = matching_df
             matching_dfs.append(matching_df)
     if len(matching_dfs) > 1:
+        flowfile_logger.info('Combining fuzzy matches')
         all_mappings_df = combine_matches(matching_dfs, local_temp_dir_ref)
     else:
+        flowfile_logger.info('Caching fuzzy matches')
         all_mappings_df = cache_polars_frame_to_temp(matching_dfs[0], local_temp_dir_ref)
-    output_df = (left_df.join(all_mappings_df, on='__left_index').join(right_df, on='__right_index')
-                 .drop('__right_index', '__left_index')).collect()
+    flowfile_logger.info('Joining fuzzy matches with original dataframes')
+    output_df = collect_lazy_frame((left_df.join(all_mappings_df, on='__left_index').join(right_df, on='__right_index')
+                 .drop('__right_index', '__left_index')))
+    flowfile_logger.info('Cleaning up temporary files')
     local_temp_dir.cleanup()
     return output_df

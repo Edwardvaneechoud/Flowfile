@@ -1,7 +1,7 @@
 import polars as pl
 import polars_distance as pld
 from flowfile_worker.polars_fuzzy_match.utils import cache_polars_frame_to_temp
-
+from flowfile_worker.utils import collect_lazy_frame
 
 def calculate_fuzzy_score(mapping_table: pl.LazyFrame, left_col_name: str, right_col_name: str, fuzzy_method: str,
                           th_score: float) -> pl.LazyFrame:
@@ -9,7 +9,7 @@ def calculate_fuzzy_score(mapping_table: pl.LazyFrame, left_col_name: str, right
                                                pl.col(right_col_name).str.to_lowercase().alias('right'))
     dist_col = pld.DistancePairWiseString(pl.col('left'))
     fm_method = getattr(dist_col, fuzzy_method)(pl.col('right'), normalized=True).alias('s')
-    return (mapping_table.with_columns(fm_method).drop(['left','right']).filter(pl.col('s') <= th_score).
+    return (mapping_table.with_columns(fm_method).drop(['left', 'right']).filter(pl.col('s') <= th_score).
             with_columns((1-pl.col('s')).alias('s')))
 
 
@@ -35,8 +35,8 @@ def process_fuzzy_frames(left_df: pl.LazyFrame, right_df: pl.LazyFrame, left_col
     right_fuzzy_frame = cache_polars_frame_to_temp(right_df.group_by(right_col_name).agg('__right_index').
                                                    filter(pl.col(right_col_name).is_not_null()), temp_dir_ref)
     # Calculate lengths of fuzzy frames
-    len_left_df = left_fuzzy_frame.select(pl.len()).collect()[0, 0]
-    len_right_df = right_fuzzy_frame.select(pl.len()).collect()[0, 0]
+    len_left_df = collect_lazy_frame(left_fuzzy_frame.select(pl.len()))[0, 0]
+    len_right_df = collect_lazy_frame(right_fuzzy_frame.select(pl.len()))[0, 0]
 
     # Decide which frame to use as left or right based on their lengths
     if len_left_df < len_right_df:

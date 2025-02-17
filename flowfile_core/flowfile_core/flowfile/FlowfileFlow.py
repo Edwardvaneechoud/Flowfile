@@ -10,6 +10,7 @@ from typing import List, Dict, Union, Callable, Any, Optional, Tuple
 from uuid import uuid1
 from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
+from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowfileColumn
@@ -90,6 +91,7 @@ class EtlGraph:
     end_datetime: datetime = None
     nodes_completed: int = 0
     flow_settings: schemas.FlowSettings = None
+    flow_logger: FlowLogger
 
     def __init__(self, flow_id: int,
                  flow_settings: schemas.FlowSettings,
@@ -106,6 +108,7 @@ class EtlGraph:
         self.latest_run_info = None
         self.node_results = []
         self._flow_id = flow_id
+        self.flow_logger = FlowLogger(flow_id)
         self._flow_starts: List[NodeStep] = []
         self._results = None
         self.schema = None
@@ -436,7 +439,8 @@ class EtlGraph:
 
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "EtlGraph":
         def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
-            return main.do_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash)
+            return main.do_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
+                                      flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
 
         self.add_node_step(node_id=fuzzy_settings.node_id,
                            function=_func,
@@ -633,7 +637,7 @@ class EtlGraph:
 
     def add_output(self, output_file: input_schema.NodeOutput):
         def _func(df: FlowfileTable):
-            df.output(output_fs=output_file.output_settings)
+            df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id)
             return df
 
         self.add_node_step(node_id=output_file.node_id,
@@ -646,7 +650,10 @@ class EtlGraph:
         logger.info('Adding airbyte reader')
         node_type = 'airbyte_reader'
         source_settings: input_schema.AirbyteReader = external_source_input.source_settings
-        airbyte_settings = airbyte_settings_from_config(source_settings)
+        airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
+                                                        node_id=external_source_input.node_id)
+
+        logger.info("Airbyte settings created")
         airbyte_settings.fields = source_settings.fields
         external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
 
@@ -695,7 +702,7 @@ class EtlGraph:
             node_type = 'external_source'
             external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
             source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
-                               parse_obj(external_source_input.source_settings))
+                               model_validate(external_source_input.source_settings))
             if hasattr(external_source_script, 'initial_getter'):
                 initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
             else:
@@ -709,7 +716,8 @@ class EtlGraph:
         else:
             node_type = 'airbyte_reader'
             source_settings: input_schema.AirbyteReader = external_source_input.source_settings
-            airbyte_settings = airbyte_settings_from_config(source_settings)
+            airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
+                                                            node_id=external_source_input.node_id)
             airbyte_settings.fields = source_settings.fields
             external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
 
@@ -766,7 +774,9 @@ class EtlGraph:
             elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:
                 input_data = FlowfileTable.create_from_path(input_file.received_file)
             else:
-                input_data = FlowfileTable.create_from_path_worker(input_file.received_file)
+                input_data = FlowfileTable.create_from_path_worker(input_file.received_file,
+                                                                   node_id=input_file.node_id,
+                                                                   flow_id=self.flow_id)
             input_data.name = input_file.received_file.name
             return input_data
 
@@ -865,30 +875,31 @@ class EtlGraph:
 
     def run_graph(self) -> RunInformation:
         self.flow_settings.is_canceled = False
+        self.flow_logger.clear_log_file()
         self.flow_settings.is_running = True
         self.nodes_completed = 0
         self.node_results = []
         self.start_datetime = datetime.datetime.now()
         self.end_datetime = None
         self.latest_run_info = None
-        all_node_ids = set(self._node_db.keys())
-        for _, node in self._node_db.items():
-            logger.info(f'{node} ->  {node.leads_to_nodes}')
-        logger.info(f'Running graph with node ids: {all_node_ids}')
+        # all_node_ids = set(self._node_db.keys())
+        self.flow_logger.info('Starting to run flowfile flow...')
         execution_order = determine_execution_order(self.nodes, self._flow_starts)
         skip_nodes = []
         performance_mode = self.flow_settings.execution_mode == 'Performance'
         for node in execution_order:
+            node_logger = self.flow_logger.get_node_logger(node.node_id)
             if self.flow_settings.is_canceled:
-                logger.info('Flow canceled')
+                self.flow_logger.info('Flow canceled')
                 break
             if node in skip_nodes:
-                logger.info(f'Skipping node {node.node_id}')
+                node_logger.info(f'Skipping node {node.node_id}')
                 continue
             node_result = NodeResult(node_id=node.node_id, node_name=node.name)
             self.node_results.append(node_result)
             logger.info(f'Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}')
-            node.execute_node(run_location='auto', performance_mode=performance_mode)
+            node.execute_node(run_location='auto', performance_mode=performance_mode,
+                              node_logger=node_logger)
             try:
                 node_result.error = str(node.results.errors)
                 if self.flow_settings.is_canceled:
@@ -904,15 +915,16 @@ class EtlGraph:
                 node_result.end_timestamp = time()
                 node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
                 node_result.is_running = False
+                node_logger.error(f'Error in node {node.node_id}: {e}')
             if not node_result.success:
                 skip_nodes.extend(list(node.get_all_dependent_nodes()))
-            logger.info(f'Completed node {node.node_id} with success: {node_result.success}')
+            node_logger.info(f'Completed node with success: {node_result.success}')
             self.nodes_completed += 1
-
+        self.flow_logger.info('Flow completed!')
         self.end_datetime = datetime.datetime.now()
         self.flow_settings.is_running = False
         if self.flow_settings.is_canceled:
-            logger.info('Flow canceled')
+            self.flow_logger.info('Flow canceled')
         return self.get_run_info()
 
     def get_run_info(self) -> RunInformation:
@@ -986,7 +998,9 @@ class EtlGraph:
             node.remove_cache()
 
     def save_flow(self, flow_path: str):
-        with open(os.path.join('saved_flows', flow_path), 'wb') as f:
+        print('saving the flow 1')
+        with open(flow_path, 'wb') as f:
+            print('saving the flow')
             pickle.dump(self.get_node_storage(), f)
         self.flow_settings.path = flow_path
 

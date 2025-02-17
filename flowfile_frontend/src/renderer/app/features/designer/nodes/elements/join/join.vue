@@ -216,7 +216,8 @@ defineExpose({
   box-sizing: border-box;
   width: 100%;
   display: flex;
-  justify-content: space-between; /* This puts maximum space between the children */
+  justify-content: space-between;
+  flex-direction: column;
 }
 
 .selectors-row {

@@ -6,6 +6,7 @@ import signal
 import asyncio
 from contextlib import asynccontextmanager
 from flowfile_core.routes import router
+from flowfile_core.configs.flow_logger import clear_all_flow_logs  # Import the cleanup function
 
 # Global shutdown flag and server reference
 should_exit = False
@@ -21,6 +22,7 @@ async def shutdown_handler(app: FastAPI):
     finally:
         print('Shutting down core application...')
         print("Cleaning up core service resources...")
+        clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
 
 

@@ -60,7 +60,7 @@ def ensure_similarity_dicts(datas: List[Dict], respect_order: bool = True):
 
 
 def calculate_schema(lf: pl.LazyFrame) -> List[Dict]:
-    r = ExternalDfFetcher(lf, operation_type='calculate_schema', wait_on_completion=False)
+    r = ExternalDfFetcher(lf=lf, operation_type='calculate_schema', wait_on_completion=False, flow_id=-1, node_id=-1)
     schema_stats: List[Dict] = r.get_result()
     for schema_stat in schema_stats:
         schema_stat['pl_datatype'] = getattr(pl.datatypes, schema_stat['pl_datatype'])
@@ -140,8 +140,9 @@ def execute_write_method(write_method: Callable, path: str, data_type: str = Non
         write_method(path)
 
 
-def write_output(_df: pl.LazyFrame, data_type: str, path: str, write_mode: str, sheet_name: str = None,
-                 delimiter: str = None) -> Status:
+def write_output(_df: pl.LazyFrame,
+                 data_type: str, path: str, write_mode: str, sheet_name: str = None,
+                 delimiter: str = None, flow_id: int = -1, node_id: int | str = -1) -> Status:
     serializable_df = _df.serialize()
     r = requests.post(f'{WORKER_URL}/write_results/',
                       json={'operation': encodebytes(serializable_df).decode(),
@@ -149,7 +150,9 @@ def write_output(_df: pl.LazyFrame, data_type: str, path: str, write_mode: str, 
                             'path': path,
                             'write_mode': write_mode,
                             'sheet_name': sheet_name,
-                            'delimiter': delimiter})
+                            'delimiter': delimiter,
+                            'flowfile_node_id': node_id,
+                            'flowfile_flow_id': flow_id})
     if r.ok:
         return Status(**r.json())
     else:

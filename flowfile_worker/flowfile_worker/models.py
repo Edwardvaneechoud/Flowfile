@@ -11,7 +11,8 @@ ResultType = Literal['polars', 'other']
 
 class PolarsOperation(BaseModel):
     operation: bytes
-
+    flowfile_flow_id: Optional[int] = 1
+    flowfile_node_id: Optional[int | str] = -1
     def polars_serializable_object(self):
         return decodebytes(self.operation)
 
@@ -33,6 +34,8 @@ class PolarsScriptWrite(BaseModel):
     write_mode: str
     sheet_name: Optional[str] = None
     delimiter: Optional[str] = None
+    flowfile_flow_id: Optional[int] = -1
+    flowfile_node_id: Optional[int | str] = -1
 
     def polars_serializable_object(self):
         return decodebytes(self.operation)
@@ -44,6 +47,8 @@ class FuzzyJoinInput(BaseModel):
     left_df_operation: PolarsOperation
     right_df_operation: PolarsOperation
     fuzzy_maps: list[FuzzyMapping]
+    flowfile_flow_id: Optional[int] = 1
+    flowfile_node_id: Optional[int | str] = -1
 
 
 class Status(BaseModel):
@@ -58,3 +63,9 @@ class Status(BaseModel):
     def __hash__(self):
         return hash(self.file_ref)
 
+
+class RawLogInput(BaseModel):
+    flowfile_flow_id: int
+    log_message: str
+    log_type: Literal["INFO", "ERROR"]
+    extra: Optional[dict] = None

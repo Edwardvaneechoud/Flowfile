@@ -78,7 +78,9 @@ export const useNodeStore = defineStore('node', {
     tableVisible: false,
     resultVersion: 0,
     vueFlowInstance: null as any | null, // Updated type
-    allExpressions: null as null| ExpressionsOverview[], 
+    allExpressions: null as null| ExpressionsOverview[],
+    isShowingLogViewer : false,
+    isStreamingLogs: false,
   }),
 
   actions: {
@@ -270,11 +272,23 @@ export const useNodeStore = defineStore('node', {
       this.runResults = {}
       this.currentRunResult = null
     },
-
+    showLogViewer() {
+      this.isShowingLogViewer = true;
+    },
+    
+    hideLogViewer() {
+      this.isShowingLogViewer = false;
+    },
+    
+    toggleLogViewer() {
+      this.isShowingLogViewer = !this.isShowingLogViewer;
+    },
+    
     insertRunResult(runResult: RunInformation, showResult: boolean = true) {
       this.currentRunResult = runResult
       this.runResults[runResult.flow_id] = runResult
       this.showFlowResult = showResult
+      this.isShowingLogViewer = showResult
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
       })

@@ -42,6 +42,7 @@ services:
       - ./shared_data:/app/shared
       - temp-storage:/app/temp
     environment:
+      - CORE_HOST=flowfile-core
       - TEMP_DIR=/app/temp
     networks:
       - flowfile-network

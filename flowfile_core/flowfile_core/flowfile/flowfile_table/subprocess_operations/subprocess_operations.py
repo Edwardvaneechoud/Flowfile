@@ -30,19 +30,20 @@ from flowfile_core.utils.arrow_reader import read
 ReceivedTableCollection = ReceivedCsvTable | ReceivedParquetTable | ReceivedJsonTable | ReceivedExcelTable
 
 
-def trigger_df_operation(lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = 'store') -> Status:
+def trigger_df_operation(flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = 'store') -> Status:
     encoded_operation = encodebytes(lf.serialize()).decode()
-    _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': operation_type}
+    _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': operation_type,
+             'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id}
     v = requests.post(url=f'{WORKER_URL}/submit_query/', json=_json)
     if not v.ok:
         raise Exception(f'Could not cache the data, {v.text}')
     return Status(**v.json())
 
 
-def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, sample_size: int = 100) -> Status:
+def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100) -> Status:
     encoded_operation = encodebytes(lf.serialize()).decode()
     _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': 'store_sample',
-             'sample_size': sample_size}
+             'sample_size': sample_size, 'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id}
     v = requests.post(url=f'{WORKER_URL}/store_sample/', json=_json)
     if not v.ok:
         raise Exception(f'Could not cache the data, {v.text}')
@@ -51,13 +52,17 @@ def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, sample_size: int =
 
 def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
                                   fuzzy_maps: List[FuzzyMap],
-                                  file_ref: str) -> Status:
+                                  file_ref: str,
+                                  flow_id: int,
+                                  node_id: int | str) -> Status:
     left_serializable_object = PolarsOperation(operation=encodebytes(left_df.serialize()))
     right_serializable_object = PolarsOperation(operation=encodebytes(right_df.serialize()))
     fuzzy_join_input = FuzzyJoinInput(left_df_operation=left_serializable_object,
                                       right_df_operation=right_serializable_object,
                                       fuzzy_maps=fuzzy_maps,
-                                      task_id=file_ref
+                                      task_id=file_ref,
+                                      flowfile_flow_id=flow_id,
+                                      flowfile_node_id=node_id
                                       )
     v = requests.post(f'{WORKER_URL}/add_fuzzy_join', data=fuzzy_join_input.json())
     if not v.ok:
@@ -65,9 +70,10 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
     return Status(**v.json())
 
 
-def trigger_create_operation(received_table: ReceivedTableCollection,
+def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTableCollection,
                              file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
-    f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.json())
+    f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.json(),
+                      params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
     return Status(**f.json())
@@ -258,11 +264,12 @@ class BaseFetcher:
 class ExternalDfFetcher(BaseFetcher):
     status: Optional[Status] = None
 
-    def __init__(self, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
+    def __init__(self, flow_id: int, node_id : int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
                  operation_type: OperationType = 'store'):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
-        r = trigger_df_operation(lf=lf, file_ref=self.file_ref, operation_type=operation_type)
+        r = trigger_df_operation(lf=lf, file_ref=self.file_ref, operation_type=operation_type,
+                                 node_id=node_id, flow_id=flow_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:
             _ = self.get_result()
@@ -272,11 +279,11 @@ class ExternalDfFetcher(BaseFetcher):
 class ExternalSampler(BaseFetcher):
     status: Optional[Status] = None
 
-    def __init__(self, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
+    def __init__(self, lf: pl.LazyFrame | pl.DataFrame, node_id: str | int, flow_id: int, file_ref: str = None, wait_on_completion: bool = True,
                  sample_size: int = 100):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
-        r = trigger_sample_operation(lf=lf, file_ref=file_ref, sample_size=sample_size)
+        r = trigger_sample_operation(lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:
             _ = self.get_result()
@@ -284,11 +291,14 @@ class ExternalSampler(BaseFetcher):
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
-    def __init__(self, left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: List[Any], file_ref: str = None,
+    def __init__(self, left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: List[Any], flow_id: int,
+                 node_id: int | str,
+                 file_ref: str = None,
                  wait_on_completion: bool = True):
         super().__init__(file_ref=file_ref)
 
-        r = trigger_fuzzy_match_operation(left_df=left_df, right_df=right_df, fuzzy_maps=fuzzy_maps, file_ref=file_ref)
+        r = trigger_fuzzy_match_operation(left_df=left_df, right_df=right_df, fuzzy_maps=fuzzy_maps,
+                                          file_ref=file_ref, flow_id=flow_id, node_id=node_id)
         self.file_ref = r.background_task_id
         self.running = r.status == 'Processing'
         if wait_on_completion:
@@ -296,9 +306,10 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
 
 
 class ExternalCreateFetcher(BaseFetcher):
-    def __init__(self, received_table: ReceivedTableCollection, file_type: str = 'csv',
-                 wait_on_completion: bool = True):
-        r = trigger_create_operation(received_table=received_table, file_type=file_type)
+    def __init__(self, received_table: ReceivedTableCollection, node_id: int, flow_id: int,
+                 file_type: str = 'csv', wait_on_completion: bool = True):
+        r = trigger_create_operation(received_table=received_table, file_type=file_type,
+                                     node_id=node_id, flow_id=flow_id)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:
@@ -428,7 +439,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
     try:
         # Try external source first if lf is provided
         try:
-            external_df_fetcher = ExternalDfFetcher(lf=lf)
+            external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
             if external_df_fetcher.status.status == 'Completed':
 
                 unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
