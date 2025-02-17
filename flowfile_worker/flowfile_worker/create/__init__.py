@@ -11,13 +11,13 @@ FileType = Literal['csv', 'parquet', 'json', 'excel']
 def received_table_parser(received_table_raw: Dict, file_type: FileType) -> ReceivedTableCollection:
     match file_type:
         case 'csv':
-            received_table = ReceivedCsvTable.parse_obj(received_table_raw)
+            received_table = ReceivedCsvTable.model_validate(received_table_raw)
         case 'parquet':
-            received_table = ReceivedParquetTable.parse_obj(received_table_raw)
+            received_table = ReceivedParquetTable.model_validate(received_table_raw)
         case 'excel':
-            received_table = ReceivedExcelTable.parse_obj(received_table_raw)
+            received_table = ReceivedExcelTable.model_validate(received_table_raw)
         case 'json':
-            return ReceivedJsonTable.parse_obj(received_table_raw)
+            return ReceivedJsonTable.model_validate(received_table_raw)
         case _:
             raise ValueError(f'Unsupported file type: {file_type}')
     return received_table

@@ -12,14 +12,22 @@ def create_sample_data():
 
 def test_fuzzy_match():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
-    left_flowfile_table = FlowfileTable(['edward', 'edwin', 'eduward', 'rick']).do_select(r)
+    left_flowfile_table = FlowfileTable(['edward', 'eduward', 'court']).do_select(r)
     right_flowfile_table = left_flowfile_table
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
     right_select = [transform_schema.SelectInput(c) for c in right_flowfile_table.columns]
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[transform_schema.FuzzyMap(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
-    fuzz_match_result = left_flowfile_table.do_fuzzy_join(fuzzy_match_input, right_flowfile_table, 'test')
+    fuzzy_match_result = left_flowfile_table.do_fuzzy_join(fuzzy_match_input, right_flowfile_table, 'test')
+    assert fuzzy_match_result is not None, 'Fuzzy match failed'
+    assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
+    expected_data = FlowfileTable([{'name': 'court', 'fuzzy_score_0': 1.0, 'right_name': 'court'},
+     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'right_name': 'eduward'},
+     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'eduward'},
+     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
+     {'name': 'edward', 'fuzzy_score_0': 1.0, 'right_name': 'edward'}])
+    fuzzy_match_result.assert_equal(expected_data)
 
 
 def test_cross_join():
@@ -36,7 +44,7 @@ def test_cross_join():
                                                           verify_integrity=True)
     right_columns = ['right_' + c for c in right_flowfile_table.columns]
     assert cross_join_result is not None, 'Cross join failed'
-    assert cross_join_result.number_of_records == 100 * 100, 'Number of records is not correct'
+    assert cross_join_result.get_number_of_records() == 100 * 100, 'Number of records is not correct'
     assert cross_join_result.columns == left_flowfile_table.columns + right_columns, 'Columns are not correct'
 
 
@@ -107,7 +115,9 @@ def test_execute_polars_code():
         return df.group_by('value3').len()
     output_df = abc(input_df)
     """
-    fl_table.execute_polars_code(code)
+    result_data = fl_table.execute_polars_code(code)
+    expected_data = FlowfileTable([[30, 20, 5, 25, 10, 15], [1, 1, 1, 1, 2, 1]], schema=['value3', 'len'])
+    result_data.assert_equal(expected_data)
 
 
 def get_join_settings(how: str):
@@ -232,7 +242,6 @@ def test_remove_comments_and_docstrings():
         result = remove_comments_and_docstrings(input_code).strip()
         try:
             assert result == expected, f"\nInput:\n{input_code}\nExpected:\n{expected}\nGot:\n{result}"
-            print(f"Test passed for:\n{input_code}")
         except Exception as e:
             print(f"Test failed for:\n{input_code}")
-            print(e)
+            raise e

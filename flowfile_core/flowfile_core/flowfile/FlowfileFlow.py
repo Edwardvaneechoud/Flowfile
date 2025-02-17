@@ -702,7 +702,7 @@ class EtlGraph:
             node_type = 'external_source'
             external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
             source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
-                               parse_obj(external_source_input.source_settings))
+                               model_validate(external_source_input.source_settings))
             if hasattr(external_source_script, 'initial_getter'):
                 initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
             else:
@@ -884,9 +884,6 @@ class EtlGraph:
         self.latest_run_info = None
         # all_node_ids = set(self._node_db.keys())
         self.flow_logger.info('Starting to run flowfile flow...')
-        # for _, node in self._node_db.items():
-        #     self.flow_logger.info(f'{node} ->  {node.leads_to_nodes}')
-        # self.flow_logger.info(f'Running graph with node ids: {all_node_ids}')
         execution_order = determine_execution_order(self.nodes, self._flow_starts)
         skip_nodes = []
         performance_mode = self.flow_settings.execution_mode == 'Performance'
@@ -1001,7 +998,9 @@ class EtlGraph:
             node.remove_cache()
 
     def save_flow(self, flow_path: str):
-        with open(os.path.join('saved_flows', flow_path), 'wb') as f:
+        print('saving the flow 1')
+        with open(flow_path, 'wb') as f:
+            print('saving the flow')
             pickle.dump(self.get_node_storage(), f)
         self.flow_settings.path = flow_path
 

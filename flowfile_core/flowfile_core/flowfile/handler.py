@@ -60,12 +60,13 @@ class FlowfileHandler:
     def add_flow(self, name: str, flow_path: str) -> int | str:
         # next_id = max(self._flows.keys(), default=0) + 1
         next_id = 1
-        flow_info = FlowSettings(name=name, flow_id=next_id, save_location='saved_flows', path=flow_path)
+        flow_info = FlowSettings(name=name, flow_id=next_id, save_location='', path=flow_path)
         flows = [(flow_id, flow) for flow_id, flow in self._flows.items()]
         for flow_id, flow in flows:
-            flow.save_flow(flow_path)
+            flow.save_flow(flow.flow_settings.path)
             self.delete_flow(flow_id)
         _ = self.register_flow(flow_info)
+        #  TODO: This does not make sense. The flow is saved and then deleted. This should be fixed.
         return next_id
 
     def get_flow_info(self, flow_id: int) -> FlowSettings:

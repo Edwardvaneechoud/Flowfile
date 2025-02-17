@@ -36,6 +36,7 @@ polars-grouper = "~0.2.0"
 polars-ds = "~0.6.0"
 airbyte = { url = "https://github.com/Edwardvaneechoud/PyAirbyte/releases/download/v0.20.1.flowfile2/airbyte-0.0.0-py3-none-any.whl" }
 airbyte-cdk = "^6.6.3"
+pytest = "^8.3.4"
 
 [tool.poetry.scripts]
 flowfile_worker = "flowfile_worker.main:run"  # Entry point for the command
@@ -53,3 +54,8 @@ nuitka = "^2.5.4"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[pytest]
+markers = [
+    "worker: Tests for the flowfile_worker package",
+    "core: Tests for the flowfile_core package"
+]

@@ -36,7 +36,7 @@ class SingleExecutionFuture(Generic[T]):
         """Clean up resources by clearing the future and shutting down the executor."""
         # if self.future:
         #     self.future = None
-        self.executor.shutdown(wait=True)
+        self.executor.shutdown(wait=False)
 
     def __call__(self) -> Optional[T]:
         """Execute function if not running and return its result."""

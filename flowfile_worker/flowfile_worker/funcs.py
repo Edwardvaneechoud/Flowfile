@@ -105,6 +105,8 @@ def store(polars_serializable_object: bytes, progress: Value, error_message: Arr
 
 
 def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True, flowfile_logger: Logger = None) -> List[Dict]:
+    if flowfile_logger is None:
+        raise ValueError('flowfile_logger is required')
     schema = df.collect_schema()
     schema_stats = [dict(column_name=k, pl_datatype=str(v), col_index=i) for i, (k, v) in
                     enumerate(schema.items())]
@@ -152,7 +154,7 @@ def calculate_schema(polars_serializable_object: bytes, progress: Value, error_m
     flowfile_logger.info("Starting schema calculation")
     try:
         lf = pl.LazyFrame.deserialize(polars_serializable_object_io)
-        schema_stats = calculate_schema_logic(lf)
+        schema_stats = calculate_schema_logic(lf, flowfile_logger=flowfile_logger)
         flowfile_logger.info('schema_stats', schema_stats)
         queue.put(schema_stats)
         flowfile_logger.info("Schema calculation completed successfully")

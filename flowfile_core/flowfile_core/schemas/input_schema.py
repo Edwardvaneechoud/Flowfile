@@ -148,6 +148,24 @@ class OutputSettings(BaseModel):
     output_csv_table: OutputCsvTable
     output_parquet_table: OutputParquetTable
     output_excel_table: OutputExcelTable
+    abs_file_path: Optional[str] = None
+
+    def set_absolute_filepath(self):
+        base_path = Path(self.directory)
+        # Check if the path is relative, resolve it with the current working directory
+        if not base_path.is_absolute():
+            base_path = Path.cwd() / base_path
+
+        if self.name and self.name not in base_path.name:
+            base_path = base_path / self.name
+
+        self.abs_file_path = str(base_path.resolve())
+
+    @model_validator(mode='after')
+    def populate_abs_file_path(self):
+        if not self.abs_file_path:
+            self.set_absolute_filepath()
+        return self
 
 
 class NodeBase(BaseModel):

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, validator, ConfigDict
+from pydantic import BaseModel, field_validator, ConfigDict
 from typing import List, Dict, Tuple, Iterable, Optional, Any, Literal
 
 
@@ -67,7 +67,7 @@ class FlowInformation(BaseModel):
     node_starts: List[int]
     node_connections: List[Tuple[int, int]] = []
 
-    @validator('flow_name', pre=True, always=True)
+    @field_validator('flow_name', mode="before")
     def ensure_string(cls, v):
         return str(v) if v is not None else ''
 

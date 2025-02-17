@@ -452,7 +452,7 @@ class NodeStep:
     def execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
         # flow_logger = logger if flow_logger is None else flow_logger
         if node_logger is None:
-            raise Exception('Flow logger is not defined')
+            raise Exception('Node logger is not defined')
         if self.node_settings.cache_results and results_exists(self.hash):
             try:
                 self.results.resulting_data = get_external_df_result(self.hash)
@@ -705,7 +705,7 @@ class NodeStep:
                     data = []
             else:
                 data = []
-            schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
+            schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             fl = self.get_resulting_data()
             return TableExample(node_id=self.node_id,
                                 name=str(self.node_id), number_of_records=999,
@@ -714,7 +714,7 @@ class NodeStep:
         else:
             logger.warning('getting the table example but the node has not run')
             try:
-                schema = [FileColumn.parse_obj(c.get_column_repr()) for c in self.schema]
+                schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             except Exception as e:
                 logger.warning(e)
                 schema = []

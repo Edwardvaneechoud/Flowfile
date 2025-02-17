@@ -1129,7 +1129,7 @@ class FlowfileTable:
         if self.is_future and not self.is_collected:
             return -1
 
-        if self.number_of_records is None or self.number_of_records < 0:
+        if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:
                 self._number_of_records_callback(self)
 
@@ -1335,7 +1335,7 @@ class FlowfileTable:
         status = utils.write_output(
             self.data_frame,
             data_type=output_fs.file_type,
-            path=output_fs.directory + os.sep + output_fs.name,
+            path=output_fs.abs_file_path,
             write_mode=output_fs.write_mode,
             sheet_name=output_fs.output_excel_table.sheet_name,
             delimiter=output_fs.output_csv_table.delimiter,
