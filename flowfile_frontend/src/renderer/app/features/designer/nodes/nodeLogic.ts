@@ -14,6 +14,7 @@ export interface FlowSettings {
   modified_on?: number
   path?: string
   execution_mode: ExecutionMode
+  show_detailed_progress: boolean
   is_running: boolean
 }
 

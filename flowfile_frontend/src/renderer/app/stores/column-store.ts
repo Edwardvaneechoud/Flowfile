@@ -81,6 +81,7 @@ export const useNodeStore = defineStore('node', {
     allExpressions: null as null| ExpressionsOverview[],
     isShowingLogViewer : false,
     isStreamingLogs: false,
+    displayLogViewer: true,
   }),
 
   actions: {
@@ -273,7 +274,7 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = null
     },
     showLogViewer() {
-      this.isShowingLogViewer = true;
+      this.isShowingLogViewer = this.displayLogViewer;
     },
     
     hideLogViewer() {
@@ -288,7 +289,8 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = runResult
       this.runResults[runResult.flow_id] = runResult
       this.showFlowResult = showResult
-      this.isShowingLogViewer = showResult
+      console.log(this.displayLogViewer)
+      this.isShowingLogViewer = this.displayLogViewer
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
       })
