@@ -53,6 +53,17 @@ def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int
         return []
 
 
+def skip_node_message(flow_logger: FlowLogger, nodes: List[NodeStep]) -> None:
+    if len(nodes) > 0:
+        msg = "\n".join(str(node) for node in nodes)
+        flow_logger.warning(f'skipping nodes:\n{msg}')
+
+
+def execution_order_message(flow_logger: FlowLogger, nodes: List[NodeStep]) -> None:
+    msg = "\n".join(str(node) for node in nodes)
+    flow_logger.info(f'execution order:\n{msg}')
+
+
 def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
                              end_row: int, end_column: int, has_headers: bool):
     return partial(get_xlsx_schema, engine=engine, file_path=file_path, sheet_name=sheet_name, start_row=start_row,
@@ -85,7 +96,7 @@ class EtlGraph:
     schema: Optional[List[FlowfileColumn]] = None
     has_over_row_function: bool = False
     _flow_starts: List[Union[int, str]] = None
-    node_results: [List[NodeResults]] = None
+    node_results: List[NodeResult] = None
     latest_run_info: Optional[RunInformation] = None
     start_datetime: datetime = None
     end_datetime: datetime = None
@@ -874,58 +885,72 @@ class EtlGraph:
                              col in [table_col.name for table_col in self._input_data.schema]]))
 
     def run_graph(self) -> RunInformation:
-        self.flow_settings.is_canceled = False
-        self.flow_logger.clear_log_file()
-        self.flow_settings.is_running = True
-        self.nodes_completed = 0
-        self.node_results = []
-        self.start_datetime = datetime.datetime.now()
-        self.end_datetime = None
-        self.latest_run_info = None
-        # all_node_ids = set(self._node_db.keys())
-        self.flow_logger.info('Starting to run flowfile flow...')
-        execution_order = determine_execution_order(self.nodes, self._flow_starts)
-        skip_nodes = []
-        performance_mode = self.flow_settings.execution_mode == 'Performance'
-        for node in execution_order:
-            node_logger = self.flow_logger.get_node_logger(node.node_id)
+        if self.flow_settings.is_running:
+            raise Exception('Flow is already running')
+        try:
+            self.flow_settings.is_running = True
+            self.flow_settings.is_canceled = False
+            self.flow_logger.clear_log_file()
+            self.nodes_completed = 0
+            self.node_results = []
+            self.start_datetime = datetime.datetime.now()
+            self.end_datetime = None
+            self.latest_run_info = None
+            # all_node_ids = set(self._node_db.keys())
+            self.flow_logger.info('Starting to run flowfile flow...')
+            skip_nodes = [node for node in self.nodes if not node.is_correct]
+            skip_nodes.extend([lead_to_node for node in skip_nodes for lead_to_node in node.leads_to_nodes])
+            execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
+                                                                   node not in skip_nodes],
+                                                        flow_starts=self._flow_starts)
+            skip_node_message(self.flow_logger, skip_nodes)
+            execution_order_message(self.flow_logger, execution_order)
+            performance_mode = self.flow_settings.execution_mode == 'Performance'
+            for node in execution_order:
+                node_logger = self.flow_logger.get_node_logger(node.node_id)
+                if self.flow_settings.is_canceled:
+                    self.flow_logger.info('Flow canceled')
+                    break
+                if node in skip_nodes:
+                    node_logger.info(f'Skipping node {node.node_id}')
+                    continue
+                node_result = NodeResult(node_id=node.node_id, node_name=node.name)
+                self.node_results.append(node_result)
+                logger.info(f'Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}')
+                node.execute_node(run_location='auto', performance_mode=performance_mode,
+                                  node_logger=node_logger)
+                try:
+                    node_result.error = str(node.results.errors)
+                    if self.flow_settings.is_canceled:
+                        node_result.success = None
+                        node_result.success = None
+                        node_result.is_running = False
+                        continue
+                    node_result.success = node.results.errors is None
+                    node_result.end_timestamp = time()
+                    node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+                    node_result.is_running = False
+                except Exception as e:
+                    node_result.error = 'Node did not run'
+                    node_result.success = False
+                    node_result.end_timestamp = time()
+                    node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+                    node_result.is_running = False
+                    node_logger.error(f'Error in node {node.node_id}: {e}')
+                if not node_result.success:
+                    skip_nodes.extend(list(node.get_all_dependent_nodes()))
+                node_logger.info(f'Completed node with success: {node_result.success}')
+                self.nodes_completed += 1
+            self.flow_logger.info('Flow completed!')
+            self.end_datetime = datetime.datetime.now()
+            self.flow_settings.is_running = False
             if self.flow_settings.is_canceled:
                 self.flow_logger.info('Flow canceled')
-                break
-            if node in skip_nodes:
-                node_logger.info(f'Skipping node {node.node_id}')
-                continue
-            node_result = NodeResult(node_id=node.node_id, node_name=node.name)
-            self.node_results.append(node_result)
-            logger.info(f'Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}')
-            node.execute_node(run_location='auto', performance_mode=performance_mode,
-                              node_logger=node_logger)
-            try:
-                node_result.error = str(node.results.errors)
-                if self.flow_settings.is_canceled:
-                    node_result.success = None
-                    continue
-                node_result.success = node.results.errors is None
-                node_result.end_timestamp = time()
-                node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
-                node_result.is_running = False
-            except Exception as e:
-                node_result.error = 'Node did not run'
-                node_result.success = False
-                node_result.end_timestamp = time()
-                node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
-                node_result.is_running = False
-                node_logger.error(f'Error in node {node.node_id}: {e}')
-            if not node_result.success:
-                skip_nodes.extend(list(node.get_all_dependent_nodes()))
-            node_logger.info(f'Completed node with success: {node_result.success}')
-            self.nodes_completed += 1
-        self.flow_logger.info('Flow completed!')
-        self.end_datetime = datetime.datetime.now()
-        self.flow_settings.is_running = False
-        if self.flow_settings.is_canceled:
-            self.flow_logger.info('Flow canceled')
-        return self.get_run_info()
+            return self.get_run_info()
+        except Exception as e:
+            raise e
+        finally:
+            self.flow_settings.is_running = False
 
     def get_run_info(self) -> RunInformation:
         if self.latest_run_info is None:
@@ -1092,17 +1117,7 @@ def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection)
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
     logger.info(f'from_node={from_node}, to_node={to_node}')
-    connection_class = node_connection.input_connection.connection_class
-    match connection_class:
-        case 'input-0':
-            insert_type = 'main'
-        case 'input-1':
-            insert_type = 'right'
-        case 'input-2':
-            insert_type = 'left'
-        case _:
-            insert_type = connection_class
     if not (from_node and to_node):
         raise HTTPException(404, 'Not not available')
     else:
-        to_node.add_node_connection(from_node, insert_type)
+        to_node.add_node_connection(from_node, node_connection.input_connection.get_node_input_connection_type())

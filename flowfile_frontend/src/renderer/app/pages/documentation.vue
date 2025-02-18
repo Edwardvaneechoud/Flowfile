@@ -2,7 +2,8 @@
   <div class="doc-wrapper">
     <iframe :src="docsUrl" class="iframe-docs"></iframe>
     <button class="flowfile-button" @click="openFlowfile">
-      <i class="fas fa-up-right-from-square"></i> <!-- Pop-out icon -->
+      <i class="fas fa-up-right-from-square"></i>
+      <!-- Pop-out icon -->
     </button>
   </div>
 </template>
@@ -14,7 +15,7 @@ import { computed } from "vue";
 const docsUrl = computed(() =>
   import.meta.env.MODE === "development"
     ? "http://127.0.0.1:8000/"
-    : "https://edwardvaneechoud.github.io/Flowfile/"
+    : "https://edwardvaneechoud.github.io/Flowfile/",
 );
 
 const openFlowfile = () => {

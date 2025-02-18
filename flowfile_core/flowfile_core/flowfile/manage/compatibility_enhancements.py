@@ -8,6 +8,13 @@ def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
             setattr(node_read.received_file, 'fields', [])
 
 
+def ensure_compatibility_node_output(node_output: input_schema.NodeOutput):
+    if hasattr(node_output, 'output_settings'):
+        if not hasattr(node_output.output_settings, 'abs_file_path'):
+            new_output_settings = input_schema.OutputSettings.model_validate(node_output.output_settings.model_dump())
+            setattr(node_output, 'output_settings', new_output_settings)
+
+
 def ensure_compatibility_node_select(node_select: input_schema.NodeSelect):
     if hasattr(node_select, 'select_input'):
         if any(not hasattr(select_input, 'position') for select_input in node_select.select_input):
@@ -43,6 +50,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_read(node_information.setting_input)
         elif node_information.setting_input.__class__.__name__ == 'NodeSelect':
             ensure_compatibility_node_select(node_information.setting_input)
+        elif node_information.setting_input.__class__.__name__ == 'NodeOutput':
+            ensure_compatibility_node_output(node_information.setting_input)
         elif node_information.setting_input.__class__.__name__ in ('NodeJoin', 'NodeFuzzyMatch'):
             ensure_compatibility_node_joins(node_information.setting_input)
         ensure_description(node_information.setting_input)

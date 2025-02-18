@@ -1,11 +1,11 @@
 
-from typing import List, Union, Callable, Any, Optional, Generator
+from typing import List, Union, Callable, Any, Optional, Generator, Literal
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
-from flowfile_core.configs.flow_logger import FlowLogger, NodeLogger
+from flowfile_core.configs.flow_logger import NodeLogger
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
@@ -79,7 +79,7 @@ class NodeStep:
 
     @property
     def is_start(self) -> bool:
-        return not self.has_input
+        return not self.has_input and self.node_template.input == 0
 
     def get_input_type(self, node_id: int) -> List:
         relation_type = []
@@ -249,7 +249,7 @@ class NodeStep:
         self._function = function
         # self.reset()
 
-    def add_node_connection(self, from_node: "NodeStep", insert_type: str = 'main'):
+    def add_node_connection(self, from_node: "NodeStep", insert_type: Literal['main', 'left', 'right'] = 'main'):
         from_node.leads_to_nodes.append(self)
         if insert_type == 'main':
             if self.node_template.input <= 2 or self.node_inputs.main_inputs is None:
@@ -517,6 +517,7 @@ class NodeStep:
             self.node_stats.is_canceled = True
         else:
             logger.warning('No external process to cancel')
+        self.node_stats.is_canceled = True
 
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
                      performance_mode: bool = False, retry: bool = True, node_logger: NodeLogger = None):
