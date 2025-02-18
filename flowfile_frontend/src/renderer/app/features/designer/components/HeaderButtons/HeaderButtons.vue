@@ -63,26 +63,28 @@
 
   <!-- New Settings Modal -->
   <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
-    <div class="settings-modal-content">
-      <div class="form-group">
-        <label>Execution Mode:</label>
-        <el-select
-          v-model="flowSettings.execution_mode"
-          size="small"
-          placeholder="Select run mode"
-          style="width: 100%"
-          @change="pushFlowSettings"
-        >
-          <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
-        </el-select>
-      </div>
-      <div class="form-group">
-        <el-checkbox
-          v-model="flowSettings.show_detailed_progress"
-          label="Show details during execution"
-          size="small"
-          @change="pushFlowSettings"
-        />
+    <div v-if="flowSettings">
+      <div class="settings-modal-content">
+        <div class="form-group">
+          <label>Execution Mode:</label>
+          <el-select
+            v-model="flowSettings.execution_mode"
+            size="small"
+            placeholder="Select run mode"
+            style="width: 100%"
+            @change="pushFlowSettings"
+          >
+            <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
+          </el-select>
+        </div>
+        <div class="form-group">
+          <el-checkbox
+            v-model="flowSettings.show_detailed_progress"
+            label="Show details during execution"
+            size="small"
+            @change="pushFlowSettings"
+          />
+        </div>
       </div>
     </div>
     <template #footer>
