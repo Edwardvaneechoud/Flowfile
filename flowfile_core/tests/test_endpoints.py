@@ -2,13 +2,16 @@ from flowfile_core.routes import (add_node,
                                   flow_file_handler,
                                   input_schema,
                                   connect_node,
-                                  output_model)
+                                  output_model,)
+from flowfile_core.schemas.transform_schema import SelectInput
 from time import sleep
 import os
 import threading
 from typing import Dict
 from fastapi.testclient import TestClient
 from flowfile_core import main
+from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
+
 client = TestClient(main.app)
 
 
@@ -16,6 +19,29 @@ def get_flow_settings() -> Dict:
     return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
             'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/test_flow.flowfile',
             'execution_mode': 'Development', 'is_running': False, 'is_canceled': False}
+
+
+def get_join_data(how: str = 'inner'):
+    return {'flow_id': 1, 'node_id': 3, 'cache_results': False, 'pos_x': 788.8727272727273, 'pos_y': 186.4,
+             'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+             'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
+                                                      'left_select': {'renames': [
+                                                          {'old_name': 'name', 'new_name': 'name', 'data_type': None,
+                                                           'data_type_change': False, 'join_key': False,
+                                                           'is_altered': False, 'position': None, 'is_available': True,
+                                                           'keep': True}]}, 'right_select': {'renames': [
+            {'old_name': 'name', 'new_name': 'right_name', 'data_type': None, 'data_type_change': False,
+             'join_key': False, 'is_altered': False, 'position': None, 'is_available': True, 'keep': True}]},
+                                                      'how': how}, 'auto_keep_all': True, 'auto_keep_right': True,
+             'auto_keep_left': True}
+
+
+def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
+    node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
+    graph.add_node_promise(node_promise)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
+    graph.add_manual_input(input_file)
+    return graph
 
 
 def remove_flow(file_path: str):
@@ -40,12 +66,43 @@ def ensure_clean_flow():
     client.post("editor/create_flow", params={'flow_path': flow_path})
 
 
-def create_flow_with_manual_input_and_select():
+def create_join_graph():
     ensure_clean_flow()
-    add_node(1, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    graph = flow_file_handler.get_flow(1)
+    left_data = [{"name": "eduward"},
+                 {"name": "edward"},
+                 {"name": "courtney"}]
+
+    add_manual_input(graph, data=left_data)
+    right_data = left_data[:1]
+    add_manual_input(graph, data=right_data, node_id=2)
+    add_node(1, 3, node_type='join', pos_x=0, pos_y=0)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+
+
+def create_flow_with_manual_input_and_select():
+    create_flow_with_manual_input()
     add_node(1, 2, node_type='select', pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": 1})
+    flow = flow_file_handler.get_flow(1)
+    select_settings = input_schema.NodeSelect(flow_id=1, node_id=2, select_input=[SelectInput(old_name='name')],
+                                              keep_missing=False)
+    flow.add_select(select_settings)
+
+
+def add_select_node(node_id: int, flow_id: int, node_input_id: int):
+    add_node(flow_id, node_id, node_type='select', pos_x=0, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(node_input_id, node_id)
+    client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
+    flow = flow_file_handler.get_flow(flow_id)
+    select_settings = input_schema.NodeSelect(flow_id=1, node_id=node_id, select_input=[SelectInput(old_name='name')],
+                                              keep_missing=False)
+    flow.add_select(select_settings)
 
 
 def create_flow_with_manual_input():
@@ -111,6 +168,68 @@ def test_connect_node():
     assert flow_file_handler.get_node(1, 2).all_inputs[0].node_id == 1, 'Node to from not connected'
 
 
+def test_create_flow_with_join():
+    create_join_graph()
+    data = get_join_data(how='inner')
+    flow = flow_file_handler.get_flow(1)
+    r = client.post("/update_settings/", json=data, params={ "node_type": "join"})
+    assert r.status_code == 200, 'Settings not added'
+    assert flow.get_node(3).setting_input.join_input.how == 'inner', 'Settings not set'
+    assert flow.get_node(3).node_inputs.main_inputs[0].node_id == 1, 'Node not connected'
+    assert flow.get_node(3).node_inputs.right_input.node_id == 2, 'Node not connected'
+
+
+def test_delete_main_connection():
+    create_join_graph()
+    data = get_join_data(how='inner')
+    flow = flow_file_handler.get_flow(1)
+    client.post("/update_settings/", json=data, params={"node_type": "join"})
+    node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 3)
+    response = client.post("/editor/delete_connection", data=node_connection.json(), params={"flow_id": 1})
+    assert response.status_code == 200, 'Connection not deleted'
+    assert flow.get_node(1).leads_to_nodes == [], 'Connection not deleted'
+    assert flow.get_node(3).node_inputs.main_inputs == [], 'Connection not deleted'
+
+
+def test_delete_right_connection():
+    create_join_graph()
+    data = get_join_data(how='inner')
+    flow = flow_file_handler.get_flow(1)
+    client.post("/update_settings/", json=data, params={"node_type": "join"})
+    right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    right_connection.input_connection.connection_class = 'input-1'
+    response = client.post("/editor/delete_connection", data=right_connection.json(), params={"flow_id": 1})
+    assert response.status_code == 200, 'Connection not deleted'
+    assert flow.get_node(2).leads_to_nodes == [], 'Connection not deleted'
+    assert flow.get_node(3).node_inputs.right_input is None, 'Connection not deleted'
+
+
+def test_delete_connection_with_wrong_input():
+    create_join_graph()
+    data = get_join_data(how='inner')
+    flow = flow_file_handler.get_flow(1)
+    client.post("/update_settings/", json=data, params={"node_type": "join"})
+    right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    response = client.post("/editor/delete_connection", data=right_connection.json(), params={"flow_id": 1})
+    assert response.status_code == 422, 'Connection should not be able to delete'
+    assert flow.get_node(2).leads_to_nodes != [], 'Connection should not be deleted'
+    assert flow.get_node(3).node_inputs.main_inputs != [], 'Connection not should not be deleted'
+
+
+def test_run_error_flow_with_join():
+    create_join_graph()
+    data = get_join_data(how='inner')
+    flow = flow_file_handler.get_flow(1)
+    client.post("/update_settings/", json=data, params={"node_type": "join"})
+    right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
+    right_connection.input_connection.connection_class = 'input-1'
+    response = client.post("/editor/delete_connection", data=right_connection.json(), params={"flow_id": 1})
+    assert response.status_code == 200, 'Connection not deleted, breaking off test'
+    response = client.post("/flow/run/", params={'flow_id': 1})
+    assert response.status_code == 200, 'Flow should just start as normal'
+    assert len(flow.node_results) == 2, 'Flow should have only executed 2 nodes'
+
+
 def test_import_flow():
     if flow_file_handler.get_flow(1):
 
@@ -131,6 +250,31 @@ def test_delete_connection():
     assert response.status_code == 200, 'Connection not deleted'
     assert 2 not in flow_file_handler.get_node(1, 1).leads_to_nodes, 'Connection not deleted'
     assert 1 not in flow_file_handler.get_node(1, 2).all_inputs, 'Connection not deleted'
+
+
+def test_run_invalid_flow():
+    create_flow_with_manual_input_and_select()
+    add_select_node(node_id=3, flow_id=1, node_input_id=2)
+    add_select_node(node_id=4, flow_id=1, node_input_id=1)
+    flow = flow_file_handler.get_flow(1)
+    if not flow_file_handler.get_node(1, 1).leads_to_nodes:
+        raise Exception('Node not connected, breaking off test')
+    node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    response = client.post("/editor/delete_connection", data=node_connection.json(), params={"flow_id": 1})
+    assert response.status_code == 200, 'Connection not deleted, breaking off test'
+    response = client.post("/flow/run/", params={'flow_id': 1})
+    assert response.status_code == 200, 'Flow should just start as normal'
+
+
+def test_save_flow():
+    create_flow_with_manual_input_and_select()
+    file_path = 'flowfile_core/tests/support_files/flows/sample_save.flowfile'
+    remove_flow(file_path)
+    # def save_flow(flow_id: int, flow_path: str = None)
+    response = client.get("/save_flow", params={ 'flow_id': 1, 'flow_path': file_path})
+    assert response.status_code == 200, 'Flow not saved'
+    assert os.path.exists(file_path), 'Flow not saved, file not found'
+    remove_flow(file_path)
 
 
 def test_delete_node():
@@ -275,7 +419,7 @@ def create_slow_flow():
     connect_node(1, connection)
     settings = {'flow_id': 1, 'node_id': 2, 'pos_x': 668, 'pos_y': 450,
                 'polars_code_input': {
-                    'polars_code': '# Add your polars code here\ntime.sleep(10)\noutput_df = input_df.select(pl.col("name"))'},
+                    'polars_code': '# Add your polars code here\ntime.sleep(5)\noutput_df = input_df.select(pl.col("name"))'},
                 'cache_results': False, 'is_setup': True}
     response = client.post('/update_settings/', json=settings, params={'node_type': 'polars_code'})
     assert response.status_code == 200, 'Settings not updated'
@@ -286,12 +430,18 @@ def test_flow_cancel():
     flow = flow_file_handler.get_flow(1)
     thread = threading.Thread(target=flow.run_graph)
     thread.start()
-    sleep(1)
+    while 2 not in [n.node_id for n in flow.node_results]:
+        sleep(0.5)
+    sleep(2)  # give it some time to start up
     # actual start of the test
     response = client.post("/flow/cancel/", params={'flow_id': 1})
-    print('Response:', response.json())
-    thread.join()
-    assert response.status_code == 200, 'Flow not canceled: ' + str(response.json())
+    assert response.status_code == 200, 'Flow not canceled'
+    assert flow.flow_settings.is_canceled, 'Flow not requested to cancel'
+    assert flow.flow_settings.is_running, 'Flow stopped running to early, without waiting for all processes to cancel'
+    thread.join()  # Wait for the thread to finish
+    assert flow.get_run_info().node_step_result[1].success is None, 'Flow not canceled'
+    assert flow.get_run_info().node_step_result[0].success, 'Cancel should not reset nodes that ran before cancel'
+    assert flow.flow_settings.is_running is False, 'Indicator not set to false'
 
 
 def test_flow_cancel_when_not_running():
@@ -299,3 +449,13 @@ def test_flow_cancel_when_not_running():
     response = client.post("/flow/cancel/", params={'flow_id': 1})
     assert response.status_code == 422, 'Flow should not be able to cancel'
 
+
+def test_error_run_flow_while_running():
+    create_slow_flow()
+    flow = flow_file_handler.get_flow(1)
+    thread = threading.Thread(target=flow.run_graph)
+    thread.start()
+    responses = [client.post("/flow/run/", params={'flow_id': 1}) for i in range(10)]
+    thread.join()
+    for response in responses:
+        assert response.status_code == 422, 'Flow should not be able to run while running'

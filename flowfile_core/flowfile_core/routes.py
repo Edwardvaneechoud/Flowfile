@@ -1,6 +1,6 @@
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body
 from fastapi.responses import JSONResponse, Response, RedirectResponse, StreamingResponse
-from typing import List, Dict, Any, Optional, AsyncGenerator, Literal
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import logging
 import os
 import inspect
@@ -9,6 +9,7 @@ import asyncio
 import json
 
 # Core modules
+from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
@@ -144,12 +145,14 @@ async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
 
 
 @router.post('/flow/run/', tags=['editor'])
-def run_flow(flow_id: int, background_tasks: BackgroundTasks):
+async def run_flow(flow_id: int, background_tasks: BackgroundTasks):
     logger.info('starting to run...')
     flow = flow_file_handler.get_flow(flow_id)
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, 'Flow is running')
-    background_tasks.add_task(flow.run_graph)
+    lock = get_flow_run_lock(flow_id)
+    async with lock:
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, 'Flow is already running')
+        background_tasks.add_task(flow.run_graph)
     JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_202_ACCEPTED)
 
 
@@ -237,6 +240,13 @@ def delete_connection(flow_id: int,
         raise HTTPException(422, 'Flow is running')
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
+    connection_valid = (
+        to_node.node_inputs.validate_if_input_connection_exists(
+            node_input_id=from_node.node_id,
+            connection_name=node_connection.input_connection.get_node_input_connection_type())
+    )
+    if not connection_valid:
+        raise HTTPException(422, 'Connection does not exist on the input node')
     if from_node is not None:
         from_node.delete_lead_to_node(node_connection.input_connection.node_id)
 

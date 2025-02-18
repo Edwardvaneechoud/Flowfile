@@ -321,6 +321,17 @@ class NodeInputConnection(BaseModel):
     node_id: int
     connection_class: InputConnectionClass
 
+    def get_node_input_connection_type(self) -> Literal['main', 'right', 'left']:
+        match self.connection_class:
+            case 'input-0':
+                return 'main'
+            case 'input-1':
+                return 'right'
+            case 'input-2':
+                return 'left'
+            case _:
+                raise ValueError(f"Unexpected connection_class: {self.connection_class}")
+
 
 class NodePivot(NodeSingleInput):
     pivot_input: transform_schema.PivotInput = None

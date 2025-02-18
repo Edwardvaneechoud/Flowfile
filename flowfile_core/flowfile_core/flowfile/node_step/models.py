@@ -1,6 +1,6 @@
 
 import pyarrow as pa
-from typing import List, Union, Callable, Optional
+from typing import List, Union, Callable, Optional, Literal
 
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
@@ -53,6 +53,15 @@ class NodeStepInputs:
         right_repr = f"Right Input: {self.right_input}" if self.right_input else "Right Input: None"
         main_inputs_repr = f"Main Inputs: {self.main_inputs}" if self.main_inputs else "Main Inputs: None"
         return f"{self.__class__.__name__}({left_repr}, {right_repr}, {main_inputs_repr})"
+
+    def validate_if_input_connection_exists(self, node_input_id: int,
+                                            connection_name: Literal['main', 'left', 'right']) -> bool:
+        if connection_name == 'main':
+            return any((node_input.node_information.id == node_input_id for node_input in self.main_inputs))
+        if connection_name == 'left':
+            return self.left_input.node_information.id == node_input_id
+        if connection_name == 'right':
+            return self.right_input.node_information.id == node_input_id
 
 
 class NodeSchemaInformation:
