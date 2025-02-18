@@ -5,50 +5,43 @@
       style="background-color: rgb(92, 92, 92); color: white"
       round
       @click="openSaveModal"
-      >Save</el-button
     >
+      Save
+    </el-button>
     <el-button
       size="small"
       style="background-color: rgb(92, 92, 92); color: white"
       round
       @click="modalVisibleForOpen = true"
-      >Open</el-button
     >
+      Open
+    </el-button>
     <el-button
       size="small"
       style="background-color: rgb(92, 92, 92); color: white"
       round
       @click="modalVisibleForCreate = true"
-      >Create</el-button
     >
-    <run-button ref="runButton" :flow-id="1"></run-button>
-    <div v-if="flowSettings" class="dropdown-container">
-      <span>Execution Mode:</span>
-      <el-select
-        v-model="flowSettings.execution_mode"
-        size="small"
-        style="width: 200px"
-        placeholder="Select run mode"
-        @change="pushFlowSettings"
-      >
-        <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
-      </el-select>
-      <pop-over
-        title="Execution mode"
-        content="<strong>- Development Mode</strong>: Lets you view the data in every step of the process, at the cost of performance.
-<strong>- Performance Mode</strong>: Only executes steps needed for the output (e.g., writing data), enabling query optimizations and better performance."
-        placement="bottom"
-      >
-        <el-icon class="help-icon"><QuestionFilled /></el-icon>
-      </pop-over>
-    </div>
+      Create
+    </el-button>
+    <run-button ref="runButton" :flow-id="1" />
+    <!-- New Settings Button -->
+    <el-button
+      size="small"
+      style="background-color: rgb(92, 92, 92); color: white"
+      round
+      @click="openSettingsModal"
+    >
+      Settings
+    </el-button>
   </div>
 
+  <!-- Existing dialogs for Open, Save, Create -->
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
-    <file-browser :allowed-file-types="['flowfile']" mode="open" @file-selected="openFlowAction">
-    </file-browser>
+    <file-browser :allowed-file-types="['flowfile']" mode="open" @file-selected="openFlowAction" />
   </el-dialog>
-  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="50%">
+
+  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%">
     <file-browser
       ref="fileBrowserRef"
       :allowed-file-types="['flowfile']"
@@ -56,8 +49,7 @@
       :initial-file-path="savePath"
       @create-file="saveFlowAction"
       @overwrite-file="saveFlowAction"
-    >
-    </file-browser>
+    />
   </el-dialog>
 
   <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="50%">
@@ -66,21 +58,49 @@
       mode="create"
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
-    >
-    </file-browser>
+    />
+  </el-dialog>
+
+  <!-- New Settings Modal -->
+  <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
+    <div v-if="flowSettings">
+      <div class="settings-modal-content">
+        <div class="form-group">
+          <label>Execution Mode:</label>
+          <el-select
+            v-model="flowSettings.execution_mode"
+            size="small"
+            placeholder="Select run mode"
+            style="width: 100%"
+            @change="pushFlowSettings"
+          >
+            <el-option v-for="eM in executionModes" :key="eM" :label="eM" :value="eM" />
+          </el-select>
+        </div>
+        <div class="form-group">
+          <el-checkbox
+            v-model="flowSettings.show_detailed_progress"
+            label="Show details during execution"
+            size="small"
+            @change="pushFlowSettings"
+          />
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="modalVisibleForSettings = false">Cancel</el-button>
+      <el-button type="primary" @click="modalVisibleForSettings = false">Save</el-button>
+    </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { QuestionFilled } from "@element-plus/icons-vue";
 import { defineProps, ref, onMounted, defineExpose } from "vue";
 import { saveFlow } from "./utils";
 import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
 import { useNodeStore } from "../../../../stores/column-store";
-
-import PopOver from "../../editor/PopOver.vue";
 import {
   createFlow,
   getFlowSettings,
@@ -95,6 +115,8 @@ const nodeStore = useNodeStore();
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
+const modalVisibleForSettings = ref(false); // New modal for settings
+
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
@@ -114,9 +136,8 @@ const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"])
 const loadFlowSettings = async () => {
   flowSettings.value = await getFlowSettings(props.flowId);
   if (!flowSettings.value) return;
-  if (flowSettings.value) {
-    flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
-  }
+  flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
+  nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
   if (flowSettings.value.is_running) {
     if (runButton.value) {
       nodeStore.isRunning = true;
@@ -125,19 +146,17 @@ const loadFlowSettings = async () => {
   } else {
     if (runButton.value) {
       nodeStore.isRunning = false;
+
       runButton.value.stopPolling();
       updateRunStatus(props.flowId, nodeStore, false);
     }
   }
 };
 
-const pushFlowSettings = async (execution_lcoation: ExecutionMode) => {
-  if (flowSettings.value) {
-    flowSettings.value.execution_mode = execution_lcoation;
-  }
-
+const pushFlowSettings = async (execution_mode: any) => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
+    nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
   }
 };
 
@@ -166,10 +185,10 @@ function openFlowAction(inputSelectedFile: FileInfo | null) {
 }
 
 const openSaveModal = async () => {
-  let flowSettings = await getFlowSettings(props.flowId);
-  if (!flowSettings) return;
-  if (flowSettings && flowSettings.path) {
-    savePath.value = flowSettings.path;
+  let settings = await getFlowSettings(props.flowId);
+  if (!settings) return;
+  if (settings && settings.path) {
+    savePath.value = settings.path;
   }
   modalVisibleForSave.value = true;
   await fileBrowserRef.value?.handleInitialFileSelection();
@@ -177,7 +196,6 @@ const openSaveModal = async () => {
 
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   console.log("handleCreateAction", flowPath);
-  // Remove any existing extension and add .flowfile
   const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
 
@@ -185,6 +203,10 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   await saveFlow(createdFlowId, normalizedPath);
   emit("refreshFlow");
   modalVisibleForCreate.value = false;
+};
+
+const openSettingsModal = () => {
+  modalVisibleForSettings.value = true;
 };
 
 defineExpose({
@@ -202,25 +224,16 @@ onMounted(async () => {
 .action-buttons {
   padding-left: 20px;
   display: flex;
-  justify-content: center;
   align-items: center;
   gap: 10px;
   height: 50px;
 }
 
-.dropdown-container {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+/* Styles for the settings modal */
+.settings-modal-content {
+  padding: 10px;
 }
-.help-icon {
-  width: 16px;
-  height: 16px;
-  color: #909399;
-  margin: 0 4px;
-}
-
-.help-icon:hover {
-  color: #606266;
+.form-group {
+  margin-bottom: 10px;
 }
 </style>

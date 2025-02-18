@@ -43,6 +43,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     elif not hasattr(flow_storage_obj.flow_settings, 'is_running'):
         setattr(flow_storage_obj.flow_settings, 'is_running', False)
         setattr(flow_storage_obj.flow_settings, 'is_canceled', False)
+    if not hasattr(flow_storage_obj.flow_settings, 'show_detailed_progress'):
+        setattr(flow_storage_obj.flow_settings, 'show_detailed_progress', True)
     for _id, node_information in flow_storage_obj.data.items():
         if not hasattr(node_information, 'setting_input'):
             continue

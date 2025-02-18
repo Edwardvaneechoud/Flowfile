@@ -144,7 +144,7 @@ onMounted(async () => {
 }
 
 .spacer {
-  flex-grow: 1;
+  flex-grow: 0.8;
 }
 
 .overlay {
