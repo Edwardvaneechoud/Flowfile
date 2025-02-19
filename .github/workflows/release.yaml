@@ -1,9 +1,10 @@
-name: Build and Release
+name: Build application
 
 on:
   push:
     tags:
       - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
+  workflow_dispatch:
 
 jobs:
   build:
@@ -60,8 +61,8 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            ${{ env:LOCALAPPDATA }}\pypoetry\Cache
-            ${{ env:LOCALAPPDATA }}\pip
+            ${{ env.LOCALAPPDATA }}\pypoetry\Cache
+            ${{ env.LOCALAPPDATA }}\pip
           key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
           restore-keys: |
             ${{ runner.os }}-poetry-
