@@ -1,7 +1,6 @@
 {
   "appId": "com.flowfile.app",
   "productName": "Flowfile",
-  "publish": "never",
   "directories": {
     "output": "dist",
     "buildResources": "src/assets/icons"
