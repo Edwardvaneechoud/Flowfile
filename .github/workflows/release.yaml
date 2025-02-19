@@ -40,3 +40,45 @@ jobs:
         with:
           name: Flowfile-mac-dmg
           path: flowfile_frontend/dist/Flowfile-*-arm64.dmg
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Flowfile-mac-dmg
+
+      - name: List downloaded artifact files
+        run: ls -la Flowfile-mac-dmg
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Log release information
+        run: |
+          echo "GitHub Release created."
+          echo "Tag: ${{ github.ref_name }}"
+          echo "Release ID: ${{ steps.create_release.outputs.id }}"
+
+      - name: Upload DMG asset to GitHub Release
+        id: upload_release_asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          # Adjust the path to match the downloaded location.
+          asset_path: Flowfile-mac-dmg/Flowfile-*-arm64.dmg
+          asset_name: Flowfile-mac-dmg.dmg
+          asset_content_type: application/x-apple-diskimage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Log asset upload
+        run: echo "DMG asset has been uploaded to the GitHub Release."
