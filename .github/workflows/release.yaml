@@ -1,17 +1,14 @@
-name: Build and Release
+name: Build and Release on macOS
 
 on:
   push:
     tags:
       - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
   workflow_dispatch:
+
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -19,99 +16,35 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16'
+          node-version: '21'
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
-      # On Windows GitHub runners, install GNU Make (if not already available)
-      - name: Install Make on Windows
-        if: runner.os == 'Windows'
-        run: choco install make -y
-
-      # Install Poetry (using bash for consistency across OSes)
       - name: Install Poetry
         shell: bash
         run: |
           curl -sSL https://install.python-poetry.org | python -
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            # Poetry installs to %USERPROFILE%\AppData\Roaming\Python\Scripts on Windows
-            echo "$USERPROFILE/AppData/Roaming/Python/Scripts" >> $GITHUB_PATH
-          else
-            echo "${HOME}/.local/bin" >> $GITHUB_PATH
-          fi
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
 
-      # (Optional) Cache Poetry and pip dependencies (customize paths as needed)
-      - name: Cache Poetry packages (non‑Windows)
-        if: runner.os != 'Windows'
+      - name: Cache Poetry packages
         uses: actions/cache@v3
         with:
           path: |
             ~/.cache/pypoetry
             ~/.cache/pip
-          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+          key: macos-poetry-${{ hashFiles('**/poetry.lock') }}
           restore-keys: |
-            ${{ runner.os }}-poetry-
+            macos-poetry-
 
-      - name: Cache Poetry packages (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v3
-        with:
-          path: |
-            ${{ env:LOCALAPPDATA }}\pypoetry\Cache
-            ${{ env:LOCALAPPDATA }}\pip
-          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-poetry-
-
-      # Run your Makefile "all" target to install dependencies and build both Python services and Electron app
       - name: Build project
         shell: bash
-        run: make all
+        run: make
 
-      # Zip the Electron build output (assumes your Electron app builds to flowfile_frontend/dist)
-      - name: Zip Electron build output
-        shell: bash
-        run: |
-          zip -r Flowfile-${{ matrix.os }}.zip flowfile_frontend/dist
-
-      # Upload the zipped artifact with a name indicating the OS
-      - name: Upload build artifact
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@v3
         with:
-          name: Flowfile-${{ matrix.os }}
-          path: Flowfile-${{ matrix.os }}.zip
-
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      # Download all artifacts produced by the build jobs.
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          path: release_artifacts
-
-      # Determine if the pushed tag should be marked as a pre‑release (if the tag contains a hyphen)
-      - name: Determine if prerelease
-        id: prerelease
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          if [[ "$TAG" == *"-"* ]]; then
-            echo "prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "prerelease=false" >> $GITHUB_OUTPUT
-          fi
-
-      # Create (or update) the GitHub Release and attach all artifacts
-      - name: Create GitHub Release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ github.ref }}
-          name: Release ${{ github.ref }}
-          prerelease: ${{ steps.prerelease.outputs.prerelease }}
-          files: release_artifacts/*.zip
+          name: Flowfile-mac-dmg
+          path: flowfile_frontend/dist/Flowfile-*-arm64.dmg
