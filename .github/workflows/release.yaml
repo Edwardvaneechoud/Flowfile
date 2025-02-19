@@ -1,12 +1,11 @@
-name: Build application
+name: Build and Release
 
 on:
   push:
     tags:
       - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
   workflow_dispatch:
-  pull_request:
-    branches: [ main ]
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
