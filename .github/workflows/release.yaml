@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
-
+  workflow_dispatch:
 jobs:
   build:
     name: Build on ${{ matrix.os }}
