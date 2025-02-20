@@ -274,6 +274,7 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = null
     },
     showLogViewer() {
+      console.log('triggered show log viewer')
       this.isShowingLogViewer = this.displayLogViewer;
     },
     
@@ -282,6 +283,7 @@ export const useNodeStore = defineStore('node', {
     },
     
     toggleLogViewer() {
+      console.log('triggered toggle log viewer')
       this.isShowingLogViewer = !this.isShowingLogViewer;
     },
     
@@ -289,8 +291,7 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = runResult
       this.runResults[runResult.flow_id] = runResult
       this.showFlowResult = showResult
-      console.log(this.displayLogViewer)
-      this.isShowingLogViewer = this.displayLogViewer
+      this.isShowingLogViewer = this.displayLogViewer 
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
       })
