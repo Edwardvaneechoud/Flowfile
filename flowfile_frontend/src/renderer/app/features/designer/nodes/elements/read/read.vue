@@ -211,10 +211,10 @@ const pushNodeData = async () => {
     nodeRead.value.is_setup = true;
 
     if (isExcelFile.value) {
-      nodeRead.value.cache_results = true;
+      // nodeRead.value.cache_results = true;
       nodeRead.value.received_file = receivedExcelTable.value;
     } else if (isCsvFile.value) {
-      nodeRead.value.cache_results = true;
+      // nodeRead.value.cache_results = true;
       nodeRead.value.received_file = receivedCsvTable.value;
     } else if (isParquetFile.value) {
       nodeRead.value.cache_results = false;

@@ -87,10 +87,6 @@
         </div>
       </div>
     </div>
-    <template #footer>
-      <el-button @click="modalVisibleForSettings = false">Cancel</el-button>
-      <el-button type="primary" @click="modalVisibleForSettings = false">Save</el-button>
-    </template>
   </el-dialog>
 </template>
 
