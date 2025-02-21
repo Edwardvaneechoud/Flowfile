@@ -121,8 +121,7 @@ const isErrorLine = (line: string): boolean => {
         v-for="(line, index) in logLines"
         :key="index"
         :class="{ 'error-line': isErrorLine(line) }"
-      >
-        {{ line }}
+      >{{ line }}
       </div>
     </div>
   </div>

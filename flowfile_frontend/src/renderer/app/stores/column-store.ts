@@ -291,7 +291,7 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = runResult
       this.runResults[runResult.flow_id] = runResult
       this.showFlowResult = showResult
-      this.isShowingLogViewer = this.displayLogViewer 
+      this.isShowingLogViewer = this.displayLogViewer && showResult
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
       })
