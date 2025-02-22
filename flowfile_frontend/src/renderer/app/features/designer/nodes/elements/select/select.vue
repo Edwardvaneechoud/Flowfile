@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded">
+  <div v-if="dataLoaded" class="listbox-wrapper">
     <generic-node-settings v-model="nodeSelect">
       <select-dynamic
         :select-inputs="nodeSelect.select_input"

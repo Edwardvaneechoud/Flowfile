@@ -1,5 +1,5 @@
 <template>
-  <div v-if="isLoaded && nodeTextToRows" class="listbox">
+  <div v-if="isLoaded && nodeTextToRows" class="listbox-wrapper">
     <generic-node-settings v-model="nodeTextToRows">
       <div class="table">
         <div v-if="nodeTextToRows?.text_to_rows_input" class="selectors">
@@ -210,7 +210,7 @@ input {
 .table {
   padding: 12px;
   border-radius: 6px;
-  background: #f8f8f8;
+
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.05);
 }
 

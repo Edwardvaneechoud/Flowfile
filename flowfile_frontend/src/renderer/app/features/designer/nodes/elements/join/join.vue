@@ -1,7 +1,6 @@
 <template>
-  <div v-if="dataLoaded && nodeJoin">
+  <div v-if="dataLoaded && nodeJoin" class="listbox-wrapper">
     <generic-node-settings v-model="nodeJoin">
-      <div class="listbox-wrapper">
         <div class="listbox-subtitle">Join columns</div>
         <div class="join-content">
           <div class="join-type-selector">
@@ -83,7 +82,6 @@
             (updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)
           "
         />
-      </div>
     </generic-node-settings>
   </div>
   <code-loader v-else />
