@@ -10,6 +10,7 @@ export interface SelectInput {
   data_type_change: boolean
   is_available: boolean
   position: number
+  original_position: number
 }
 
 export const createSelectInputFromName = (columnName: string, keep: boolean = true): SelectInput => {
@@ -20,7 +21,8 @@ export const createSelectInputFromName = (columnName: string, keep: boolean = tr
     is_altered: false,
     data_type_change: false,
     is_available: true,
-    position: 0
+    position: 0,
+    original_position: 0
   };
 }
 
@@ -233,6 +235,7 @@ export interface NodeManualInput extends NodeBase {
 export interface NodeSelect extends NodeSingleInput {
   keep_missing: boolean
   select_input: SelectInput[]
+  sorted_by?: "none"| "asc" | "desc"
 }
 
 export interface NodeFilter extends NodeSingleInput {

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.1.2"
+version = "0.1.3"
 description = "Project combining flowfile_designer (backend) and flowfile_worker (compute offloader)"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 packages = [
@@ -40,6 +40,7 @@ pytest = "^8.3.4"
 
 # Only install pendulum for Python versions below 3.12
 pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
+aiofiles = "^24.1.0"
 
 [tool.poetry.scripts]
 flowfile_worker = "flowfile_worker.main:run"

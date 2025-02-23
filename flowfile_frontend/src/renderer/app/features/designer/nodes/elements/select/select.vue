@@ -1,5 +1,5 @@
 <template>
-  <div v-if="dataLoaded">
+  <div v-if="dataLoaded" class="listbox-wrapper">
     <generic-node-settings v-model="nodeSelect">
       <select-dynamic
         :select-inputs="nodeSelect.select_input"
@@ -12,6 +12,7 @@
         :show-data="true"
         title="Select data"
         @update-select-inputs="updateSelectInputsHandler"
+        v-model:sortedBy="nodeSelect.sorted_by"
       />
     </generic-node-settings>
   </div>
@@ -41,11 +42,9 @@ const loadNodeData = async (nodeId: number) => {
   const result = await nodeStore.getNodeData(1, nodeId, false);
   if (result) {
     dataLoaded.value = true;
-    nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
     const main_input = result.main_input;
     try {
-      // Try to parse the result.value.setting_input
-      if (result?.setting_input && main_input && result?.setting_input.is_setup) {
+      if (result.setting_input && main_input && result.setting_input.is_setup) {
         nodeSelect.value = result.setting_input;
         keepMissing.value = nodeSelect.value.keep_missing;
         updateNodeSelect(main_input, nodeSelect);
@@ -53,9 +52,9 @@ const loadNodeData = async (nodeId: number) => {
         throw new Error("Setting input not available");
       }
     } catch (error) {
-      // If there's an error, fall back to this logic
+      console.log('doing this')
       if (main_input && nodeSelect.value) {
-        console.log("doing this");
+        nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
         nodeSelect.value.depending_on_id = main_input.node_id;
         nodeSelect.value.flow_id = nodeStore.flow_id;
         nodeSelect.value.node_id = nodeStore.node_id;
@@ -64,7 +63,6 @@ const loadNodeData = async (nodeId: number) => {
       }
     }
   }
-  console.log(nodeSelect.value);
 };
 
 const pushNodeData = async () => {
@@ -74,11 +72,17 @@ const pushNodeData = async () => {
   nodeSelect.value.keep_missing = keepMissing.value;
   if (originalData) {
     newColumnSettings.forEach((newColumnSetting, index) => {
-      let original_object = originalData.main_input?.table_schema[index];
-      newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
-      newColumnSetting.data_type_change = newColumnSetting.is_altered;
-      newColumnSetting.position = index;
-    });
+      let original_index = originalData.main_input?.table_schema.findIndex(
+        (column) => column.name === newColumnSetting.old_name
+      );
+      let original_object = index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
+      if (original_object) {
+        newColumnSetting.is_altered = original_object?.data_type !== newColumnSetting.data_type;
+        newColumnSetting.data_type_change = newColumnSetting.is_altered;
+        newColumnSetting.position = index;
+        newColumnSetting.original_position = original_index || index;
+      }
+     });
   }
   await nodeStore.updateSettings(nodeSelect);
 };

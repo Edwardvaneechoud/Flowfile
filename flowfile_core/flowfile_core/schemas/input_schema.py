@@ -86,7 +86,7 @@ class ReceivedCsvTable(ReceivedTableBase):
     parquet_ref: Optional[str] = None
     row_delimiter: str = '\n'
     quote_char: str = '"'
-    infer_schema_length: int = 1_000
+    infer_schema_length: int = 10_000
     truncate_ragged_lines: bool = False
     ignore_errors: bool = False
 
@@ -196,6 +196,7 @@ class NodeMultiInput(NodeBase):
 class NodeSelect(NodeSingleInput):
     keep_missing: bool = True
     select_input: List[transform_schema.SelectInput] = Field(default_factory=list)
+    sorted_by: Optional[Literal['none', 'asc', 'desc']] = 'none'
 
 
 class NodeFilter(NodeSingleInput):

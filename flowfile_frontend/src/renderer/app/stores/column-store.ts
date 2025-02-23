@@ -274,23 +274,24 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = null
     },
     showLogViewer() {
+      console.log('triggered show log viewer')
       this.isShowingLogViewer = this.displayLogViewer;
     },
-    
+
     hideLogViewer() {
       this.isShowingLogViewer = false;
     },
-    
+
     toggleLogViewer() {
+      console.log('triggered toggle log viewer')
       this.isShowingLogViewer = !this.isShowingLogViewer;
     },
-    
+
     insertRunResult(runResult: RunInformation, showResult: boolean = true) {
       this.currentRunResult = runResult
       this.runResults[runResult.flow_id] = runResult
       this.showFlowResult = showResult
-      console.log(this.displayLogViewer)
-      this.isShowingLogViewer = this.displayLogViewer
+      this.isShowingLogViewer = this.displayLogViewer && showResult
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
       })
@@ -331,8 +332,7 @@ export const useNodeStore = defineStore('node', {
         this.nodeData = response.data
         this.is_loaded = true
         this.node_exists = true
-        console.log('Node data:', this.nodeData)
-        return this.nodeData // Return the NodeData or null
+        return this.nodeData
       } catch (error) {
         console.error('Error fetching node data:', error)
         this.nodeData = null
@@ -381,7 +381,7 @@ export const useNodeStore = defineStore('node', {
         return []
       }
     },
-    
+
     async getExpressionsOverview(): Promise<ExpressionsOverview[]> {
       if (this.allExpressions) {
         return this.allExpressions

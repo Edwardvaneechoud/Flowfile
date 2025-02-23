@@ -1,10 +1,18 @@
 <template>
   <div class="popover-container">
-    <div class="popover-reference" @mouseenter="showPopover" @mouseleave="hidePopover">
+    <!-- Attach a ref to the reference element -->
+    <div
+      ref="referenceEl"
+      class="popover-reference"
+      @mouseenter="showPopover"
+      @mouseleave="hidePopover"
+    >
       <slot></slot>
     </div>
+    <!-- Attach a ref to the popover itself -->
     <div
       v-if="visible"
+      ref="popoverEl"
       :style="popoverStyle"
       class="popover"
       :class="{ 'popover--left': props.placement === 'left' }"
@@ -14,11 +22,12 @@
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
 import { ref, nextTick } from "vue";
 
 const visible = ref(false);
+const referenceEl = ref<HTMLElement | null>(null);
+const popoverEl = ref<HTMLElement | null>(null);
 
 const props = defineProps({
   content: {
@@ -44,10 +53,10 @@ const popoverStyle = ref({
   left: "0px",
 });
 
-const showPopover = (event: MouseEvent) => {
+const showPopover = () => {
   visible.value = true;
   nextTick(() => {
-    updatePosition(event);
+    updatePosition();
   });
 };
 
@@ -55,52 +64,43 @@ const hidePopover = () => {
   visible.value = false;
 };
 
-const updatePosition = (event: MouseEvent) => {
-  const referenceRect = (event.target as HTMLElement).getBoundingClientRect();
-  const popover = (event.currentTarget as HTMLElement).querySelector(".popover") as HTMLElement;
-  const popoverRect = popover?.getBoundingClientRect();
+const updatePosition = () => {
+  if (!referenceEl.value || !popoverEl.value) return;
 
-  let top = "0px";
-  let left = "0px";
-  const offset = 10;
+  const referenceRect = referenceEl.value.getBoundingClientRect();
+  const popoverRect = popoverEl.value.getBoundingClientRect();
+  const offset = 20; // Increased offset for a lower popover position
 
-  // Removed lexical declaration in case block
-  const referenceTop = referenceRect.top;
-  const referenceBottom = referenceRect.bottom;
-  const referenceLeft = referenceRect.left;
-  const referenceRight = referenceRect.right;
-  const referenceWidth = referenceRect.width;
-  const referenceHeight = referenceRect.height;
-  const popoverHeight = popoverRect?.height ?? 0;
-  const popoverWidth = popoverRect?.width ?? 0;
+  let top = 0;
+  let left = 0;
 
   switch (props.placement) {
     case "top":
-      top = `${referenceTop - popoverHeight - offset}px`;
-      left = `${referenceLeft + referenceWidth / 2 - popoverWidth / 2}px`;
+      top = referenceRect.top - popoverRect.height - offset;
+      left = referenceRect.left + (referenceRect.width / 2) - (popoverRect.width / 2);
       break;
     case "bottom":
-      top = `${referenceBottom + offset}px`;
-      left = `${referenceLeft + referenceWidth / 2 - popoverWidth / 2}px`;
+      top = referenceRect.bottom + offset;
+      left = referenceRect.left + (referenceRect.width / 2) - (popoverRect.width / 2);
       break;
     case "left":
-      top = `${referenceTop + referenceHeight / 2 - popoverHeight / 2}px`;
-      left = `${referenceLeft - popoverWidth - offset}px`;
+      top = referenceRect.top + (referenceRect.height / 2) - (popoverRect.height / 2);
+      left = referenceRect.left - popoverRect.width - offset;
       break;
     case "right":
-      top = `${referenceTop + referenceHeight / 2 - popoverHeight / 2}px`;
-      left = `${referenceRight + offset}px`;
+      top = referenceRect.top + (referenceRect.height / 2) - (popoverRect.height / 2);
+      left = referenceRect.right + offset;
       break;
   }
 
-  popoverStyle.value = { top, left };
+  popoverStyle.value = { top: `${top}px`, left: `${left}px` };
 };
 </script>
 
 <style scoped>
 .popover-container {
   position: relative;
-  display: inline-block; /* Ensure container takes up space */
+  display: inline-block;
 }
 
 .popover {
@@ -110,11 +110,11 @@ const updatePosition = (event: MouseEvent) => {
   border: 0.5px solid #ccc;
   border-radius: 4px;
   z-index: 10000;
-  min-width: v-bind(minWidth + "px"); /* Added min-width */
+  min-width: 100px; /* You can also bind this dynamically if needed */
 }
 
 .popover--left {
-  min-width: 200px; /* Specific width when positioned left */
+  min-width: 200px;
 }
 
 .popover-reference {

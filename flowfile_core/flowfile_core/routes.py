@@ -7,6 +7,8 @@ import inspect
 from pathlib import Path
 import asyncio
 import json
+import time
+import aiofiles
 
 # Core modules
 from flowfile_core.run_lock import get_flow_run_lock
@@ -14,6 +16,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
 from flowfile_core.configs.node_store import nodes
+from flowfile_core import ServerRun
 
 # File handling
 from flowfile_core.fileExplorer.funcs import (
@@ -222,7 +225,7 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
 
 @router.post('/editor/delete_node/', tags=['editor'])
 def delete_node(flow_id: Optional[int], node_id: int):
-    print('Deleting node')
+    logger.info('Deleting node')
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
@@ -515,52 +518,6 @@ async def format_sse_message(data: str) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-async def stream_log_file(log_file_path: Path, is_running_callable: callable) -> AsyncGenerator[str, None]:
-    """
-    Streams the content of a log file as it's being written.
-    Ensures all lines are sent, even after is_running_callable becomes False.
-
-    Args:
-        log_file_path: The path to the log file.
-        is_running_callable: Callable that determines if streaming should continue.
-
-    Yields:
-        str: Formatted SSE messages containing log lines.
-    """
-    print(f"Streaming log file: {log_file_path}")
-    try:
-        with open(log_file_path, "r") as file:
-            file.seek(0)
-            # Stream while running
-            while is_running_callable():
-                line = file.readline()
-                if line:
-                    formatted_message = await format_sse_message(line.strip())
-                    print(f'Yielding line: {line.strip()}')
-                    yield formatted_message
-                else:
-                    await asyncio.sleep(0.1)
-
-            # Read any remaining lines after stopping
-            while True:
-                line = file.readline()
-                if not line:
-                    break
-                formatted_message = await format_sse_message(line.strip())
-                print(f'Yielding final line: {line.strip()}')
-                yield formatted_message
-
-            print("Streaming completed")
-
-    except FileNotFoundError:
-        error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
-        yield error_msg
-        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}")
-    except Exception as e:
-        error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
-        yield error_msg
-        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}")
-
 async def fake_data_streamer():
     for i in range(10):
         yield b'some fake data\n\n'
@@ -584,7 +541,7 @@ async def add_raw_log(raw_log_input: schemas.RawLogInput):
     """
     Adds a log message to the log file for a given flow_id.
     """
-    print('Adding raw logs')
+    logger.info('Adding raw logs')
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
@@ -600,11 +557,65 @@ async def add_raw_log(raw_log_input: schemas.RawLogInput):
     return {"message": "Log added successfully"}
 
 
+async def stream_log_file(
+    log_file_path: Path,
+    is_running_callable: callable,
+    idle_timeout: int = 60  # timeout in seconds
+) -> AsyncGenerator[str, None]:
+    logger.info(f"Streaming log file: {log_file_path}")
+    last_active = time.monotonic()
+    try:
+        async with aiofiles.open(log_file_path, "r") as file:
+
+            # Ensure we start at the beginning
+            await file.seek(0)
+            while is_running_callable():
+                # Immediately check if shutdown has been triggered
+                if ServerRun.exit:
+                    yield await format_sse_message("Server is shutting down. Closing connection.")
+                    break
+
+
+                line = await file.readline()
+                if line:
+                    formatted_message = await format_sse_message(line.strip())
+                    logger.info(f'Yielding line: {line.strip()}')
+                    yield formatted_message
+                    last_active = time.monotonic()  # Reset idle timer on activity
+                else:
+                    # Check for idle timeout
+                    if time.monotonic() - last_active > idle_timeout:
+                        yield await format_sse_message("Connection timed out due to inactivity.")
+                        break
+                    # Allow the event loop to process other tasks (like signals)
+                    await asyncio.sleep(0.1)
+
+            # Optionally, read any final lines
+            while True:
+                if ServerRun.exit:
+                    break
+                line = await file.readline()
+                if not line:
+                    break
+                yield await format_sse_message(line.strip())
+
+            logger.info("Streaming completed")
+
+    except FileNotFoundError:
+        error_msg = await format_sse_message(f"Log file not found: {log_file_path}")
+        yield error_msg
+        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file_path}")
+    except Exception as e:
+        error_msg = await format_sse_message(f"Error reading log file: {str(e)}")
+        yield error_msg
+        raise HTTPException(status_code=500, detail=f"Error reading log file: {e}")
+
+
 @router.get("/logs/{flow_id}", tags=['flow_logging'])
-async def stream_logs(flow_id: int):
+async def stream_logs(flow_id: int, idle_timeout: int = 300):
     """
     Streams logs for a given flow_id using Server-Sent Events.
-    Streaming continues until the client disconnects.
+    The connection will close gracefully if the server shuts down.
     """
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
@@ -624,7 +635,7 @@ async def stream_logs(flow_id: int):
     running_state = RunningState()
 
     return StreamingResponse(
-        stream_log_file(log_file_path, running_state.is_running),
+        stream_log_file(log_file_path, running_state.is_running, idle_timeout),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

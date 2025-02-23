@@ -43,7 +43,6 @@ const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
 const selectedNodeIdInTable = ref(0);
-const logViewer = ref<InstanceType<typeof LogViewer>>();
 
 interface NodeChange {
   id: string;

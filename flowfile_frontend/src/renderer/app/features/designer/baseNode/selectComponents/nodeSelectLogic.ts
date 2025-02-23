@@ -5,42 +5,46 @@ import { NodeData, nodeData as nodeDataRef, TableExample } from '../nodeInterfac
 import { SelectInput, NodeSelect } from '../nodeInput'
 import axios from 'axios'
 
-export const createSelectInput = (column_name: string, data_type: string | undefined = undefined): SelectInput => {
-  const selectInput: SelectInput = {
-    old_name: column_name,
-    new_name: column_name,
-    data_type: data_type,
-    keep: true,
-    join_key: false,
-    is_altered: false,
-    data_type_change: false,
-    is_available: true,
-    position: 0,
-  }
-  return selectInput
-}
-
-export const updateNodeSelect = (nodeTable: TableExample, nodeSelectRef: Ref<NodeSelect | null>): void => {
-  if (nodeTable?.table_schema) {
-    for (const schema of nodeTable.table_schema) {
-      // Check if schema.name is not already in select_input
-      const existingInput = nodeSelectRef.value?.select_input.find(
-        (selectInput) => selectInput.old_name === schema.name,
-      )
-
-      if (existingInput) {
-        // If function is not altered, change the data type
-        if (!existingInput.is_altered) {
-          existingInput.data_type = schema.data_type
-        }
-      } else {
-        // If schema.name is not in select_input, add it
-        nodeSelectRef.value?.select_input.push(createSelectInput(schema.name, schema.data_type))
-      }
+export const createSelectInput = (column_name: string, data_type: string | undefined = undefined, 
+  position: number | undefined = undefined,
+    original_position: number | undefined = undefined): SelectInput => {
+    const selectInput: SelectInput = {
+      old_name: column_name,
+      new_name: column_name,
+      data_type: data_type,
+      keep: true,
+      join_key: false,
+      is_altered: false,
+      data_type_change: false,
+      is_available: true,
+      position: position ?? 0,
+      original_position: original_position ?? 0,
     }
-    console.log(nodeDataRef.value)
+    return selectInput
   }
-}
+
+  export const updateNodeSelect = (nodeTable: TableExample, nodeSelectRef: Ref<NodeSelect | null>): void => {
+    if (nodeTable?.table_schema) {
+      nodeTable.table_schema.forEach((schema, index) => {
+        // Check if schema.name is not already in select_input
+        const existingInput = nodeSelectRef.value?.select_input.find(
+          (selectInput) => selectInput.old_name === schema.name,
+        )
+  
+        if (existingInput) {
+          // If function is not altered, change the data type
+          if (!existingInput.is_altered) {
+            existingInput.data_type = schema.data_type
+          }
+          if (!existingInput.original_position) {
+            existingInput.original_position = index
+          }
+        } else {
+          nodeSelectRef.value?.select_input.push(createSelectInput(schema.name, schema.data_type, index, index))
+        }
+      })
+    }
+  }
 
 export const createNodeSelect = (
   flowId = -1,
@@ -60,6 +64,7 @@ export const createNodeSelect = (
     keep_missing: keep_missing,
     select_input: selectInputData,
     cache_results: false,
+    sorted_by: 'none',
   })
   return nodeSelectRef
 }
