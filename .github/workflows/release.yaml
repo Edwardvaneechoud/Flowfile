@@ -82,11 +82,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
+      - name: List dist directory contents
+        shell: pwsh
+        run: |
+          Write-Host "Contents of flowfile_frontend/dist directory:"
+          Get-ChildItem -Path "flowfile_frontend/dist" -Recurse | Select-Object FullName
+
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: Flowfile-windows-exe
           path: flowfile_frontend/dist/Flowfile-*-win.exe
+
   release:
     needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
