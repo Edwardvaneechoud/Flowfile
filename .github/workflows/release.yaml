@@ -68,15 +68,13 @@ jobs:
           echo "Tag: ${{ github.ref_name }}"
           echo "Release ID: ${{ steps.create_release.outputs.id }}"
 
-      - name: Upload DMG asset to GitHub Release
-        id: upload_release_asset
+      - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          # Adjust the path to match the downloaded location.
-          asset_path: Flowfile-*-arm64.dmg
-          asset_name: Flowfile-mac-dmg.dmg
-          asset_content_type: application/x-apple-diskimage
+          name: "Release ${{ github.ref_name }}"
+          files: |
+            ./Flowfile-*-arm64.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
