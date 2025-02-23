@@ -87,8 +87,8 @@
       <label for="infer-schema-length">Schema Infer Length:</label>
       <el-slider
         v-model="localCsvTable.infer_schema_length"
-        :step="10000"
-        :max="1000000"
+        :step="1000"
+        :max="100000"
         :min="0"
         show-stops
         size="small"

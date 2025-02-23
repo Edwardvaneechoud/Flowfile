@@ -208,6 +208,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { FileInfo } from "./types";
+import { useFileBrowserStore } from "../../../../stores/fileBrowserStore";
+
 
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
@@ -218,6 +220,18 @@ import {
   navigateTo,
 } from "./fileSystemApi";
 import path from "path-browserify";
+
+const fileBrowserStore = useFileBrowserStore()
+
+const sortBy = computed<"name" | "size" | "last_modified" | "created_date">({
+  get: () => fileBrowserStore.sortBy,
+  set: (newValue) => {
+    fileBrowserStore.setSortBy(newValue)
+  },
+})
+
+const sortDirection = computed(() => fileBrowserStore.sortDirection)
+const toggleSortDirection = () => fileBrowserStore.toggleSortDirection()
 
 interface Props {
   allowedFileTypes?: string[];
@@ -354,6 +368,7 @@ const handleDoubleClick = async (file: FileInfo) => {
     try {
       await navigateInto(file.name);
       await loadCurrentDirectory();
+      searchTerm.value = ""
     } catch (err: any) {
       error.value = err.message || "Failed to open directory";
     } finally {
@@ -465,8 +480,8 @@ defineExpose({
   selectedFile: computed(() => selectedFile.value),
 });
 // Add new sorting state
-const sortBy = ref<"name" | "size" | "last_modified" | "created_date">("name");
-const sortDirection = ref<"asc" | "desc">("asc");
+// const sortBy = ref<"name" | "size" | "last_modified" | "created_date">("name");
+// const sortDirection = ref<"asc" | "desc">("asc");
 
 const calculateSortedFiles = () => {
   return files.value
@@ -519,10 +534,6 @@ const filteredFiles = computed(() => {
   return calculateSortedFiles();
 });
 
-// Add sort direction toggle function
-const toggleSortDirection = () => {
-  sortDirection.value = sortDirection.value === "asc" ? "desc" : "asc";
-};
 
 // Watch for changes in allowedFileTypes
 watch(

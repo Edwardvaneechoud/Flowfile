@@ -23,6 +23,7 @@ JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross'
 class SelectInput:
     # __slots__ = ['old_name', 'new_name', 'keep', 'data_type', 'data_type_change', 'join_key']
     old_name: str
+    original_position: Optional[int] = None
     new_name: Optional[str] = None
     data_type: Optional[str] = None
     data_type_change: Optional[bool] = False

@@ -7,6 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from flowfile_core.routes import router
 from flowfile_core.configs.flow_logger import clear_all_flow_logs  # Import the cleanup function
+from flowfile_core import ServerRun
 
 # Global shutdown flag and server reference
 should_exit = False
@@ -60,6 +61,9 @@ app.include_router(router)
 @app.post("/shutdown")
 async def shutdown():
     """Endpoint to handle graceful shutdown"""
+
+    ServerRun.exit = True
+    print(ServerRun.exit)
     if server_instance:
         # Schedule the shutdown
         await asyncio.create_task(trigger_shutdown())
