@@ -103,6 +103,8 @@ jobs:
 
       - name: List downloaded artifact files
         run: ls -la
+      - name: List all files recursively
+        run: ls -laR
 
       - name: Create GitHub Release
         id: create_release
