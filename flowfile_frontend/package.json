@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev-server.js",
     "dev:web": "vite --config vite.config.js",
-    "build": "npm run lint && vue-tsc --noEmit && node scripts/build.js && electron-builder",
+    "build": "npm run lint && vue-tsc --noEmit && node scripts/build.js && electron-builder --publish=never",
     "build:web": "npm run lint && vue-tsc --noEmit && vite build --config vite.config.js",
     "preview:web": "vite preview",
     "lint": "eslint --fix ./src/**/*.{ts,vue}",
