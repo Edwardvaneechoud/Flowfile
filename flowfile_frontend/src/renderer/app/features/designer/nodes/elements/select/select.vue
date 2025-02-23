@@ -2,6 +2,7 @@
   <div v-if="dataLoaded" class="listbox-wrapper">
     <generic-node-settings v-model="nodeSelect">
       <select-dynamic
+        v-model:sortedBy="nodeSelect.sorted_by"
         :select-inputs="nodeSelect.select_input"
         :show-keep-option="true"
         :show-data-type="true"
@@ -12,7 +13,6 @@
         :show-data="true"
         title="Select data"
         @update-select-inputs="updateSelectInputsHandler"
-        v-model:sortedBy="nodeSelect.sorted_by"
       />
     </generic-node-settings>
   </div>
@@ -52,7 +52,7 @@ const loadNodeData = async (nodeId: number) => {
         throw new Error("Setting input not available");
       }
     } catch (error) {
-      console.log('doing this')
+      console.log("doing this");
       if (main_input && nodeSelect.value) {
         nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
         nodeSelect.value.depending_on_id = main_input.node_id;
@@ -73,7 +73,7 @@ const pushNodeData = async () => {
   if (originalData) {
     newColumnSettings.forEach((newColumnSetting, index) => {
       let original_index = originalData.main_input?.table_schema.findIndex(
-        (column) => column.name === newColumnSetting.old_name
+        (column) => column.name === newColumnSetting.old_name,
       );
       let original_object = index !== -1 ? originalData.main_input?.table_schema[index] : undefined;
       if (original_object) {
@@ -82,7 +82,7 @@ const pushNodeData = async () => {
         newColumnSetting.position = index;
         newColumnSetting.original_position = original_index || index;
       }
-     });
+    });
   }
   await nodeStore.updateSettings(nodeSelect);
 };

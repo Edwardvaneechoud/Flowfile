@@ -1,23 +1,11 @@
 <template>
   <div class="nodes-wrapper">
     <!-- Search Input -->
-    <input
-      type="text"
-      v-model="searchQuery"
-      placeholder="Search nodes..."
-      class="search-input"
-    />
+    <input v-model="searchQuery" type="text" placeholder="Search nodes..." class="search-input" />
 
-    <div
-      v-for="(categoryInfo, category) in categories"
-      :key="category"
-      class="category-container"
-    >
+    <div v-for="(categoryInfo, category) in categories" :key="category" class="category-container">
       <!-- Category Header -->
-      <button
-        class="category-header"
-        @click="toggleCategory(category as CategoryKey)"
-      >
+      <button class="category-header" @click="toggleCategory(category as CategoryKey)">
         <span class="category-title">{{ categoryInfo.name }}</span>
         <el-icon class="category-icon">
           <ArrowDown v-if="openCategories[category as CategoryKey]" />
@@ -37,11 +25,7 @@
           draggable="true"
           @dragstart="$emit('dragstart', $event, node)"
         >
-          <img
-            :src="getImageUrl(node.image)"
-            :alt="node.name"
-            class="node-image"
-          />
+          <img :src="getImageUrl(node.image)" :alt="node.name" class="node-image" />
           <span class="node-name">{{ node.name }}</span>
         </div>
       </div>
@@ -79,22 +63,22 @@ const categories: Categories = {
 
 const openCategories = ref<{ [K in CategoryKey]: boolean }>(
   Object.fromEntries(
-    Object.keys(categories).map((key) => [
-      key,
-      categories[key as CategoryKey].isOpen,
-    ])
-  ) as { [K in CategoryKey]: boolean }
+    Object.keys(categories).map((key) => [key, categories[key as CategoryKey].isOpen]),
+  ) as { [K in CategoryKey]: boolean },
 );
 
 const groupedNodes = computed(() => {
-  return nodes.value.reduce((acc, node) => {
-    const group = node.node_group as CategoryKey;
-    if (!acc[group]) {
-      acc[group] = [];
-    }
-    acc[group].push(node);
-    return acc;
-  }, {} as Record<CategoryKey, NodeTemplate[]>);
+  return nodes.value.reduce(
+    (acc, node) => {
+      const group = node.node_group as CategoryKey;
+      if (!acc[group]) {
+        acc[group] = [];
+      }
+      acc[group].push(node);
+      return acc;
+    },
+    {} as Record<CategoryKey, NodeTemplate[]>,
+  );
 });
 
 // Reactive search query
@@ -110,9 +94,7 @@ const filteredNodes = computed(() => {
   // Loop through each category and filter nodes
   for (const category in groupedNodes.value) {
     const nodesArray = groupedNodes.value[category as CategoryKey];
-    const filteredArray = nodesArray.filter((node) =>
-      node.name.toLowerCase().includes(query)
-    );
+    const filteredArray = nodesArray.filter((node) => node.name.toLowerCase().includes(query));
     if (filteredArray.length) {
       filtered[category as CategoryKey] = filteredArray;
     }

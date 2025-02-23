@@ -77,18 +77,18 @@ const updatePosition = () => {
   switch (props.placement) {
     case "top":
       top = referenceRect.top - popoverRect.height - offset;
-      left = referenceRect.left + (referenceRect.width / 2) - (popoverRect.width / 2);
+      left = referenceRect.left + referenceRect.width / 2 - popoverRect.width / 2;
       break;
     case "bottom":
       top = referenceRect.bottom + offset;
-      left = referenceRect.left + (referenceRect.width / 2) - (popoverRect.width / 2);
+      left = referenceRect.left + referenceRect.width / 2 - popoverRect.width / 2;
       break;
     case "left":
-      top = referenceRect.top + (referenceRect.height / 2) - (popoverRect.height / 2);
+      top = referenceRect.top + referenceRect.height / 2 - popoverRect.height / 2;
       left = referenceRect.left - popoverRect.width - offset;
       break;
     case "right":
-      top = referenceRect.top + (referenceRect.height / 2) - (popoverRect.height / 2);
+      top = referenceRect.top + referenceRect.height / 2 - popoverRect.height / 2;
       left = referenceRect.right + offset;
       break;
   }

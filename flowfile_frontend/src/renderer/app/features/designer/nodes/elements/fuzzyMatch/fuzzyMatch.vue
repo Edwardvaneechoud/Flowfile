@@ -146,6 +146,7 @@ const createSelectInput = (field: string): SelectInput => {
     is_altered: false,
     data_type_change: false,
     is_available: true,
+    original_position: 0,
   };
 };
 const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {

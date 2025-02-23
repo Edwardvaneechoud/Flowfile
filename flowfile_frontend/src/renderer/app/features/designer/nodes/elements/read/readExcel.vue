@@ -1,5 +1,5 @@
 <template>
-  <div v-if="isLoaded" >
+  <div v-if="isLoaded">
     <div class="table">
       <div v-if="localExcelTable" class="selectors">
         <!-- Sheet Name Dropdown -->

@@ -17,9 +17,9 @@
         <table class="styled-table">
           <thead>
             <tr v-if="props.showHeaders">
-              <th 
-                v-if="props.showOldColumns" 
-                :style="{ width: standardColumnWidth }" 
+              <th
+                v-if="props.showOldColumns"
+                :style="{ width: standardColumnWidth }"
                 @click="toggleSort"
               >
                 {{ originalColumnHeader }}
@@ -29,12 +29,8 @@
               <th v-if="props.showNewColumns" :style="{ width: standardColumnWidth }">
                 New column name
               </th>
-              <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">
-                Data type
-              </th>
-              <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">
-                Select
-              </th>
+              <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">Data type</th>
+              <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
             </tr>
           </thead>
           <tbody id="selectable-container">
@@ -65,12 +61,18 @@
               </td>
 
               <!-- New Column -->
-              <td v-if="props.showNewColumns" :class="{ 'highlight-row': isSelected(column.old_name) }">
+              <td
+                v-if="props.showNewColumns"
+                :class="{ 'highlight-row': isSelected(column.old_name) }"
+              >
                 <el-input v-model="column.new_name" size="small" class="smaller-el-input" />
               </td>
 
               <!-- Data Type -->
-              <td v-if="props.showDataType" :class="{ 'highlight-row': isSelected(column.old_name) }">
+              <td
+                v-if="props.showDataType"
+                :class="{ 'highlight-row': isSelected(column.old_name) }"
+              >
                 <el-select v-model="column.data_type" size="small">
                   <el-option
                     v-for="dataType in dataTypes"
@@ -82,7 +84,10 @@
               </td>
 
               <!-- Keep Option -->
-              <td v-if="props.showKeepOption" :class="{ 'highlight-row': isSelected(column.old_name) }">
+              <td
+                v-if="props.showKeepOption"
+                :class="{ 'highlight-row': isSelected(column.old_name) }"
+              >
                 <el-checkbox v-model="column.keep" />
               </td>
             </tr>
@@ -104,33 +109,41 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, defineProps, computed, onMounted, onUnmounted, watchEffect, defineEmits, defineExpose, watch } from "vue";
+import {
+  ref,
+  defineProps,
+  computed,
+  onMounted,
+  onUnmounted,
+  watchEffect,
+  defineEmits,
+  defineExpose,
+  watch,
+} from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";
 import UnavailableField from "./UnavailableFields.vue";
 
-const sortState = ref<'none' | 'asc' | 'desc'>('none');
+const sortState = ref<"none" | "asc" | "desc">("none");
 
 const initializeOrder = () => {
   const sortedInputs = [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1
+    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
   );
-  if (sortState.value === 'none') {
+  if (sortState.value === "none") {
     localSelectInputs.value = [...sortedInputs];
   }
 };
 
-
-
 const toggleSort = () => {
-  if (props.sortedBy === 'none') {
-    emit('update:sortedBy', 'asc');
+  if (props.sortedBy === "none") {
+    emit("update:sortedBy", "asc");
     localSelectInputs.value.sort((a, b) => a.old_name.localeCompare(b.old_name));
-  } else if (props.sortedBy === 'asc') {
-    emit('update:sortedBy', 'desc');
+  } else if (props.sortedBy === "asc") {
+    emit("update:sortedBy", "desc");
     localSelectInputs.value.sort((a, b) => b.old_name.localeCompare(a.old_name));
   } else {
-    emit('update:sortedBy', 'none');
+    emit("update:sortedBy", "none");
     localSelectInputs.value.sort((a, b) => a.original_position - b.original_position);
   }
   localSelectInputs.value.forEach((input, i) => (input.position = i));
@@ -170,19 +183,19 @@ const dataTypes = nodeStore.getDataTypes();
 // Local sorted select inputs (by availability)
 const localSelectInputs = ref<SelectInput[]>(
   [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1
-  )
+    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
+  ),
 );
 
 watchEffect(() => {
   localSelectInputs.value = [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1
+    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
   );
 });
 
 // Computed properties for column widths
-const standardColumnCount = computed(() =>
-  [props.showOldColumns, props.showNewColumns, props.showDataType].filter(Boolean).length
+const standardColumnCount = computed(
+  () => [props.showOldColumns, props.showNewColumns, props.showDataType].filter(Boolean).length,
 );
 
 const standardColumnWidth = computed(() => {
@@ -191,7 +204,7 @@ const standardColumnWidth = computed(() => {
 });
 
 const selectColumnWidth = computed(() =>
-  standardColumnCount.value > 0 ? 50 / (standardColumnCount.value + 0.5) + "%" : "0%"
+  standardColumnCount.value > 0 ? 50 / (standardColumnCount.value + 0.5) + "%" : "0%",
 );
 
 // Helper Methods
@@ -223,10 +236,10 @@ const handleDrop = (index: number) => {
 
 // Item Selection and Context Menu
 const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent) => {
-  if ((event.shiftKey) && firstSelectedIndex.value !== null) {
+  if (event.shiftKey && firstSelectedIndex.value !== null) {
     const range = getRange(firstSelectedIndex.value, clickedIndex);
     selectedColumns.value = range
-      .map(index => localSelectInputs.value[index].old_name)
+      .map((index) => localSelectInputs.value[index].old_name)
       .filter(Boolean);
   } else {
     firstSelectedIndex.value = clickedIndex;
@@ -238,13 +251,13 @@ const openContextMenu = (clickedIndex: number, columnName: string, event: MouseE
   showContextMenu.value = true;
   event.stopPropagation();
   if (!selectedColumns.value.includes(columnName)) {
-    handleItemClick(clickedIndex, columnName, event)
+    handleItemClick(clickedIndex, columnName, event);
   }
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
 };
 
 const selectAllSelected = () => {
-  localSelectInputs.value.forEach(column => {
+  localSelectInputs.value.forEach((column) => {
     if (selectedColumns.value.includes(column.old_name)) {
       column.keep = true;
     }
@@ -252,7 +265,7 @@ const selectAllSelected = () => {
 };
 
 const deselectAllSelected = () => {
-  localSelectInputs.value.forEach(column => {
+  localSelectInputs.value.forEach((column) => {
     if (selectedColumns.value.includes(column.old_name)) {
       column.keep = false;
     }
@@ -261,7 +274,7 @@ const deselectAllSelected = () => {
 
 // Check for Missing Fields
 const hasMissingFields = computed(() =>
-  localSelectInputs.value.some(column => !column.is_available)
+  localSelectInputs.value.some((column) => !column.is_available),
 );
 
 // Click Outside Handler for Context Menu
@@ -276,7 +289,7 @@ const handleClickOutside = (event: MouseEvent) => {
 onMounted(() => {
   window.addEventListener("click", handleClickOutside);
 
-initializeOrder();
+  initializeOrder();
 });
 
 onUnmounted(() => {
@@ -287,7 +300,7 @@ onUnmounted(() => {
 const emit = defineEmits(["updateSelectInputs", "update:sortedBy"]);
 
 const removeMissingFields = () => {
-  const availableColumns = localSelectInputs.value.filter(column => column.is_available);
+  const availableColumns = localSelectInputs.value.filter((column) => column.is_available);
   localSelectInputs.value = availableColumns;
   emit("updateSelectInputs", availableColumns);
 };

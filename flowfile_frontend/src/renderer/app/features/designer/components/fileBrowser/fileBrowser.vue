@@ -210,7 +210,6 @@ import { ref, computed, onMounted, watch } from "vue";
 import { FileInfo } from "./types";
 import { useFileBrowserStore } from "../../../../stores/fileBrowserStore";
 
-
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   getCurrentDirectoryContents,
@@ -221,17 +220,17 @@ import {
 } from "./fileSystemApi";
 import path from "path-browserify";
 
-const fileBrowserStore = useFileBrowserStore()
+const fileBrowserStore = useFileBrowserStore();
 
 const sortBy = computed<"name" | "size" | "last_modified" | "created_date">({
   get: () => fileBrowserStore.sortBy,
   set: (newValue) => {
-    fileBrowserStore.setSortBy(newValue)
+    fileBrowserStore.setSortBy(newValue);
   },
-})
+});
 
-const sortDirection = computed(() => fileBrowserStore.sortDirection)
-const toggleSortDirection = () => fileBrowserStore.toggleSortDirection()
+const sortDirection = computed(() => fileBrowserStore.sortDirection);
+const toggleSortDirection = () => fileBrowserStore.toggleSortDirection();
 
 interface Props {
   allowedFileTypes?: string[];
@@ -368,7 +367,7 @@ const handleDoubleClick = async (file: FileInfo) => {
     try {
       await navigateInto(file.name);
       await loadCurrentDirectory();
-      searchTerm.value = ""
+      searchTerm.value = "";
     } catch (err: any) {
       error.value = err.message || "Failed to open directory";
     } finally {
@@ -533,7 +532,6 @@ const calculateSortedFiles = () => {
 const filteredFiles = computed(() => {
   return calculateSortedFiles();
 });
-
 
 // Watch for changes in allowedFileTypes
 watch(
