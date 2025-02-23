@@ -74,7 +74,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           # Adjust the path to match the downloaded location.
-          asset_path: Flowfile-mac-dmg/Flowfile-*-arm64.dmg
+          asset_path: Flowfile-*-arm64.dmg
           asset_name: Flowfile-mac-dmg.dmg
           asset_content_type: application/x-apple-diskimage
         env:
