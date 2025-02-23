@@ -57,23 +57,28 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Make and dependencies
-        shell: pwsh
-        run: |
-          choco install make
-          refreshenv
-
       - name: Install Poetry
         shell: pwsh
         run: |
           (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
           echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Build project
+      - name: Install Python dependencies
         shell: pwsh
         run: |
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          make windows
+          poetry install
+
+      - name: Build Python services
+        shell: pwsh
+        run: |
+          poetry run build_backends
+
+      - name: Build Electron app
+        shell: pwsh
+        run: |
+          cd flowfile_frontend
+          npm install
+          npm run build
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
@@ -82,7 +87,6 @@ jobs:
         with:
           name: Flowfile-windows-exe
           path: flowfile_frontend/dist/Flowfile-*-win.exe
-
   release:
     needs: [build-macos, build-windows]
     runs-on: ubuntu-latest
