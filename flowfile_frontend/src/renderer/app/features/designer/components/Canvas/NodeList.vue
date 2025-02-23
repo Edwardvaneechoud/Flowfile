@@ -1,8 +1,23 @@
 <template>
   <div class="nodes-wrapper">
-    <div v-for="(categoryInfo, category) in categories" :key="category" class="category-container">
+    <!-- Search Input -->
+    <input
+      type="text"
+      v-model="searchQuery"
+      placeholder="Search nodes..."
+      class="search-input"
+    />
+
+    <div
+      v-for="(categoryInfo, category) in categories"
+      :key="category"
+      class="category-container"
+    >
       <!-- Category Header -->
-      <button class="category-header" @click="toggleCategory(category as CategoryKey)">
+      <button
+        class="category-header"
+        @click="toggleCategory(category as CategoryKey)"
+      >
         <span class="category-title">{{ categoryInfo.name }}</span>
         <el-icon class="category-icon">
           <ArrowDown v-if="openCategories[category as CategoryKey]" />
@@ -12,17 +27,21 @@
 
       <!-- Category Content -->
       <div
-        v-if="openCategories[category as CategoryKey] && groupedNodes[category]"
+        v-if="openCategories[category as CategoryKey] && filteredNodes[category]"
         class="category-content"
       >
         <div
-          v-for="node in groupedNodes[category]"
+          v-for="node in filteredNodes[category]"
           :key="node.item"
           class="node-item"
           draggable="true"
           @dragstart="$emit('dragstart', $event, node)"
         >
-          <img :src="getImageUrl(node.image)" :alt="node.name" class="node-image" />
+          <img
+            :src="getImageUrl(node.image)"
+            :alt="node.name"
+            class="node-image"
+          />
           <span class="node-name">{{ node.name }}</span>
         </div>
       </div>
@@ -60,22 +79,45 @@ const categories: Categories = {
 
 const openCategories = ref<{ [K in CategoryKey]: boolean }>(
   Object.fromEntries(
-    Object.keys(categories).map((key) => [key, categories[key as CategoryKey].isOpen]),
-  ) as { [K in CategoryKey]: boolean },
+    Object.keys(categories).map((key) => [
+      key,
+      categories[key as CategoryKey].isOpen,
+    ])
+  ) as { [K in CategoryKey]: boolean }
 );
 
 const groupedNodes = computed(() => {
-  return nodes.value.reduce(
-    (acc, node) => {
-      const group = node.node_group as CategoryKey;
-      if (!acc[group]) {
-        acc[group] = [];
-      }
-      acc[group].push(node);
-      return acc;
-    },
-    {} as Record<CategoryKey, NodeTemplate[]>,
-  );
+  return nodes.value.reduce((acc, node) => {
+    const group = node.node_group as CategoryKey;
+    if (!acc[group]) {
+      acc[group] = [];
+    }
+    acc[group].push(node);
+    return acc;
+  }, {} as Record<CategoryKey, NodeTemplate[]>);
+});
+
+// Reactive search query
+const searchQuery = ref("");
+
+// Compute filtered nodes based on the search query
+const filteredNodes = computed(() => {
+  // If no search query, return all grouped nodes
+  if (!searchQuery.value) return groupedNodes.value;
+
+  const query = searchQuery.value.toLowerCase();
+  const filtered = {} as Record<CategoryKey, NodeTemplate[]>;
+  // Loop through each category and filter nodes
+  for (const category in groupedNodes.value) {
+    const nodesArray = groupedNodes.value[category as CategoryKey];
+    const filteredArray = nodesArray.filter((node) =>
+      node.name.toLowerCase().includes(query)
+    );
+    if (filteredArray.length) {
+      filtered[category as CategoryKey] = filteredArray;
+    }
+  }
+  return filtered;
 });
 
 const toggleCategory = (category: CategoryKey) => {
@@ -94,6 +136,14 @@ defineEmits(["dragstart"]);
   background-color: #fff;
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Style for search input */
+.search-input {
+  padding: 8px 16px;
+  margin-bottom: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
 }
 
 .category-container {

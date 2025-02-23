@@ -49,9 +49,6 @@ const defaultColDef = {
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
-  if (gridApi.value) {
-    gridApi.value.sizeColumnsToFit();
-  }
 };
 
 interface Props {

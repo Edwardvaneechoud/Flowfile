@@ -35,8 +35,6 @@
       </div>
     </pop-over>
 
-    <!-- Control Button -->
-    <!-- Control Button with Glasses icon -->
     <pop-over content="Show or hide logs and status" placement="left">
       <button
         class="control-button"
