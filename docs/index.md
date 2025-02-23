@@ -6,7 +6,7 @@
 </div>
 
 <figure markdown>
-  ![Flowfile Interface](assets/images/group_by_screenshot.png){ width="800px" }
+  ![Flowfile Interface](assets/images/generic_screenshot.png){ width="800px" }
 </figure>
 
 ## ⚡ Technical Design

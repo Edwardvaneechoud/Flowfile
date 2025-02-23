@@ -1,5 +1,5 @@
 <template>
-  <div v-if="isLoaded" class="listbox">
+  <div v-if="isLoaded" >
     <div class="table">
       <div v-if="localExcelTable" class="selectors">
         <!-- Sheet Name Dropdown -->
@@ -182,7 +182,7 @@ input {
 }
 
 .compact-input {
-  width: 99%;
+  width: 96%;
   padding: 6px;
   font-size: 14px;
   border: 1px solid #ccc;

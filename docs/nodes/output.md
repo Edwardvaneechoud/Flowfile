@@ -3,108 +3,72 @@
 Output nodes represent the final steps in your data pipeline, allowing you to save your transformed data or explore it visually. These nodes help you deliver your results in the desired format or analyze them directly.
 
 ## Node Details
+## Node Details  
 
-### ![Write Data](../assets/images/nodes/output.png){ width="50" height="50" } Write Data
+### ![Write Data](../assets/images/nodes/output.png){ width="50" height="50" } Write Data  
 
-The Write Data node allows you to save your processed data to various file formats.
+The **Write Data** node allows you to save your processed data in different formats. It supports **CSV**, **Excel**, and **Parquet**, each with specific configuration options.  
 
-**Key Features:**
-- Multiple output formats support
-- File path configuration
-- Compression options
-- Overwrite protection
-- Partition writing support
+---
 
-**Supported Formats:**
-- CSV (.csv)
-- Excel (.xlsx)
-- Parquet (.parquet)
+### **Supported Formats**  
 
-**Usage:**
-1. Configure output path
-2. Select file format
-3. Set writing options
-4. Configure compression (if applicable)
-5. Preview and save
+- **CSV files** (`.csv`)  
+- **Excel files** (`.xlsx`)  
+- **Parquet files** (`.parquet`)  
 
-**Configuration Options:**
-- File path and name
-- Output format selection
-- CSV delimiter and encoding
-- Excel sheet name
-- Parquet compression options
-- Overwrite settings
+---
+
+### **Usage**  
+
+1. Configure the **output file path**.  
+2. Select the **file format**.  
+3. Set writing options (e.g., delimiter, compression).  
+
+---
+
+### CSV  
+When a **CSV** file is selected, the following setup options are available:  
+
+| Parameter      | Description                                                             |
+|----------------|-------------------------------------------------------------------------|
+| **Delimiter**  | Specifies the character used to separate values (default: `,`).         |
+| **Encoding**   | Defines the file encoding (default: `UTF-8`).                           |
+| **Write Mode** | Determines how the file is saved (`overwrite`, `new file` or `append`). |
+
+---
+
+### Excel  
+When an **Excel** file is selected, additional configurations allow customizing the output.
+
+| Parameter      | Description                                                       |
+|----------------|-------------------------------------------------------------------|
+| **Sheet Name** | Name of the sheet where data will be written (default: `Sheet1`). |
+| **Write Mode** | Determines how the file is saved (`overwrite` or `new file`).     |
+
+---
+
+### Parquet  
+When a **Parquet** file is selected, no additional setup options are required. Parquet is a **columnar storage format**, optimized for efficient reading and writing.
+
+| Parameter       | Description                                                   |
+|-----------------|---------------------------------------------------------------|
+| **Write Mode**  | Determines how the file is saved (`overwrite` or `new file`). |
+
+---
+
+### **General Configuration Options**  
+
+| Parameter          | Description                                                                                                                 |
+|--------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| **File Path**      | Directory and filename for the output file.                                                                                 |
+| **File Format**    | Selects the output format (`CSV`, `Excel`, `Parquet`).                                                                      |
+| **Overwrite Mode** | Controls whether to replace or append data. When `new file` is selected it will throw an error when the file already exists |
+
+This node ensures that your transformed data is **saved in the correct format**, ready for further use or analysis.
 
 ---
 
 ### ![Explore Data](../assets/images/nodes/explore_data.png){ width="50" height="50" } Explore Data
 
 The Explore Data node provides interactive data exploration and analysis capabilities.
-
-**Key Features:**
-- Data preview
-- Basic statistics
-- Column profiling
-- Data quality checks
-- Value distribution analysis
-
-**Analysis Options:**
-- Column statistics
-- Data type information
-- Missing value analysis
-- Value distributions
-- Pattern detection
-
-**Usage:**
-1. Connect input data
-2. Select analysis options
-3. View interactive dashboard
-4. Export analysis results (optional)
-
-**Exploration Features:**
-- Preview first/last rows
-- Column statistics
-- Data quality metrics
-- Value frequencies
-- Pattern detection
-- Relationship analysis
-
-## Technical Notes
-
-### Input/Output Specifications
-| Node | Inputs | Output |
-|------|--------|---------|
-| Write Data | 1 | 0 |
-| Explore Data | 1 | 0 |
-
-### Performance Considerations
-- Write Data: 
-  - Large files may require significant disk space
-  - Compression can impact write speed
-  - Consider partitioning for very large datasets
-- Explore Data:
-  - Memory usage depends on dataset size
-  - Some analyses may take time on large datasets
-  - Interactive features work best with smaller datasets
-
-### Best Practices
-- Write Data:
-  - Use appropriate file formats for your data size
-  - Consider compression for large files
-  - Verify write permissions before saving
-  - Use meaningful file names and organization
-  - Validate written files
-
-- Explore Data:
-  - Review data quality before final export
-  - Use sampling for large datasets
-  - Export important findings
-  - Document insights
-  - Check for anomalies
-
-### File Format Guidelines
-| Format | Best For | Considerations |
-|--------|----------|----------------|
-| CSV | Simple data, universal compatibility | No data type preservation |
-| Excel | Small datasets, human readability | Size limitations |
-| Parquet | Large datasets, type preservation | Requires specific tools to read |
