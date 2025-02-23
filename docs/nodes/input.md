@@ -1,107 +1,79 @@
 # Input Nodes
 
-Input nodes are your starting point for any data flow. Flowfile currently supports reading from local files, Airbyte sources, and manual input.
+Input nodes are the starting point for any data flow. Flowfile currently supports reading from **local files**, **Airbyte sources**, and **manual input**.
 
 ## Node Details
 
 ### ![Read Data](../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
 
-The Read Data node is your primary way to load data from local files into Flowfile.
+The **Read Data** node allows you to load local data into your flow. It currently supports **CSV**, **Excel**, and **Parquet** file formats, each with specific configuration options.
 
-**Supported Formats:**
-- CSV files (.csv)
-- Excel files (.xlsx, .xls)
-- Parquet files (.parquet)
+#### **Supported Formats:**
 
-**Key Features:**
-- Auto-detection of data types
-- Preview of data before loading
-- Configuration of delimiter and encoding for CSV files
-- Sheet selection for Excel files
+- **CSV files** (`.csv`)
+- **Excel files** (`.xlsx`, `.xls`)
+- **Parquet files** (`.parquet`)
 
-**Usage:**
-1. Drag the Read Data node onto your canvas
-2. Click to configure the node
-3. Select your input file
-4. Configure any format-specific options
-5. Preview and confirm your data
+#### **Usage:**
 
-**Configuration Options:**
-- File path selection
-- Sheet name (for Excel files)
-- Delimiter (for CSV files)
-- Header row options
-- Data type inference settings
+1. Select your input file.  
+2. Configure any format-specific options.  
+3. Preview and confirm your data.  
+
+---
+
+#### CSV  
+When a **CSV** file is selected, the following setup options are available:  
+
+| Parameter               | Description                                                                                                                                                                          |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Has Headers**         | Determines whether the first row is used as headers. If `"yes"`, the first row is treated as column names. If `"no"`, default column names like `"Column 1, Column 2, ..."` are assigned. |
+| **Delimiter**           | Specifies the character used to separate values (e.g., comma `,`, semicolon `;`, tab `\t`).                                                                                          |
+| **Encoding**            | Defines the file encoding (e.g., `UTF-8`, `ISO-8859-1`).                                                                                                                             |
+| **Quote Character**     | Character used to enclose text fields, preventing delimiter conflicts (e.g., `"`, `'`).                                                                                              |
+| **New Line Delimiter**  | Specifies how new lines are detected (e.g., `\n`, `\r\n`).                                                                                                                          |
+| **Schema Infer Length** | Determines how many rows are scanned to infer column types.                                                                                                                         |
+| **Truncate Long Lines** | If enabled, long lines are truncated instead of causing errors.                                                                                                                     |
+| **Ignore Errors**       | If enabled, the process continues even if some rows cause errors.                                                                                                                   |
+
+---
+
+#### Excel  
+When an **Excel** file is selected, you can specify the sheet, select specific rows and columns, and configure headers and type inference options to tailor data loading to your needs.
+
+| Parameter          | Description                                                                                                                                              |
+|--------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Sheet Name**     | The name of the sheet to be read. If not specified, the first sheet is used.                                                                             |
+| **Start Row**      | The row index (zero-based) from which reading starts. Default is `0` (beginning of the sheet).                                                           |
+| **Start Column**   | The column index (zero-based) from which reading starts. Default is `0` (first column).                                                                  |
+| **End Row**        | The row index (zero-based) at which reading stops. Default is `0` (read all rows).                                                                       |
+| **End Column**     | The column index (zero-based) at which reading stops. Default is `0` (read all columns).                                                                 |
+| **Has Headers**    | Determines whether the first row is treated as headers. If `true`, the first row is used as column names. If `false`, default column names are assigned. |
+| **Type Inference** | If `true`, the engine attempts to infer data types. If `false`, data types are not automatically inferred.                                               |
+
+---
+
+#### Parquet  
+When a **Parquet** file is selected, no additional setup options are required. Parquet is a columnar storage format optimized for efficiency and performance. It retains schema information and data types, enabling faster reads and writes without manual configuration.
 
 ---
 
 ### ![Read Airbyte](../assets/images/nodes/airbyte.png){ width="50" height="50" } Read Airbyte
 
-The Read Airbyte node allows you to connect to any configured Airbyte source and import data directly.
-
-**Key Features:**
-- Connect to any Airbyte source
-- Select specific streams
-- Configure sync modes
-
-**Usage:**
-1. Drag the Read Airbyte node onto your canvas
-2. Configure the Airbyte connection
-3. Select the desired stream
-4. Configure sync options
-5. Preview the data schema
-
-**Configuration Options:**
-- Connection selection
-- Stream selection
-- Sync mode
-- Cursor field (for incremental syncs)
-- Primary key configuration
+The **Read Airbyte** node allows you to connect to any configured Airbyte source and import data directly. This feature is **experimental** and requires a running Docker instance. The behavior of this node depends heavily on the Airbyte source settings, following Airbyte’s standard configuration guidelines.
 
 ---
 
 ### ![Manual Input](../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
 
-The Manual Input node allows you to create data directly within Flowfile or paste data from your clipboard.
+The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
 
-**Key Features:**
+#### **Key Features:**
 - Create data from scratch
-- Paste data from clipboard
-- Define column types manually
-- Preview data as you enter it
+- Paste data from clipboard in the raw data section
 
-**Usage:**
-1. Drag the Manual Input node onto your canvas
-2. Click to open the data editor
-3. Either:
-   - Enter data manually using the grid interface
-   - Paste data from clipboard
-4. Define column types if needed
-5. Preview and confirm your data
-
-**Configuration Options:**
-- Column names and types
-- Data validation rules
-- Copy/paste settings
-- Preview options
-
-**Example Use Cases:**
+#### **Example Use Cases:**
 - Creating small lookup tables
 - Testing data transformations
 - Quick data prototyping
 - Adding configuration data to your flow
-
-## Technical Notes
-
-### Input/Output Specifications
-| Node | Inputs | Output |
-|------|--------|---------|
-| Read Data | 0 | 1 |
-| Read Airbyte | 0 | 1 |
-| Manual Input | 0 | 1 |
-
-### Best Practices
-- Preview data after loading to verify structure
-- Check data types are correctly inferred
-- Use appropriate delimiters for CSV files
-- Consider file encoding for text files
