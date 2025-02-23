@@ -20,10 +20,12 @@ def ensure_compatibility_node_select(node_select: input_schema.NodeSelect):
         if any(not hasattr(select_input, 'position') for select_input in node_select.select_input):
             for _index, select_input in enumerate(node_select.select_input):
                 setattr(select_input, 'position', _index)
+        if not hasattr(node_select, 'sorted_by'):
+            setattr(node_select, 'sorted_by', 'none')
 
 
 def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch | input_schema.NodeJoin):
-    if any(not hasattr(r,'position') for r in node_settings.join_input.right_select.renames):
+    if any(not hasattr(r, 'position') for r in node_settings.join_input.right_select.renames):
         for _index, select_input in enumerate(node_settings.join_input.right_select.renames +
                                               node_settings.join_input.left_select.renames):
             setattr(select_input, 'position', _index)

@@ -1,36 +1,54 @@
 <template>
   <div v-if="dataLoaded">
+    <!-- Remove Missing Fields Button -->
     <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
-      <unavailable-field tooltip-text="Field not available click for removing them for memory" />
+      <UnavailableField tooltip-text="Field not available click for removing them for memory" />
       <span>Remove Missing Fields</span>
     </div>
-    <div v-if="props.showTitle" class="listbox-subtitle">{{ props.title }}</div>
+
+    <!-- Title -->
+    <div v-if="props.showTitle" class="listbox-subtitle">
+      {{ props.title }}
+    </div>
+
+    <!-- Table Wrapper -->
     <div class="listbox-wrapper">
       <div class="table-wrapper">
         <table class="styled-table">
           <thead>
             <tr v-if="props.showHeaders">
-              <th v-if="props.showOldColumns" :style="{ width: standardColumnWidth }">
+              <th 
+                v-if="props.showOldColumns" 
+                :style="{ width: standardColumnWidth }" 
+                @click="toggleSort"
+              >
                 {{ originalColumnHeader }}
+                <span v-if="props.sortedBy === 'asc'">▲</span>
+                <span v-else-if="props.sortedBy === 'desc'">▼</span>
               </th>
               <th v-if="props.showNewColumns" :style="{ width: standardColumnWidth }">
                 New column name
               </th>
-              <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">Data type</th>
-              <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
+              <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">
+                Data type
+              </th>
+              <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">
+                Select
+              </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="selectable-container">
             <tr
               v-for="(column, index) in localSelectInputs"
               :key="column.old_name"
-              :class="[{ 'drag-over': dragOverIndex === index }]"
+              :class="{ 'drag-over': dragOverIndex === index }"
               :style="{ opacity: column.is_available ? 1 : 0.6 }"
               draggable="true"
               @dragstart="handleDragStart(index, $event)"
               @dragover.prevent="handleDragOver(index)"
               @drop="handleDrop(index)"
             >
+              <!-- Old Column -->
               <td
                 v-if="props.showOldColumns"
                 :class="{ 'highlight-row': isSelected(column.old_name) }"
@@ -38,23 +56,21 @@
                 @contextmenu.prevent="openContextMenu(index, column.old_name, $event)"
               >
                 <div v-if="!column.is_available" class="unavailable-field">
-                  <unavailable-field />
+                  <UnavailableField />
                   <span style="margin-left: 20px">{{ column.old_name }}</span>
                 </div>
                 <div v-else>
                   {{ column.old_name }}
                 </div>
               </td>
-              <td
-                v-if="props.showNewColumns"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-              >
+
+              <!-- New Column -->
+              <td v-if="props.showNewColumns" :class="{ 'highlight-row': isSelected(column.old_name) }">
                 <el-input v-model="column.new_name" size="small" class="smaller-el-input" />
               </td>
-              <td
-                v-if="props.showDataType"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-              >
+
+              <!-- Data Type -->
+              <td v-if="props.showDataType" :class="{ 'highlight-row': isSelected(column.old_name) }">
                 <el-select v-model="column.data_type" size="small">
                   <el-option
                     v-for="dataType in dataTypes"
@@ -64,10 +80,9 @@
                   />
                 </el-select>
               </td>
-              <td
-                v-if="props.showKeepOption"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-              >
+
+              <!-- Keep Option -->
+              <td v-if="props.showKeepOption" :class="{ 'highlight-row': isSelected(column.old_name) }">
                 <el-checkbox v-model="column.keep" />
               </td>
             </tr>
@@ -76,13 +91,12 @@
       </div>
     </div>
   </div>
+
+  <!-- Context Menu -->
   <div
     v-if="showContextMenu"
     class="context-menu"
-    :style="{
-      top: contextMenuPosition.y + 'px',
-      left: contextMenuPosition.x + 'px',
-    }"
+    :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
   >
     <button @click="selectAllSelected">Select</button>
     <button @click="deselectAllSelected">Deselect</button>
@@ -90,103 +104,105 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, defineProps, computed, onMounted, onUnmounted, watchEffect } from "vue";
+import { ref, defineProps, computed, onMounted, onUnmounted, watchEffect, defineEmits, defineExpose, watch } from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";
-import unavailableField from "./UnavailableFields.vue";
+import UnavailableField from "./UnavailableFields.vue";
+
+const sortState = ref<'none' | 'asc' | 'desc'>('none');
+
+const initializeOrder = () => {
+  const sortedInputs = [...props.selectInputs].sort((a, b) =>
+    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1
+  );
+  if (sortState.value === 'none') {
+    localSelectInputs.value = [...sortedInputs];
+  }
+};
+
+
+
+const toggleSort = () => {
+  if (props.sortedBy === 'none') {
+    emit('update:sortedBy', 'asc');
+    localSelectInputs.value.sort((a, b) => a.old_name.localeCompare(b.old_name));
+  } else if (props.sortedBy === 'asc') {
+    emit('update:sortedBy', 'desc');
+    localSelectInputs.value.sort((a, b) => b.old_name.localeCompare(a.old_name));
+  } else {
+    emit('update:sortedBy', 'none');
+    localSelectInputs.value.sort((a, b) => a.original_position - b.original_position);
+  }
+  localSelectInputs.value.forEach((input, i) => (input.position = i));
+};
 
 const props = defineProps({
   selectInputs: {
-    type: Object as () => SelectInput[],
-    default: () => ({}),
+    type: Array as () => SelectInput[],
+    default: () => [],
   },
-  showOldColumns: {
-    type: Boolean,
-    default: true,
-  },
-  showNewColumns: {
-    type: Boolean,
-    default: true,
-  },
-  showKeepOption: {
-    type: Boolean,
-    default: false,
-  },
-  showDataType: {
-    type: Boolean,
-    default: false,
-  },
-  title: {
-    type: String,
-    default: "Select columns",
-  },
-  showOptionKeepUnseen: {
-    type: Boolean,
-    default: false,
-  },
-  showHeaders: {
-    type: Boolean,
-    default: true,
-  },
-  showData: {
-    type: Boolean,
-    default: true,
-  },
-  showTitle: {
-    type: Boolean,
-    default: true,
-  },
-  draggable: {
-    type: Boolean,
-    default: false,
-  },
-  showMissing: {
-    type: Boolean,
-    default: true,
-  },
-  originalColumnHeader: {
-    type: String,
-    default: "Original column name",
-  },
+  showOldColumns: { type: Boolean, default: true },
+  showNewColumns: { type: Boolean, default: true },
+  showKeepOption: { type: Boolean, default: false },
+  showDataType: { type: Boolean, default: false },
+  title: { type: String, default: "Select columns" },
+  showOptionKeepUnseen: { type: Boolean, default: false },
+  showHeaders: { type: Boolean, default: true },
+  showData: { type: Boolean, default: true },
+  showTitle: { type: Boolean, default: true },
+  draggable: { type: Boolean, default: false },
+  showMissing: { type: Boolean, default: true },
+  originalColumnHeader: { type: String, default: "Original column name" },
+  sortedBy: { type: String, default: "none" },
 });
-// Refs and Computed
+
+// State and Store
 const dataLoaded = ref(true);
-const dataTypes = useNodeStore().getDataTypes();
 const selectedColumns = ref<string[]>([]);
 const firstSelectedIndex = ref<number | null>(null);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const showContextMenu = ref(false);
 const draggingIndex = ref<number>(-1);
 const dragOverIndex = ref<number>(-1);
+const nodeStore = useNodeStore();
+const dataTypes = nodeStore.getDataTypes();
 
+// Local sorted select inputs (by availability)
 const localSelectInputs = ref<SelectInput[]>(
   [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
-  ),
+    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1
+  )
 );
 
 watchEffect(() => {
   localSelectInputs.value = [...props.selectInputs].sort((a, b) =>
-    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1,
+    a.is_available === b.is_available ? 0 : a.is_available ? -1 : 1
   );
 });
 
-const standardColumnCount = computed(() => {
-  return [props.showOldColumns, props.showNewColumns, props.showDataType].filter(Boolean).length;
-});
+// Computed properties for column widths
+const standardColumnCount = computed(() =>
+  [props.showOldColumns, props.showNewColumns, props.showDataType].filter(Boolean).length
+);
 
 const standardColumnWidth = computed(() => {
   const totalColumns = standardColumnCount.value + 0.5;
   return totalColumns > 0 ? 100 / totalColumns + "%" : "0%";
 });
 
-const selectColumnWidth = computed(() => {
-  return standardColumnCount.value > 0 ? 50 / (standardColumnCount.value + 0.5) + "%" : "0%";
-});
+const selectColumnWidth = computed(() =>
+  standardColumnCount.value > 0 ? 50 / (standardColumnCount.value + 0.5) + "%" : "0%"
+);
 
-// Methods
+// Helper Methods
 const isSelected = (columnName: string) => selectedColumns.value.includes(columnName);
 
+const getRange = (start: number, end: number) =>
+  start < end
+    ? Array.from({ length: end - start + 1 }, (_, i) => i + start)
+    : Array.from({ length: start - end + 1 }, (_, i) => i + end);
+
+// Drag & Drop Handlers
 const handleDragStart = (index: number, event: DragEvent) => {
   draggingIndex.value = index;
   event.dataTransfer?.setData("text", "");
@@ -205,23 +221,30 @@ const handleDrop = (index: number) => {
   localSelectInputs.value.forEach((input, i) => (input.position = i));
 };
 
-const getRange = (start: number, end: number) => {
-  const range =
-    start < end
-      ? Array.from({ length: end - start + 1 }, (_, i) => i + start)
-      : Array.from({ length: start - end + 1 }, (_, i) => i + end);
-  return range;
+// Item Selection and Context Menu
+const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent) => {
+  if ((event.shiftKey) && firstSelectedIndex.value !== null) {
+    const range = getRange(firstSelectedIndex.value, clickedIndex);
+    selectedColumns.value = range
+      .map(index => localSelectInputs.value[index].old_name)
+      .filter(Boolean);
+  } else {
+    firstSelectedIndex.value = clickedIndex;
+    selectedColumns.value = [localSelectInputs.value[clickedIndex].old_name];
+  }
 };
 
 const openContextMenu = (clickedIndex: number, columnName: string, event: MouseEvent) => {
   showContextMenu.value = true;
   event.stopPropagation();
-  handleItemClick(clickedIndex, columnName, event, true);
+  if (!selectedColumns.value.includes(columnName)) {
+    handleItemClick(clickedIndex, columnName, event)
+  }
   contextMenuPosition.value = { x: event.clientX, y: event.clientY };
 };
 
 const selectAllSelected = () => {
-  localSelectInputs.value.forEach((column) => {
+  localSelectInputs.value.forEach(column => {
     if (selectedColumns.value.includes(column.old_name)) {
       column.keep = true;
     }
@@ -229,60 +252,49 @@ const selectAllSelected = () => {
 };
 
 const deselectAllSelected = () => {
-  localSelectInputs.value.forEach((column) => {
+  localSelectInputs.value.forEach(column => {
     if (selectedColumns.value.includes(column.old_name)) {
       column.keep = false;
     }
   });
 };
 
-const handleItemClick = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-  full = false,
-) => {
-  if ((event.shiftKey || full) && firstSelectedIndex.value !== null) {
-    const range = getRange(firstSelectedIndex.value, clickedIndex);
-    selectedColumns.value = range
-      .map((index) => localSelectInputs.value[index].old_name)
-      .filter((col): col is string => col !== undefined);
-  } else {
-    firstSelectedIndex.value = clickedIndex;
-    selectedColumns.value = [columnName];
+// Check for Missing Fields
+const hasMissingFields = computed(() =>
+  localSelectInputs.value.some(column => !column.is_available)
+);
+
+// Click Outside Handler for Context Menu
+const handleClickOutside = (event: MouseEvent) => {
+  const container = document.getElementById("selectable-container");
+  if (container && !container.contains(event.target as Node)) {
+    selectedColumns.value = [];
+    showContextMenu.value = false;
   }
 };
 
-const hasMissingFields = computed(() => {
-  return localSelectInputs.value.some((column) => !column.is_available);
-});
-
-// Lifecycle Hooks
 onMounted(() => {
   window.addEventListener("click", handleClickOutside);
+
+initializeOrder();
 });
 
 onUnmounted(() => {
   window.removeEventListener("click", handleClickOutside);
 });
 
-const handleClickOutside = (event: MouseEvent) => {
-  if ((event.target as HTMLElement).className !== "highlight-row") {
-    selectedColumns.value = [];
-    showContextMenu.value = false;
-  }
-};
-
-const emit = defineEmits(["updateSelectInputs"]);
+// Emit and Expose
+const emit = defineEmits(["updateSelectInputs", "update:sortedBy"]);
 
 const removeMissingFields = () => {
-  const availableColumns = localSelectInputs.value.filter((column) => column.is_available);
+  const availableColumns = localSelectInputs.value.filter(column => column.is_available);
   localSelectInputs.value = availableColumns;
   emit("updateSelectInputs", availableColumns);
 };
 
 defineExpose({ localSelectInputs });
 </script>
+
 <style scoped>
 /* Context menu styling */
 .context-menu {
@@ -310,7 +322,7 @@ defineExpose({ localSelectInputs });
   background-color: #f0f0f0;
 }
 
-/* Table wrapper to allow scrolling */
+/* Table wrapper for scrolling */
 .table-wrapper {
   max-height: 700px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -319,11 +331,11 @@ defineExpose({ localSelectInputs });
   margin: 5px;
 }
 
-/* Adjusted font size for input fields within the table */
+/* Adjusted font size for input fields */
 ::v-deep(.smaller-el-input .el-input__inner) {
   padding: 2px 10px;
   font-size: 12px;
-  height: 24px; /* Adjusted height to match row height */
+  height: 24px;
   line-height: 20px;
 }
 
@@ -374,32 +386,28 @@ defineExpose({ localSelectInputs });
 }
 
 /* Adjustments for el-checkbox component */
-/* Adjust the el-checkbox component size */
 ::v-deep .el-checkbox {
-  font-size: 12px; /* Match the table's font size */
-  height: 20px; /* Adjust height as needed */
-  line-height: 20px; /* Ensure vertical alignment */
+  font-size: 12px;
+  height: 20px;
+  line-height: 20px;
   display: flex;
   align-items: center;
 }
 
-/* Adjust the checkbox input */
 ::v-deep .el-checkbox .el-checkbox__input {
-  height: 16px; /* Adjust to fit the checkbox size */
+  height: 16px;
   width: 16px;
-  margin: 0; /* Remove default margins */
+  margin: 0;
 }
 
-/* Adjust the checkbox inner square */
 ::v-deep .el-checkbox .el-checkbox__inner {
   height: 16px;
   width: 16px;
 }
 
-/* Adjust the label of the checkbox, if any */
 ::v-deep .el-checkbox .el-checkbox__label {
   font-size: 12px;
   line-height: 20px;
-  margin-left: 4px; /* Space between checkbox and label */
+  margin-left: 4px;
 }
 </style>

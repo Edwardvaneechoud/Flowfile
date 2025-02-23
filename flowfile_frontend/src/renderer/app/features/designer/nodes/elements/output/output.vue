@@ -206,6 +206,7 @@ function handleFileSelected(filePath: string, currentPath: string, fileName: str
   nodeOutput.value.output_settings.name = fileName;
   nodeOutput.value.output_settings.directory = currentPath;
   showFileSelectionModal.value = false;
+  detectFileType(fileName)
 }
 
 function handleFolderChange() {

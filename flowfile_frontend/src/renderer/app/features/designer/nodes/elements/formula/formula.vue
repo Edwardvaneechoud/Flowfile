@@ -82,7 +82,6 @@ const pushNodeData = async () => {
   if (!nodeFormula.value || !formulaInput.value) {
     return;
   }
-  nodeFormula.value.cache_results = false;
   nodeFormula.value.is_setup = true;
   nodeFormula.value.function.function = nodeStore.inputCode;
   nodeStore.updateSettings(nodeFormula);
