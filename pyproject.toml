@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.1.2"
+version = "0.1.3"
 description = "Project combining flowfile_designer (backend) and flowfile_worker (compute offloader)"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 packages = [
