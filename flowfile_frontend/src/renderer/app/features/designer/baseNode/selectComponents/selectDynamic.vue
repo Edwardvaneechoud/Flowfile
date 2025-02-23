@@ -20,7 +20,7 @@
               <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="selectable-container">
             <tr
               v-for="(column, index) in localSelectInputs"
               :key="column.old_name"
@@ -36,12 +36,12 @@
                 :class="{ 'highlight-row': isSelected(column.old_name) }"
                 @click="handleItemClick(index, column.old_name, $event)"
                 @contextmenu.prevent="openContextMenu(index, column.old_name, $event)"
-              >
+              > 
                 <div v-if="!column.is_available" class="unavailable-field">
                   <unavailable-field />
                   <span style="margin-left: 20px">{{ column.old_name }}</span>
                 </div>
-                <div v-else>
+                <div v-else @click="handleItemClick(index, column.old_name, $event)">
                   {{ column.old_name }}
                 </div>
               </td>
@@ -236,20 +236,17 @@ const deselectAllSelected = () => {
   });
 };
 
-const handleItemClick = (
-  clickedIndex: number,
-  columnName: string,
-  event: MouseEvent,
-  full = false,
-) => {
+const handleItemClick = (clickedIndex: number, columnName: string, event: MouseEvent, full = false,) => {
+  if (event.button === 2 || !localSelectInputs.value[clickedIndex].is_available) return;
   if ((event.shiftKey || full) && firstSelectedIndex.value !== null) {
     const range = getRange(firstSelectedIndex.value, clickedIndex);
-    selectedColumns.value = range
+      const s = range
       .map((index) => localSelectInputs.value[index].old_name)
       .filter((col): col is string => col !== undefined);
+    selectedColumns.value = s 
   } else {
     firstSelectedIndex.value = clickedIndex;
-    selectedColumns.value = [columnName];
+    selectedColumns.value = [localSelectInputs.value[clickedIndex].old_name];
   }
 };
 
@@ -267,11 +264,13 @@ onUnmounted(() => {
 });
 
 const handleClickOutside = (event: MouseEvent) => {
-  if ((event.target as HTMLElement).className !== "highlight-row") {
+  const container = document.getElementById('selectable-container');
+  if (container && !container.contains(event.target as Node)) {
     selectedColumns.value = [];
     showContextMenu.value = false;
   }
 };
+
 
 const emit = defineEmits(["updateSelectInputs"]);
 

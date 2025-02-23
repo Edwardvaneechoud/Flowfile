@@ -93,7 +93,7 @@ const receivedCsvTable = ref<ReceivedCsvTable>({
   encoding: "utf-8",
   row_delimiter: "",
   quote_char: "",
-  infer_schema_length: 0,
+  infer_schema_length: 1000,
   truncate_ragged_lines: false,
   ignore_errors: false,
 });

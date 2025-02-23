@@ -86,7 +86,7 @@ class ReceivedCsvTable(ReceivedTableBase):
     parquet_ref: Optional[str] = None
     row_delimiter: str = '\n'
     quote_char: str = '"'
-    infer_schema_length: int = 1_000
+    infer_schema_length: int = 10_000
     truncate_ragged_lines: bool = False
     ignore_errors: bool = False
 
