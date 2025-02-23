@@ -196,6 +196,7 @@ class NodeMultiInput(NodeBase):
 class NodeSelect(NodeSingleInput):
     keep_missing: bool = True
     select_input: List[transform_schema.SelectInput] = Field(default_factory=list)
+    sorted_by: Optional[Literal['none', 'asc', 'desc']] = 'none'
 
 
 class NodeFilter(NodeSingleInput):
