@@ -57,6 +57,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Make and dependencies
+        shell: pwsh
+        run: |
+          choco install make
+          refreshenv
+
       - name: Install Poetry
         shell: pwsh
         run: |
@@ -65,7 +71,9 @@ jobs:
 
       - name: Build project
         shell: pwsh
-        run: make windows
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          make windows
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
