@@ -223,7 +223,7 @@ const handleItemClick = (columnName: string) => {
 
 const loadNodeData = async (nodeId: number) => {
   console.log("loadNodeData from groupby");
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodePivot.value = nodeData.value?.setting_input as NodePivot;
   if (nodeData.value) {
     if (nodePivot.value) {

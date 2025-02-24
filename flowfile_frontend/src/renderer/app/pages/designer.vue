@@ -1,6 +1,6 @@
 <template>
   <div class="header">
-    <HeaderButtons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+    <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
     <div class="spacer"></div>
     <Status />
   </div>
@@ -44,6 +44,7 @@ import {
 import { fetchNodes } from "../features/designer/utils";
 import { NodeTemplate } from "../features/designer/types";
 import { FlowSettings } from "../features/designer/nodes/nodeLogic";
+import { useNodeStore } from "../stores/column-store";
 
 const flowsActive = ref<FlowSettings[]>([]);
 const isLoading = ref(true);
@@ -65,8 +66,9 @@ const loadActiveFlows = async () => {
   }
 };
 
+const nodeStore = useNodeStore();
+
 const openFlow = (eventData: { message: string; flowPath: string }) => {
-  console.log("openFlow");
   reloadCanvas(eventData.flowPath);
 };
 
@@ -74,7 +76,8 @@ const reloadCanvas = async (flowPath: string) => {
   isLoading.value = true;
   try {
     console.log("reloadCanvas", flowPath);
-    await importSavedFlow(flowPath);
+    const flowId = await importSavedFlow(flowPath);
+    nodeStore.setFlowId(flowId);
     if (canvasFlow.value) {
       await canvasFlow.value.loadFlow();
     }

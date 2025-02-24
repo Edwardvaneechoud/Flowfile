@@ -366,10 +366,10 @@ def get_node_list() -> List[nodes.NodeTemplate]:
     return nodes.nodes_list
 
 
-@router.post('/reset')
-def reset():
-    flow_file_handler.delete_flow(1)
-    register_flow(schemas.FlowSettings(flow_id=1))
+# @router.post('/reset')
+# def reset():
+#     flow_file_handler.delete_flow(1)
+#     register_flow(schemas.FlowSettings(flow_id=1))
 
 
 @router.post('/files/remove_items', tags=['file manager'])

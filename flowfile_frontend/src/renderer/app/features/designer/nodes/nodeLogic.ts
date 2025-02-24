@@ -44,7 +44,7 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
   )
   return response
 }
-export async function createFlow(flowPath: string): Promise<Number> {
+export async function createFlow(flowPath: string): Promise<number> {
   console.log('Creating flow', flowPath)
   const response = await axios.post(
     '/editor/create_flow',

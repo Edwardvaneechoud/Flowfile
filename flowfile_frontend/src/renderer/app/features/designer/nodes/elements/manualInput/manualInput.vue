@@ -147,7 +147,7 @@ const populateTableFromData = (data: Record<string, string>[]) => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
+  const nodeResult = await nodeStore.getNodeData(nodeId, false);
 
   if (nodeResult?.setting_input) {
     nodeManualInput.value = nodeResult.setting_input;
