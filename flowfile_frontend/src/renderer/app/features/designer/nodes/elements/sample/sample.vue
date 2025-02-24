@@ -32,7 +32,7 @@ const nodeData = ref<null | NodeData>(null);
 const sampleSize = ref<number>(1000);
 
 const loadNodeData = async (nodeId: number) => {
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeSample.value = nodeData.value?.setting_input;
   if (!nodeData.value?.setting_input.is_setup && nodeSample.value) {
     nodeSample.value.sample_size = sampleSize.value;

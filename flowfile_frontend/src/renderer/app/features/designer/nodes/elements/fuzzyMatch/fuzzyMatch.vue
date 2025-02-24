@@ -197,7 +197,7 @@ const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoin
 
 const loadNodeData = async (nodeId: number) => {
   console.log("doing this for fuzzy mathcing");
-  result.value = await nodeStore.getNodeData(1, nodeId, true);
+  result.value = await nodeStore.getNodeData(nodeId, true);
   nodeFuzzyJoin.value = result.value?.setting_input;
   if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
     console.log("doing the initial set up again ");

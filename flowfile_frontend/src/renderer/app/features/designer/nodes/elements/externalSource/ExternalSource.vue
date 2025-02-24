@@ -51,7 +51,7 @@ watchEffect(() => {
 });
 
 const loadNodeData = async (nodeId: number) => {
-  const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
+  const nodeResult = await nodeStore.getNodeData(nodeId, false);
   nodeExternalSource.value = nodeResult?.setting_input;
   if (nodeExternalSource.value?.is_setup)
     if (nodeExternalSource.value?.identifier == "sample_users") {
@@ -91,7 +91,7 @@ const pushNodeDataAction = async () => {
   console.log("pushed");
   if (nodeExternalSource.value) {
     console.log("pushing");
-    await nodeStore.getNodeData(1, Number(nodeExternalSource.value.node_id), false);
+    await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
   }
   console.log("pushed");
 };

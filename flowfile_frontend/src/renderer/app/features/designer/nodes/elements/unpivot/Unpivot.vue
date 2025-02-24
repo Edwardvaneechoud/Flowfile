@@ -226,7 +226,7 @@ const handleItemClick = (columnName: string) => {
 
 const loadNodeData = async (nodeId: number) => {
   console.log("loadNodeData from unpivot ");
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeUnpivot.value = nodeData.value?.setting_input as NodeUnpivot;
   console.log(nodeUnpivot.value);
   if (nodeData.value) {

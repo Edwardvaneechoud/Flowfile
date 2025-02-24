@@ -1,4 +1,5 @@
 <template>
+  {{ nodeStore.flow_id }}
   <div class="action-buttons">
     <el-button
       size="small"
@@ -119,18 +120,11 @@ const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
-const props = withDefaults(
-  defineProps<{
-    flowId?: number;
-  }>(),
-  {
-    flowId: 1,
-  },
-);
+
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
-  flowSettings.value = await getFlowSettings(props.flowId);
+  flowSettings.value = await getFlowSettings(nodeStore.flow_id);
   if (!flowSettings.value) return;
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
   nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
@@ -144,7 +138,7 @@ const loadFlowSettings = async () => {
       nodeStore.isRunning = false;
 
       runButton.value.stopPolling();
-      updateRunStatus(props.flowId, nodeStore, false);
+      updateRunStatus(nodeStore.flow_id, nodeStore, false);
     }
   }
 };
@@ -181,7 +175,7 @@ function openFlowAction(inputSelectedFile: FileInfo | null) {
 }
 
 const openSaveModal = async () => {
-  let settings = await getFlowSettings(props.flowId);
+  let settings = await getFlowSettings(nodeStore.flow_id);
   if (!settings) return;
   if (settings && settings.path) {
     savePath.value = settings.path;
@@ -191,7 +185,6 @@ const openSaveModal = async () => {
 };
 
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
-  console.log("handleCreateAction", flowPath);
   const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
 
@@ -199,6 +192,7 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   await saveFlow(createdFlowId, normalizedPath);
   emit("refreshFlow");
   modalVisibleForCreate.value = false;
+  nodeStore.flow_id = createdFlowId;
 };
 
 const openSettingsModal = () => {

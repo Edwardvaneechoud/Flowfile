@@ -39,7 +39,7 @@ const dataLoaded = ref(false);
 
 const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = false;
-  const result = await nodeStore.getNodeData(1, nodeId, false);
+  const result = await nodeStore.getNodeData(nodeId, false);
   if (result) {
     dataLoaded.value = true;
     const main_input = result.main_input;

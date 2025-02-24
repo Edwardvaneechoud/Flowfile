@@ -272,6 +272,7 @@ export const useNodeStore = defineStore('node', {
       this.runNodeResultMap = new Map<number, NodeResult>()
       this.runResults = {}
       this.currentRunResult = null
+      this.nodeDescriptions = {}
     },
     showLogViewer() {
       console.log('triggered show log viewer')
@@ -315,8 +316,9 @@ export const useNodeStore = defineStore('node', {
       }
     },
 
-    async getNodeData(flow_id: number, node_id: number, useCache = true): Promise<NodeData | null> {
-      if (this.flow_id === flow_id && this.node_id === node_id && useCache) {
+    async getNodeData(node_id: number, useCache = true): Promise<NodeData | null> {
+      console.log('getNodeData called', node_id, useCache)
+      if (this.node_id === node_id && useCache) {
         if (this.nodeData) {
           this.is_loaded = true
           return this.nodeData
@@ -324,7 +326,7 @@ export const useNodeStore = defineStore('node', {
       }
 
       try {
-        this.setFlowIdAndNodeId(flow_id, node_id)
+        this.setFlowIdAndNodeId(this.flow_id, node_id)
         const response = await axios.get<NodeData>('/node', {
           params: { flow_id: this.flow_id, node_id: this.node_id },
           headers: { accept: 'application/json' },
@@ -342,10 +344,10 @@ export const useNodeStore = defineStore('node', {
       }
     },
     async reloadCurrentNodeData(): Promise<NodeData | null> {
-      return this.getNodeData(this.flow_id, this.node_id, false)
+      return this.getNodeData(this.node_id, false)
     },
     setFlowIdAndNodeId(flow_id: number, node_id: number) {
-      console.log('setFlowIdAndNodeId called')
+      console.log('setFlowIdAndNodeId called', flow_id, node_id)  
       if (this.node_id === node_id && this.flow_id === flow_id) {
         return
       }

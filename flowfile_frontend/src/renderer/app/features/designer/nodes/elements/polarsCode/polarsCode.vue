@@ -45,7 +45,7 @@ const handleEditorUpdate = (newCode: string) => {
 
 const loadNodeData = async (nodeId: number) => {
   try {
-    nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+    nodeData.value = await nodeStore.getNodeData(nodeId, false);
     if (nodeData.value) {
       const hasValidSetup = Boolean(
         nodeData.value?.setting_input?.is_setup && nodeData.value?.setting_input?.polars_code_input,

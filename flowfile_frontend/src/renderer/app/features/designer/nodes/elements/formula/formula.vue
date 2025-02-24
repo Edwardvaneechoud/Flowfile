@@ -62,7 +62,7 @@ const dataTypes = nodeStore.getDataTypes();
 const nodeData = ref<null | NodeData>(null);
 
 const loadNodeData = async (nodeId: number) => {
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   if (nodeData.value && nodeData.value.setting_input && nodeData.value.setting_input.is_setup) {
     nodeFormula.value = nodeData.value.setting_input;
     if (nodeFormula.value && nodeFormula.value.function) {

@@ -224,7 +224,7 @@ const fetchAvailableStreams = async () => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
+  const nodeResult = await nodeStore.getNodeData(nodeId, false);
   nodeExternalSource.value = nodeResult?.setting_input;
 
   if (!nodeExternalSource.value?.is_setup || !nodeExternalSource.value.source_settings) return;

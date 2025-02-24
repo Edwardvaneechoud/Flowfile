@@ -187,7 +187,7 @@ const getRange = (start: number, end: number) => {
 };
 
 const loadData = async (nodeId: number) => {
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeGroupBy.value = nodeData.value?.setting_input;
   if (nodeData.value) {
     if (nodeGroupBy.value) {

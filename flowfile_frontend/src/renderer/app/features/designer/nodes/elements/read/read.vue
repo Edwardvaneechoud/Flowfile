@@ -155,7 +155,7 @@ const handleFileChange = (fileInfo: FileInfo) => {
 
 const loadNodeData = async (nodeId: number) => {
   try {
-    const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
+    const nodeResult = await nodeStore.getNodeData(nodeId, false);
 
     if (!nodeResult) {
       console.warn("No node result received");

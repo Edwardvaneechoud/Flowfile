@@ -24,7 +24,7 @@ const nodeData = ref<null | NodeData>(null);
 const nodeRecordCount = ref<NodeBase | null>(null);
 
 const loadNodeData = async (nodeId: number) => {
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeRecordCount.value = nodeData.value?.setting_input as NodeBase;
   dataLoaded.value = true;
   nodeStore.isDrawerOpen = true;
