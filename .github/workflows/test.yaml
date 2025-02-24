@@ -46,7 +46,9 @@ jobs:
 
   test-web:
     runs-on: ubuntu-latest
-    needs: test
+    defaults:
+      run:
+        working-directory: flowfile_frontend
     steps:
       - uses: actions/checkout@v4
 
