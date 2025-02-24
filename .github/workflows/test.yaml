@@ -68,7 +68,7 @@ jobs:
           # Start the preview server in the background
           npm run preview:web &
           # Wait for the server to fully start
-          sleep 5
+          sleep 10
           # Verify that the server responds with a 200 OK on port 4173
           if ! curl -sI http://localhost:4173 | grep -q "200 OK"; then
             echo "Port 4173 is not available or did not return 200 OK"
