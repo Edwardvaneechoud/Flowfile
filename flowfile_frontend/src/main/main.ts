@@ -9,6 +9,10 @@ import { setupAppEventListeners } from "./appEvents";
 import { loadWindow } from "./windowLoader";
 import { platform } from "os";
 
+// Global variables to store status for IPC access
+let globalDockerStatus = { isAvailable: false, error: null as string | null };
+let globalServicesStatus = { status: "not_started", error: null as string | null };
+
 async function checkDocker(): Promise<{
   isAvailable: boolean;
   error: string | null;
@@ -56,6 +60,10 @@ app.whenReady().then(async () => {
   console.log("Logging to:", logFile);
   console.log("Running the app in:", process.env.NODE_ENV);
 
+  // Setup IPC handlers for testing
+  ipcMain.handle("get-docker-status", () => globalDockerStatus);
+  ipcMain.handle("get-services-status", () => globalServicesStatus);
+
   setupAppEventListeners();
 
   try {
@@ -63,33 +71,40 @@ app.whenReady().then(async () => {
     const loadingWin = createLoadingWindow();
 
     // Check Docker status
-    const dockerStatus = await checkDocker();
-    console.log("Docker status:", dockerStatus);
+    const dockerStatusResult = await checkDocker();
+    console.log("Docker status:", dockerStatusResult);
+    
+    // Store the result in the global variable
+    globalDockerStatus = dockerStatusResult;
 
     // Update loading window with Docker status
-    loadingWin?.webContents.send("update-docker-status", {
-      isAvailable: dockerStatus.isAvailable,
-      error: dockerStatus.error,
-    });
+    loadingWin?.webContents.send("update-docker-status", dockerStatusResult);
 
     // Start services and update status
     try {
-      loadingWin?.webContents.send("update-services-status", {
-        status: "starting",
-      });
+      const startingStatus = { status: "starting", error: null };
+      globalServicesStatus = startingStatus;
+      
+      loadingWin?.webContents.send("update-services-status", startingStatus);
 
       await startServices();
 
-      loadingWin?.webContents.send("update-services-status", {
-        status: "ready",
-      });
+      const readyStatus = { status: "ready", error: null };
+      globalServicesStatus = readyStatus;
+      
+      loadingWin?.webContents.send("update-services-status", readyStatus);
 
       console.log("All services started successfully");
     } catch (error) {
-      loadingWin?.webContents.send("update-services-status", {
-        status: "error",
-        error: "Failed to start services",
-      });
+      const errorMessage = error instanceof Error ? error.message : "Failed to start services";
+      const errorStatus = { 
+        status: "error", 
+        error: errorMessage 
+      };
+      
+      globalServicesStatus = errorStatus;
+      loadingWin?.webContents.send("update-services-status", errorStatus);
+      
       throw error;
     }
 
@@ -97,6 +112,14 @@ app.whenReady().then(async () => {
     createWindow();
     modifySessionHeaders();
     setupProcessMonitoring();
+
+    const mainWindow = getMainWindow();
+    if (mainWindow) {
+      mainWindow.webContents.once("did-finish-load", () => {
+        console.log("Electron app startup successful, sending signal...");
+        mainWindow.webContents.send("startup-success");
+      });
+    }
 
     // Register shortcuts
     globalShortcut.register("CommandOrControl+R", async () => {
@@ -115,6 +138,11 @@ app.whenReady().then(async () => {
     await cleanupProcesses();
     app.quit();
   }
+
+  ipcMain.on("quit-app", () => {
+    console.log("Received quit-app command, quitting...");
+    app.quit();
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

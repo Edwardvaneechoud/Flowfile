@@ -5,9 +5,10 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  test:
+  backend-tests:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -16,7 +17,6 @@ jobs:
           - python-version: "3.10"
           - python-version: "3.11"
           - python-version: "3.12"
-            allow_failure: true
 
     steps:
       - uses: actions/checkout@v4
@@ -44,3 +44,146 @@ jobs:
 
       - name: Run pytest for flowfile_core
         run: poetry run pytest flowfile_core/tests --disable-warnings
+
+  test-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flowfile_frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Node Dependencies
+        run: npm ci
+
+      - name: Build Web Version
+        run: npm run build:web
+
+      - name: Run Vite Preview and Check Port Availability
+        run: |
+          # Start the preview server in the background
+          npm run preview:web &
+          # Wait for the server to fully start
+          sleep 10
+          # Verify that the server responds with a 200 OK on port 4173
+          if ! curl -sI http://localhost:4173 | grep -q "200 OK"; then
+            echo "Port 4173 is not available or did not return 200 OK"
+            exit 1
+          fi
+
+  electron-tests-macos:
+    runs-on: macos-latest
+    needs: 
+      - backend-tests
+      - test-web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        shell: bash
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Python dependencies
+        run: |
+          poetry install
+
+      - name: Build Python services
+        run: |
+          poetry run build_backends
+
+      - name: Build Electron app for testing
+        working-directory: flowfile_frontend
+        run: |
+          npm install
+          npm run build:test
+
+      - name: Run integration tests
+        working-directory: flowfile_frontend
+        run: |
+          npm run test
+          
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: macos-test-artifacts
+          path: |
+            flowfile_frontend/app-screenshot.png
+            flowfile_frontend/app-navigation-screenshot.png
+            flowfile_frontend/test-results/
+
+  electron-tests-windows:
+    runs-on: windows-latest
+    needs: 
+      - backend-tests
+      - test-web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        shell: pwsh
+        run: |
+          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          poetry install
+
+      - name: Build Python services
+        shell: pwsh
+        run: |
+          poetry run build_backends
+
+      - name: Build Electron app for testing
+        shell: pwsh
+        working-directory: flowfile_frontend
+        run: |
+          npm install
+          npm run build:test
+    
+      - name: Run integration tests
+        shell: pwsh
+        working-directory: flowfile_frontend
+        run: |
+          npm run test
+          
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-test-artifacts
+          path: |
+            flowfile_frontend/app-screenshot.png
+            flowfile_frontend/app-navigation-screenshot.png
+            flowfile_frontend/test-results/

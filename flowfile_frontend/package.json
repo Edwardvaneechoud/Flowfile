@@ -12,14 +12,17 @@
     "lint": "eslint --fix ./src/**/*.{ts,vue}",
     "build:win": "node scripts/build.js && electron-builder --win",
     "build:mac": "node scripts/build.js && electron-builder --mac",
-    "build:linux": "node scripts/build.js && electron-builder --linux"
+    "build:linux": "node scripts/build.js && electron-builder --linux",
+    "build:test": "node scripts/build.js && electron-builder --dir",
+    "test": "playwright test"
   },
-  "repository": "https://github.com/deluze/electron-vue-template",
+  "repository": "https://github.com/Edwardvaneechoud/Flowfile",
   "author": {
-    "name": "Deluze",
-    "url": "https://github.com/Deluze"
+    "name": "Edwardvaneechoud",
+    "url": "https://github.com/Edwardvaneechoud"
   },
   "devDependencies": {
+    "@playwright/test": "^1.50.1",
     "@types/lodash": "^4.17.6",
     "@types/medium-editor": "^5.0.5",
     "@types/node": "^17.0.45",
@@ -35,9 +38,11 @@
     "concurrently": "^8.2.2",
     "electron": "^28.1.1",
     "electron-builder": "^24.9.1",
+    "electron-playwright-helpers": "^1.7.1",
     "eslint": "^8.13.0",
     "eslint-plugin-vue": "^8.7.0",
     "lint-staged": "^13.0.1",
+    "playwright": "^1.50.1",
     "prettier": "^3.2.5",
     "sass": "^1.65.1",
     "ts-loader": "^9.5.1",

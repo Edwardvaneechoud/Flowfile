@@ -19,6 +19,15 @@
     },
     "typeRoots": ["./node_modules/@types", "./types"]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue", "vite.config.ts", "src/router/index.ts", "types/**/*.d.ts"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.vue",
+    "vite.config.ts",
+    "src/router/index.ts",
+    "types/**/*.d.ts",
+    "electron.d.ts"
+  ],
+
   "exclude": ["node_modules/**/*", "**/*.tsx", "**/*.jsx", "dist-electron/**/*"]
 }
