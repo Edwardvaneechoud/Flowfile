@@ -173,7 +173,6 @@ export function startProcess(
 
       const childProcess = spawn(path, [], {
         env: getProcessEnv(),
-        shell: isWindows ? true : "/bin/bash",
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
         cwd: workingDirectory,
