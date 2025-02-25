@@ -22,7 +22,7 @@ const nodeUnion = ref<NodeUnion | null>(null);
 
 const loadNodeData = async (nodeId: number) => {
   console.log("loadNodeData from union ");
-  nodeData.value = await nodeStore.getNodeData(1, nodeId, false);
+  nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeUnion.value = nodeData.value?.setting_input as NodeUnion;
   if (nodeData.value) {
     if (nodeUnion.value) {

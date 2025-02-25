@@ -223,7 +223,7 @@ const querySearch = (queryString: string, cb: (suggestions: LocalFileInfo[]) => 
 };
 
 async function loadNodeData(nodeId: number) {
-  const nodeResult = await nodeStore.getNodeData(1, nodeId, false);
+  const nodeResult = await nodeStore.getNodeData(nodeId, false);
   if (nodeResult?.setting_input && nodeResult.setting_input.is_setup) {
     nodeOutput.value = nodeResult.setting_input;
     console.log("this is all good", nodeResult?.setting_input);
