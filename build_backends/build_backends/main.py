@@ -59,7 +59,6 @@ a = Analysis(
         'fastexcel',
     ],
     excludes=[
-        'matplotlib',
         'tkinter',
         'PIL',
         'pytest',

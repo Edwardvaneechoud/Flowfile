@@ -150,6 +150,20 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     DOCKER_HOST: "unix:///var/run/docker.sock",
   };
 }
+
+function withProductionError<T>(
+  fn: (...args: any[]) => Promise<T | null>,
+  errorMessage = "Operation failed",
+): (...args: any[]) => Promise<T> {
+  return async (...args: any[]) => {
+    const result = await fn(...args);
+    if (!result && process.env.NODE_ENV !== "development") {
+      throw new Error(errorMessage);
+    }
+    return result as T;
+  };
+}
+
 export function startProcess(
   name: string,
   path: string,
@@ -173,7 +187,6 @@ export function startProcess(
 
       const childProcess = spawn(path, [], {
         env: getProcessEnv(),
-        shell: isWindows ? true : "/bin/bash",
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
         cwd: workingDirectory,
@@ -216,6 +229,8 @@ export function startProcess(
   });
 }
 
+const startProcessWithError = withProductionError(startProcess, "Failed to start process");
+
 export async function startServices(retry = true): Promise<void> {
   try {
     const corePath = getResourceServicePath("flowfile_core");
@@ -226,12 +241,12 @@ export async function startServices(retry = true): Promise<void> {
     );
 
     const [newCoreProcess, newWorkerProcess] = await Promise.all([
-      startProcess("flowfile_core", corePath, CORE_PORT, (data) => {
+      startProcessWithError("flowfile_core", corePath, CORE_PORT, (data: string) => {
         if (data.includes("Core server started")) {
           console.log("Core process is ready");
         }
       }),
-      startProcess("flowfile_worker", workerPath, WORKER_PORT, (data) => {
+      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data: string) => {
         if (data.includes("Server started")) {
           console.log("Worker process is ready");
         }

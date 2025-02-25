@@ -5,9 +5,10 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  test:
+  backend-tests:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -16,7 +17,7 @@ jobs:
           - python-version: "3.10"
           - python-version: "3.11"
           - python-version: "3.12"
-            allow_failure: true
+
     steps:
       - uses: actions/checkout@v4
 
@@ -74,3 +75,95 @@ jobs:
             echo "Port 4173 is not available or did not return 200 OK"
             exit 1
           fi
+
+  electron-tests-macos:
+    runs-on: macos-latest
+    needs: 
+      - backend-tests
+      - test-web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        shell: bash
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Python dependencies
+        run: |
+          poetry install
+
+      - name: Build Python services
+        run: |
+          poetry run build_backends
+
+      - name: Build Electron app for testing
+        working-directory: flowfile_frontend
+        run: |
+          npm install
+          npm run build:test
+
+      - name: Run integration tests
+        working-directory: flowfile_frontend
+        run: |
+          npm run test
+
+  electron-tests-windows:
+    runs-on: windows-latest
+    needs: 
+      - backend-tests
+      - test-web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        shell: pwsh
+        run: |
+          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          poetry install
+
+      - name: Build Python services
+        shell: pwsh
+        run: |
+          poetry run build_backends
+
+      - name: Build Electron app for testing
+        shell: pwsh
+        working-directory: flowfile_frontend
+        run: |
+          npm install
+          npm run build:test
+    
+      - name: Run integration tests
+        shell: pwsh
+        working-directory: flowfile_frontend
+        run: |
+          npm run test

@@ -40,12 +40,37 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
   - Custom formulas and expressions
   - Filter data based on conditions
 
-- **Data Integration**
+<div align="center">
+  <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile Layout" width="800"/>
+</div>
+
+---
+
+- **Performance**
+  - Build to scale out of core
+  - Using polars for data processing
+
+<div align="center">
+  <img src=".github/images/demo_flowfile_write.gif" alt="Flowfile Layout" width="800"/>
+</div>
+
+---
+
+### **Data Integration**
   - Standardize data formats
   - Handle messy Excel files
 
+
+<div align="center">
+  <img src=".github/images/read_excel_flowfile.gif" alt="Flowfile Layout" width="800"/>
+</div>
+
+
+---
+
 - **ETL Operations**
   - Data quality checks
+
 
 ## 🚀 Getting Started
 
