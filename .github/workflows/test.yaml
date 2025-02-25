@@ -119,16 +119,6 @@ jobs:
         working-directory: flowfile_frontend
         run: |
           npm run test
-          
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: macos-test-artifacts
-          path: |
-            flowfile_frontend/app-screenshot.png
-            flowfile_frontend/app-navigation-screenshot.png
-            flowfile_frontend/test-results/
 
   electron-tests-windows:
     runs-on: windows-latest
@@ -177,13 +167,3 @@ jobs:
         working-directory: flowfile_frontend
         run: |
           npm run test
-          
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: windows-test-artifacts
-          path: |
-            flowfile_frontend/app-screenshot.png
-            flowfile_frontend/app-navigation-screenshot.png
-            flowfile_frontend/test-results/
