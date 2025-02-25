@@ -153,7 +153,7 @@ function getProcessEnv(): NodeJS.ProcessEnv {
 
 function withProductionError<T>(
   fn: (...args: any[]) => Promise<T | null>,
-  errorMessage: string = "Operation failed"
+  errorMessage = "Operation failed",
 ): (...args: any[]) => Promise<T> {
   return async (...args: any[]) => {
     const result = await fn(...args);
@@ -163,7 +163,6 @@ function withProductionError<T>(
     return result as T;
   };
 }
-
 
 export function startProcess(
   name: string,
@@ -230,11 +229,7 @@ export function startProcess(
   });
 }
 
-const startProcessWithError = withProductionError(
-  startProcess,
-  "Failed to start process"
-);
-
+const startProcessWithError = withProductionError(startProcess, "Failed to start process");
 
 export async function startServices(retry = true): Promise<void> {
   try {
@@ -246,12 +241,12 @@ export async function startServices(retry = true): Promise<void> {
     );
 
     const [newCoreProcess, newWorkerProcess] = await Promise.all([
-      startProcessWithError("flowfile_core", corePath, CORE_PORT, (data) => {
+      startProcessWithError("flowfile_core", corePath, CORE_PORT, (data: string) => {
         if (data.includes("Core server started")) {
           console.log("Core process is ready");
         }
       }),
-      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data) => {
+      startProcessWithError("flowfile_worker", workerPath, WORKER_PORT, (data: string) => {
         if (data.includes("Server started")) {
           console.log("Worker process is ready");
         }

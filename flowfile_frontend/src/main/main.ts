@@ -73,7 +73,7 @@ app.whenReady().then(async () => {
     // Check Docker status
     const dockerStatusResult = await checkDocker();
     console.log("Docker status:", dockerStatusResult);
-    
+
     // Store the result in the global variable
     globalDockerStatus = dockerStatusResult;
 
@@ -84,27 +84,27 @@ app.whenReady().then(async () => {
     try {
       const startingStatus = { status: "starting", error: null };
       globalServicesStatus = startingStatus;
-      
+
       loadingWin?.webContents.send("update-services-status", startingStatus);
 
       await startServices();
 
       const readyStatus = { status: "ready", error: null };
       globalServicesStatus = readyStatus;
-      
+
       loadingWin?.webContents.send("update-services-status", readyStatus);
 
       console.log("All services started successfully");
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to start services";
-      const errorStatus = { 
-        status: "error", 
-        error: errorMessage 
+      const errorStatus = {
+        status: "error",
+        error: errorMessage,
       };
-      
+
       globalServicesStatus = errorStatus;
       loadingWin?.webContents.send("update-services-status", errorStatus);
-      
+
       throw error;
     }
 

@@ -1,9 +1,6 @@
-
-
 import { contextBridge, ipcRenderer } from "electron";
 
 console.log("Preload script loaded");
-
 
 contextBridge.exposeInMainWorld("electronAPI", {
   sendMessage: (message: string) => ipcRenderer.send("message", message),
@@ -30,5 +27,5 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.removeListener("update-services-status", listener);
     };
   },
-  quitApp: () => ipcRenderer.send("quit-app")
+  quitApp: () => ipcRenderer.send("quit-app"),
 });

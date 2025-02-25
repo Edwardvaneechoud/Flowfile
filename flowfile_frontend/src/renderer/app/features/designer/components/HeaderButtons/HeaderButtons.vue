@@ -120,7 +120,6 @@ const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
-
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
