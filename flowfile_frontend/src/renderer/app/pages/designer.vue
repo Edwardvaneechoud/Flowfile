@@ -1,10 +1,10 @@
 <template>
   <div class="header">
     <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+      <flow-selector ref="flowSelector" @flow-changed="handleFlowChange" />
     <div class="spacer"></div>
     <Status />
   </div>
-  <div>
     <!-- Show loading state while fetching flows -->
     <div v-if="isLoading" class="loading-state">
       <div class="loading-state-content">
@@ -28,7 +28,6 @@
       </div>
     </div>
     <CanvasFlow v-else ref="canvasFlow" class="canvas" />
-  </div>
 </template>
 
 <script setup lang="ts">
@@ -37,6 +36,7 @@ import HeaderButtons from "../features/designer/components/HeaderButtons/HeaderB
 import {} from "../features/designer/components/Canvas/backendInterface";
 import Status from "../features/designer/editor/status.vue";
 import CanvasFlow from "../features/designer/components/Canvas/CanvasFlow.vue";
+import FlowSelector from "./designer/FlowSelector.vue"; // Import the new component
 import {
   getAllFlows,
   importSavedFlow,
@@ -50,6 +50,7 @@ const flowsActive = ref<FlowSettings[]>([]);
 const isLoading = ref(true);
 const canvasFlow = ref<InstanceType<typeof CanvasFlow>>();
 const headerButtons = ref<InstanceType<typeof HeaderButtons>>();
+const flowSelector = ref<InstanceType<typeof FlowSelector>>(); // Reference to the flow selector
 const nodeOptions = ref<NodeTemplate[]>([]);
 
 const loadActiveFlows = async () => {
@@ -57,10 +58,13 @@ const loadActiveFlows = async () => {
   try {
     const flows = await getAllFlows();
     flowsActive.value = flows;
+    
+    // Refresh the flow selector when active flows change
+    if (flowSelector.value) {
+      await flowSelector.value.loadFlows();
+    }
   } catch (error) {
     console.error("Failed to load active flows:", error);
-    // Optionally show error message to user
-    // ElMessage.error('Failed to load active flows');
   } finally {
     isLoading.value = false;
   }
@@ -85,6 +89,22 @@ const reloadCanvas = async (flowPath: string) => {
       await headerButtons.value.loadFlowSettings();
     }
     await loadActiveFlows(); // Refresh flows after reloading canvas
+  } finally {
+    isLoading.value = false;
+  }
+};
+
+// New function to handle flow changes from the selector
+const handleFlowChange = async (flowId: number) => {
+  isLoading.value = true;
+  try {
+    nodeStore.setFlowId(flowId);
+    if (canvasFlow.value) {
+      await canvasFlow.value.loadFlow();
+    }
+    if (headerButtons.value) {
+      await headerButtons.value.loadFlowSettings();
+    }
   } finally {
     isLoading.value = false;
   }
