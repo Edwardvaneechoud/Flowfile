@@ -6,6 +6,22 @@ from pathlib import Path
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph
 from flowfile_core.schemas.schemas import FlowSettings
+import time
+
+
+def create_unique_id() -> int:
+    """
+    Create a unique id for the flowfile based on the current time in milliseconds and the current process id
+    Returns:
+        int: unique id
+    """
+    # Get current time in milliseconds
+    current_time_ms = int(time.time() * 1000)
+
+    # Get current process id
+    process_id = os.getpid()
+    unique_id = (current_time_ms << 20) | (process_id & 0xFFFFF)
+    return unique_id
 
 
 @dataclass
@@ -20,17 +36,13 @@ class FlowfileHandler:
         return list(self._flows.values())
 
     def __add__(self, other: EtlGraph) -> int:
-        _id = len(self._flows) + 1
-        self._flows[_id] = other
-        return _id
+        self._flows[other.flow_id] = other
+        return other.flow_id
 
-    def import_flow(self, flow_path: Path) -> int:
+    def import_flow(self, flow_path: Path|str) -> int:
+        if isinstance(flow_path, str):
+            flow_path = Path(flow_path)
         imported_flow = open_flow(flow_path)
-        new_id = len(self._flows) + 1  # to ensure there is no overlap
-        existing_flow = self._flows.get(imported_flow.flow_id)
-        if existing_flow:
-            existing_flow.flow_id = new_id
-            self._flows[new_id] = existing_flow
         self._flows[imported_flow.flow_id] = imported_flow
         imported_flow.flow_settings = self.get_flow_info(imported_flow.flow_id)
         imported_flow.flow_settings.is_running = False
@@ -57,16 +69,24 @@ class FlowfileHandler:
         else:
             raise Exception('Flow not found')
 
-    def add_flow(self, name: str, flow_path: str) -> int | str:
-        # next_id = max(self._flows.keys(), default=0) + 1
-        next_id = 1
+    def add_flow(self, name: str, flow_path: str) -> int:
+        """
+        Creates a new flow with a reference to the flow path
+        Args:
+            name (str): The name of the flow
+            flow_path (str): The path to the flow file
+
+        Returns:
+            int: The flow id
+
+        """
+        next_id = create_unique_id()
         flow_info = FlowSettings(name=name, flow_id=next_id, save_location='', path=flow_path)
         flows = [(flow_id, flow) for flow_id, flow in self._flows.items()]
         for flow_id, flow in flows:
             flow.save_flow(flow.flow_settings.path)
             self.delete_flow(flow_id)
         _ = self.register_flow(flow_info)
-        #  TODO: This does not make sense. The flow is saved and then deleted. This should be fixed.
         return next_id
 
     def get_flow_info(self, flow_id: int) -> FlowSettings:

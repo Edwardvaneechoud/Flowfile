@@ -437,6 +437,7 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
+    print(flow_file_handler._flows)
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -466,7 +467,10 @@ def update_flow_settings(flow_settings: schemas.FlowSettings):
 
 
 @router.get('/flow_data/v2', tags=['manager'])
-def get_vue_flow_data(flow_id: Optional[int] = 1) -> schemas.VueFlowInput:
+def get_vue_flow_data(flow_id) -> schemas.VueFlowInput:
+    print('Getting vue flow data')
+    print(flow_file_handler.flowfile_flows)
+    print(flow_file_handler._flows.keys())
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')

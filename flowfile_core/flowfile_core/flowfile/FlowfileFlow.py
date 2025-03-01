@@ -199,6 +199,7 @@ class EtlGraph:
         for node in self.nodes:
             if hasattr(node.setting_input, 'flow_id'):
                 node.setting_input.flow_id = new_id
+        self.flow_settings.flow_id = new_id
 
     def __repr__(self):
         """

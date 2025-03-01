@@ -93,7 +93,8 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 }
 
 const loadFlow = async () => {
-  const vueFlowInput = await getFlowData();
+  console.log(nodeStore.flow_id);
+  const vueFlowInput = await getFlowData(nodeStore.flow_id);
   console.log("vueFlowInput", vueFlowInput);
   await nextTick();
   await importFlow(vueFlowInput);
@@ -135,7 +136,6 @@ onMounted(async () => {
 
   nodeStore.setVueFlowInstance(instance);
   loadFlow();
-  nodeStore.setFlowId(1);
 });
 
 const NodeIsSelected = (nodeId: string) => {

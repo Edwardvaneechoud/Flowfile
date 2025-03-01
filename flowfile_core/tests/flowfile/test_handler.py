@@ -84,6 +84,8 @@ def test_import_flow():
     flow_path = "flowfile_core/tests/support_files/flows/read_csv.flowfile"
     flow_id = handler.import_flow(Path(flow_path))
     assert handler.flowfile_flows[0].flow_id == flow_id, "Flow should be imported"
+    assert handler.get_flow(flow_id).flow_settings.name == 'read_csv', "First flow should be named read_csv"
+    assert handler.get_flow(flow_id).flow_settings.path == str(Path(flow_path).absolute()), "Path should be correct"
 
 
 def test_import_second_flow():
@@ -93,3 +95,15 @@ def test_import_second_flow():
     assert handler.flowfile_flows[0].flow_id == first_graph_id, "First flow should be imported"
     assert handler.flowfile_flows[1].flow_id == second_graph_id, "Second flow should be imported"
     assert handler.flowfile_flows[0].flow_id != handler.flowfile_flows[1].flow_id, "Flows should have different ids"
+    assert handler.get_flow(first_graph_id).flow_settings.name == 'read_csv', "First flow should be named read_csv"
+    assert (handler.get_flow(first_graph_id).flow_settings.path ==
+            str(Path("flowfile_core/tests/support_files/flows/read_csv.flowfile").absolute())), "Path should be correct"
+    assert handler.get_flow(second_graph_id).flow_settings.name == 'text_to_rows', "Second flow should be named text_to_rows"
+    assert (handler.get_flow(second_graph_id).flow_settings.path ==
+            str(Path("flowfile_core/tests/support_files/flows/text_to_rows.flowfile").absolute())), "Path should be correct"
+
+
+def test_get_flow():
+    handler = create_flowfile_handler()
+    handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.'))
+    assert handler.get_flow(1).flow_id == 1, "Flow should be retrieved"

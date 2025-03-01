@@ -133,9 +133,9 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
   };
   
 
-export const getFlowData = async (): Promise<VueFlowInput> => {
+export const getFlowData = async (flowId: number): Promise<VueFlowInput> => {
     const response = await axios.get("/flow_data/v2", {
-      params: { flow_id: 1 },
+      params: { flow_id: flowId },
       headers: { accept: "application/json" },
     });
     return response.data;

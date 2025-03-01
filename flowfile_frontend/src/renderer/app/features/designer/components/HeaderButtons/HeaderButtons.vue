@@ -92,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps, ref, onMounted, defineExpose } from "vue";
+import { ref, onMounted, defineExpose } from "vue";
 import { saveFlow } from "./utils";
 import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
@@ -106,6 +106,7 @@ import {
   ExecutionMode,
   updateRunStatus,
 } from "../../nodes/nodeLogic";
+import { create } from "lodash";
 
 const nodeStore = useNodeStore();
 
@@ -188,10 +189,13 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
 
   let createdFlowId = await createFlow(normalizedPath);
+  console.log(createdFlowId);
   await saveFlow(createdFlowId, normalizedPath);
   emit("refreshFlow");
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;
+  console.log("Created flow with id:", createdFlowId);
+  console.log("Flow ID in store:", nodeStore.flow_id);
 };
 
 const openSettingsModal = () => {
