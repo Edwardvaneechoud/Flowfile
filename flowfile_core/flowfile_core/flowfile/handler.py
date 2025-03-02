@@ -7,20 +7,24 @@ from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph
 from flowfile_core.schemas.schemas import FlowSettings
 import time
+import random
+
+import time
+import os
+import random
 
 
 def create_unique_id() -> int:
     """
     Create a unique id for the flowfile based on the current time in milliseconds and the current process id
     Returns:
-        int: unique id
+        int: unique id within 32 bits (4 bytes)
     """
-    # Get current time in milliseconds
-    current_time_ms = int(time.time() * 1000)
+    time_component = int(time.time()) & 0x1FFFF
+    pid_component = os.getpid() & 0xFF
+    random_component = random.randint(0, 0x7F)
+    unique_id = (time_component << 15) | (pid_component << 7) | random_component
 
-    # Get current process id
-    process_id = os.getpid()
-    unique_id = (current_time_ms << 20) | (process_id & 0xFFFFF)
     return unique_id
 
 
@@ -60,7 +64,8 @@ class FlowfileHandler:
         return self._flows.get(flow_id, None)
 
     def delete_flow(self, flow_id: int):
-        self._flows.pop(flow_id)
+        flow = self._flows.pop(flow_id)
+        del flow
 
     def save_flow(self, flow_id: int, flow_path: str):
         flow = self.get_flow(flow_id)
@@ -82,10 +87,6 @@ class FlowfileHandler:
         """
         next_id = create_unique_id()
         flow_info = FlowSettings(name=name, flow_id=next_id, save_location='', path=flow_path)
-        flows = [(flow_id, flow) for flow_id, flow in self._flows.items()]
-        for flow_id, flow in flows:
-            flow.save_flow(flow.flow_settings.path)
-            self.delete_flow(flow_id)
         _ = self.register_flow(flow_info)
         return next_id
 

@@ -467,10 +467,7 @@ def update_flow_settings(flow_settings: schemas.FlowSettings):
 
 
 @router.get('/flow_data/v2', tags=['manager'])
-def get_vue_flow_data(flow_id) -> schemas.VueFlowInput:
-    print('Getting vue flow data')
-    print(flow_file_handler.flowfile_flows)
-    print(flow_file_handler._flows.keys())
+def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')

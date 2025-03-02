@@ -58,8 +58,8 @@ def add_node_placeholder(node_type: str, flow_id: FlowId = 1, node_id: int = 1):
 
 
 def ensure_no_flow_registered():
-    if flow_file_handler.get_flow(1) is not None:
-        flow_file_handler.delete_flow(1)
+    for flow in flow_file_handler.flowfile_flows:
+        flow_file_handler.delete_flow(flow.flow_id)
 
 
 def ensure_clean_flow() -> FlowId:

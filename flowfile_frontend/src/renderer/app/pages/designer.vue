@@ -1,5 +1,5 @@
 <template>
-  <div class="header">
+  <div v-if="!isLoading" class="header">
     <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
       <flow-selector ref="flowSelector" @flow-changed="handleFlowChange" />
     <div class="spacer"></div>
@@ -31,12 +31,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, nextTick } from "vue";
 import HeaderButtons from "../features/designer/components/HeaderButtons/HeaderButtons.vue";
 import {} from "../features/designer/components/Canvas/backendInterface";
 import Status from "../features/designer/editor/status.vue";
 import CanvasFlow from "../features/designer/components/Canvas/CanvasFlow.vue";
-import FlowSelector from "./designer/FlowSelector.vue"; // Import the new component
+import FlowSelector from "./designer/FlowSelector.vue";
 import {
   getAllFlows,
   importSavedFlow,
@@ -50,11 +50,13 @@ const flowsActive = ref<FlowSettings[]>([]);
 const isLoading = ref(true);
 const canvasFlow = ref<InstanceType<typeof CanvasFlow>>();
 const headerButtons = ref<InstanceType<typeof HeaderButtons>>();
-const flowSelector = ref<InstanceType<typeof FlowSelector>>(); // Reference to the flow selector
+const flowSelector = ref<InstanceType<typeof FlowSelector>>();
 const nodeOptions = ref<NodeTemplate[]>([]);
+const initialLoadComplete = ref(false);
 
-const loadActiveFlows = async () => {
-  isLoading.value = true;
+const nodeStore = useNodeStore();
+
+const fetchActiveFlows = async () => {
   try {
     const flows = await getAllFlows();
     flowsActive.value = flows;
@@ -63,14 +65,22 @@ const loadActiveFlows = async () => {
     if (flowSelector.value) {
       await flowSelector.value.loadFlows();
     }
+    return flows;
   } catch (error) {
     console.error("Failed to load active flows:", error);
+    return [];
+  }
+};
+
+// Function to load active flows with loading state management
+const loadActiveFlows = async () => {
+  isLoading.value = true;
+  try {
+    await fetchActiveFlows();
   } finally {
     isLoading.value = false;
   }
 };
-
-const nodeStore = useNodeStore();
 
 const openFlow = (eventData: { message: string; flowPath: string }) => {
   reloadCanvas(eventData.flowPath);
@@ -88,16 +98,21 @@ const reloadCanvas = async (flowPath: string) => {
     if (headerButtons.value) {
       await headerButtons.value.loadFlowSettings();
     }
-    await loadActiveFlows(); // Refresh flows after reloading canvas
+    await fetchActiveFlows();
   } finally {
     isLoading.value = false;
   }
 };
 
-// New function to handle flow changes from the selector
 const handleFlowChange = async (flowId: number) => {
+  if (isLoading.value && flowId === nodeStore.flow_id) {
+    console.log("Already loading flow ID:", flowId);
+    return;
+  }
+  
   isLoading.value = true;
   try {
+    console.log("Handling flow change to:", flowId);
     nodeStore.setFlowId(flowId);
     if (canvasFlow.value) {
       await canvasFlow.value.loadFlow();
@@ -114,7 +129,7 @@ const refreshFlow = async () => {
   isLoading.value = true;
   try {
     console.log("refreshFlow");
-    await loadActiveFlows(); // Refresh flows list
+    await fetchActiveFlows(); // Refresh flows list
     if (canvasFlow.value && flowsActive.value.length > 0) {
       await canvasFlow.value.loadFlow();
     }
@@ -139,15 +154,55 @@ const openFlowDialog = () => {
   }
 };
 
-onMounted(async () => {
+const initialSetup = async () => {
+  if (initialLoadComplete.value) {
+    console.log("Initial setup already completed");
+    return;
+  }
+  
+  isLoading.value = true;
+  console.log("Starting initial setup");
+  
   try {
-    await Promise.all([
-      fetchNodes().then((nodes) => (nodeOptions.value = nodes)),
-      loadActiveFlows(),
+    const [nodes, flows] = await Promise.all([
+      fetchNodes(),
+      fetchActiveFlows()
     ]);
+    
+    nodeOptions.value = nodes;
+        if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
+      console.log("Setting initial flow ID to:", flows[0].flow_id);
+      nodeStore.setFlowId(flows[0].flow_id);
+      
+      // Load the flow data
+      if (canvasFlow.value) {
+        await canvasFlow.value.loadFlow();
+      }
+      if (headerButtons.value) {
+        await headerButtons.value.loadFlowSettings();
+      }
+    } else if (nodeStore.flow_id && nodeStore.flow_id > 0) {
+      console.log("Using existing flow ID:", nodeStore.flow_id);
+      if (canvasFlow.value) {
+        await canvasFlow.value.loadFlow();
+      }
+      if (headerButtons.value) {
+        await headerButtons.value.loadFlowSettings();
+      }
+    }
+    
+    initialLoadComplete.value = true;
+    console.log("Initial setup completed");
+  } catch (error) {
+    console.error("Error during initial setup:", error);
   } finally {
     isLoading.value = false;
   }
+};
+
+onMounted(async () => {
+  console.log("Component mounted, starting initialization");
+  await initialSetup();
 });
 </script>
 

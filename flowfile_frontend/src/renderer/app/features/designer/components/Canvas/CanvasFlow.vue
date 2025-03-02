@@ -210,6 +210,11 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
   }
 };
 
+
+const handleDrop = (event: DragEvent) => {
+  onDrop(event, nodeStore.flow_id);
+};
+
 const toggleShowRunResult = () => {
   nodeStore.showFlowResult = !nodeStore.showFlowResult;
 };
@@ -217,7 +222,7 @@ const toggleShowRunResult = () => {
 
 <template>
   <div class="container">
-    <main ref="mainContainerRef" @drop="onDrop" @dragover="onDragOver">
+    <main ref="mainContainerRef" @drop="handleDrop" @dragover="onDragOver">
       <VueFlow
         ref="vueFlow"
         :nodes="nodes"

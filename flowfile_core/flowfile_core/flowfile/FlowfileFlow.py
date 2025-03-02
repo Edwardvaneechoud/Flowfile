@@ -1024,9 +1024,7 @@ class EtlGraph:
             node.remove_cache()
 
     def save_flow(self, flow_path: str):
-        print('saving the flow 1')
         with open(flow_path, 'wb') as f:
-            print('saving the flow')
             pickle.dump(self.get_node_storage(), f)
         self.flow_settings.path = flow_path
 

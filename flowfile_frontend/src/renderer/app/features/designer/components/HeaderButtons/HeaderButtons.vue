@@ -1,5 +1,4 @@
 <template>
-  {{ nodeStore.flow_id }}
   <div class="action-buttons">
     <el-button
       size="small"
@@ -25,8 +24,7 @@
     >
       Create
     </el-button>
-    <run-button ref="runButton" :flow-id="1" />
-    <!-- New Settings Button -->
+    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
     <el-button
       size="small"
       style="background-color: rgb(92, 92, 92); color: white"
@@ -37,7 +35,6 @@
     </el-button>
   </div>
 
-  <!-- Existing dialogs for Open, Save, Create -->
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
     <file-browser :allowed-file-types="['flowfile']" mode="open" @file-selected="openFlowAction" />
   </el-dialog>
@@ -62,7 +59,6 @@
     />
   </el-dialog>
 
-  <!-- New Settings Modal -->
   <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
     <div v-if="flowSettings">
       <div class="settings-modal-content">
@@ -92,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, defineExpose } from "vue";
+import { ref, onMounted, defineExpose, computed, watch } from "vue";
 import { saveFlow } from "./utils";
 import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
@@ -106,14 +102,13 @@ import {
   ExecutionMode,
   updateRunStatus,
 } from "../../nodes/nodeLogic";
-import { create } from "lodash";
 
 const nodeStore = useNodeStore();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
-const modalVisibleForSettings = ref(false); // New modal for settings
+const modalVisibleForSettings = ref(false);
 
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
@@ -124,26 +119,27 @@ const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
+  if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
+  
   flowSettings.value = await getFlowSettings(nodeStore.flow_id);
   if (!flowSettings.value) return;
+  
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
   nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+  
+  if (!runButton.value) return;
+  
   if (flowSettings.value.is_running) {
-    if (runButton.value) {
-      nodeStore.isRunning = true;
-      runButton.value.startPolling(runButton.value.checkRunStatus);
-    }
+    nodeStore.isRunning = true;
+    runButton.value.startPolling(runButton.value.checkRunStatus);
   } else {
-    if (runButton.value) {
-      nodeStore.isRunning = false;
-
-      runButton.value.stopPolling();
-      updateRunStatus(nodeStore.flow_id, nodeStore, false);
-    }
+    nodeStore.isRunning = false;
+    runButton.value.stopPolling();
+    updateRunStatus(nodeStore.flow_id, nodeStore, false);
   }
 };
 
-const pushFlowSettings = async (execution_mode: any) => {
+const pushFlowSettings = async () => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
     nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
@@ -159,7 +155,7 @@ const fileBrowserRef = ref<{
 } | null>(null);
 
 const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
-  await saveFlow(1, flowPath);
+  await saveFlow(nodeStore.flow_id, flowPath);
   modalVisibleForSave.value = false;
 };
 
@@ -175,11 +171,10 @@ function openFlowAction(inputSelectedFile: FileInfo | null) {
 }
 
 const openSaveModal = async () => {
-  let settings = await getFlowSettings(nodeStore.flow_id);
+  const settings = await getFlowSettings(nodeStore.flow_id);
   if (!settings) return;
-  if (settings && settings.path) {
-    savePath.value = settings.path;
-  }
+  
+  savePath.value = settings.path;
   modalVisibleForSave.value = true;
   await fileBrowserRef.value?.handleInitialFileSelection();
 };
@@ -188,19 +183,25 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
 
-  let createdFlowId = await createFlow(normalizedPath);
-  console.log(createdFlowId);
+  const createdFlowId = await createFlow(normalizedPath);
   await saveFlow(createdFlowId, normalizedPath);
-  emit("refreshFlow");
+  
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;
-  console.log("Created flow with id:", createdFlowId);
-  console.log("Flow ID in store:", nodeStore.flow_id);
+  
+  emit("refreshFlow");
 };
 
 const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
 };
+
+// Watch for flow ID changes to reload settings
+watch(() => nodeStore.flow_id, async (newId, oldId) => {
+  if (newId !== oldId && newId > 0) {
+    await loadFlowSettings();
+  }
+});
 
 defineExpose({
   loadFlowSettings,
@@ -209,7 +210,9 @@ defineExpose({
 });
 
 onMounted(async () => {
-  await loadFlowSettings();
+  if (nodeStore.flow_id && nodeStore.flow_id > 0) {
+    await loadFlowSettings();
+  }
 });
 </script>
 
@@ -222,10 +225,10 @@ onMounted(async () => {
   height: 50px;
 }
 
-/* Styles for the settings modal */
 .settings-modal-content {
   padding: 10px;
 }
+
 .form-group {
   margin-bottom: 10px;
 }

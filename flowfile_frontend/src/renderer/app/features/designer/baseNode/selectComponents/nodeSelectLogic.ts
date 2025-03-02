@@ -1,4 +1,3 @@
-// nodeLogic.ts
 
 import { ref, Ref } from 'vue'
 import { NodeData, nodeData as nodeDataRef, TableExample } from '../nodeInterfaces'
