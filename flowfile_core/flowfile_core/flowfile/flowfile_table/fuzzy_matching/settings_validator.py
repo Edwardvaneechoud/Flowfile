@@ -61,6 +61,7 @@ def pre_calculate_pivot_schema(node_input_schema: List[FlowfileColumn],
     index_columns_schema = [get_schema_of_column(node_input_schema, index_col) for index_col in
                             pivot_input.index_columns]
     val_column_schema = get_schema_of_column(node_input_schema, pivot_input.value_col)
+    # pivot_column_schema = get_schema_of_column(node_input_schema, pivot_input.pivot_column)
     if val_column_schema.generic_datatype() == 'numeric':
         output_type = datatypes.Float64
     elif val_column_schema.generic_datatype() == 'string':
@@ -74,6 +75,7 @@ def pre_calculate_pivot_schema(node_input_schema: List[FlowfileColumn],
                                                            pl_datatype=output_type)) for output_field in output_fields]
 
     else:
+
         pl_output_fields = []
         unique_vals = input_lf.select(pivot_input.pivot_column).unique().collect(streaming=True)[:, 0].cast(pl.String)
         for val in unique_vals:

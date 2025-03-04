@@ -27,7 +27,7 @@ loky = "~3.4.1"
 fastexcel = "~0.12.0"
 openpyxl = "~3.1.2"
 polars-distance = "~0.4.3"
-polars-expr-transformer = "~0.3.12"
+polars-expr-transformer = "~0.4.3.0"
 gspread = "~6.1.3"
 google-api-python-client = "~2.149.0"
 polars-sim = { version = "~0.1.3", markers = "sys_platform != 'win32'" }
