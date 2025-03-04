@@ -239,7 +239,7 @@ class EtlGraph:
             input_data = input_node.get_resulting_data()
             input_data.lazy = True
             input_lf = input_data.data_frame
-            node_input_schema = input_node.schema
+            node_input_schema = input_data.calculate_schema()
             return pre_calculate_pivot_schema(node_input_schema, pivot_settings.pivot_input, input_lf=input_lf)
 
         node.schema_callback = schema_callback
