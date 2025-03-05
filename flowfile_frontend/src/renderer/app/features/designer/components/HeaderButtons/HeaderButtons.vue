@@ -120,15 +120,15 @@ const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"])
 
 const loadFlowSettings = async () => {
   if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
-  
+
   flowSettings.value = await getFlowSettings(nodeStore.flow_id);
   if (!flowSettings.value) return;
-  
+
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
   nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
-  
+
   if (!runButton.value) return;
-  
+
   if (flowSettings.value.is_running) {
     nodeStore.isRunning = true;
     runButton.value.startPolling(runButton.value.checkRunStatus);
@@ -173,7 +173,7 @@ function openFlowAction(inputSelectedFile: FileInfo | null) {
 const openSaveModal = async () => {
   const settings = await getFlowSettings(nodeStore.flow_id);
   if (!settings) return;
-  
+
   savePath.value = settings.path;
   modalVisibleForSave.value = true;
   await fileBrowserRef.value?.handleInitialFileSelection();
@@ -185,10 +185,10 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
 
   const createdFlowId = await createFlow(normalizedPath);
   await saveFlow(createdFlowId, normalizedPath);
-  
+
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;
-  
+
   emit("refreshFlow");
 };
 

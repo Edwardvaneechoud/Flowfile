@@ -10,10 +10,11 @@
     </div>
     <div class="resizer" @mousedown="initResize"></div>
     <div ref="editorWrapper" class="editor-wrapper">
-      <sql-editor
-        ref="sqlEditor"
+      <function-editor
+        ref="functionEditor"
         class="prism-editor-ref"
         :editor-string="code"
+        :columns="nodeStore.nodeData?.main_input?.columns"
         @update-editor-string="handleCodeChange"
       />
     </div>
@@ -25,7 +26,7 @@
 import { ref, Ref, defineExpose, defineProps, watch, onMounted, nextTick, computed } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
-import SqlEditor from "./SqlEditor.vue";
+import FunctionEditor from "./FunctionEditor.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import InstantFuncResults from "./instantFuncResults.vue";
 import debounce from "lodash/debounce";
@@ -51,7 +52,7 @@ const instantFuncResultsRef = ref<Ref<typeof InstantFuncResults> | null>(null);
 const code = ref(props.editorString);
 nodeStore.setInputCode(props.editorString);
 
-const sqlEditor = ref<typeof SqlEditor | null>(null);
+const functionEditor = ref<typeof FunctionEditor | null>(null);
 const showTools: Ref<boolean> = ref(true);
 const showHideOptions = () => {
   showTools.value = !showTools.value;
@@ -79,9 +80,9 @@ watch(
   }, 1500),
 );
 
-defineExpose({ showHideOptions, sqlEditor, showTools });
+defineExpose({ showHideOptions, functionEditor, showTools });
 const handleNodeSelected = (nodeLabel: string) => {
-  sqlEditor.value?.insertTextAtCursor(nodeLabel);
+  functionEditor.value?.insertTextAtCursor(nodeLabel);
 };
 
 onMounted(async () => {

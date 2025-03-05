@@ -432,7 +432,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
 
     Example:
         >>> lf = pl.LazyFrame({'category': ['A', 'B', 'A', 'C']})
-        >>> unique_vals = fetch_unique_values(lf, 'category')
+        >>> unique_vals = fetch_unique_values(lf)
         >>> print(unique_vals)
         ['A', 'B', 'C']
     """

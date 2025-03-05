@@ -9,21 +9,25 @@
     >
       <slot></slot>
     </div>
-    <!-- Attach a ref to the popover itself -->
-    <div
-      v-if="visible"
-      ref="popoverEl"
-      :style="popoverStyle"
-      class="popover"
-      :class="{ 'popover--left': props.placement === 'left' }"
-    >
-      <h3 v-if="props.title !== ''">{{ props.title }}</h3>
-      <p class="content" v-html="props.content"></p>
-    </div>
+
+    <!-- The portal target for the popover -->
+    <Teleport v-if="visible" to="body">
+      <!-- Attach a ref to the popover itself -->
+      <div
+        ref="popoverEl"
+        :style="popoverStyle"
+        class="popover"
+        :class="{ 'popover--left': props.placement === 'left' }"
+      >
+        <h3 v-if="props.title !== ''">{{ props.title }}</h3>
+        <p class="content" v-html="props.content"></p>
+      </div>
+    </Teleport>
   </div>
 </template>
+
 <script setup lang="ts">
-import { ref, nextTick } from "vue";
+import { ref, nextTick, onMounted } from "vue";
 
 const visible = ref(false);
 const referenceEl = ref<HTMLElement | null>(null);
@@ -46,11 +50,16 @@ const props = defineProps({
     type: Number,
     default: 100,
   },
+  zIndex: {
+    type: Number,
+    default: 9999,
+  },
 });
 
 const popoverStyle = ref({
   top: "0px",
   left: "0px",
+  zIndex: props.zIndex.toString(),
 });
 
 const showPopover = () => {
@@ -93,8 +102,36 @@ const updatePosition = () => {
       break;
   }
 
-  popoverStyle.value = { top: `${top}px`, left: `${left}px` };
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  // Adjust horizontal position if needed
+  if (left < 10) left = 10;
+  if (left + popoverRect.width > viewportWidth - 10) {
+    left = viewportWidth - popoverRect.width - 10;
+  }
+
+  // Adjust vertical position if needed
+  if (top < 10) top = 10;
+  if (top + popoverRect.height > viewportHeight - 10) {
+    top = viewportHeight - popoverRect.height - 10;
+  }
+
+  popoverStyle.value = {
+    top: `${top}px`,
+    left: `${left}px`,
+    zIndex: props.zIndex.toString(),
+  };
 };
+
+// Listen for window resize to update popover position
+onMounted(() => {
+  window.addEventListener("resize", () => {
+    if (visible.value) {
+      updatePosition();
+    }
+  });
+});
 </script>
 
 <style scoped>
@@ -109,8 +146,8 @@ const updatePosition = () => {
   background-color: #fff;
   border: 0.5px solid #ccc;
   border-radius: 4px;
-  z-index: 10000;
-  min-width: 100px; /* You can also bind this dynamically if needed */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: v-bind('props.minWidth + "px"');
 }
 
 .popover--left {
@@ -124,10 +161,12 @@ const updatePosition = () => {
 .popover h3 {
   margin: 0 0 2px;
   font-size: 16px;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 }
 
 .popover p {
   margin: 0;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 }
 
 .content {

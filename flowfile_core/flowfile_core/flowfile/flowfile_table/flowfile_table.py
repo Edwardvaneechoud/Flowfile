@@ -16,6 +16,7 @@ from pyarrow.parquet import ParquetFile
 
 # Local imports - Core
 from flowfile_core.configs import logger
+from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.schemas import (
     input_schema,
     transform_schema as transform_schemas
@@ -604,13 +605,19 @@ class FlowfileTable:
 
         return FlowfileTable(result)
 
-    def do_pivot(self, pivot_input: transform_schemas.PivotInput) -> "FlowfileTable":
+    def do_pivot(self, pivot_input: transform_schemas.PivotInput, logger: NodeLogger = None) -> "FlowfileTable":
         """Convert data from long to wide format with aggregations."""
         # Get unique values for pivot columns
-        lf = self.data_frame.select(pivot_input.pivot_column).unique().cast(pl.String)
-        new_cols_unique = fetch_unique_values(lf)
+        max_unique_vals = 200
+        new_cols_unique = fetch_unique_values(self.data_frame.select(pivot_input.pivot_column)
+                                              .unique()
+                                              .sort(pivot_input.pivot_column)
+                                              .limit(max_unique_vals).cast(pl.String))
+        if len(new_cols_unique) >= max_unique_vals:
+            if logger:
+                logger.warning('Pivot column has too many unique values. Please consider using a different column.'
+                               f' Max unique values: {max_unique_vals}')
 
-        # Handle case with no index columns
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
             pivot_input.index_columns = ['__temp__']

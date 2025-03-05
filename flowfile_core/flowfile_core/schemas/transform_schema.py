@@ -16,6 +16,9 @@ def get_func_type_mapping(func: str):
         return "Utf8"
 
 
+def string_concat(*column: str):
+    return pl.col(column).cast(pl.Utf8).str.concat(delimiter=',')
+
 JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']
 
 
@@ -422,8 +425,10 @@ class AggColl:
 
     @property
     def agg_func(self):
-        if self.agg == 'groupby':
+        if self.agg == 's':
             return self.agg
+        elif self.agg == 'concat':
+            return string_concat
         else:
             return getattr(pl, self.agg) if isinstance(self.agg, str) else self.agg
 
