@@ -1,21 +1,18 @@
 <template>
   <div class="flow-tabs-container">
     <div class="flow-tabs">
-      <div 
-        v-for="flow in flows" 
-        :key="flow.flow_id" 
+      <div
+        v-for="flow in flows"
+        :key="flow.flow_id"
         class="flow-tab"
-        :class="{ 'active': selectedFlowId === flow.flow_id }"
+        :class="{ active: selectedFlowId === flow.flow_id }"
         @click="selectFlow(flow.flow_id)"
       >
         <div class="tab-content">
           <span class="material-icons tab-icon">account_tree</span>
           <span class="tab-name">{{ flow.name }}</span>
         </div>
-        <span 
-          class="material-icons close-icon"
-          @click.stop="onCloseTab(flow.flow_id)"
-        >
+        <span class="material-icons close-icon" @click.stop="onCloseTab(flow.flow_id)">
           close
         </span>
       </div>
@@ -37,8 +34,7 @@ const props = defineProps({
   onCloseTab: {
     type: Function,
     required: false,
-    default: () => {},
-  }
+  },
 });
 
 const emit = defineEmits(["flow-changed", "close-tab"]);
@@ -52,7 +48,7 @@ const loadFlows = async () => {
   try {
     const flowsData = await getAllFlows();
     flows.value = flowsData;
-    
+
     // Check for stored flow ID in session storage
     if (nodeStore.flow_id && nodeStore.flow_id !== -1) {
       selectedFlowId.value = nodeStore.flow_id;
@@ -86,7 +82,7 @@ watch(
     if (newFlowId && newFlowId !== -1 && newFlowId !== selectedFlowId.value) {
       selectedFlowId.value = newFlowId;
     }
-  }
+  },
 );
 
 onMounted(() => {
@@ -102,7 +98,12 @@ defineExpose({
 <style scoped>
 .flow-tabs-container {
   width: 100%;
-  font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    "Inter",
+    "Roboto",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
 }
 
 .flow-tabs {

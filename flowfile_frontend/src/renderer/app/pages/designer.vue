@@ -4,7 +4,11 @@
       <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
     </div>
     <div class="middle-section">
-      <flow-selector ref="flowSelector" @flow-changed="handleFlowChange" @close-tab="handleCloseFlow" />
+      <flow-selector
+        ref="flowSelector"
+        @flow-changed="handleFlowChange"
+        @close-tab="handleCloseFlow"
+      />
     </div>
     <div class="right-section">
       <Status />
@@ -100,30 +104,29 @@ const reloadCanvas = async (flowPath: string) => {
   }
 };
 
-
 const handleCloseFlow = async (flowId: number) => {
   try {
     isLoading.value = true;
-    console.log('Closing flow:', flowId);
-    
+    console.log("Closing flow:", flowId);
+
     // Check if we're closing the currently active flow
     const isCurrentFlow = nodeStore.flow_id === flowId;
-    
+
     // Call the API to close the flow
     await closeFlow(flowId);
-    
+
     // Clean up any flow-related data in the store
     nodeStore.clearFlowResults(flowId);
     nodeStore.clearFlowDescriptionCache(flowId);
-    
+
     // Refresh the flows list
     await fetchActiveFlows();
-    
+
     if (isCurrentFlow) {
       if (flowsActive.value.length > 0) {
         // Switch to the first available flow
         const newFlowId = flowsActive.value[0].flow_id;
-        console.log('Switching to flow:', newFlowId);
+        console.log("Switching to flow:", newFlowId);
         await handleFlowChange(newFlowId);
       } else {
         // No flows left, reset the nodeStore
@@ -131,7 +134,7 @@ const handleCloseFlow = async (flowId: number) => {
       }
     }
   } catch (error) {
-    console.error('Error closing flow:', error);
+    console.error("Error closing flow:", error);
   } finally {
     isLoading.value = false;
   }

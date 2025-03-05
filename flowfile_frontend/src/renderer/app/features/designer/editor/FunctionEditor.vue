@@ -188,7 +188,7 @@ const highlightPlugin = ViewPlugin.fromClass(
         while ((match = regexFunction.exec(text)) !== null) {
           const start = from + match.index;
           const end = start + match[1].length;
-          matches.push({ start, end, type: 'function' });
+          matches.push({ start, end, type: "function" });
         }
 
         // Collect column matches
@@ -196,7 +196,7 @@ const highlightPlugin = ViewPlugin.fromClass(
         while ((match = regexColumn.exec(text)) !== null) {
           const start = from + match.index;
           const end = start + match[0].length;
-          matches.push({ start, end, type: 'column' });
+          matches.push({ start, end, type: "column" });
         }
 
         // Collect string matches
@@ -204,7 +204,7 @@ const highlightPlugin = ViewPlugin.fromClass(
         while ((match = regexString.exec(text)) !== null) {
           const start = from + match.index;
           const end = start + match[0].length;
-          matches.push({ start, end, type: 'string' });
+          matches.push({ start, end, type: "string" });
         }
       }
 
@@ -213,11 +213,11 @@ const highlightPlugin = ViewPlugin.fromClass(
 
       // Add decorations in sorted order
       for (const match of matches) {
-        if (match.type === 'function') {
+        if (match.type === "function") {
           builder.add(match.start, match.end, Decoration.mark({ class: "cm-function" }));
-        } else if (match.type === 'column') {
+        } else if (match.type === "column") {
           builder.add(match.start, match.end, Decoration.mark({ class: "cm-column" }));
-        } else if (match.type === 'string') {
+        } else if (match.type === "string") {
           builder.add(match.start, match.end, Decoration.mark({ class: "cm-string" }));
         }
       }

@@ -1,19 +1,9 @@
 <template>
   <div class="button-group">
-    <el-button
-      size="small"
-      :disabled="nodeStore.isRunning"
-      round
-      @click="runFlow()"
-    >
+    <el-button size="small" :disabled="nodeStore.isRunning" round @click="runFlow()">
       Run
     </el-button>
-    <el-button
-      v-if="nodeStore.isRunning"
-      size="small"
-      round
-      @click="cancelFlow()"
-    >
+    <el-button v-if="nodeStore.isRunning" size="small" round @click="cancelFlow()">
       Cancel
     </el-button>
   </div>

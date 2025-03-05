@@ -1,35 +1,22 @@
 <template>
   <div class="action-buttons">
-    <button
-      class="action-btn"
-      @click="openSaveModal"
-    >
+    <button class="action-btn" @click="openSaveModal">
       <span class="material-icons btn-icon">save</span>
       <span class="btn-text">Save</span>
     </button>
-    <button
-      class="action-btn"
-      @click="modalVisibleForOpen = true"
-    >
+    <button class="action-btn" @click="modalVisibleForOpen = true">
       <span class="material-icons btn-icon">folder_open</span>
       <span class="btn-text">Open</span>
     </button>
-    <button
-      class="action-btn"
-      @click="modalVisibleForCreate = true"
-    >
+    <button class="action-btn" @click="modalVisibleForCreate = true">
       <span class="material-icons btn-icon">add_circle_outline</span>
       <span class="btn-text">Create</span>
     </button>
-    <button
-      class="action-btn"
-      @click="openSettingsModal"
-    >
+    <button class="action-btn" @click="openSettingsModal">
       <span class="material-icons btn-icon">settings</span>
       <span class="btn-text">Settings</span>
     </button>
     <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
-
   </div>
 
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
@@ -223,7 +210,12 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   height: 50px;
-  font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    "Inter",
+    "Roboto",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
 }
 
 .action-btn {
@@ -265,7 +257,12 @@ onMounted(async () => {
 
 .settings-modal-content {
   padding: 16px;
-  font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    "Inter",
+    "Roboto",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
 }
 
 .form-group {
