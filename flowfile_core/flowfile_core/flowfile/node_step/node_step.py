@@ -71,6 +71,7 @@ class NodeStep:
 
         def error_callback(e: Exception) -> List:
             logger.warn(e)
+
             self.node_settings.setup_errors = True
             return []
 

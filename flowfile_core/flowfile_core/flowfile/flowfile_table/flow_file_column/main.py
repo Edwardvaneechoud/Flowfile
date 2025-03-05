@@ -67,7 +67,8 @@ class FlowfileColumn:
 
     @classmethod
     def create_from_minimal_field_info(cls, minimal_field_info: input_schema.MinimalFieldInfo) -> "FlowfileColumn":
-        return cls.from_input(**minimal_field_info.__dict__)
+        return cls.from_input(column_name=minimal_field_info.name,
+                              data_type=minimal_field_info.data_type)
 
     @property
     def is_unique(self) -> bool:

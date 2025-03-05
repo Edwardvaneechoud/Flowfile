@@ -24,24 +24,14 @@
         }"
       >
         <button @click="setAggregations('groupby', selectedColumns)">Group by</button>
-        <button v-if="singleColumnSelected" @click="setAggregations('count', selectedColumns)">
-          Count
-        </button>
-        <button v-if="singleColumnSelected" @click="setAggregations('max', selectedColumns)">
-          Max
-        </button>
-        <button v-if="singleColumnSelected" @click="setAggregations('median', selectedColumns)">
-          Median
-        </button>
-        <button v-if="singleColumnSelected" @click="setAggregations('min', selectedColumns)">
-          Min
-        </button>
-        <button v-if="singleColumnSelected" @click="setAggregations('sum', selectedColumns)">
-          Sum
-        </button>
-        <button v-if="singleColumnSelected" @click="setAggregations('n_unique', selectedColumns)">
-          N_unique
-        </button>
+        <button
+        v-for="option in singleColumnAggOptions"
+        :key="option.value"
+        v-if="singleColumnSelected"
+        @click="setAggregations(option.value, selectedColumns)"
+        >
+        {{ option.label }}
+      </button>
       </div>
 
       <div class="listbox-subtitle">Settings</div>
@@ -96,7 +86,7 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
-import { GroupByInput, NodeGroupBy } from "../../../baseNode/nodeInput";
+import { GroupByInput, NodeGroupBy, AggOption, GroupByOption } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -112,7 +102,7 @@ const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
 const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
-const aggOptions = ["groupby", "sum", "max", "median", "min", "count", "n_unique"];
+const aggOptions: (AggOption | GroupByOption)[] = ["groupby", "sum", "max", "median", "min", "count", "n_unique", "first", "last", "concat"];
 const firstSelectedIndex = ref<number | null>(null);
 
 const groupByInput = ref<GroupByInput>({
@@ -148,7 +138,7 @@ const openContextMenu = (clickedIndex: number, columnName: string, event: MouseE
   showContextMenu.value = true;
 };
 
-const setAggregations = (aggType: string, columns: string[] | null) => {
+const setAggregations = (aggType: AggOption|GroupByOption, columns: string[] | null) => {
   if (columns) {
     columns.forEach((column) => {
       const new_column_name = aggType !== "groupby" ? column + "_" + aggType : column;
@@ -179,6 +169,23 @@ const handleItemClick = (clickedIndex: number, columnName: string, event: MouseE
     }
   }
 };
+
+interface SingleColumnAggOption {
+  value: AggOption
+  label: string
+}
+
+const singleColumnAggOptions: SingleColumnAggOption[] = [
+  { value: 'count', label: 'Count' },
+  { value: 'max', label: 'Max' },
+  { value: 'median', label: 'Median' },
+  { value: 'min', label: 'Min' },
+  { value: 'sum', label: 'Sum' },
+  { value: 'n_unique', label: 'N_unique' },
+  { value: 'first', label: 'First'},
+  { value: 'last', label: 'Last'},
+  { value: 'concat', label: 'Concat'}
+];
 
 const getRange = (start: number, end: number) => {
   return start < end

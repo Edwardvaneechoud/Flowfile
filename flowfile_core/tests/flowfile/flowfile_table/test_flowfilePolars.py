@@ -60,6 +60,50 @@ def create_test_dataframe():
     return pl.DataFrame(data)
 
 
+def test_group_by_numeric():
+    data = create_test_dataframe()
+    fl_table = FlowfileTable(data)
+    agg_cols = [transform_schema.AggColl('category', agg='groupby'),
+                transform_schema.AggColl('value1', agg='sum'),
+                transform_schema.AggColl('value1', agg='mean'),
+                transform_schema.AggColl('value1', agg='min'),
+                transform_schema.AggColl('value1', agg='max'),
+                transform_schema.AggColl('value1', agg='count'),
+                transform_schema.AggColl('value1', agg='n_unique'),
+                ]
+    group_by_input = transform_schema.GroupByInput(agg_cols=agg_cols)
+    grouped_table = fl_table.do_group_by(group_by_input)
+
+    expected_output = FlowfileTable([
+        {'category': 'B', 'value1_sum': 40, 'value1_mean': 20.0, 'value1_min': 15, 'value1_max': 25, 'value1_count': 2, 'value1_n_unique': 2},
+        {'category': 'C', 'value1_sum': 35, 'value1_mean': 17.5, 'value1_min': 5, 'value1_max': 30, 'value1_count': 2, 'value1_n_unique': 2},
+        {'category': 'A', 'value1_sum': 40, 'value1_mean': 13.333333333333334, 'value1_min': 10, 'value1_max': 20, 'value1_count': 3, 'value1_n_unique': 2}
+    ])
+    grouped_table.assert_equal(expected_output)
+
+
+def test_group_by_string():
+    data = create_test_dataframe()
+    fl_table = FlowfileTable(data)
+    agg_cols = [transform_schema.AggColl('category', agg='groupby'),
+                transform_schema.AggColl('sub_category', agg='first'),
+                transform_schema.AggColl('sub_category', agg='last'),
+                transform_schema.AggColl('sub_category', agg='min'),
+                transform_schema.AggColl('sub_category', agg='max'),
+                transform_schema.AggColl('sub_category', agg='count'),
+                transform_schema.AggColl('sub_category', agg='n_unique'),
+                transform_schema.AggColl('sub_category', agg='concat')
+                ]
+    group_by_input = transform_schema.GroupByInput(agg_cols=agg_cols)
+    grouped_table = fl_table.do_group_by(group_by_input)
+
+    expected_output = FlowfileTable([
+        {'category': 'C', 'sub_category_first': 'C1', 'sub_category_last': 'C2', 'sub_category_min': 'C1', 'sub_category_max': 'C2', 'sub_category_count': 2, 'sub_category_n_unique': 2, 'sub_category_concat': 'C1,C2'},
+        {'category': 'A', 'sub_category_first': 'A1', 'sub_category_last': 'A1', 'sub_category_min': 'A1', 'sub_category_max': 'A1', 'sub_category_count': 3, 'sub_category_n_unique': 1, 'sub_category_concat': 'A1,A1,A1'},
+        {'category': 'B', 'sub_category_first': 'B1', 'sub_category_last': 'B2', 'sub_category_min': 'B1', 'sub_category_max': 'B2', 'sub_category_count': 2, 'sub_category_n_unique': 2, 'sub_category_concat': 'B1,B2'}])
+    grouped_table.assert_equal(expected_output)
+
+
 def test_grouped_record_id():
     fl_table = FlowfileTable(pl.DataFrame({
         "id": [1, 2, 3, 4, 5, 6, 7, 8],
@@ -73,6 +117,36 @@ def test_grouped_record_id():
     output = fl_table.add_record_id(record_id_settings)
     expected_output = (fl_table.add_new_values([1, 2, 1, 1, 1, 1, 1, 2], 'ranking')
                        .select_columns(['ranking', 'id', 'category', 'sub_category', 'value1']))
+    output.assert_equal(expected_output)
+
+
+def test_pivot_numeric():
+    fl_table = FlowfileTable(pl.DataFrame({
+        'id': [1, 1, 2, 2, 2, 1, 1],
+        'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+        'value': [10, 20, 15, 25, 30, 5, 10],
+    }))
+    pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
+                                              aggregations=['sum'])
+    output = fl_table.do_pivot(pivot_input)
+    expected_output = FlowfileTable([{'category': 'A', '2_sum': None, '1_sum': 40},
+                                     {'category': 'B', '2_sum': 40, '1_sum': None},
+                                     {'category': 'C', '2_sum': 30, '1_sum': 5}])
+    output.assert_equal(expected_output)
+
+
+def test_pivot_string_concat():
+    fl_table = FlowfileTable(pl.DataFrame({
+        'id': [1, 1, 2, 2, 2, 1, 1],
+        'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+        'value': ['10', '20', '15', '25', '30', '5', '10'],
+    }))
+    pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
+                                              aggregations=['concat'])
+    output = fl_table.do_pivot(pivot_input)
+    expected_output = FlowfileTable([{'category': 'A', '1_concat': '10,20,10', '2_concat': None},
+                                     {'category': 'B', '1_concat': None, '2_concat': '15,25'},
+                                     {'category': 'C', '1_concat': '5', '2_concat': '30'}])
     output.assert_equal(expected_output)
 
 

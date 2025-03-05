@@ -87,14 +87,14 @@ export interface GraphSolverInput {
   output_column_name: string
 }
 
-export type PivotAggOption = 'sum' | 'max' | 'median' | 'min' | 'count' | 'n_unique' | 'mean'
-
+export type AggOption = 'sum' | 'max' | 'median' | 'min' | 'count' | 'n_unique' | 'mean' | 'concat' | 'first' | 'last'
+export type GroupByOption = 'groupby';
 
 export interface PivotInput {
   index_columns: string[]
   pivot_column?: string | null
   value_col?: string | null
-  aggregations: PivotAggOption[]
+  aggregations: AggOption[]
 }
 
 export type DataTypeSelector = 'float' | 'all' | 'date' | 'numeric' | 'string'

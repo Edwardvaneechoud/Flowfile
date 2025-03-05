@@ -1,5 +1,5 @@
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
+from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation, FlowfileColumn
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
@@ -304,6 +304,155 @@ def test_add_read_excel():
     graph = create_graph()
     add_node_promise_on_type(graph, node_type='read', node_id=1)
     graph.add_read(input_file=input_schema.NodeRead(**settings))
+
+
+def test_add_record_id():
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'record_id', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+
+    node_record_id = input_schema.NodeRecordId(flow_id=1, node_id=2, record_id_input=transform_schema.RecordIdInput())
+    graph.add_record_id(node_record_id)
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    output_data = graph.get_node(2).get_resulting_data()
+    expected_data = FlowfileTable([{'record_id': 1, 'name': 'eduward'},
+                                   {'record_id': 2, 'name': 'edward'},
+                                   {'record_id': 3, 'name': 'courtney'}]
+                                  )
+    output_data.assert_equal(expected_data)
+
+
+def test_add_and_run_group_by():
+    graph = create_graph()
+    input_data = (FlowfileTable.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'sales_data']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'group_by', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    group_by_input = transform_schema.GroupByInput([transform_schema.AggColl('groups', 'groupby'),
+                                                    transform_schema.AggColl('sales_data', 'sum', 'sales_data_output')])
+    node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
+    graph.add_group_by(node_group_by)
+    predicted_df = graph.get_node(2).get_predicted_resulting_data()
+    assert set(predicted_df.columns) == {'groups', 'sales_data_output'}, 'Columns should be groups, Country, sales_data_sum'
+    assert {'numeric', 'numeric'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+
+def test_add_and_run_group_by_string():
+    graph = create_graph()
+    input_data = (FlowfileTable.create_random(100)
+                  .apply_flowfile_formula('to_string(random_int(0, 40))', 'groups')
+                  .apply_flowfile_formula('to_string(random_int(0, 10))', 'vals')
+                  .select_columns(['groups', 'vals']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'group_by', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    group_by_input = transform_schema.GroupByInput([transform_schema.AggColl('groups', 'groupby'),
+                                                    transform_schema.AggColl('vals', 'concat', 'vals_output')])
+    node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
+    graph.add_group_by(node_group_by)
+    predicted_df = graph.get_node(2).get_predicted_resulting_data()
+    assert set(predicted_df.columns) == {'groups', 'vals_output'}, 'Columns should be groups, Country, sales_data_sum'
+    assert {'str'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+
+def test_add_pivot():
+    graph = create_graph()
+    input_data = (FlowfileTable.create_random(10000).apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'sales_data']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'pivot', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    pivot_input = transform_schema.PivotInput(pivot_column='groups', value_col='sales_data', index_columns=['Country'],
+                                              aggregations=['sum'])
+    pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
+    graph.add_pivot(pivot_settings)
+    predicted_df = graph.get_node(2).get_predicted_resulting_data()
+    assert set(predicted_df.columns) == {'Country', '0_sum', '3_sum', '2_sum', '1_sum'}, 'Columns should be Country, 0_sum, 3_sum, 2_sum, 1_sum'
+    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+
+def test_add_pivot_string_count():
+    graph = create_graph()
+    input_data = (FlowfileTable.create_random(10000)
+                  .apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'Work']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'pivot', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    pivot_input = transform_schema.PivotInput(pivot_column='groups', value_col='Work', index_columns=['Country'],
+                                              aggregations=['count'])
+    pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
+    graph.add_pivot(pivot_settings)
+    predicted_df = graph.get_node(2).get_predicted_resulting_data()
+    assert set(predicted_df.columns) == {'Country', '0_count', '3_count', '2_count', '1_count'}, 'Columns should be Country, 0_count, 3_count, 2_count, 1_count'
+    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+
+def test_add_pivot_string_concat():
+    graph = create_graph()
+    input_data = (FlowfileTable.create_random(10000)
+                  .apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'Work']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'pivot', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    pivot_input = transform_schema.PivotInput(pivot_column='groups', value_col='Work', index_columns=['Country'],
+                                              aggregations=['concat'])
+    pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
+    graph.add_pivot(pivot_settings)
+    predicted_df = graph.get_node(2).get_predicted_resulting_data()
+    assert set(predicted_df.columns) == {'Country', '0_concat', '3_concat', '2_concat', '1_concat'}, 'Columns should be Country, 0_concat, 3_concat, 2_concat, 1_concat'
+    assert {'str'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+
+
+def test_try_add_to_big_pivot():
+    graph = create_graph()
+    graph.execution_mode = 'Performance'
+    input_data = (FlowfileTable.create_random(10000)
+                  .add_record_id(record_id_settings=transform_schema.RecordIdInput(output_column_name='groups'))
+                  .select_columns(['groups', 'Country', 'sales_data']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'pivot', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    pivot_input = transform_schema.PivotInput(pivot_column='groups', value_col='sales_data', index_columns=['Country'],
+                                              aggregations=['sum'])
+    pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
+    graph.add_pivot(pivot_settings)
+    predicted_df = graph.get_node(2).get_predicted_resulting_data()
+    expected_columns = ['Country'] + [f'{i+1}_sum' for i in range(200)]
+    assert set(predicted_df.columns) == set(expected_columns), 'Should not have calculated the columns'
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    error_line = None
+    with open(graph.flow_logger.log_file_path, 'r') as file:
+        for line in file:
+            if "WARNING" in line and "Pivot column has too many unique values" in line and 'Node ID: 2' in line:
+                error_line = line
+    if error_line is None:
+        raise ValueError('There should be a warning')
 
 
 def test_add_cross_join():
