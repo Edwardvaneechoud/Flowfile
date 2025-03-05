@@ -55,8 +55,19 @@ def determine_insertion_order(node_storage: schemas.FlowInformation):
 
 
 def open_flow(flow_path: Path) -> EtlGraph:
+    """
+    Open a flowfile from a given path
+    Args:
+        flow_path (Path): The absolute or relative path to the flowfile
+
+    Returns:
+        EtlGraph: The flowfile object
+    """
     with open(str(flow_path), 'rb') as f:
         flow_storage_obj: schemas.FlowInformation = pickle.load(f)
+    flow_storage_obj.flow_settings.path = str(flow_path)
+    flow_storage_obj.flow_settings.name = str(flow_path.stem)
+    flow_storage_obj.flow_name = str(flow_path.stem)
     ensure_compatibility(flow_storage_obj, str(flow_path))
     ingestion_order = determine_insertion_order(flow_storage_obj)
     new_flow = EtlGraph(flow_id=flow_storage_obj.flow_id, name=flow_storage_obj.flow_name,
@@ -107,7 +118,6 @@ def open_flow(flow_path: Path) -> EtlGraph:
             from_node = new_flow.get_node(missing_connection[0])
             if from_node:
                 to_node.add_node_connection(from_node)
-    new_flow.flow_id = 1
     return new_flow
 
 

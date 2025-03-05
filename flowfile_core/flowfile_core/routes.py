@@ -293,6 +293,11 @@ def create_flow(flow_path: str):
     return flow_file_handler.add_flow(name=flow_path.stem, flow_path=str(flow_path))
 
 
+@router.post('/editor/close_flow/', tags=['editor'])
+def close_flow(flow_id: int) -> None:
+    flow_file_handler.delete_flow(flow_id)
+
+
 @router.get('/airbyte/available_connectors', tags=['airbyte'])
 def get_available_connectors():
     return airbyte_config_handler.available_connectors
@@ -437,6 +442,7 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
+    print(flow_file_handler._flows)
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -466,7 +472,7 @@ def update_flow_settings(flow_settings: schemas.FlowSettings):
 
 
 @router.get('/flow_data/v2', tags=['manager'])
-def get_vue_flow_data(flow_id: Optional[int] = 1) -> schemas.VueFlowInput:
+def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')

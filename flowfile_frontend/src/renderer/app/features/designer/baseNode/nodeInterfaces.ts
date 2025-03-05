@@ -73,8 +73,12 @@ export interface RunInformationDictionary {
   [flow_id: number]: RunInformation
 }
 
-export interface NodeDescriptionDictionary {
+export interface NodeDescriptionDictionaryPerGraph {
   [node_id: number]: string
+}
+
+export interface NodeDescriptionDictionary {
+  [flow_id: number]: NodeDescriptionDictionaryPerGraph
 }
 
 
