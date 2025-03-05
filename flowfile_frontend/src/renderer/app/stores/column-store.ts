@@ -227,6 +227,7 @@ export const useNodeStore = defineStore('node', {
     openDrawer(close_function?: () => void) {
       console.log('openDrawer in column-store.ts')
       if (this.isDrawerOpen) {
+        console.log('pushing data')
         this.pushNodeData()
       }
       if (close_function) {

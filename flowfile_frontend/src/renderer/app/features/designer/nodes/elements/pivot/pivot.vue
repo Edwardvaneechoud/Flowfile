@@ -79,9 +79,9 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
-import { PivotInput, NodePivot, PivotAggOption } from "../../../baseNode/nodeInput";
+import { PivotInput, NodePivot, AggOption } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
@@ -97,7 +97,18 @@ const contextMenuOptions = ref<{ label: string; action: string; disabled: boolea
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeData = ref<null | NodeData>(null);
 const draggedColumnName = ref<string | null>(null);
-const aggOptions: PivotAggOption[] = ["sum", "count", "min", "max", "n_unique", "mean", "median"];
+const aggOptions: AggOption[] = [
+  "sum",
+  "count",
+  "min",
+  "max",
+  "n_unique",
+  "mean",
+  "median",
+  "first",
+  "last",
+  "concat",
+];
 
 const pivotInput = ref<PivotInput>({
   index_columns: [],
@@ -107,8 +118,6 @@ const pivotInput = ref<PivotInput>({
 });
 
 const nodePivot = ref<NodePivot | null>(null);
-
-const props = defineProps({ nodeId: { type: Number, required: true } });
 
 const singleColumnSelected = computed(() => selectedColumns.value.length === 1);
 

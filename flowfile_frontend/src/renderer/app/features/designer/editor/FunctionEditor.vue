@@ -30,7 +30,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  columns: () => []
+  columns: () => [],
 });
 
 const emit = defineEmits(["update-editor-string"]);
@@ -40,27 +40,27 @@ const expressionDocs = ref<Record<string, string>>({});
 
 const fetchExpressions = async () => {
   try {
-    const response = await axios.get('editor/expressions');
+    const response = await axios.get("editor/expressions");
     expressionsList.value = response.data;
   } catch (error) {
-    console.error('Failed to fetch expressions:', error);
+    console.error("Failed to fetch expressions:", error);
   }
 };
 
 const fetchExpressionDocs = async () => {
   try {
-    const response = await axios.get('editor/expression_doc');
+    const response = await axios.get("editor/expression_doc");
     const docsMap: Record<string, string> = {};
-    
+
     response.data.forEach((category: any) => {
       category.expressions.forEach((expr: any) => {
         docsMap[expr.name] = expr.doc;
       });
     });
-    
+
     expressionDocs.value = docsMap;
   } catch (error) {
-    console.error('Failed to fetch expression docs:', error);
+    console.error("Failed to fetch expression docs:", error);
   }
 };
 
@@ -72,62 +72,64 @@ onMounted(() => {
 const polarsCompletions: CompletionSource = (context: CompletionContext) => {
   let functionWord = context.matchBefore(/\w+/);
   let columnWord = context.matchBefore(/\[\w*/);
-  
-  if ((!functionWord || functionWord.from === functionWord.to) && 
-      (!columnWord || columnWord.from === columnWord.to) && 
-      !context.explicit) {
+
+  if (
+    (!functionWord || functionWord.from === functionWord.to) &&
+    (!columnWord || columnWord.from === columnWord.to) &&
+    !context.explicit
+  ) {
     return null;
   }
-  
+
   const options: Array<{
     label: string;
     type: string;
     info: string;
     apply: (view: EditorView) => void;
   }> = [];
-  
-  if (functionWord && context.state.sliceDoc(functionWord.from - 1, functionWord.from) !== '[') {
+
+  if (functionWord && context.state.sliceDoc(functionWord.from - 1, functionWord.from) !== "[") {
     const currentText = functionWord.text.toLowerCase();
-    
+
     expressionsList.value
-      .filter(funcName => funcName.toLowerCase().startsWith(currentText))
-      .forEach(funcName => {
+      .filter((funcName) => funcName.toLowerCase().startsWith(currentText))
+      .forEach((funcName) => {
         options.push({
           label: funcName,
           type: "function",
           info: expressionDocs.value[funcName] || `Function: ${funcName}`,
           apply: (editorView: EditorView) => {
             editorView.dispatch({
-              changes: { from: functionWord!.from, to: functionWord!.to, insert: funcName + "(" }
+              changes: { from: functionWord!.from, to: functionWord!.to, insert: funcName + "(" },
             });
-          }
+          },
         });
       });
   }
-  
+
   if (columnWord) {
     const bracketContent = columnWord.text.slice(1).toLowerCase();
-    
+
     props.columns
-      .filter(column => column.toLowerCase().startsWith(bracketContent))
-      .forEach(column => {
+      .filter((column) => column.toLowerCase().startsWith(bracketContent))
+      .forEach((column) => {
         options.push({
           label: column,
           type: "variable",
           info: `Column: ${column}`,
           apply: (editorView: EditorView) => {
             editorView.dispatch({
-              changes: { 
-                from: columnWord!.from + 1, 
-                to: columnWord!.to, 
-                insert: column 
-              }
+              changes: {
+                from: columnWord!.from + 1,
+                to: columnWord!.to,
+                insert: column,
+              },
             });
-          }
+          },
         });
       });
   }
-  
+
   return {
     from: functionWord?.from || (columnWord ? columnWord.from + 1 : context.pos),
     options,
@@ -149,59 +151,62 @@ const insertTextAtCursor = (text: string) => {
 const code = ref(props.editorString);
 const view = shallowRef<EditorView | null>(null);
 
-const highlightPlugin = ViewPlugin.fromClass(class {
-  decorations: DecorationSet;
+const highlightPlugin = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet;
 
-  constructor(view: EditorView) {
-    this.decorations = this.buildDecorations(view);
-  }
-
-  update(update: any) {
-    if (update.docChanged || update.viewportChanged) {
-      this.decorations = this.buildDecorations(update.view);
+    constructor(view: EditorView) {
+      this.decorations = this.buildDecorations(view);
     }
-  }
 
-  buildDecorations(view: EditorView) {
-    const builder = new RangeSetBuilder<Decoration>();
-    const { doc } = view.state;
-
-    const regexFunction = /\b([a-zA-Z_]\w*)\(/g;
-    const regexColumn = /\[[^\]]+\]/g;
-    const regexString = /(["'])(?:(?=(\\?))\2.)*?\1/g;
-
-    for (let { from, to } of view.visibleRanges) {
-      const text = doc.sliceString(from, to);
-      let match: RegExpExecArray | null;
-
-      while ((match = regexFunction.exec(text)) !== null) {
-        const start = from + match.index;
-        const end = start + match[1].length;
-        builder.add(start, end, Decoration.mark({ class: "cm-function" }));
-      }
-
-      while ((match = regexColumn.exec(text)) !== null) {
-        const start = from + match.index;
-        const end = start + match[0].length;
-        builder.add(start, end, Decoration.mark({ class: "cm-column" }));
-      }
-
-      while ((match = regexString.exec(text)) !== null) {
-        const start = from + match.index;
-        const end = start + match[0].length;
-        builder.add(start, end, Decoration.mark({ class: "cm-string" }));
+    update(update: any) {
+      if (update.docChanged || update.viewportChanged) {
+        this.decorations = this.buildDecorations(update.view);
       }
     }
 
-    return builder.finish();
-  }
-}, {
-  decorations: v => v.decorations,
-});
+    buildDecorations(view: EditorView) {
+      const builder = new RangeSetBuilder<Decoration>();
+      const { doc } = view.state;
+
+      const regexFunction = /\b([a-zA-Z_]\w*)\(/g;
+      const regexColumn = /\[[^\]]+\]/g;
+      const regexString = /(["'])(?:(?=(\\?))\2.)*?\1/g;
+
+      for (let { from, to } of view.visibleRanges) {
+        const text = doc.sliceString(from, to);
+        let match: RegExpExecArray | null;
+
+        while ((match = regexFunction.exec(text)) !== null) {
+          const start = from + match.index;
+          const end = start + match[1].length;
+          builder.add(start, end, Decoration.mark({ class: "cm-function" }));
+        }
+
+        while ((match = regexColumn.exec(text)) !== null) {
+          const start = from + match.index;
+          const end = start + match[0].length;
+          builder.add(start, end, Decoration.mark({ class: "cm-column" }));
+        }
+
+        while ((match = regexString.exec(text)) !== null) {
+          const start = from + match.index;
+          const end = start + match[0].length;
+          builder.add(start, end, Decoration.mark({ class: "cm-string" }));
+        }
+      }
+
+      return builder.finish();
+    }
+  },
+  {
+    decorations: (v) => v.decorations,
+  },
+);
 
 const extensions: Extension[] = [
   EditorState.tabSize.of(2),
-  autocompletion({ 
+  autocompletion({
     override: [polarsCompletions],
     defaultKeymap: true,
     activateOnTyping: true,
