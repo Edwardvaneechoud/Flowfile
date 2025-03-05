@@ -208,7 +208,6 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
   }
 };
 
-
 const handleDrop = (event: DragEvent) => {
   onDrop(event, nodeStore.flow_id);
 };

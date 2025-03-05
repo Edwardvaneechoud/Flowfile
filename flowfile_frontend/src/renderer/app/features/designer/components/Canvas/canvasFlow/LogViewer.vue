@@ -3,7 +3,6 @@ import { ref, onUnmounted, nextTick, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { flowfileCorebaseURL } from "../../../../../../config/constants";
 
-
 // Store & Refs
 const nodeStore = useNodeStore();
 const logs = ref<string>("");

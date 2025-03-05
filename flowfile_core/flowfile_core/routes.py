@@ -293,6 +293,11 @@ def create_flow(flow_path: str):
     return flow_file_handler.add_flow(name=flow_path.stem, flow_path=str(flow_path))
 
 
+@router.post('/editor/close_flow/', tags=['editor'])
+def close_flow(flow_id: int) -> None:
+    flow_file_handler.delete_flow(flow_id)
+
+
 @router.get('/airbyte/available_connectors', tags=['airbyte'])
 def get_available_connectors():
     return airbyte_config_handler.available_connectors

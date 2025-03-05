@@ -1,34 +1,38 @@
 <template>
-  {{ nodeStore.flow_id}}
-    <div v-if="!isLoading" class="header">
-    <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
-      <flow-selector ref="flowSelector" @flow-changed="handleFlowChange" />
-    <div class="spacer"></div>
-    <Status />
+  <div v-if="!isLoading" class="header">
+    <div class="left-section">
+      <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+    </div>
+    <div class="middle-section">
+      <flow-selector ref="flowSelector" @flow-changed="handleFlowChange" @close-tab="handleCloseFlow" />
+    </div>
+    <div class="right-section">
+      <Status />
+    </div>
   </div>
-    <!-- Show loading state while fetching flows -->
-    <div v-if="isLoading" class="loading-state">
-      <div class="loading-state-content">
-        <p>Loading flows...</p>
-      </div>
+  <!-- Show loading state while fetching flows -->
+  <div v-if="isLoading" class="loading-state">
+    <div class="loading-state-content">
+      <p>Loading flows...</p>
     </div>
-    <!-- Show empty state only when loading is complete and no flows are found -->
-    <div v-else-if="!isLoading && flowsActive.length === 0" class="empty-state">
-      <div class="empty-state-content">
-        <span class="material-icons empty-icon">account_tree</span>
-        <h2>No Active Flows</h2>
-        <p>There are currently no active flows in the system.</p>
-        <el-button type="primary" class="action-button" @click="createFlowDialog">
-          <span class="material-icons">add_circle</span>
-          Create new flow
-        </el-button>
-        <el-button type="primary" class="action-button" @click="openFlowDialog">
-          <span class="material-icons">folder_open</span>
-          Open existing flow
-        </el-button>
-      </div>
+  </div>
+  <!-- Show empty state only when loading is complete and no flows are found -->
+  <div v-else-if="!isLoading && flowsActive.length === 0" class="empty-state">
+    <div class="empty-state-content">
+      <span class="material-icons empty-icon">account_tree</span>
+      <h2>No Active Flows</h2>
+      <p>There are currently no active flows in the system.</p>
+      <el-button type="primary" class="action-button" @click="createFlowDialog">
+        <span class="material-icons">add_circle</span>
+        Create new flow
+      </el-button>
+      <el-button type="primary" class="action-button" @click="openFlowDialog">
+        <span class="material-icons">folder_open</span>
+        Open existing flow
+      </el-button>
     </div>
-    <CanvasFlow v-else ref="canvasFlow" class="canvas" />
+  </div>
+  <CanvasFlow v-else ref="canvasFlow" class="canvas" />
 </template>
 
 <script setup lang="ts">
@@ -41,6 +45,7 @@ import FlowSelector from "./designer/FlowSelector.vue";
 import {
   getAllFlows,
   importSavedFlow,
+  closeFlow,
 } from "../features/designer/components/Canvas/backendInterface";
 import { fetchNodes } from "../features/designer/utils";
 import { NodeTemplate } from "../features/designer/types";
@@ -61,7 +66,7 @@ const fetchActiveFlows = async () => {
   try {
     const flows = await getAllFlows();
     flowsActive.value = flows;
-    
+
     // Refresh the flow selector when active flows change
     if (flowSelector.value) {
       await flowSelector.value.loadFlows();
@@ -70,16 +75,6 @@ const fetchActiveFlows = async () => {
   } catch (error) {
     console.error("Failed to load active flows:", error);
     return [];
-  }
-};
-
-// Function to load active flows with loading state management
-const loadActiveFlows = async () => {
-  isLoading.value = true;
-  try {
-    await fetchActiveFlows();
-  } finally {
-    isLoading.value = false;
   }
 };
 
@@ -105,12 +100,49 @@ const reloadCanvas = async (flowPath: string) => {
   }
 };
 
+
+const handleCloseFlow = async (flowId: number) => {
+  try {
+    isLoading.value = true;
+    console.log('Closing flow:', flowId);
+    
+    // Check if we're closing the currently active flow
+    const isCurrentFlow = nodeStore.flow_id === flowId;
+    
+    // Call the API to close the flow
+    await closeFlow(flowId);
+    
+    // Clean up any flow-related data in the store
+    nodeStore.clearFlowResults(flowId);
+    nodeStore.clearFlowDescriptionCache(flowId);
+    
+    // Refresh the flows list
+    await fetchActiveFlows();
+    
+    if (isCurrentFlow) {
+      if (flowsActive.value.length > 0) {
+        // Switch to the first available flow
+        const newFlowId = flowsActive.value[0].flow_id;
+        console.log('Switching to flow:', newFlowId);
+        await handleFlowChange(newFlowId);
+      } else {
+        // No flows left, reset the nodeStore
+        nodeStore.setFlowId(-1);
+      }
+    }
+  } catch (error) {
+    console.error('Error closing flow:', error);
+  } finally {
+    isLoading.value = false;
+  }
+};
+
 const handleFlowChange = async (flowId: number) => {
   if (isLoading.value && flowId === nodeStore.flow_id) {
     console.log("Already loading flow ID:", flowId);
     return;
   }
-  
+
   isLoading.value = true;
   try {
     console.log("Handling flow change to:", flowId);
@@ -160,21 +192,18 @@ const initialSetup = async () => {
     console.log("Initial setup already completed");
     return;
   }
-  
+
   isLoading.value = true;
   console.log("Starting initial setup");
-  
+
   try {
-    const [nodes, flows] = await Promise.all([
-      fetchNodes(),
-      fetchActiveFlows()
-    ]);
-    
+    const [nodes, flows] = await Promise.all([fetchNodes(), fetchActiveFlows()]);
+
     nodeOptions.value = nodes;
-        if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
+    if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
       console.log("Setting initial flow ID to:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
-      
+
       // Load the flow data
       if (canvasFlow.value) {
         await canvasFlow.value.loadFlow();
@@ -191,7 +220,7 @@ const initialSetup = async () => {
         await headerButtons.value.loadFlowSettings();
       }
     }
-    
+
     initialLoadComplete.value = true;
     console.log("Initial setup completed");
   } catch (error) {
@@ -214,24 +243,33 @@ onMounted(async () => {
 
 .header {
   display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  padding: 0 16px;
+  justify-content: space-between;
+  align-items: stretch;
   height: 50px;
   background-color: #f5f5f5;
   border-bottom: 1px solid #ececec;
 }
 
-.spacer {
-  flex-grow: 0.8;
+.left-section {
+  min-width: 250px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
 }
 
-.overlay {
-  position: fixed;
-  top: 0px;
-  border-right: 1px solid #ececec;
-  z-index: 2000;
-  background-color: #ececec;
+.middle-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.right-section {
+  min-width: 150px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 /* Loading state styles */
@@ -283,26 +321,14 @@ onMounted(async () => {
   margin-bottom: 1.5rem;
 }
 
-.refresh-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.refresh-button .material-icons {
-  font-size: 18px;
-}
-
 .action-button {
-  /* Changed from .refresh-button */
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0 0.5rem; /* Added margin */
+  margin: 0 0.5rem;
 }
 
 .action-button .material-icons {
-  /* Changed from .refresh-button */
   font-size: 18px;
 }
 </style>

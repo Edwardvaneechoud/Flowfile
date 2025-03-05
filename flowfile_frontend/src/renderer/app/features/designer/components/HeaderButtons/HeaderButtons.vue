@@ -1,38 +1,35 @@
 <template>
   <div class="action-buttons">
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
+    <button
+      class="action-btn"
       @click="openSaveModal"
     >
-      Save
-    </el-button>
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
+      <span class="material-icons btn-icon">save</span>
+      <span class="btn-text">Save</span>
+    </button>
+    <button
+      class="action-btn"
       @click="modalVisibleForOpen = true"
     >
-      Open
-    </el-button>
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
+      <span class="material-icons btn-icon">folder_open</span>
+      <span class="btn-text">Open</span>
+    </button>
+    <button
+      class="action-btn"
       @click="modalVisibleForCreate = true"
     >
-      Create
-    </el-button>
-    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
+      <span class="material-icons btn-icon">add_circle_outline</span>
+      <span class="btn-text">Create</span>
+    </button>
+    <button
+      class="action-btn"
       @click="openSettingsModal"
     >
-      Settings
-    </el-button>
+      <span class="material-icons btn-icon">settings</span>
+      <span class="btn-text">Settings</span>
+    </button>
+    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
+
   </div>
 
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
@@ -197,11 +194,14 @@ const openSettingsModal = () => {
 };
 
 // Watch for flow ID changes to reload settings
-watch(() => nodeStore.flow_id, async (newId, oldId) => {
-  if (newId !== oldId && newId > 0) {
-    await loadFlowSettings();
-  }
-});
+watch(
+  () => nodeStore.flow_id,
+  async (newId, oldId) => {
+    if (newId !== oldId && newId > 0) {
+      await loadFlowSettings();
+    }
+  },
+);
 
 defineExpose({
   loadFlowSettings,
@@ -221,15 +221,62 @@ onMounted(async () => {
   padding-left: 20px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   height: 50px;
+  font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  height: 36px;
+  background-color: rgba(3, 11, 27, 0.05); /* Slightly darker background */
+  border: 1px solid rgba(16, 24, 40, 0.12); /* Darker border */
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: rgba(23, 10, 106, 0.9); /* Darker text color */
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(1, 5, 13, 0.08); /* Slightly darker shadow */
+}
+
+.action-btn:hover {
+  background-color: rgba(16, 24, 40, 0.08); /* Darker hover background */
+  border-color: rgba(16, 24, 40, 0.18); /* Darker hover border */
+}
+
+.action-btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.btn-icon {
+  font-size: 16px;
+  color: rgba(80, 70, 230, 0.9); /* Darker icon color */
+}
+
+.btn-text {
+  white-space: nowrap;
 }
 
 .settings-modal-content {
-  padding: 10px;
+  padding: 16px;
+  font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .form-group {
-  margin-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(16, 24, 40, 0.9);
 }
 </style>

@@ -3,7 +3,7 @@
     <codemirror
       v-model="code"
       placeholder="Code goes here..."
-      :style="{ height: '300px' }"
+      :style="{ height: '250px' }"
       :autofocus="true"
       :indent-with-tab="true"
       :tab-size="2"
@@ -99,8 +99,10 @@ const polarsCompletions: CompletionSource = (context: CompletionContext) => {
           type: "function",
           info: expressionDocs.value[funcName] || `Function: ${funcName}`,
           apply: (editorView: EditorView) => {
+            const insert = funcName + "(";
             editorView.dispatch({
-              changes: { from: functionWord!.from, to: functionWord!.to, insert: funcName + "(" },
+              changes: { from: functionWord!.from, to: functionWord!.to, insert },
+              selection: { anchor: functionWord!.from + insert.length },
             });
           },
         });
@@ -124,6 +126,7 @@ const polarsCompletions: CompletionSource = (context: CompletionContext) => {
                 to: columnWord!.to,
                 insert: column,
               },
+              selection: { anchor: columnWord!.from + 1 + column.length },
             });
           },
         });
@@ -173,26 +176,49 @@ const highlightPlugin = ViewPlugin.fromClass(
       const regexColumn = /\[[^\]]+\]/g;
       const regexString = /(["'])(?:(?=(\\?))\2.)*?\1/g;
 
+      // Collect all matches first, then sort them
+      const matches = [];
+
       for (let { from, to } of view.visibleRanges) {
         const text = doc.sliceString(from, to);
-        let match: RegExpExecArray | null;
+        let match;
 
+        // Collect function matches
+        regexFunction.lastIndex = 0;
         while ((match = regexFunction.exec(text)) !== null) {
           const start = from + match.index;
           const end = start + match[1].length;
-          builder.add(start, end, Decoration.mark({ class: "cm-function" }));
+          matches.push({ start, end, type: 'function' });
         }
 
+        // Collect column matches
+        regexColumn.lastIndex = 0;
         while ((match = regexColumn.exec(text)) !== null) {
           const start = from + match.index;
           const end = start + match[0].length;
-          builder.add(start, end, Decoration.mark({ class: "cm-column" }));
+          matches.push({ start, end, type: 'column' });
         }
 
+        // Collect string matches
+        regexString.lastIndex = 0;
         while ((match = regexString.exec(text)) !== null) {
           const start = from + match.index;
           const end = start + match[0].length;
-          builder.add(start, end, Decoration.mark({ class: "cm-string" }));
+          matches.push({ start, end, type: 'string' });
+        }
+      }
+
+      // Sort matches by their 'from' position
+      matches.sort((a, b) => a.start - b.start);
+
+      // Add decorations in sorted order
+      for (const match of matches) {
+        if (match.type === 'function') {
+          builder.add(match.start, match.end, Decoration.mark({ class: "cm-function" }));
+        } else if (match.type === 'column') {
+          builder.add(match.start, match.end, Decoration.mark({ class: "cm-column" }));
+        } else if (match.type === 'string') {
+          builder.add(match.start, match.end, Decoration.mark({ class: "cm-string" }));
         }
       }
 

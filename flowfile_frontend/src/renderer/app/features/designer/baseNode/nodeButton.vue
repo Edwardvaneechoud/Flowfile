@@ -62,7 +62,7 @@ interface ResultOutput {
   hasRun: boolean;
 }
 const nodeResult = computed<ResultOutput | undefined>(() => {
-  const nodeResult = nodeStore.runNodeResultMap.get(props.nodeId);
+  const nodeResult = nodeStore.getNodeResult(props.nodeId);
   const nodeValidation = nodeStore.getNodeValidation(props.nodeId);
 
   // Check if node is currently running (has start timestamp but not completed)

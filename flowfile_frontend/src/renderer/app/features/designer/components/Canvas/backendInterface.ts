@@ -43,6 +43,8 @@ export const connectNode = async(flowId: number, nodeConnection: NodeConnection)
   }
 }
 
+
+
   export async function deleteConnection(flowId: number, nodeConnection: NodeConnection): Promise<any> {
     try {
       const response: AxiosResponse = await axios.post(
@@ -65,6 +67,29 @@ export const connectNode = async(flowId: number, nodeConnection: NodeConnection)
     }
   }
 
+
+  export async function closeFlow(flow_id: number): Promise<any> {
+    try {
+      const response: AxiosResponse = await axios.post(
+        '/editor/close_flow/',
+        {},
+        {
+          params: {
+            flow_id,
+          },
+          headers: {
+            accept: 'application/json',
+          },
+        },
+      )
+  
+      return response.data
+    } catch (error) {
+      console.error('Error closing flow:', error)
+      throw error
+    }
+  }
+  
 
   export async function deleteNode(flow_id: number, node_id: number): Promise<any> {
     try {

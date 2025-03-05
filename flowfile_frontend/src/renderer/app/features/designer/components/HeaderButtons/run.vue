@@ -2,13 +2,8 @@
   <div class="button-group">
     <el-button
       size="small"
-      :style="
-        nodeStore.isRunning
-          ? 'background-color: lightgrey; color: white'
-          : 'background-color: rgb(92, 92, 92); color: white; font-weight: bold'
-      "
-      round
       :disabled="nodeStore.isRunning"
+      round
       @click="runFlow()"
     >
       Run
@@ -16,7 +11,6 @@
     <el-button
       v-if="nodeStore.isRunning"
       size="small"
-      style="background-color: rgb(220, 53, 69); color: white; font-weight: bold"
       round
       @click="cancelFlow()"
     >
@@ -163,7 +157,59 @@ defineExpose({
   gap: 10px;
 }
 
-.el-button {
+.button-group .el-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  height: 36px;
+  border-radius: 6px !important;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(1, 5, 13, 0.08);
   flex-shrink: 0;
+}
+
+/* Run button - normal state */
+.button-group .el-button:first-child:not([disabled]) {
+  background-color: rgba(80, 70, 230, 0.9) !important;
+  border: 1px solid rgba(80, 70, 230, 0.95) !important;
+  color: white !important;
+}
+
+/* Run button - hover state */
+.button-group .el-button:first-child:not([disabled]):hover {
+  background-color: rgba(65, 55, 200, 0.95) !important;
+  border-color: rgba(65, 55, 200, 1) !important;
+}
+
+/* Run button - disabled state */
+.button-group .el-button:first-child[disabled] {
+  background-color: rgba(16, 24, 40, 0.3) !important;
+  border: 1px solid rgba(16, 24, 40, 0.2) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  cursor: not-allowed;
+}
+
+/* Cancel button */
+.button-group .el-button:nth-child(2) {
+  background-color: rgba(220, 53, 69, 0.9) !important;
+  border: 1px solid rgba(220, 53, 69, 0.95) !important;
+  color: white !important;
+}
+
+/* Cancel button - hover state */
+.button-group .el-button:nth-child(2):hover {
+  background-color: rgba(200, 35, 51, 0.95) !important;
+  border-color: rgba(200, 35, 51, 1) !important;
+}
+
+/* Active state for both buttons */
+.button-group .el-button:active {
+  transform: translateY(1px);
+  box-shadow: none;
 }
 </style>
