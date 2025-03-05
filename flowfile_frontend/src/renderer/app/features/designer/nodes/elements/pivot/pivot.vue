@@ -97,7 +97,18 @@ const contextMenuOptions = ref<{ label: string; action: string; disabled: boolea
 const contextMenuRef = ref<HTMLElement | null>(null);
 const nodeData = ref<null | NodeData>(null);
 const draggedColumnName = ref<string | null>(null);
-const aggOptions: PivotAggOption[] = ["sum", "count", "min", "max", "n_unique", "mean", "median", 'first', 'last', 'concat'];
+const aggOptions: PivotAggOption[] = [
+  "sum",
+  "count",
+  "min",
+  "max",
+  "n_unique",
+  "mean",
+  "median",
+  "first",
+  "last",
+  "concat",
+];
 
 const pivotInput = ref<PivotInput>({
   index_columns: [],

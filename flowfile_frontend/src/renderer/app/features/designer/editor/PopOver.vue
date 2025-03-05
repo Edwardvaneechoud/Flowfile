@@ -11,7 +11,7 @@
     </div>
 
     <!-- The portal target for the popover -->
-    <Teleport to="body" v-if="visible">
+    <Teleport v-if="visible" to="body">
       <!-- Attach a ref to the popover itself -->
       <div
         ref="popoverEl"
@@ -53,7 +53,7 @@ const props = defineProps({
   zIndex: {
     type: Number,
     default: 9999,
-  }
+  },
 });
 
 const popoverStyle = ref({
@@ -120,13 +120,13 @@ const updatePosition = () => {
   popoverStyle.value = {
     top: `${top}px`,
     left: `${left}px`,
-    zIndex: props.zIndex.toString()
+    zIndex: props.zIndex.toString(),
   };
 };
 
 // Listen for window resize to update popover position
 onMounted(() => {
-  window.addEventListener('resize', () => {
+  window.addEventListener("resize", () => {
     if (visible.value) {
       updatePosition();
     }
@@ -161,12 +161,12 @@ onMounted(() => {
 .popover h3 {
   margin: 0 0 2px;
   font-size: 16px;
-  font-family:  "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 }
 
 .popover p {
   margin: 0;
-  font-family:  "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 }
 
 .content {

@@ -3,15 +3,18 @@
     <generic-node-settings v-model="nodeGroupBy">
       <div class="listbox-wrapper">
         <ul v-if="dataLoaded" class="listbox">
-          <li
+          <template
             v-for="(col_schema, index) in nodeData?.main_input?.table_schema"
             :key="col_schema.name"
-            :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
-            @click="handleItemClick(index, col_schema.name, $event)"
-            @contextmenu="openContextMenu(index, col_schema.name, $event)"
           >
-            {{ col_schema.name }} ({{ col_schema.data_type }})
-          </li>
+            <li
+              :class="{ 'is-selected': selectedColumns.includes(col_schema.name) }"
+              @click="handleItemClick(index, col_schema.name, $event)"
+              @contextmenu="openContextMenu(index, col_schema.name, $event)"
+            >
+              {{ col_schema.name }} ({{ col_schema.data_type }})
+            </li>
+          </template>
         </ul>
       </div>
       <div
@@ -24,14 +27,14 @@
         }"
       >
         <button @click="setAggregations('groupby', selectedColumns)">Group by</button>
-        <button
-        v-for="option in singleColumnAggOptions"
-        :key="option.value"
-        v-if="singleColumnSelected"
-        @click="setAggregations(option.value, selectedColumns)"
-        >
-        {{ option.label }}
-      </button>
+        <template v-for="option in singleColumnAggOptions" :key="option.value">
+          <button
+            v-if="singleColumnSelected"
+            @click="setAggregations(option.value, selectedColumns)"
+          >
+            {{ option.label }}
+          </button>
+        </template>
       </div>
 
       <div class="listbox-subtitle">Settings</div>
@@ -46,26 +49,24 @@
             </tr>
           </thead>
           <tbody>
-            <tr
-              v-for="(item, index) in groupByInput.agg_cols"
-              :key="index"
-              @contextmenu.prevent="openRowContextMenu($event, index)"
-            >
-              <td>{{ item.old_name }}</td>
-              <td>
-                <el-select v-model="item.agg" size="small">
-                  <el-option
-                    v-for="aggOption in aggOptions"
-                    :key="aggOption"
-                    :label="aggOption"
-                    :value="aggOption"
-                  />
-                </el-select>
-              </td>
-              <td>
-                <el-input v-model="item.new_name" class="w-50 m-2" size="small" />
-              </td>
-            </tr>
+            <template v-for="(item, index) in groupByInput.agg_cols" :key="index">
+              <tr @contextmenu.prevent="openRowContextMenu($event, index)">
+                <td>{{ item.old_name }}</td>
+                <td>
+                  <el-select v-model="item.agg" size="small">
+                    <el-option
+                      v-for="aggOption in aggOptions"
+                      :key="aggOption"
+                      :label="aggOption"
+                      :value="aggOption"
+                    />
+                  </el-select>
+                </td>
+                <td>
+                  <el-input v-model="item.new_name" class="w-50 m-2" size="small" />
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -102,7 +103,18 @@ const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
 const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
-const aggOptions: (AggOption | GroupByOption)[] = ["groupby", "sum", "max", "median", "min", "count", "n_unique", "first", "last", "concat"];
+const aggOptions: (AggOption | GroupByOption)[] = [
+  "groupby",
+  "sum",
+  "max",
+  "median",
+  "min",
+  "count",
+  "n_unique",
+  "first",
+  "last",
+  "concat",
+];
 const firstSelectedIndex = ref<number | null>(null);
 
 const groupByInput = ref<GroupByInput>({
@@ -138,7 +150,7 @@ const openContextMenu = (clickedIndex: number, columnName: string, event: MouseE
   showContextMenu.value = true;
 };
 
-const setAggregations = (aggType: AggOption|GroupByOption, columns: string[] | null) => {
+const setAggregations = (aggType: AggOption | GroupByOption, columns: string[] | null) => {
   if (columns) {
     columns.forEach((column) => {
       const new_column_name = aggType !== "groupby" ? column + "_" + aggType : column;
@@ -171,20 +183,20 @@ const handleItemClick = (clickedIndex: number, columnName: string, event: MouseE
 };
 
 interface SingleColumnAggOption {
-  value: AggOption
-  label: string
+  value: AggOption;
+  label: string;
 }
 
 const singleColumnAggOptions: SingleColumnAggOption[] = [
-  { value: 'count', label: 'Count' },
-  { value: 'max', label: 'Max' },
-  { value: 'median', label: 'Median' },
-  { value: 'min', label: 'Min' },
-  { value: 'sum', label: 'Sum' },
-  { value: 'n_unique', label: 'N_unique' },
-  { value: 'first', label: 'First'},
-  { value: 'last', label: 'Last'},
-  { value: 'concat', label: 'Concat'}
+  { value: "count", label: "Count" },
+  { value: "max", label: "Max" },
+  { value: "median", label: "Median" },
+  { value: "min", label: "Min" },
+  { value: "sum", label: "Sum" },
+  { value: "n_unique", label: "N_unique" },
+  { value: "first", label: "First" },
+  { value: "last", label: "Last" },
+  { value: "concat", label: "Concat" },
 ];
 
 const getRange = (start: number, end: number) => {

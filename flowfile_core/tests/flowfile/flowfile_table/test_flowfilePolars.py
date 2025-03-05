@@ -129,9 +129,9 @@ def test_pivot_numeric():
     pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
                                               aggregations=['sum'])
     output = fl_table.do_pivot(pivot_input)
-    expected_output = FlowfileTable([{'category': 'A', '2_sum': None, '1_sum': 40},
-                                     {'category': 'B', '2_sum': 40, '1_sum': None},
-                                     {'category': 'C', '2_sum': 30, '1_sum': 5}])
+    expected_output = FlowfileTable([{'category': 'C', '1_sum': 5, '2_sum': 30},
+                                     {'category': 'B', '1_sum': None, '2_sum': 40},
+                                     {'category': 'A', '1_sum': 40, '2_sum': None}])
     output.assert_equal(expected_output)
 
 

@@ -1,5 +1,4 @@
 <template>
-
   <div v-if="dataLoaded" class="listbox-wrapper">
     <generic-node-settings v-model="nodeSelect">
       <select-dynamic
@@ -40,16 +39,14 @@ const dataLoaded = ref(false);
 
 const loadNodeData = async (nodeId: number) => {
   const result = await nodeStore.getNodeData(nodeId, false);
-  console.log('got result data')
+  console.log("got result data");
   if (result) {
-    
     const main_input = result.main_input;
     try {
       if (result.setting_input && main_input && result.setting_input.is_setup) {
         nodeSelect.value = result.setting_input;
         keepMissing.value = nodeSelect.value.keep_missing;
         updateNodeSelect(main_input, nodeSelect);
-
       } else {
         throw new Error("Setting input not available");
       }

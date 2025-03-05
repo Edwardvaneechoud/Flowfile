@@ -122,7 +122,7 @@ const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
-  nodeStore.flow_id = 1 //TODO: REMOVE THIS
+  nodeStore.flow_id = 1; //TODO: REMOVE THIS
   flowSettings.value = await getFlowSettings(nodeStore.flow_id);
   if (!flowSettings.value) return;
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
