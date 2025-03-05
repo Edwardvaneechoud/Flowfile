@@ -420,6 +420,9 @@ def get_table_example(flow_id: int, node_id: int):
     return node.get_table_example(True)
 
 
+import polars as pl
+pl.sum
+
 @router.get('/node/downstream_node_ids', response_model=List[int], tags=['editor'])
 async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
     flow = flow_file_handler.get_flow(flow_id)

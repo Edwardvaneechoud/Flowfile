@@ -46,8 +46,8 @@ export const getDownstreamNodeIds = async (flow_id: number, node_id: number): Pr
 }
 
 
-const loadDownstreamNodeIds = async (nodeId: number) => {
-  const downstreamNodeIds = await getDownstreamNodeIds(1, nodeId)
+const loadDownstreamNodeIds = async (flowId: number, nodeId: number) => {
+  const downstreamNodeIds = await getDownstreamNodeIds(flowId, nodeId)
   return downstreamNodeIds
 }
 
@@ -403,7 +403,7 @@ export const useNodeStore = defineStore('node', {
           },
         }
         )
-        const downstreamNodeIds = await loadDownstreamNodeIds(inputData.value.node_id)
+        const downstreamNodeIds = await loadDownstreamNodeIds(this.flow_id, inputData.value.node_id)
         downstreamNodeIds.map((nodeId) => {
           this.validateNode(nodeId)
         }

@@ -29,11 +29,11 @@ const instantFuncResult = ref<InstantFuncResult>({
   success: false,
 });
 
-const getInstantFuncResults = async (funcString: string) => {
+const getInstantFuncResults = async (funcString: string, flowId: number) => {
   const response = await axios.get("/custom_functions/instant_result", {
     params: {
       node_id: props.nodeId,
-      flow_id: 1,
+      flow_id: flowId,
       func_string: funcString,
     },
   });

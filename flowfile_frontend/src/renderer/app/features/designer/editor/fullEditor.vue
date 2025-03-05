@@ -74,7 +74,7 @@ watch(
   code,
   debounce((newCode: string) => {
     if (instantFuncResultsRef.value) {
-      instantFuncResultsRef.value.getInstantFuncResults(newCode);
+      instantFuncResultsRef.value.getInstantFuncResults(newCode, nodeStore.flow_id);
     }
   }, 1500),
 );
@@ -87,7 +87,7 @@ const handleNodeSelected = (nodeLabel: string) => {
 onMounted(async () => {
   await nextTick();
   if (instantFuncResultsRef.value) {
-    instantFuncResultsRef.value.getInstantFuncResults(props.editorString);
+    instantFuncResultsRef.value.getInstantFuncResults(props.editorString, nodeStore.flow_id);
   }
 });
 

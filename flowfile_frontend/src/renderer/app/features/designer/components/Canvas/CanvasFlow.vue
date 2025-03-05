@@ -124,7 +124,7 @@ async function onConnect(params: any) {
         connection_class: params.sourceHandle,
       },
     };
-    await connectNode(1, nodeConnection);
+    await connectNode(nodeStore.flow_id, nodeConnection);
     addEdges([params]);
   }
 }
@@ -200,12 +200,10 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "add") {
       console.log("This edge change does not work");
-      // const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange)
-      // connectNode(1, nodeConnection)
     } else if (edgeChange.type === "remove") {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
       console.log("Removing connection", nodeConnection);
-      deleteConnection(1, nodeConnection);
+      deleteConnection(nodeStore.flow_id, nodeConnection);
     }
   }
 };
@@ -283,7 +281,7 @@ const toggleShowRunResult = () => {
       :on-minize="toggleShowTablePreview"
       :initial-height="tablePreviewHeight"
     >
-      <data-preview ref="dataPreview" :flow-id="1"> text </data-preview>
+      <data-preview ref="dataPreview"> text </data-preview>
     </draggable-item>
     <draggable-item
       v-if="nodeStore.isDrawerOpen"

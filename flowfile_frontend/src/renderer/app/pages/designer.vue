@@ -1,5 +1,6 @@
 <template>
-  <div v-if="!isLoading" class="header">
+  {{ nodeStore.flow_id}}
+    <div v-if="!isLoading" class="header">
     <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
       <flow-selector ref="flowSelector" @flow-changed="handleFlowChange" />
     <div class="spacer"></div>
