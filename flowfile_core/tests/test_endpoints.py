@@ -72,6 +72,7 @@ def ensure_clean_flow() -> FlowId:
 
 
 def create_join_graph() -> FlowId:
+    sleep(0.5)
     flow_id = ensure_clean_flow()
     graph = flow_file_handler.get_flow(flow_id)
     left_data = [{"name": "eduward"},

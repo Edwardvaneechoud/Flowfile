@@ -1,9 +1,7 @@
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
 from flowfile_core.schemas import input_schema, transform_schema, schemas
-from flowfile_core.schemas.schemas import FlowSettings
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
-from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
+from time import sleep
 from flowfile_core.configs.flow_logger import FlowLogger
 import pytest
 from pathlib import Path
@@ -75,6 +73,7 @@ def test_error_register_double_flow():
 def test_register_second_flow():
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.'))
+    sleep(0.5)
     handler.register_flow(schemas.FlowSettings(flow_id=2, name='new_flow', path='.'))
     assert handler.flowfile_flows[1].flow_id == 2, "Second flow should be registered"
 
@@ -91,6 +90,7 @@ def test_import_flow():
 def test_import_second_flow():
     handler = create_flowfile_handler()
     first_graph_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/read_csv.flowfile"))
+    sleep(0.1)
     second_graph_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/text_to_rows.flowfile"))
     assert handler.flowfile_flows[0].flow_id == first_graph_id, "First flow should be imported"
     assert handler.flowfile_flows[1].flow_id == second_graph_id, "Second flow should be imported"
@@ -110,6 +110,7 @@ def test_get_flow():
 def test_add_flow():
     handler = create_flowfile_handler()
     first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/read_csv.flowfile')
+    sleep(1)
     second_id = handler.add_flow('second_flow', 'flowfile_core/tests/support_files/flows/text_to_rows.flowfile')
     assert len(handler.flowfile_flows) == 2, "Two flows should be added"
     assert handler.flowfile_flows[0].flow_settings.name == 'new_flow', "First flow should be named new_flow"
