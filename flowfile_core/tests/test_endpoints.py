@@ -65,6 +65,7 @@ def ensure_no_flow_registered():
 def ensure_clean_flow() -> FlowId:
     flow_path: str = 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile'
     remove_flow(flow_path)  # Remove the flow if it exists
+    sleep(.1)
     r = client.post("editor/create_flow", params={'flow_path': flow_path})
     if r.status_code != 200:
         raise Exception('Flow not created')

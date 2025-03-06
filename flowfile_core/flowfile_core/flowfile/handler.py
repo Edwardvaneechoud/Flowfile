@@ -6,11 +6,9 @@ from pathlib import Path
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph
 from flowfile_core.schemas.schemas import FlowSettings
-import time
-import random
+from flowfile_core.configs import logger
 
 import time
-import os
 import random
 
 
@@ -54,7 +52,8 @@ class FlowfileHandler:
 
     def register_flow(self, flow_settings: FlowSettings):
         if flow_settings.flow_id in self._flows:
-            raise Exception('flow already registered')
+            self.delete_flow(flow_settings.flow_id)
+            logger.warning('flow already registered')
         else:
             name = flow_settings.name if flow_settings.name else flow_settings.flow_id
             self._flows[flow_settings.flow_id] = EtlGraph(name=name, flow_id=flow_settings.flow_id, flow_settings=flow_settings)
