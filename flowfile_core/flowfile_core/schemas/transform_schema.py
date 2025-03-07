@@ -425,7 +425,7 @@ class AggColl:
 
     @property
     def agg_func(self):
-        if self.agg == 's':
+        if self.agg == 'groupby':
             return self.agg
         elif self.agg == 'concat':
             return string_concat
