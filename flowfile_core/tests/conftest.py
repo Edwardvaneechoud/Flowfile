@@ -1,81 +1,182 @@
 # conftest.py
 import subprocess
 import time
+import os
+import signal
+import logging
+import platform
 import pytest
 import requests
 import sys
+from contextlib import contextmanager
+from typing import Tuple, Generator
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+logger = logging.getLogger("flowfile_fixture")
+
+# Configuration constants
+WORKER_HOST = os.environ.get("FLOWFILE_WORKER_HOST", "0.0.0.0")
+WORKER_PORT = int(os.environ.get("FLOWFILE_WORKER_PORT", 63579))
+WORKER_URL = f"http://{WORKER_HOST}:{WORKER_PORT}/docs"
+STARTUP_TIMEOUT = int(os.environ.get("FLOWFILE_STARTUP_TIMEOUT", 30))  # seconds
+STARTUP_CHECK_INTERVAL = 2  # seconds
+SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
+
+
+def is_worker_running() -> bool:
+    """Check if the flowfile worker service is already running."""
+    try:
+        response = requests.get(WORKER_URL, timeout=5)
+        return response.ok
+    except requests.exceptions.RequestException:
+        return False
+
+
+def start_worker() -> Tuple[subprocess.Popen, bool]:
+    """
+    Start the flowfile worker process.
+
+    Returns:
+        Tuple containing the process object and a success flag
+    """
+    logger.info("Starting flowfile_worker process...")
+
+    # Determine the appropriate command based on platform
+    if platform.system() == "Windows":
+        # Use shell=True on Windows
+        proc = subprocess.Popen(
+            "poetry run flowfile_worker",
+            shell=True,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            universal_newlines=True,
+            # On Windows, CREATE_NEW_PROCESS_GROUP flag allows sending Ctrl+C to child process
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
+        )
+    else:
+        # Use shell=False on Unix-like systems and provide the full args list
+        # This is safer and allows for proper process group handling
+        proc = subprocess.Popen(
+            ["poetry", "run", "flowfile_worker"],
+            shell=False,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            universal_newlines=True,
+            # On Unix, start in a new process group for clean signal handling
+            preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+        )
+
+    # Check if process started successfully
+    retcode = proc.poll()
+    if retcode is not None:
+        logger.error(f"Process failed to start with return code {retcode}")
+        return proc, False
+
+    # Wait for service to be available
+    start_time = time.time()
+    max_retries = STARTUP_TIMEOUT // STARTUP_CHECK_INTERVAL
+
+    for i in range(max_retries):
+        # Check if process is still running
+        if proc.poll() is not None:
+            logger.error(f"Process terminated unexpectedly with code {proc.poll()}")
+            return proc, False
+
+        # Try to connect to the service
+        try:
+            response = requests.get(WORKER_URL, timeout=5)
+            if response.ok:
+                elapsed = time.time() - start_time
+                logger.info(f"flowfile_worker started successfully in {elapsed:.2f} seconds")
+                return proc, True
+        except requests.exceptions.RequestException:
+            pass
+
+        # Log progress
+        elapsed = time.time() - start_time
+        logger.info(f"Waiting for flowfile_worker to start... ({elapsed:.1f}s / {STARTUP_TIMEOUT}s)")
+        time.sleep(STARTUP_CHECK_INTERVAL)
+
+    # Timeout reached
+    logger.error(f"flowfile_worker failed to start within {STARTUP_TIMEOUT} seconds")
+    return proc, False
+
+
+def stop_worker(proc: subprocess.Popen) -> None:
+    """
+    Stop the flowfile worker process gracefully.
+
+    Args:
+        proc: The process object to terminate
+    """
+    logger.info("Stopping flowfile_worker process...")
+
+    if proc is None or proc.poll() is not None:
+        logger.info("Process is already terminated")
+        return
+
+    # Try graceful termination first
+    try:
+        if platform.system() == "Windows":
+            # On Windows, send Ctrl+C
+            proc.send_signal(signal.CTRL_C_EVENT if hasattr(signal, 'CTRL_C_EVENT') else signal.SIGTERM)
+        else:
+            # On Unix, terminate the entire process group
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM) if hasattr(os, 'killpg') else proc.terminate()
+
+        # Wait for process to terminate
+        try:
+            proc.wait(timeout=SHUTDOWN_TIMEOUT)
+            logger.info("Process terminated gracefully")
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Process did not terminate within {SHUTDOWN_TIMEOUT} seconds, forcing termination")
+            if platform.system() != "Windows":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL) if hasattr(os, 'killpg') else proc.kill()
+            else:
+                proc.kill()
+            proc.wait(timeout=5)
+            logger.info("Process forcefully terminated")
+    except (ProcessLookupError, OSError) as e:
+        logger.warning(f"Error while terminating process: {e}")
+
+
+@contextmanager
+def managed_worker() -> Generator[None, None, None]:
+    """
+    Context manager for flowfile worker process management.
+    Ensures proper cleanup even when tests fail.
+    """
+    proc = None
+    try:
+        if is_worker_running():
+            logger.info("flowfile_worker is already running, using existing instance")
+            yield
+        else:
+            proc, success = start_worker()
+            if not success:
+                error_msg = "Failed to start flowfile_worker"
+                logger.error(error_msg)
+                if proc and proc.poll() is None:
+                    stop_worker(proc)
+                pytest.skip(error_msg)
+            yield
+    finally:
+        if proc is not None and proc.poll() is None:
+            stop_worker(proc)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def flowfile_worker():
     """
-    Ensure that flowfile_worker is running before tests.
-    If it's already running, use it; otherwise, start it using:
-        poetry run flowfile_worker
-    Provides extra logging to help diagnose startup issues.
+    Pytest fixture that ensures flowfile_worker is running for the test session.
+    Uses the managed_worker context manager for proper resource management.
     """
-    # Use localhost when checking the service.
-    worker_url = "http://0.0.0.0:63579/docs"
-    proc = None
+    with managed_worker():
+        yield
 
-    # Check if the worker is already running.
-    try:
-        response = requests.get(worker_url)
-        if response.ok:
-            print("flowfile_worker already running!", flush=True)
-            already_running = True
-        else:
-            already_running = False
-    except requests.exceptions.RequestException:
-        already_running = False
-
-    # If not running, attempt to start the worker.
-    if not already_running:
-        print("flowfile_worker not running. Attempting to start...", flush=True)
-        proc = subprocess.Popen(
-            "poetry run flowfile_worker",
-            shell=True,
-            stdout=sys.stdout,  # Directly prints to terminal.
-            stderr=sys.stderr,
-            universal_newlines=True,
-        )
-        max_retries = 10
-        for i in range(max_retries):
-            time.sleep(2)
-            # Check if the process terminated unexpectedly.
-            retcode = proc.poll()
-            if retcode is not None:
-                # Process terminated; capture output for debugging.
-                stdout, stderr = proc.communicate()
-                pytest.skip(
-                    f"flowfile_worker terminated unexpectedly with code {retcode}.\n"
-                    f"Stdout:\n{stdout}\nStderr:\n{stderr}"
-                )
-            try:
-                response = requests.get(worker_url)
-                if response.ok:
-                    print("flowfile_worker started successfully.", flush=True)
-                    break
-            except requests.exceptions.RequestException:
-                print(
-                    f"Waiting for flowfile_worker to start... (retry {i + 1}/{max_retries})",
-                    flush=True
-                )
-        else:
-            # If we never get a successful response, capture output and skip tests.
-            stdout, stderr = proc.communicate(timeout=5)
-            pytest.skip(
-                f"flowfile_worker did not start in time.\nLast output:\nStdout:\n{stdout}\nStderr:\n{stderr}"
-            )
-
-    yield  # Run tests.
-
-    # Teardown: only terminate the worker if we started it.
-    if proc is not None:
-        print("Terminating flowfile_worker subprocess...", flush=True)
-        print("Sending SIGTERM...", flush=True)
-        # time.sleep(10)
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()

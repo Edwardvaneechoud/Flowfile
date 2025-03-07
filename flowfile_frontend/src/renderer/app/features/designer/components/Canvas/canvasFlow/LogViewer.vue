@@ -64,7 +64,6 @@ const startStreamingLogs = () => {
 const stopStreamingLogs = () => {
   eventSourceRef.value?.close();
   eventSourceRef.value = null;
-  console.log("Log streaming stopped");
 };
 
 // UI Handlers

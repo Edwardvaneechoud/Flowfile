@@ -93,9 +93,7 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 }
 
 const loadFlow = async () => {
-  console.log(nodeStore.flow_id);
   const vueFlowInput = await getFlowData(nodeStore.flow_id);
-  console.log("vueFlowInput", vueFlowInput);
   await nextTick();
   await importFlow(vueFlowInput);
 };
@@ -112,7 +110,6 @@ const selectNodeExternally = (nodeId: number) => {
 };
 
 async function onConnect(params: any) {
-  console.log("params", params);
   if (params.target && params.source) {
     const nodeConnection: NodeConnection = {
       input_connection: {

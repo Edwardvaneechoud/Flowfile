@@ -274,7 +274,7 @@ export const useNodeStore = defineStore('node', {
         this.cacheNodeDescriptionDict(this.flow_id, nodeId, response.data);
         return response.data;
       } catch (error) {
-        console.error('Error fetching node description:', error);
+        console.info('Error fetching node description:', error);
         
         // Return cached version if available
         if (this.nodeDescriptions[this.flow_id]?.[nodeId]) {

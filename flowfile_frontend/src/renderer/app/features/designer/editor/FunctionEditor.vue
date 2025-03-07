@@ -9,8 +9,6 @@
       :tab-size="2"
       :extensions="extensions"
       @ready="handleReady"
-      @focus="log('focus', $event)"
-      @blur="log('blur', $event)"
     />
   </div>
 </template>
@@ -243,10 +241,6 @@ const extensions: Extension[] = [
 
 const handleReady = (payload: { view: EditorView }) => {
   view.value = payload.view;
-};
-
-const log = (type: any, event: any) => {
-  console.log(type, event);
 };
 
 watch(code, (newCode: string) => {

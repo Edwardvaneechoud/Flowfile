@@ -1,11 +1,11 @@
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+from flowfile_core.flowfile.FlowfileFlow import RunInformation
+from flowfile_core.schemas import schemas
+
 from time import sleep
 from flowfile_core.configs.flow_logger import FlowLogger
 import pytest
 from pathlib import Path
-import subprocess
 from typing import List, Dict
 
 
@@ -20,15 +20,6 @@ def raw_data()-> List[Dict]:
                 {'name': 'Jane', 'city': 'Los Angeles'},
                 {'name': 'Edward', 'city': 'Chicago'},
                 {'name': 'Courtney', 'city': 'Chicago'}]
-
-
-def is_docker_available():
-    """Check if Docker is running."""
-    try:
-        subprocess.run(["docker", "info"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
 
 
 def handle_run_info(run_info: RunInformation):
@@ -63,7 +54,7 @@ def test_register_flow():
     assert handler.flowfile_flows[0].flow_id == 1, "Flow should be registered"
 
 
-def test_error_register_double_flow():
+def test_warning_register_double_flow():
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.'))
     with pytest.raises(Exception):

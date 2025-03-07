@@ -142,9 +142,7 @@ export default function useDragAndDrop() {
     
     addNodes(allNodes);
     id = getMaxDataId(flowData.node_inputs);
-    console.log(id)
     addEdges(flowData.node_edges)
-    console.log(toObject())
   }
 
   function onDrop(event: DragEvent, flowId: number): Node|undefined {

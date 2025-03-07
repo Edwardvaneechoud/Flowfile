@@ -75,8 +75,6 @@ const editMode = ref<boolean>(false);
 const CHAR_LIMIT = 100;
 
 const onTitleClick = (event: MouseEvent) => {
-  console.log("Double clicked");
-  console.log(event.clientX, event.clientY);
   toggleEditMode(true);
   mouseX.value = event.clientX;
   mouseY.value = event.clientY;

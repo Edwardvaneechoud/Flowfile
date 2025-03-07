@@ -31,7 +31,6 @@ const localExcelTable = ref(props.modelValue);
 const showOptionalSettings = ref(false);
 
 const updateParent = () => {
-  console.log(localExcelTable.value);
   emit("update:modelValue", localExcelTable.value);
 };
 

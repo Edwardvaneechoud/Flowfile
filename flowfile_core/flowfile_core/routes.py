@@ -623,11 +623,17 @@ async def stream_logs(flow_id: int, idle_timeout: int = 300):
     Streams logs for a given flow_id using Server-Sent Events.
     The connection will close gracefully if the server shuts down.
     """
+    # return None
+    logger.info(f"Starting log stream for flow_id: {flow_id}")
+    await asyncio.sleep(.3)
     flow = flow_file_handler.get_flow(flow_id)
+    logger.info('Streaming logs')
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
 
     log_file_path = flow.flow_logger.get_log_filepath()
+    if not Path(log_file_path).exists():
+        raise HTTPException(status_code=404, detail="Log file not found")
 
     class RunningState:
         def __init__(self):
@@ -649,3 +655,4 @@ async def stream_logs(flow_id: int, idle_timeout: int = 300):
             "Content-Type": "text/event-stream",
         }
     )
+

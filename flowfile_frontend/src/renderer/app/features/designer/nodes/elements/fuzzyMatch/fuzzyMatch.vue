@@ -196,11 +196,9 @@ const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoin
 };
 
 const loadNodeData = async (nodeId: number) => {
-  console.log("doing this for fuzzy mathcing");
   result.value = await nodeStore.getNodeData(nodeId, true);
   nodeFuzzyJoin.value = result.value?.setting_input;
   if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
-    console.log("doing the initial set up again ");
     if (nodeFuzzyJoin.value) {
       if (result.value?.main_input.columns && result.value?.right_input?.columns) {
         nodeFuzzyJoin.value.join_input = getEmptySetup(
@@ -250,8 +248,6 @@ const pushNodeData = async () => {
   if (nodeFuzzyJoin.value) {
     nodeFuzzyJoin.value.is_setup = true;
   }
-  // console.log(nodeFuzzyJoin.value)
-  // console.log('Normally this would push the data')
   nodeStore.updateSettings(nodeFuzzyJoin);
   if (hasInvalidFields.value && nodeFuzzyJoin.value) {
     nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {

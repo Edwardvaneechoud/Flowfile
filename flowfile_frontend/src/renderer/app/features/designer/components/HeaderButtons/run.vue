@@ -94,7 +94,6 @@ const checkRunStatus = async () => {
 
 const runFlow = async () => {
   nodeStore.resetNodeResult();
-  console.log("start run");
   showNotification("Run started", "The flow started flowing");
 
   try {
@@ -165,8 +164,8 @@ defineExpose({
 
 /* Run button - normal state */
 .button-group .el-button:first-child:not([disabled]) {
-  background-color: rgba(80, 70, 230, 0.9) !important;
-  border: 1px solid rgba(80, 70, 230, 0.95) !important;
+  background-color: rgb(2, 27, 45) !important;
+  border: 1px solid rgb(17, 64, 97) !important;
   color: white !important;
 }
 

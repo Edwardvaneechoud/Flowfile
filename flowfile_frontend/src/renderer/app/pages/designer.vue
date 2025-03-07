@@ -42,7 +42,6 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from "vue";
 import HeaderButtons from "../features/designer/components/HeaderButtons/HeaderButtons.vue";
-import {} from "../features/designer/components/Canvas/backendInterface";
 import Status from "../features/designer/editor/status.vue";
 import CanvasFlow from "../features/designer/components/Canvas/CanvasFlow.vue";
 import FlowSelector from "./designer/FlowSelector.vue";
@@ -106,7 +105,6 @@ const reloadCanvas = async (flowPath: string) => {
 
 const handleCloseFlow = async (flowId: number) => {
   try {
-    isLoading.value = true;
     console.log("Closing flow:", flowId);
 
     // Check if we're closing the currently active flow
@@ -118,6 +116,7 @@ const handleCloseFlow = async (flowId: number) => {
     // Clean up any flow-related data in the store
     nodeStore.clearFlowResults(flowId);
     nodeStore.clearFlowDescriptionCache(flowId);
+    isLoading.value = true;
 
     // Refresh the flows list
     await fetchActiveFlows();

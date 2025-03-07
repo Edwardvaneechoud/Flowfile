@@ -38,7 +38,6 @@ interface ChildComponentRef {
 const childComp = ref<ChildComponentRef | null>(null);
 
 const closeOnDrawer = () => {
-  console.log("closeOnDrawer");
   if (drawer.value) {
     childComp.value?.pushNodeData();
     drawer.value = false;
@@ -59,7 +58,6 @@ const openDrawer = async () => {
   if (nodeStore.node_id === props.nodeId && drawerOpen) {
     return;
   }
-  console.log("test", childComp.value);
   if (childComp.value) {
     childComp.value.loadNodeData(props.nodeId);
     nodeStore.openDrawer(closeOnDrawer);

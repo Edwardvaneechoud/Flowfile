@@ -34,7 +34,7 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="50%">
+  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%">
     <file-browser
       :allowed-file-types="['flowfile']"
       mode="create"
@@ -180,7 +180,6 @@ const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
 };
 
-// Watch for flow ID changes to reload settings
 watch(
   () => nodeStore.flow_id,
   async (newId, oldId) => {
@@ -194,6 +193,7 @@ defineExpose({
   loadFlowSettings,
   openCreateDialog: () => (modalVisibleForCreate.value = true),
   openOpenDialog: () => (modalVisibleForOpen.value = true),
+  openSaveModal: () => (modalVisibleForSave.value = true),
 });
 
 onMounted(async () => {
@@ -229,7 +229,7 @@ onMounted(async () => {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
-  color: rgba(23, 10, 106, 0.9); /* Darker text color */
+  color: rgb(2, 27, 45); /* Darker text color */
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -248,7 +248,7 @@ onMounted(async () => {
 
 .btn-icon {
   font-size: 16px;
-  color: rgba(80, 70, 230, 0.9); /* Darker icon color */
+  color: rgb(2, 27, 45); /* Darker icon color */
 }
 
 .btn-text {

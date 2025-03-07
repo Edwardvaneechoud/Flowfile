@@ -220,8 +220,6 @@ onMounted(() => {
   props.parsedConfig.forEach((item, index) => {
     if (item.oneOf && typeof item.selectedOption === "number" && item.selectedOption >= 0) {
       selectedValues.value[index] = item.oneOf[item.selectedOption].title;
-      console.log(item.oneOf[item.selectedOption].title);
-      console.log("selecting a value");
     }
   });
 });

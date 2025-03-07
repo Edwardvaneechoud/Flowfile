@@ -79,21 +79,15 @@ const loadTemplateValue = () => {
 };
 
 const pushNodeDataAction = async () => {
-  console.log("pushing node data");
   if (nodeExternalSource.value && isDirty.value) {
-    console.log(nodeExternalSource.value);
     nodeExternalSource.value.is_setup = true;
     nodeExternalSource.value.source_settings.fields = [];
     isDirty.value = false;
   }
-  console.log(nodeExternalSource.value);
   await nodeStore.updateSettings(nodeExternalSource);
-  console.log("pushed");
   if (nodeExternalSource.value) {
-    console.log("pushing");
     await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
   }
-  console.log("pushed");
 };
 
 const pushNodeData = async () => {

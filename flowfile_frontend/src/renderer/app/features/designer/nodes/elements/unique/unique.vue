@@ -60,8 +60,6 @@ const loadSelection = (nodeData: NodeData, columnsToKeep: string[]) => {
 
 const loadData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
-  console.log(nodeData.value);
-  console.log("nodeData");
   nodeUnique.value = nodeData.value?.setting_input;
   dataLoaded.value = true;
 

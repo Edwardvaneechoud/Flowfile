@@ -1,14 +1,15 @@
-import pickle
 
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation, FlowfileColumn
+from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
+
+from tests.utils import is_docker_available
+
 import pytest
 from pathlib import Path
-import subprocess
 from typing import List, Dict
 
 
@@ -23,15 +24,6 @@ def raw_data()-> List[Dict]:
                 {'name': 'Jane', 'city': 'Los Angeles'},
                 {'name': 'Edward', 'city': 'Chicago'},
                 {'name': 'Courtney', 'city': 'Chicago'}]
-
-
-def is_docker_available():
-    """Check if Docker is running."""
-    try:
-        subprocess.run(["docker", "info"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
 
 
 def handle_run_info(run_info: RunInformation):

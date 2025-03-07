@@ -231,7 +231,6 @@ const handleItemClick = (columnName: string) => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  console.log("loadNodeData from groupby");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodePivot.value = nodeData.value?.setting_input as NodePivot;
   if (nodeData.value) {
@@ -245,7 +244,6 @@ const loadNodeData = async (nodeId: number) => {
   }
   dataLoaded.value = true;
   nodeStore.isDrawerOpen = true;
-  console.log("loadNodeData from groupby");
 };
 
 const handleClickOutside = (event: MouseEvent) => {
