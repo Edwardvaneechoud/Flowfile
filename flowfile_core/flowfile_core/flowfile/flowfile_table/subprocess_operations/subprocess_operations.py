@@ -64,7 +64,7 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
                                       flowfile_flow_id=flow_id,
                                       flowfile_node_id=node_id
                                       )
-    v = requests.post(f'{WORKER_URL}/add_fuzzy_join', data=fuzzy_join_input.json())
+    v = requests.post(f'{WORKER_URL}/add_fuzzy_join', data=fuzzy_join_input.model_dump_json())
     if not v.ok:
         raise Exception(f'Could not cache the data, {v.text}')
     return Status(**v.json())
@@ -72,7 +72,7 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
 
 def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTableCollection,
                              file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
-    f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.json(),
+    f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.model_dump_json(),
                       params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
@@ -80,7 +80,7 @@ def trigger_create_operation(flow_id: int, node_id: int | str, received_table: R
 
 
 def trigger_airbyte_collector(airbyte_settings: AirbyteSettings):
-    f = requests.post(url=f'{WORKER_URL}/store_airbyte_result', data=airbyte_settings.json())
+    f = requests.post(url=f'{WORKER_URL}/store_airbyte_result', data=airbyte_settings.model_dump_json())
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
     return Status(**f.json())

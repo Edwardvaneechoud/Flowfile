@@ -96,7 +96,7 @@ def create_flow_with_manual_input_and_select() -> FlowId:
     flow_id = create_flow_with_manual_input()
     add_node(flow_id, 2, node_type='select', pos_x=0, pos_y=0)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
+    client.post("/editor/connect_node/", data=connection.model_dump_json(), params={"flow_id": flow_id})
     flow = flow_file_handler.get_flow(flow_id)
     select_settings = input_schema.NodeSelect(flow_id=flow_id, node_id=2, select_input=[SelectInput(old_name='name')],
                                               keep_missing=False)
@@ -167,7 +167,7 @@ def test_add_generic_settings():
     assert flow_file_handler.get_node(flow_id, 1).setting_input.raw_data == input_file['raw_data'], 'Settings not set'
 
 
-def test_connect_node() -> FlowId:
+def test_connect_node():
     flow_id = ensure_clean_flow()
     add_node(flow_id, 1, node_type='manual_input', pos_x=0, pos_y=0)
     add_node(flow_id, 2, node_type='select', pos_x=0, pos_y=0)
@@ -176,7 +176,6 @@ def test_connect_node() -> FlowId:
     assert r.status_code == 200, 'Node not connected'
     assert flow_file_handler.get_node(flow_id, 1).leads_to_nodes[0].node_id == 2, 'Node from to not connected'
     assert flow_file_handler.get_node(flow_id, 2).all_inputs[0].node_id == 1, 'Node to from not connected'
-    return flow_id
 
 
 def test_create_flow_with_join():
@@ -260,7 +259,7 @@ def test_delete_connection():
     if not flow_file_handler.get_node(flow_id, 1).leads_to_nodes:
         raise Exception('Node not connected, breaking off test')
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    response = client.post("/editor/delete_connection", data=node_connection.json(), params={"flow_id":flow_id})
+    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id":flow_id})
     assert response.status_code == 200, 'Connection not deleted'
     assert 2 not in flow_file_handler.get_node(flow_id, 1).leads_to_nodes, 'Connection not deleted'
     assert 1 not in flow_file_handler.get_node(flow_id, 2).all_inputs, 'Connection not deleted'
@@ -274,7 +273,7 @@ def test_run_invalid_flow():
     if not flow_file_handler.get_node(flow_id, 1).leads_to_nodes:
         raise Exception('Node not connected, breaking off test')
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    response = client.post("/editor/delete_connection", data=node_connection.json(), params={"flow_id": flow_id})
+    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id": flow_id})
     assert response.status_code == 200, 'Connection not deleted, breaking off test'
     response = client.post("/flow/run/", params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow should just start as normal'
@@ -304,7 +303,11 @@ def test_delete_node():
 
 
 def test_get_flow_data_v2():
-    flow_id = test_connect_node()
+    flow_id = ensure_clean_flow()
+    add_node(flow_id, 1, node_type='manual_input', pos_x=0, pos_y=0)
+    add_node(flow_id, 2, node_type='select', pos_x=0, pos_y=0)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
     response = client.get('/flow_data/v2', params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow data not retrieved'
     expected_data = {'node_edges': [{'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}], 'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1, 'image': 'manual_input.png', 'multi': False, 'node_group': 'input', 'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0}, {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1, 'image': 'select.png', 'multi': False, 'node_group': 'transform', 'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
