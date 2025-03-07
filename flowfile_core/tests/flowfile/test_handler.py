@@ -15,7 +15,7 @@ def flow_logger() -> FlowLogger:
 
 
 @pytest.fixture
-def raw_data()-> List[Dict]:
+def raw_data() -> List[Dict]:
     return [{'name': 'John', 'city': 'New York'},
                 {'name': 'Jane', 'city': 'Los Angeles'},
                 {'name': 'Edward', 'city': 'Chicago'},
