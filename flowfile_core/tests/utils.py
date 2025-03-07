@@ -9,8 +9,3 @@ def is_docker_available():
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
-
-
-from pathlib import Path
-
-Path("/var/folders/qf/skdr0r8s49g1_qf1lb7n3sfw0000gn/T/flowfile_logs/flow_808236605.log").read_text()
