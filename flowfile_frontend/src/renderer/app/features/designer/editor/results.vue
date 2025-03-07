@@ -1,7 +1,7 @@
 <template>
   <el-card class="run-card" shadow="hover">
     <div class="clearfix">
-      <span>Flow ID: {{ runInformation?.flow_id }}</span>
+      <span>Flow: {{ runInformation?.flow_id }}</span>
       <span class="flow-summary">
         - {{ runInformation?.success ? "Succeeded" : "Failed" }}, Nodes:
         {{ runInformation?.nodes_completed }}/{{ runInformation?.number_of_nodes }}
@@ -18,9 +18,15 @@
           @click="navigateToNode(`node-${node.node_id}`)"
         >
           <el-card class="node-card">
-            <h4 v-if="nodeStore.nodeDescriptions[node.node_id]">
-              {{ nodeStore.nodeDescriptions[node.node_id] }} ({{ node.node_name }})
-            </h4>
+            <div
+              v-if="nodeStore.nodeDescriptions[nodeStore.flow_id][node.node_id]"
+              class="node-info"
+            >
+              <h4 class="node-title">
+                {{ nodeStore.nodeDescriptions[nodeStore.flow_id][node.node_id] }}
+              </h4>
+              <p class="node-description">node type: {{ node.node_name }}</p>
+            </div>
             <h4 v-else>{{ `Node ${node.node_id}` }}: {{ node.node_name }}</h4>
             <div class="node-details">
               <p>
@@ -173,5 +179,29 @@ const navigateToNode = (nodeId: string) => {
   100% {
     opacity: 1;
   }
+}
+
+.node-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.node-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.node-description {
+  margin: 0;
+  font-size: 14px;
+  color: #606266;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
 }
 </style>

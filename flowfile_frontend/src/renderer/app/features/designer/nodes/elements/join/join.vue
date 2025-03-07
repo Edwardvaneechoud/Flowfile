@@ -121,9 +121,7 @@ const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean
 const loadNodeData = async (nodeId: number) => {
   result.value = await nodeStore.getNodeData(nodeId, false);
   nodeJoin.value = result.value?.setting_input;
-  console.log(result.value);
   if (result.value) {
-    console.log("Data loaded");
     dataLoaded.value = true;
   }
   nodeStore.isDrawerOpen = true;

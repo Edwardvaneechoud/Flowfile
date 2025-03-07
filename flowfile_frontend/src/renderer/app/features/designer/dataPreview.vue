@@ -60,7 +60,6 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   showFileStats: false,
   hideTitle: true,
-  flowId: -1,
 });
 
 const calculateGridHeight = () => {
@@ -74,7 +73,7 @@ let schema_dict: any = {};
 async function downloadData(nodeId: number) {
   try {
     isLoading.value = true;
-    let resp = await nodeStore.getTableExample(props.flowId, nodeId);
+    let resp = await nodeStore.getTableExample(nodeStore.flow_id, nodeId);
 
     if (resp) {
       dataPreview.value = resp;

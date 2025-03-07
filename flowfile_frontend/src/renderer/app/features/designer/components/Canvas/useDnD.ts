@@ -142,12 +142,10 @@ export default function useDragAndDrop() {
     
     addNodes(allNodes);
     id = getMaxDataId(flowData.node_inputs);
-    console.log(id)
     addEdges(flowData.node_edges)
-    console.log(toObject())
   }
 
-  function onDrop(event: DragEvent): Node|undefined {
+  function onDrop(event: DragEvent, flowId: number): Node|undefined {
     const position = screenToFlowCoordinate({
       x: event.clientX,
       y: event.clientY,
@@ -191,7 +189,7 @@ export default function useDragAndDrop() {
 
           off();
         });
-        insertNode(1, nodeId, nodeData.item)
+        insertNode(flowId, nodeId, nodeData.item)
         addNodes(newNode);
       })
       .catch((error) => {

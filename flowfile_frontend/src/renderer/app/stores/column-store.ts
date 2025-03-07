@@ -15,6 +15,9 @@ import {
 import { VueFlowStore, Node } from '@vue-flow/core';
 import { get } from 'lodash';
 
+// Session storage key for the flow ID
+const FLOW_ID_STORAGE_KEY = 'last_flow_id';
+
 export const nodeData = ref<NodeData | null>(null)
 
 export const useColumnStore = defineStore('column', {
@@ -46,45 +49,146 @@ export const getDownstreamNodeIds = async (flow_id: number, node_id: number): Pr
 }
 
 
-const loadDownstreamNodeIds = async (nodeId: number) => {
-  const downstreamNodeIds = await getDownstreamNodeIds(1, nodeId)
+const loadDownstreamNodeIds = async (flowId: number, nodeId: number) => {
+  const downstreamNodeIds = await getDownstreamNodeIds(flowId, nodeId)
   return downstreamNodeIds
 }
 
 
 export const useNodeStore = defineStore('node', {
-  state: () => ({
-    inputCode: '',
-    flow_id: -1 as number,
-    node_id: -1 as number,
-    previous_node_id: -1 as number,
-    nodeValidateFuncs: new Map<number, () => void>(),
-    nodeData: null as NodeData | null,
-    node_exists: false,
-    is_loaded: false,
-    size_data_preview: 300 as number,
-    dataTypes: ['String', 'Datetime', 'Int64', 'Int32', 'Int16', 'Float64', 'Float32', 'Boolean'], // Adding the data types here
-    isDrawerOpen: false,
-    isAnalysisOpen: false,
-    drawCloseFunction: null as any,
-    initialEditorData: '' as string,
-    runResults: {} as RunInformationDictionary,
-    nodeDescriptions: {} as NodeDescriptionDictionary,
-    runNodeResultMap: new Map<number, NodeResult>(),
-    runNodeValidationMap: new Map<number, NodeValidation>(),
-    currentRunResult: null as RunInformation | null,
-    isRunning: false,
-    showFlowResult: false,
-    tableVisible: false,
-    resultVersion: 0,
-    vueFlowInstance: null as any | null, // Updated type
-    allExpressions: null as null| ExpressionsOverview[],
-    isShowingLogViewer : false,
-    isStreamingLogs: false,
-    displayLogViewer: true,
-  }),
+  state: () => {
+    // Try to get the last flow ID from session storage
+    const savedFlowId = sessionStorage.getItem(FLOW_ID_STORAGE_KEY);
+    const initialFlowId = savedFlowId ? parseInt(savedFlowId) : -1;
+    
+    return {
+      inputCode: '',
+      flow_id: initialFlowId as number,
+      node_id: -1 as number,
+      previous_node_id: -1 as number,
+      nodeValidateFuncs: new Map<number, () => void>(),
+      nodeData: null as NodeData | null,
+      node_exists: false,
+      is_loaded: false,
+      size_data_preview: 300 as number,
+      dataTypes: ['String', 'Datetime', 'Int64', 'Int32', 'Int16', 'Float64', 'Float32', 'Boolean'], // Adding the data types here
+      isDrawerOpen: false,
+      isAnalysisOpen: false,
+      drawCloseFunction: null as any,
+      initialEditorData: '' as string,
+      runResults: {} as RunInformationDictionary,
+      nodeDescriptions: {} as NodeDescriptionDictionary,
+      runNodeResults: {} as Record<number, Record<number, NodeResult>>,
+      runNodeValidations: {} as Record<number, Record<number, NodeValidation>>,
+      currentRunResult: null as RunInformation | null,
+      isRunning: false,
+      showFlowResult: false,
+      tableVisible: false,
+      resultVersion: 0,
+      vueFlowInstance: null as any | null, // Updated type
+      allExpressions: null as null| ExpressionsOverview[],
+      isShowingLogViewer : false,
+      isStreamingLogs: false,
+      displayLogViewer: true,
+    }
+  },
 
   actions: {
+
+    initializeResultCache(flowId: number): void {
+      if (!this.runNodeResults[flowId]) {
+        this.runNodeResults[flowId] = {};
+      }
+    },
+
+    // Initialize validation structure for a flow if it doesn't exist
+    initializeValidationCache(flowId: number): void {
+      if (!this.runNodeValidations[flowId]) {
+        this.runNodeValidations[flowId] = {};
+      }
+    },
+
+    // Set a node result
+    setNodeResult(nodeId: number, result: NodeResult): void {
+      this.initializeResultCache(this.flow_id);
+      this.runNodeResults[this.flow_id][nodeId] = result;
+    },
+
+    // Get a node result
+    getNodeResult(nodeId: number): NodeResult | undefined {
+      return this.runNodeResults[this.flow_id]?.[nodeId];
+    },
+
+    // Reset all node results
+    resetNodeResult(): void {
+      console.log('Clearing node results');
+      this.runNodeResults = {};
+    },
+
+    // Clear results for a specific flow
+    clearFlowResults(flowId: number): void {
+      if (this.runNodeResults[flowId]) {
+        delete this.runNodeResults[flowId];
+      }
+    },
+
+    // Set a node validation
+    setNodeValidation(nodeId: number | string, nodeValidationInput: NodeValidationInput): void {
+      if (typeof nodeId === 'string') {
+        nodeId = parseInt(nodeId);
+      }
+      
+      this.initializeValidationCache(this.flow_id);
+      
+      const nodeValidation: NodeValidation = {
+        ...nodeValidationInput,
+        validationTime: Date.now() / 1000
+      };
+      
+      this.runNodeValidations[this.flow_id][nodeId] = nodeValidation;
+    },
+
+    // Reset all node validations
+    resetNodeValidation(): void {
+      this.runNodeValidations = {};
+    },
+
+    // Get a node validation
+    getNodeValidation(nodeId: number): NodeValidation {
+      return this.runNodeValidations[this.flow_id]?.[nodeId] || 
+             {isValid: true, error: '', validationTime: 0};
+    },
+
+    // Insert run result - modified to use the new structure
+    insertRunResult(runResult: RunInformation, showResult: boolean = true): void {
+      this.currentRunResult = runResult;
+      this.runResults[runResult.flow_id] = runResult;
+      this.showFlowResult = showResult;
+      this.isShowingLogViewer = this.displayLogViewer && showResult;
+      
+      // Store node results in the new format
+      this.initializeResultCache(runResult.flow_id);
+      runResult.node_step_result.forEach((nodeResult) => {
+        this.runNodeResults[runResult.flow_id][nodeResult.node_id] = nodeResult;
+      });
+      
+      this.resultVersion++;
+    },
+
+    // Reset run results - modified to use the new structure
+    resetRunResults(): void {
+      this.runNodeResults = {};
+      this.runResults = {};
+      this.currentRunResult = null;
+    },
+
+
+  
+    initializeDescriptionCache(flowId: number): void {
+      if (!this.nodeDescriptions[flowId]) {
+        this.nodeDescriptions[flowId] = {};
+      }
+    },
 
     setNodeValidateFunc(nodeId: number|string, func: () => void) {
       if (typeof nodeId === 'string') {
@@ -107,42 +211,16 @@ export const useNodeStore = defineStore('node', {
     },
 
     setFlowId(flowId: number) {
-      this.flow_id = flowId
-    },
-
-    setNodeResult(nodeId: number, result: NodeResult) {
-      const nodeResult = this.runNodeResultMap.get(nodeId)
-      this.runNodeResultMap.set(nodeId, result)
-    },
-
-    getNodeResult(nodeId: number): NodeResult|undefined {
-      return this.runNodeResultMap.get(nodeId)
-    },
-
-    resetNodeResult() {
-      console.log('Clearing node results')
-      this.runNodeResultMap = new Map<number, NodeResult>()
-    },
-
-    setNodeValidation(nodeId: number|string, nodeValidationInput: NodeValidationInput) {
-      if (typeof nodeId === 'string') {
-        nodeId = parseInt(nodeId)
+      this.flow_id = flowId;
+      
+      // Store the flow ID in session storage
+      try {
+        sessionStorage.setItem(FLOW_ID_STORAGE_KEY, flowId.toString());
+      } catch (error) {
+        console.warn('Failed to store flow ID in session storage:', error);
       }
-      const nodeValidation: NodeValidation = {
-        ...nodeValidationInput,
-        validationTime: Date.now()/1000
-      };
-      this.runNodeValidationMap.set(nodeId, nodeValidation)
     },
 
-    resetNodeValidation() {
-      this.runNodeValidationMap.clear()
-    },
-
-    getNodeValidation(nodeId: number): NodeValidation | null {
-      // Validate the node without running it
-      return this.runNodeValidationMap.get(nodeId) || {isValid: true, error: '', validationTime: 0}
-    },
 
     setVueFlowInstance(vueFlowInstance: VueFlowStore) {
       this.vueFlowInstance = vueFlowInstance
@@ -155,25 +233,65 @@ export const useNodeStore = defineStore('node', {
       return this.initialEditorData
     },
 
-    cacheNodeDescriptionDict(nodeId: number, description: string) {
-      this.nodeDescriptions[nodeId] = description
+    cacheNodeDescriptionDict(flowId: number, nodeId: number, description: string): void {
+      this.initializeDescriptionCache(flowId);
+      this.nodeDescriptions[flowId][nodeId] = description;
+    },
+    clearNodeDescriptionCache(flowId: number, nodeId: number): void {
+      if (this.nodeDescriptions[flowId] && this.nodeDescriptions[flowId][nodeId]) {
+        delete this.nodeDescriptions[flowId][nodeId];
+      }
+    },
+    clearFlowDescriptionCache(flowId: number): void {
+      if (this.nodeDescriptions[flowId]) {
+        delete this.nodeDescriptions[flowId];
+      }
     },
 
-    async getNodeDescription(nodeId: number): Promise<string> {
-      if (!this.nodeDescriptions[nodeId]) {
+    clearAllDescriptionCaches(): void {
+      this.nodeDescriptions = {};
+    },
+
+    
+    async getNodeDescription(nodeId: number, forceRefresh = false): Promise<string> {
+      this.initializeDescriptionCache(this.flow_id);
+      
+      // Return cached description if available and not forced to refresh
+      if (!forceRefresh && this.nodeDescriptions[this.flow_id]?.[nodeId]) {
+        return this.nodeDescriptions[this.flow_id][nodeId];
+      }
+      
+      try {
+        // Fetch a fresh description from the API
         const response = await axios.get('/node/description', {
           params: {
             node_id: nodeId,
             flow_id: this.flow_id,
           },
-        })
-        this.cacheNodeDescriptionDict(nodeId, response.data)
+        });
+        
+        // Cache the new description
+        this.cacheNodeDescriptionDict(this.flow_id, nodeId, response.data);
+        return response.data;
+      } catch (error) {
+        console.info('Error fetching node description:', error);
+        
+        // Return cached version if available
+        if (this.nodeDescriptions[this.flow_id]?.[nodeId]) {
+          console.warn('Using cached description due to API error');
+          return this.nodeDescriptions[this.flow_id][nodeId];
+        }
+        
+        // Return empty string if no cache available
+        return '';
       }
-      return this.nodeDescriptions[nodeId]
     },
 
     async setNodeDescription(nodeId: number, description: string): Promise<void> {
       try {
+        // Update the cache immediately for responsive UI
+        this.cacheNodeDescriptionDict(this.flow_id, nodeId, description);
+        
         const response = await axios.post('/node/description/', JSON.stringify(description), {
           params: {
             flow_id: this.flow_id,
@@ -182,20 +300,24 @@ export const useNodeStore = defineStore('node', {
           headers: {
             'Content-Type': 'application/json',
           },
-        })
+        });
+        
         if (response.data.status === 'success') {
-          console.log(response.data.message)
+          console.log(response.data.message);
         } else {
-          console.warn('Unexpected success response structure:', response.data)
+          console.warn('Unexpected success response structure:', response.data);
         }
       } catch (error: any) {
+        // Handle the error, but keep the updated cache value
         if (error.response) {
-          console.error(error.response.data.message)
+          console.error('API error:', error.response.data.message);
         } else if (error.request) {
-          console.error('The request was made but no response was received')
+          console.error('The request was made but no response was received');
         } else {
-          console.error('Error', error.message)
+          console.error('Error', error.message);
         }
+        
+        throw error; // Re-throw to allow callers to handle the error
       }
     },
 
@@ -227,6 +349,7 @@ export const useNodeStore = defineStore('node', {
     openDrawer(close_function?: () => void) {
       console.log('openDrawer in column-store.ts')
       if (this.isDrawerOpen) {
+        console.log('pushing data')
         this.pushNodeData()
       }
       if (close_function) {
@@ -268,12 +391,6 @@ export const useNodeStore = defineStore('node', {
       this.inputCode = newCode
     },
 
-    resetRunResults() {
-      this.runNodeResultMap = new Map<number, NodeResult>()
-      this.runResults = {}
-      this.currentRunResult = null
-      this.nodeDescriptions = {}
-    },
     showLogViewer() {
       console.log('triggered show log viewer')
       this.isShowingLogViewer = this.displayLogViewer;
@@ -288,16 +405,6 @@ export const useNodeStore = defineStore('node', {
       this.isShowingLogViewer = !this.isShowingLogViewer;
     },
 
-    insertRunResult(runResult: RunInformation, showResult: boolean = true) {
-      this.currentRunResult = runResult
-      this.runResults[runResult.flow_id] = runResult
-      this.showFlowResult = showResult
-      this.isShowingLogViewer = this.displayLogViewer && showResult
-      runResult.node_step_result.forEach((nodeResult) => {
-        this.runNodeResultMap.set(nodeResult.node_id, nodeResult)
-      })
-      this.resultVersion++
-    },
 
     getRunResult(flow_id: number): RunInformation | null {
       return this.runResults[flow_id] || null
@@ -354,7 +461,12 @@ export const useNodeStore = defineStore('node', {
       console.log('Automatically pushing the node data ')
       this.pushNodeData()
       this.previous_node_id = this.node_id
-      this.flow_id = flow_id
+      
+      // Update flow_id and store in session storage
+      if (this.flow_id !== flow_id) {
+        this.setFlowId(flow_id);
+      }
+      
       this.node_id = node_id
     },
     getCurrentNodeData(): NodeData | null {
@@ -403,7 +515,7 @@ export const useNodeStore = defineStore('node', {
           },
         }
         )
-        const downstreamNodeIds = await loadDownstreamNodeIds(inputData.value.node_id)
+        const downstreamNodeIds = await loadDownstreamNodeIds(this.flow_id, inputData.value.node_id)
         downstreamNodeIds.map((nodeId) => {
           this.validateNode(nodeId)
         }
@@ -417,7 +529,7 @@ export const useNodeStore = defineStore('node', {
     },
     updateNodeDescription(nodeId: number, description: string) {
       // Update cache first for immediate feedback
-      this.cacheNodeDescriptionDict(nodeId, description);
+      this.cacheNodeDescriptionDict(this.flow_id, nodeId, description);
     }
   },
 })

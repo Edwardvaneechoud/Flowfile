@@ -16,7 +16,7 @@
       />
     </generic-node-settings>
   </div>
-  <CodeLoader v-else />
+  <code-loader v-else />
 </template>
 
 <script lang="ts" setup>
@@ -38,10 +38,9 @@ const nodeSelect = ref<NodeSelect>(createNodeSelect().value);
 const dataLoaded = ref(false);
 
 const loadNodeData = async (nodeId: number) => {
-  dataLoaded.value = false;
   const result = await nodeStore.getNodeData(nodeId, false);
+  console.log("got result data");
   if (result) {
-    dataLoaded.value = true;
     const main_input = result.main_input;
     try {
       if (result.setting_input && main_input && result.setting_input.is_setup) {
@@ -63,6 +62,7 @@ const loadNodeData = async (nodeId: number) => {
       }
     }
   }
+  dataLoaded.value = true;
 };
 
 const pushNodeData = async () => {

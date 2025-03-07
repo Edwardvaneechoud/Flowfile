@@ -3,7 +3,12 @@ import polars as pl
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 
+import pytest
 
+from tests.utils import is_docker_available
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_read_airbyte():
     try:
         settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 110.87272727272727, 'pos_y': 298.4,

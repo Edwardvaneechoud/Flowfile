@@ -23,7 +23,17 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, Ref, defineExpose, defineProps, watch, onMounted, nextTick, computed } from "vue";
+import {
+  ref,
+  Ref,
+  defineExpose,
+  defineProps,
+  watch,
+  onMounted,
+  nextTick,
+  computed,
+  onBeforeUnmount,
+} from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
 import FunctionEditor from "./FunctionEditor.vue";
@@ -75,7 +85,7 @@ watch(
   code,
   debounce((newCode: string) => {
     if (instantFuncResultsRef.value) {
-      instantFuncResultsRef.value.getInstantFuncResults(newCode);
+      instantFuncResultsRef.value.getInstantFuncResults(newCode, nodeStore.flow_id);
     }
   }, 1500),
 );
@@ -88,7 +98,7 @@ const handleNodeSelected = (nodeLabel: string) => {
 onMounted(async () => {
   await nextTick();
   if (instantFuncResultsRef.value) {
-    instantFuncResultsRef.value.getInstantFuncResults(props.editorString);
+    instantFuncResultsRef.value.getInstantFuncResults(props.editorString, nodeStore.flow_id);
   }
 });
 

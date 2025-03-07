@@ -70,7 +70,8 @@ class NodeStep:
             return
 
         def error_callback(e: Exception) -> List:
-            logger.warn(e)
+            logger.warning(e)
+
             self.node_settings.setup_errors = True
             return []
 
@@ -438,7 +439,7 @@ class NodeStep:
             self.node_schema.result_schema = resulting_data.schema
 
         except Exception as e:
-            logger.warn(f"Error with step {self.__name__}")
+            logger.warning(f"Error with step {self.__name__}")
             logger.error(str(e))
             self.results.errors = str(e)
             self.node_stats.has_run = False
@@ -598,8 +599,8 @@ class NodeStep:
             if self.results.errors is None:
                 self.node_stats.has_run = True
         except Exception as e:
-            logger.warn(str(e))
-            logger.warn(f"Error with step {self.__name__}")
+            logger.warning(str(e))
+            logger.warning(f"Error with step {self.__name__}")
             self.results.errors = str(e)
             self.node_stats.has_run = False
 

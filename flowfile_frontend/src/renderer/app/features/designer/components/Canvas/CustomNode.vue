@@ -75,8 +75,6 @@ const editMode = ref<boolean>(false);
 const CHAR_LIMIT = 100;
 
 const onTitleClick = (event: MouseEvent) => {
-  console.log("Double clicked");
-  console.log(event.clientX, event.clientY);
   toggleEditMode(true);
   mouseX.value = event.clientX;
   mouseY.value = event.clientY;
@@ -198,7 +196,13 @@ onMounted(async () => {
   await getNodeDescription();
 
   watch(
-    () => nodeStore.nodeDescriptions[props.data.id],
+    () => {
+      const flowId = nodeStore.flow_id; // Get the current flow ID
+      const nodeId = props.data.id; // Get the node ID
+
+      // Access the nested description
+      return nodeStore.nodeDescriptions[flowId]?.[nodeId];
+    },
     (newDescription) => {
       if (newDescription !== undefined) {
         description.value = newDescription;

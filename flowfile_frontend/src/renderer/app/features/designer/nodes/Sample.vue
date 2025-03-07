@@ -59,7 +59,6 @@ const openDrawer = async () => {
   if (nodeStore.node_id === props.nodeId && drawerOpen) {
     return;
   }
-  console.log("test", childComp.value);
   if (childComp.value) {
     childComp.value.loadNodeData(props.nodeId);
     nodeStore.openDrawer(closeOnDrawer);

@@ -1,43 +1,24 @@
 <template>
-  {{ nodeStore.flow_id }}
   <div class="action-buttons">
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
-      @click="openSaveModal"
-    >
-      Save
-    </el-button>
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
-      @click="modalVisibleForOpen = true"
-    >
-      Open
-    </el-button>
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
-      @click="modalVisibleForCreate = true"
-    >
-      Create
-    </el-button>
-    <run-button ref="runButton" :flow-id="1" />
-    <!-- New Settings Button -->
-    <el-button
-      size="small"
-      style="background-color: rgb(92, 92, 92); color: white"
-      round
-      @click="openSettingsModal"
-    >
-      Settings
-    </el-button>
+    <button class="action-btn" @click="openSaveModal">
+      <span class="material-icons btn-icon">save</span>
+      <span class="btn-text">Save</span>
+    </button>
+    <button class="action-btn" @click="modalVisibleForOpen = true">
+      <span class="material-icons btn-icon">folder_open</span>
+      <span class="btn-text">Open</span>
+    </button>
+    <button class="action-btn" @click="modalVisibleForCreate = true">
+      <span class="material-icons btn-icon">add_circle_outline</span>
+      <span class="btn-text">Create</span>
+    </button>
+    <button class="action-btn" @click="openSettingsModal">
+      <span class="material-icons btn-icon">settings</span>
+      <span class="btn-text">Settings</span>
+    </button>
+    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
   </div>
 
-  <!-- Existing dialogs for Open, Save, Create -->
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
     <file-browser :allowed-file-types="['flowfile']" mode="open" @file-selected="openFlowAction" />
   </el-dialog>
@@ -53,7 +34,7 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="50%">
+  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%">
     <file-browser
       :allowed-file-types="['flowfile']"
       mode="create"
@@ -62,7 +43,6 @@
     />
   </el-dialog>
 
-  <!-- New Settings Modal -->
   <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
     <div v-if="flowSettings">
       <div class="settings-modal-content">
@@ -92,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps, ref, onMounted, defineExpose } from "vue";
+import { ref, onMounted, defineExpose, computed, watch } from "vue";
 import { saveFlow } from "./utils";
 import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
@@ -112,7 +92,7 @@ const nodeStore = useNodeStore();
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
-const modalVisibleForSettings = ref(false); // New modal for settings
+const modalVisibleForSettings = ref(false);
 
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
@@ -123,26 +103,27 @@ const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
 const loadFlowSettings = async () => {
+  if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
+
   flowSettings.value = await getFlowSettings(nodeStore.flow_id);
   if (!flowSettings.value) return;
+
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
   nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
-  if (flowSettings.value.is_running) {
-    if (runButton.value) {
-      nodeStore.isRunning = true;
-      runButton.value.startPolling(runButton.value.checkRunStatus);
-    }
-  } else {
-    if (runButton.value) {
-      nodeStore.isRunning = false;
 
-      runButton.value.stopPolling();
-      updateRunStatus(nodeStore.flow_id, nodeStore, false);
-    }
+  if (!runButton.value) return;
+
+  if (flowSettings.value.is_running) {
+    nodeStore.isRunning = true;
+    runButton.value.startPolling(runButton.value.checkRunStatus);
+  } else {
+    nodeStore.isRunning = false;
+    runButton.value.stopPolling();
+    updateRunStatus(nodeStore.flow_id, nodeStore, false);
   }
 };
 
-const pushFlowSettings = async (execution_mode: any) => {
+const pushFlowSettings = async () => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
     nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
@@ -158,7 +139,7 @@ const fileBrowserRef = ref<{
 } | null>(null);
 
 const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
-  await saveFlow(1, flowPath);
+  await saveFlow(nodeStore.flow_id, flowPath);
   modalVisibleForSave.value = false;
 };
 
@@ -174,11 +155,10 @@ function openFlowAction(inputSelectedFile: FileInfo | null) {
 }
 
 const openSaveModal = async () => {
-  let settings = await getFlowSettings(nodeStore.flow_id);
+  const settings = await getFlowSettings(nodeStore.flow_id);
   if (!settings) return;
-  if (settings && settings.path) {
-    savePath.value = settings.path;
-  }
+
+  savePath.value = settings.path;
   modalVisibleForSave.value = true;
   await fileBrowserRef.value?.handleInitialFileSelection();
 };
@@ -187,25 +167,39 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
 
-  let createdFlowId = await createFlow(normalizedPath);
+  const createdFlowId = await createFlow(normalizedPath);
   await saveFlow(createdFlowId, normalizedPath);
-  emit("refreshFlow");
+
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;
+
+  emit("refreshFlow");
 };
 
 const openSettingsModal = () => {
   modalVisibleForSettings.value = true;
 };
 
+watch(
+  () => nodeStore.flow_id,
+  async (newId, oldId) => {
+    if (newId !== oldId && newId > 0) {
+      await loadFlowSettings();
+    }
+  },
+);
+
 defineExpose({
   loadFlowSettings,
   openCreateDialog: () => (modalVisibleForCreate.value = true),
   openOpenDialog: () => (modalVisibleForOpen.value = true),
+  openSaveModal: () => (modalVisibleForSave.value = true),
 });
 
 onMounted(async () => {
-  await loadFlowSettings();
+  if (nodeStore.flow_id && nodeStore.flow_id > 0) {
+    await loadFlowSettings();
+  }
 });
 </script>
 
@@ -214,15 +208,72 @@ onMounted(async () => {
   padding-left: 20px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   height: 50px;
+  font-family:
+    "Inter",
+    "Roboto",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
 }
 
-/* Styles for the settings modal */
-.settings-modal-content {
-  padding: 10px;
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  height: 36px;
+  background-color: rgba(3, 11, 27, 0.05); /* Slightly darker background */
+  border: 1px solid rgba(16, 24, 40, 0.12); /* Darker border */
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: rgb(2, 27, 45); /* Darker text color */
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(1, 5, 13, 0.08); /* Slightly darker shadow */
 }
+
+.action-btn:hover {
+  background-color: rgba(16, 24, 40, 0.08); /* Darker hover background */
+  border-color: rgba(16, 24, 40, 0.18); /* Darker hover border */
+}
+
+.action-btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.btn-icon {
+  font-size: 16px;
+  color: rgb(2, 27, 45); /* Darker icon color */
+}
+
+.btn-text {
+  white-space: nowrap;
+}
+
+.settings-modal-content {
+  padding: 16px;
+  font-family:
+    "Inter",
+    "Roboto",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}
+
 .form-group {
-  margin-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(16, 24, 40, 0.9);
 }
 </style>

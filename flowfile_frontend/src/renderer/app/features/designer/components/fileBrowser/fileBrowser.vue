@@ -260,7 +260,6 @@ const handleInitialFileSelection = async () => {
     // Get the directory path from the full file path
     const directoryPath = path.dirname(props.initialFilePath);
     const fileName = path.basename(props.initialFilePath);
-    console.log(fileName);
 
     // Navigate to the directory
     await navigateTo(directoryPath);

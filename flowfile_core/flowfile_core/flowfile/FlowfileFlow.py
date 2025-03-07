@@ -199,6 +199,7 @@ class EtlGraph:
         for node in self.nodes:
             if hasattr(node.setting_input, 'flow_id'):
                 node.setting_input.flow_id = new_id
+        self.flow_settings.flow_id = new_id
 
     def __repr__(self):
         """
@@ -225,7 +226,7 @@ class EtlGraph:
 
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
         def _func(fl: FlowfileTable):
-            return fl.do_pivot(pivot_settings.pivot_input)
+            return fl.do_pivot(pivot_settings.pivot_input, self.flow_logger.get_node_logger(pivot_settings.node_id))
 
         self.add_node_step(node_id=pivot_settings.node_id,
                            function=_func,
@@ -235,12 +236,11 @@ class EtlGraph:
         node = self.get_node(pivot_settings.node_id)
 
         def schema_callback():
-            input_node = node.singular_main_input
-            input_data = input_node.get_resulting_data()
-            input_data.lazy = True
-            input_lf = input_data.data_frame
-            node_input_schema = input_data.calculate_schema()
-            return pre_calculate_pivot_schema(node_input_schema, pivot_settings.pivot_input, input_lf=input_lf)
+            input_data = node.singular_main_input.get_resulting_data()  # get from the previous step the data
+            input_data.lazy = True  # ensure the dataset is lazy
+            input_lf = input_data.data_frame  # get the lazy frame
+            node_input_schema = input_data.schema  # TODO REMOVE
+            return pre_calculate_pivot_schema(input_data.schema, pivot_settings.pivot_input, input_lf=input_lf)
 
         node.schema_callback = schema_callback
 
@@ -884,6 +884,14 @@ class EtlGraph:
             return list(set([col for col in self._input_cols if
                              col in [table_col.name for table_col in self._input_data.schema]]))
 
+    @property
+    def execution_mode(self) -> str:
+        return self.flow_settings.execution_mode
+
+    @execution_mode.setter
+    def execution_mode(self, mode: str):
+        self.flow_settings.execution_mode = mode
+
     def run_graph(self) -> RunInformation:
         if self.flow_settings.is_running:
             raise Exception('Flow is already running')
@@ -1023,9 +1031,7 @@ class EtlGraph:
             node.remove_cache()
 
     def save_flow(self, flow_path: str):
-        print('saving the flow 1')
         with open(flow_path, 'wb') as f:
-            print('saving the flow')
             pickle.dump(self.get_node_storage(), f)
         self.flow_settings.path = flow_path
 

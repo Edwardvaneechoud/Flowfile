@@ -3,12 +3,6 @@ import { ref, onUnmounted, nextTick, onMounted, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { flowfileCorebaseURL } from "../../../../../../config/constants";
 
-// Props
-interface Props {
-  flowId: number;
-}
-const props = defineProps<Props>();
-
 // Store & Refs
 const nodeStore = useNodeStore();
 const logs = ref<string>("");
@@ -40,7 +34,7 @@ const startStreamingLogs = () => {
 
   logs.value = "";
   console.log("Starting log streaming");
-  const eventSource = new EventSource(`${flowfileCorebaseURL}logs/${props.flowId}`);
+  const eventSource = new EventSource(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`);
   eventSourceRef.value = eventSource;
 
   let hasReceivedMessage = false;
@@ -70,7 +64,6 @@ const startStreamingLogs = () => {
 const stopStreamingLogs = () => {
   eventSourceRef.value?.close();
   eventSourceRef.value = null;
-  console.log("Log streaming stopped");
 };
 
 // UI Handlers

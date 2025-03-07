@@ -59,7 +59,6 @@ watchEffect(() => {
     activeWatchStopHandle = watch(
       googleSheet,
       () => {
-        console.log("googleSheet has changed and condition is met.");
         isDirty.value = true;
       },
       { deep: true },
@@ -77,7 +76,6 @@ const loadNodeData = async (nodeId: number) => {
     } else if (nodeExternalSource.value?.identifier == "google_sheet") {
       googleSheet.value = nodeExternalSource.value?.source_settings as GoogleSheet;
       selectedExternalSource.value = "google_sheet";
-      console.log("donig this");
     }
   typeSelected.value = true;
   dataLoaded.value = true;
@@ -85,7 +83,6 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const loadTemplateValue = () => {
-  console.log(selectedExternalSource.value);
   if (selectedExternalSource.value === "sample_users") {
     sampleUsers.value = get_template_source_type("SAMPLE_USERS") as SampleUsers;
     if (nodeExternalSource.value) {
@@ -94,7 +91,6 @@ const loadTemplateValue = () => {
     isDirty.value = true;
   } else if (selectedExternalSource.value === "google_sheet") {
     if (!googleSheet.value) {
-      console.log("this is the google sheet");
       googleSheet.value = get_template_source_type("GOOGLE_SHEET") as GoogleSheet;
     }
     if (nodeExternalSource.value) {
@@ -109,21 +105,15 @@ const loadTemplateValue = () => {
 };
 
 const pushNodeDataAction = async () => {
-  console.log("pushing node data");
   if (nodeExternalSource.value && isDirty.value) {
-    console.log(nodeExternalSource.value);
     nodeExternalSource.value.is_setup = true;
     nodeExternalSource.value.source_settings.fields = [];
     isDirty.value = false;
   }
-  console.log(nodeExternalSource.value);
   await nodeStore.updateSettings(nodeExternalSource);
-  console.log("pushed");
   if (nodeExternalSource.value) {
-    console.log("pushing");
     await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
   }
-  console.log("pushed");
 };
 
 const pushNodeData = async () => {
