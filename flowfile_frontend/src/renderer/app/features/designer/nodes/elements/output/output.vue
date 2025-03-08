@@ -231,7 +231,7 @@ async function loadNodeData(nodeId: number) {
     // Provide a default configuration that matches NodeBase interface
     nodeOutput.value = {
       output_settings: createDefaultOutputSettings(),
-      flow_id: 1,
+      flow_id: nodeStore.flow_id,
       node_id: nodeId,
       cache_results: false,
       pos_x: 0,

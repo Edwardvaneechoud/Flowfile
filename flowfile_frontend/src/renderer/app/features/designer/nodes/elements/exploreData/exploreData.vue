@@ -40,7 +40,7 @@ const loadData = (graphicWalkerData: GraphicWalkerInput) => {
 
 const loadNodeData = async (nodeId: number) => {
   globalNodeId.value = nodeId;
-  nodeGraphicWalker.value = await fetchGraphicWalkerData(1, nodeId);
+  nodeGraphicWalker.value = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
   graphicWalkerInput.value = nodeGraphicWalker.value.graphic_walker_input;
   loadData(graphicWalkerInput.value);
   dataLoaded.value = true;
