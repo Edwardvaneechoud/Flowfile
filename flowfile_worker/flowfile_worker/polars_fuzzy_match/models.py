@@ -1,5 +1,8 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Literal
+
+FuzzyTypeLiteral = Literal['levenshtein','jaro', 'jaro_winkler', 'hamming', 'damerau_levenshtein', 'indel']
+
 
 @dataclass
 class JoinMap:

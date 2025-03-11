@@ -70,6 +70,7 @@ def create_fuzzy_data() -> models.FuzzyJoinInput:
         fuzzy_maps=fuzzy_maps
     )
 
+
 @pytest.fixture
 def create_grouper_data():
     df = pl.DataFrame(
@@ -79,6 +80,7 @@ def create_grouper_data():
         }
     )
     return df.select(graph_solver(pl.col("from"), pl.col("to")).alias('group')).lazy()
+
 
 @pytest.mark.worker
 def test_external_package(create_grouper_data):
@@ -96,6 +98,7 @@ def test_external_package(create_grouper_data):
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
 
+
 @pytest.mark.worker
 def test_add_fuzzy_join(create_fuzzy_data):
     load = create_fuzzy_data
@@ -110,7 +113,7 @@ def test_add_fuzzy_join(create_fuzzy_data):
     lf_test = base64.decodebytes(status.results.encode())
     pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
 
-@pytest.mark.worker
+
 def test_sample():
     lf = pl.LazyFrame({'value': [i for i in range(1000)]})
     serialized_df = lf.serialize()
