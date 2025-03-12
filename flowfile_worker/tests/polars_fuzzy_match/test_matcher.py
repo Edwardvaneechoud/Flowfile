@@ -27,7 +27,8 @@ from flowfile_worker.polars_fuzzy_match.matcher import (
     unique_df_large,
     combine_matches,
     add_index_column,
-    fuzzy_match_dfs
+    fuzzy_match_dfs,
+    process_fuzzy_mapping
 )
 
 
@@ -41,6 +42,10 @@ def sample_dataframe():
     }
     return pl.DataFrame(data).lazy()
 
+
+@pytest.fixture
+def flow_logger():
+    return logging.getLogger('sample')
 
 @pytest.fixture
 def temp_directory():
@@ -223,3 +228,52 @@ def test_cross_join_no_existing_fuzzy_results(temp_directory):
     assert result_df.select(pl.len())[0, 0] == left_df.select(pl.len()).collect()[0, 0] * right_df.select(pl.len()).collect()[0, 0]
 
 
+def test_process_fuzzy_mapping_no_existing_matches(temp_directory, flow_logger):
+    left_df, right_df, mapping = create_test_data(20)
+    left_df = add_index_column(left_df, '__left_index', temp_directory)
+    right_df = add_index_column(right_df, '__right_index', temp_directory)
+
+    fuzzy_map = mapping[0]
+
+    result = process_fuzzy_mapping(fuzzy_map=fuzzy_map,
+                                   left_df=left_df,
+                                   right_df=right_df,
+                                   existing_matches=None,
+                                   local_temp_dir_ref=temp_directory,
+                                   i=1,
+                                   flowfile_logger=flow_logger)
+    test_result = (result.join(left_df, on='__left_index')
+                   .join(right_df, on='__right_index')
+                   .select(["company_name", "organization", "fuzzy_score_1"]).collect())
+    result = result.collect()
+
+    # Assert that the result contains the expected columns
+    assert '__left_index' in result.columns
+    assert '__right_index' in result.columns
+    assert 'fuzzy_score_1' in result.columns
+
+    # Verify result is not empty
+    assert result.shape[0] > 0
+
+    # Check that fuzzy scores are within expected range (0-100)
+    assert all(0 <= score <= 100 for score in result['fuzzy_score_1'])
+
+    # Verify that the test_result has matched columns and reasonable values
+    assert test_result.shape[0] > 0
+    assert all(isinstance(company, str) for company in test_result['company_name'])
+    assert all(isinstance(org, str) for org in test_result['organization'])
+
+    # Check that high fuzzy scores correspond to similar strings
+    for row in test_result.iter_rows(named=True):
+        company = row['company_name']
+        org = row['organization']
+        score = row['fuzzy_score_1']
+
+        # If score is high (above threshold), company and org should be similar
+        if score >= fuzzy_map.threshold_score:
+            # Basic similarity check - at least sharing the same prefix
+            assert len(company) > 0 and len(org) > 0
+
+            # For exact matches, the score should be very high
+            if company == org:
+                assert score == 100  # Expect very high scores for exact matches

@@ -78,25 +78,43 @@ def generate_large_scale_data(
         for i, addr in enumerate(addresses)
     ]
 
+    # Generate countries (not very unique - limited set)
+    countries = ["USA", "Canada", "UK", "Germany", "France", "Italy", "Japan", "China", "India", "Brazil"]
+    left_countries = [countries[i % len(countries)] for i in range(size)]
+    right_countries = []
+    for i in range(size):
+        if random.random() < match_rate:
+            # This one should match with possible typos
+            country = left_countries[i]
+            if random.random() < error_rate:
+                # Add some typos occasionally
+                country = introduce_typos(country, error_rate)
+            right_countries.append(country)
+        else:
+            # Pick a different country
+            different_country_index = (i % len(countries) + random.randint(1, len(countries) - 1)) % len(countries)
+            right_countries.append(countries[different_country_index])
+
     # Create left dataframe data
     left_data = {
         "id": list(range(1, size + 1)),
         "company_name": companies,
-        "address": addresses
+        "address": addresses,
+        "country": left_countries
     }
 
     # Create right dataframe data
     right_data = {
         "id": list(range(1001, size + 1001)),
         "organization": right_companies,
-        "location": right_addresses
+        "location": right_addresses,
+        "country_code": right_countries
     }
 
     return {
         "left_data": left_data,
         "right_data": right_data
     }
-
 
 def generate_edge_case_data() -> Dict[str, Dict[str, Dict[str, List[Any]]]]:
     """
@@ -220,6 +238,34 @@ def create_fuzzy_mappings(
     )
 
 
+def create_fuzzy_maps():
+    # Create the fuzzy mappings
+    fuzzy_mappings = [
+        create_fuzzy_mappings(
+            left_col="company_name",
+            right_col="organization",
+            fuzzy_type="levenshtein",
+            threshold_score=80.0,  # 20% threshold corresponds to 0.8 reversed (80% similarity)
+            perc_unique=1.0
+        ),
+        create_fuzzy_mappings(
+            left_col="address",
+            right_col="location",
+            fuzzy_type="levenshtein",
+            threshold_score=80.0,  # 20% threshold corresponds to 0.8 reversed (80% similarity)
+            perc_unique=1.2
+        ),
+        create_fuzzy_mappings(
+            left_col="country",
+            right_col="country_code",
+            fuzzy_type="jaro_winkler",
+            threshold_score=90.0,  # Higher threshold for country codes as they should be more exact
+            perc_unique=0.5  # Lower uniqueness factor since countries are not very unique
+        )
+    ]
+    return fuzzy_mappings
+
+
 # Combined utility functions (for backward compatibility)
 def create_test_data(
         size: int = 10000,
@@ -244,25 +290,7 @@ def create_test_data(
     left_df = create_lazy_frames(data["left_data"])
     right_df = create_lazy_frames(data["right_data"])
 
-    # Create the fuzzy mappings
-    fuzzy_mappings = [
-        create_fuzzy_mappings(
-            left_col="company_name",
-            right_col="organization",
-            fuzzy_type="jaro_winkler",
-            threshold_score=20.0,  # 20% threshold corresponds to 0.8 reversed (80% similarity)
-            perc_unique=1.0
-        ),
-        create_fuzzy_mappings(
-            left_col="address",
-            right_col="location",
-            fuzzy_type="levenshtein",
-            threshold_score=30.0,  # 30% threshold corresponds to 0.7 reversed (70% similarity)
-            perc_unique=1.2
-        )
-    ]
-
-    return left_df, right_df, fuzzy_mappings
+    return left_df, right_df, create_fuzzy_maps()
 
 
 def create_edge_case_test_data() -> Dict[str, Tuple[pl.LazyFrame, pl.LazyFrame, List[FuzzyMapping]]]:
@@ -304,21 +332,18 @@ def create_edge_case_test_data() -> Dict[str, Tuple[pl.LazyFrame, pl.LazyFrame, 
                 create_fuzzy_mappings(
                     left_col="name",
                     right_col="full_name",
-                    threshold_score=20.0
                 ),
                 create_fuzzy_mappings(
                     left_col="email",
                     right_col="contact_email",
                     fuzzy_type="levenshtein",
                     threshold_score=30.0,
-                    perc_unique=1.2
                 ),
                 create_fuzzy_mappings(
                     left_col="phone",
                     right_col="contact_phone",
                     fuzzy_type="exact",
                     threshold_score=0.0,
-                    perc_unique=1.5
                 )
             ]
         elif case_name == "null_values":

@@ -1,5 +1,5 @@
 import polars as pl
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 import tempfile
 
 from flowfile_worker.polars_fuzzy_match.process import calculate_and_parse_fuzzy, process_fuzzy_frames
@@ -105,49 +105,124 @@ def add_index_column(df: pl.LazyFrame, column_name: str, tempdir: str):
     return cache_polars_frame_to_temp(df.with_row_index(name=column_name), tempdir)
 
 
-def fuzzy_match_dfs(left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: List[FuzzyMapping],
-                    flowfile_logger: Logger) -> pl.DataFrame:
+def process_fuzzy_mapping(
+        fuzzy_map: FuzzyMapping,
+        left_df: pl.LazyFrame,
+        right_df: pl.LazyFrame,
+        existing_matches: Optional[pl.LazyFrame],
+        local_temp_dir_ref: str,
+        i: int,
+        flowfile_logger: Logger
+) -> pl.LazyFrame:
+    """
+    Process a single fuzzy mapping to generate matching dataframes.
 
-    matching_dfs = []
+    Args:
+        fuzzy_map: The fuzzy mapping configuration containing match columns and thresholds
+        left_df: Left dataframe with index column
+        right_df: Right dataframe with index column
+        existing_matches: Previously computed matches (or None)
+        local_temp_dir_ref: Temporary directory reference for caching interim results
+        matching_dfs: List of matching dataframes (will be modified)
+        i: Index of the current fuzzy mapping
+        flowfile_logger: Logger instance for progress tracking
+
+    Returns:
+        tuple: A tuple containing:
+            - updated existing_matches (Optional[pl.LazyFrame]): The latest matches for filtering
+            - updated matching_dfs (List[pl.LazyFrame]): The list of all matching dataframes
+    """
+    # Determine join strategy based on existing matches
+    if existing_matches is not None:
+        flowfile_logger.info(f'Filtering existing fuzzy matches for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
+        cross_join_frame = cross_join_filter_existing_fuzzy_results(
+            left_df=left_df,
+            right_df=right_df,
+            existing_matches=existing_matches,
+            left_col_name=fuzzy_map.left_col,
+            right_col_name=fuzzy_map.right_col
+        )
+    else:
+        flowfile_logger.info(f'Performing fuzzy match for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
+        cross_join_frame = cross_join_no_existing_fuzzy_results(
+            left_df=left_df,
+            right_df=right_df,
+            left_col_name=fuzzy_map.left_col,
+            right_col_name=fuzzy_map.right_col,
+            temp_dir_ref=local_temp_dir_ref
+        )
+
+    # Calculate fuzzy match scores
+    flowfile_logger.info(f'Calculating fuzzy match for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
+    matching_df = calculate_and_parse_fuzzy(
+        mapping_table=cross_join_frame,
+        left_col_name=fuzzy_map.left_col,
+        right_col_name=fuzzy_map.right_col,
+        fuzzy_method=fuzzy_map.fuzzy_type,
+        th_score=fuzzy_map.reversed_threshold_score
+    )
+    return matching_df.rename({'s': f'fuzzy_score_{i}'})
+
+
+def fuzzy_match_dfs(
+        left_df: pl.LazyFrame,
+        right_df: pl.LazyFrame,
+        fuzzy_maps: List[FuzzyMapping],
+        flowfile_logger: Logger
+) -> pl.DataFrame:
+    """
+    Perform fuzzy matching between two dataframes using multiple fuzzy mapping configurations.
+
+    Args:
+        left_df: Left dataframe to be matched
+        right_df: Right dataframe to be matched
+        fuzzy_maps: List of fuzzy mapping configurations
+        flowfile_logger: Logger instance for tracking progress
+
+    Returns:
+        pl.DataFrame: The final matched dataframe with all fuzzy scores
+    """
+    matching_dfs: List[pl.LazyFrame] = []
     local_temp_dir = tempfile.TemporaryDirectory()
     local_temp_dir_ref = local_temp_dir.name
+
+    # Add index columns to both dataframes
     left_df = add_index_column(left_df, '__left_index', local_temp_dir_ref)
     right_df = add_index_column(right_df, '__right_index', local_temp_dir_ref)
-    existing_matches: Optional[pl.LazyFrame] = None
-    for i, fuzzy_map in enumerate(fuzzy_maps):
-        if existing_matches is not None:
-            flowfile_logger.info(f'Filtering existing fuzzy matches for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
-            cross_join_frame = cross_join_filter_existing_fuzzy_results(left_df, right_df, existing_matches,
-                                                                        left_col_name=fuzzy_map.left_col,
-                                                                        right_col_name=fuzzy_map.right_col)
 
-        else:
-            flowfile_logger.info(f'Performing fuzzy match for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
-            cross_join_frame = cross_join_no_existing_fuzzy_results(left_df, right_df,
-                                                                    left_col_name=fuzzy_map.left_col,
-                                                                    right_col_name=fuzzy_map.right_col,
-                                                                    temp_dir_ref=local_temp_dir_ref)
-        flowfile_logger.info(f'Calculating fuzzy match for {fuzzy_map.left_col} and {fuzzy_map.right_col}')
-        matching_df = calculate_and_parse_fuzzy(cross_join_frame, left_col_name=fuzzy_map.left_col,
-                                                right_col_name=fuzzy_map.right_col, fuzzy_method=fuzzy_map.fuzzy_type,
-                                                th_score=fuzzy_map.reversed_threshold_score)
-        matching_df = matching_df.rename({'s': f'fuzzy_score_{i}'})
-        if fuzzy_map.perc_unique > 1.3:
-            existing_matches = matching_df
-            matching_dfs = [matching_df]
-        else:
-            if existing_matches is not None:
-                existing_matches = matching_df
-            matching_dfs.append(matching_df)
+    existing_matches: Optional[pl.LazyFrame] = None
+
+    # Process each fuzzy mapping
+    for i, fuzzy_map in enumerate(fuzzy_maps):
+        existing_matches = process_fuzzy_mapping(
+            fuzzy_map=fuzzy_map,
+            left_df=left_df,
+            right_df=right_df,
+            existing_matches=existing_matches,
+            local_temp_dir_ref=local_temp_dir_ref,
+            i=i,
+            flowfile_logger=flowfile_logger
+        )
+        matching_dfs.append(existing_matches)
+
+    # Combine all matches
     if len(matching_dfs) > 1:
         flowfile_logger.info('Combining fuzzy matches')
         all_mappings_df = combine_matches(matching_dfs, local_temp_dir_ref)
     else:
         flowfile_logger.info('Caching fuzzy matches')
         all_mappings_df = cache_polars_frame_to_temp(matching_dfs[0], local_temp_dir_ref)
+
+    # Join matches with original dataframes
     flowfile_logger.info('Joining fuzzy matches with original dataframes')
-    output_df = collect_lazy_frame((left_df.join(all_mappings_df, on='__left_index').join(right_df, on='__right_index')
-                 .drop('__right_index', '__left_index')))
+    output_df = collect_lazy_frame(
+        (left_df.join(all_mappings_df, on='__left_index')
+         .join(right_df, on='__right_index')
+         .drop('__right_index', '__left_index'))
+    )
+
+    # Clean up temporary files
     flowfile_logger.info('Cleaning up temporary files')
     local_temp_dir.cleanup()
+
     return output_df
