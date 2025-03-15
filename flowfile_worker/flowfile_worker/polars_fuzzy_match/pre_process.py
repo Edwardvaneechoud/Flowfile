@@ -180,6 +180,8 @@ def pre_process_for_fuzzy_matching(left_df: pl.LazyFrame, right_df: pl.LazyFrame
     flowfile_logger.info('Optimizing data and settings for fuzzy matching')
     left_df_len = calculate_df_len(left_df)
     right_df_len = calculate_df_len(right_df)
+    if left_df_len == 0 or right_df_len == 0:
+        return left_df, right_df, fuzzy_maps
     fuzzy_maps = fill_perc_unique_in_fuzzy_maps(left_df, right_df, fuzzy_maps, flowfile_logger, left_df_len,
                                                 right_df_len)
     fuzzy_maps = determine_order_of_fuzzy_maps(fuzzy_maps)

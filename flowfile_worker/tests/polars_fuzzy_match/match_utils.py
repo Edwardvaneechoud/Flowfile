@@ -419,3 +419,14 @@ def generate_small_fuzzy_test_mappings() -> List[FuzzyMapping]:
             threshold_score=30.0
         )
     ]
+
+
+def generate_small_fuzzy_test_data() -> Tuple[pl.DataFrame, pl.DataFrame, List[FuzzyMapping]]:
+    """
+    Generates small test data for fuzzy matching.
+    """
+
+    left_df = generate_small_fuzzy_test_data_left()
+    right_df = generate_small_fuzzy_test_data_right()
+    fuzzy_mappings = generate_small_fuzzy_test_mappings()
+    return left_df, right_df, fuzzy_mappings

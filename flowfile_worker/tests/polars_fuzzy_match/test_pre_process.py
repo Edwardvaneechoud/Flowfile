@@ -27,7 +27,8 @@ from flowfile_worker.polars_fuzzy_match.pre_process import (
     determine_order_of_fuzzy_maps,
     calculate_uniqueness_rate,
     determine_need_for_aggregation,
-    aggregate_output
+    aggregate_output,
+    pre_process_for_fuzzy_matching
 )
 
 
@@ -116,3 +117,21 @@ def test_aggregate_output():
     right_n_vals = right_df.select(fuzzy_maps[2].right_col).unique().select(pl.len()).collect()[0, 0]
     assert left_df_unique.select(pl.len()).collect()[0, 0] == left_n_vals
     assert right_df_unique.select(pl.len()).collect()[0, 0] == right_n_vals
+
+
+def test_process_fuzzy_mapping_no_uniqueness(flow_logger):
+    left_df, right_df, mapping = create_test_data(100000)
+    mapping = mapping[2:]
+
+    left_df_prep, right_df_prep, mapping = pre_process_for_fuzzy_matching(left_df, right_df, mapping, flow_logger)
+    assert left_df_prep.collect().shape[0] == left_df.select(mapping[0].left_col).unique().collect().shape[0]
+    assert right_df_prep.collect().shape[0] == right_df.select(mapping[0].right_col).unique().collect().shape[0]
+    assert left_df_prep.collect().shape[0] < left_df.select(mapping[0].left_col).collect().shape[0]
+    assert right_df_prep.collect().shape[0] < right_df.select(mapping[0].right_col).collect().shape[0]
+
+def test_process_fuzzy_mapping_uniqueness(flow_logger):
+    left_df, right_df, mapping = create_test_data(100000)
+    left_df_prep, right_df_prep, mapping = pre_process_for_fuzzy_matching(left_df, right_df, mapping, flow_logger)
+    assert left_df_prep.collect().shape[0] == left_df.select(pl.first()).collect().shape[0]
+    assert right_df_prep.collect().shape[0] == right_df.select(pl.first()).collect().shape[0]
+

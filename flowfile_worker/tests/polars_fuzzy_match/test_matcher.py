@@ -10,13 +10,14 @@ except NameError:
     sys.path.append(os.path.dirname(os.path.abspath('flowfile_worker/tests/polars_fuzzy_match/test_matcher.py')))
 
 from match_utils import (generate_small_fuzzy_test_data_left, generate_small_fuzzy_test_data_right,
-                         create_test_data)
+                         create_test_data, generate_small_fuzzy_test_data)
 
 import polars as pl
 import pytest
 import logging
 
 from flowfile_worker.polars_fuzzy_match.process import process_fuzzy_frames
+from flowfile_worker.polars_fuzzy_match.pre_process import pre_process_for_fuzzy_matching
 
 # Import functions to test
 from flowfile_worker.polars_fuzzy_match.matcher import (
@@ -28,7 +29,9 @@ from flowfile_worker.polars_fuzzy_match.matcher import (
     combine_matches,
     add_index_column,
     fuzzy_match_dfs,
-    process_fuzzy_mapping
+    process_fuzzy_mapping,
+    perform_all_fuzzy_matches,
+
 )
 
 
@@ -46,6 +49,7 @@ def sample_dataframe():
 @pytest.fixture
 def flow_logger():
     return logging.getLogger('sample')
+
 
 @pytest.fixture
 def temp_directory():
@@ -225,7 +229,8 @@ def test_cross_join_no_existing_fuzzy_results(temp_directory):
     # Verify results
     assert result_df is not None
     assert result_df.shape[0] > 0
-    assert result_df.select(pl.len())[0, 0] == left_df.select(pl.len()).collect()[0, 0] * right_df.select(pl.len()).collect()[0, 0]
+    assert result_df.select(pl.len())[0, 0] == left_df.select(pl.len()).collect()[0, 0] * \
+           right_df.select(pl.len()).collect()[0, 0]
 
 
 def test_process_fuzzy_mapping_no_existing_matches(temp_directory, flow_logger):
@@ -235,7 +240,7 @@ def test_process_fuzzy_mapping_no_existing_matches(temp_directory, flow_logger):
 
     fuzzy_map = mapping[0]
 
-    result = process_fuzzy_mapping(fuzzy_map=fuzzy_map,
+    result, _ = process_fuzzy_mapping(fuzzy_map=fuzzy_map,
                                    left_df=left_df,
                                    right_df=right_df,
                                    existing_matches=None,
@@ -256,7 +261,7 @@ def test_process_fuzzy_mapping_no_existing_matches(temp_directory, flow_logger):
     assert result.shape[0] > 0
 
     # Check that fuzzy scores are within expected range (0-100)
-    assert all(0 <= score <= 100 for score in result['fuzzy_score_1'])
+    assert all(0 <= score <= 1 for score in result['fuzzy_score_1'])
 
     # Verify that the test_result has matched columns and reasonable values
     assert test_result.shape[0] > 0
@@ -270,10 +275,155 @@ def test_process_fuzzy_mapping_no_existing_matches(temp_directory, flow_logger):
         score = row['fuzzy_score_1']
 
         # If score is high (above threshold), company and org should be similar
-        if score >= fuzzy_map.threshold_score:
+        if score >= fuzzy_map.threshold_score / 100:
             # Basic similarity check - at least sharing the same prefix
             assert len(company) > 0 and len(org) > 0
 
             # For exact matches, the score should be very high
             if company == org:
-                assert score == 100  # Expect very high scores for exact matches
+                assert score == 1  # Expect very high scores for exact matches
+
+
+def test_process_fuzzy_multiple_mappings(temp_directory, flow_logger):
+    left_df, right_df, mapping = create_test_data(50_000)
+
+    left_df, right_df, mapping = pre_process_for_fuzzy_matching(left_df, right_df, mapping, flow_logger)
+
+    left_df = add_index_column(left_df, '__left_index', temp_directory)
+    right_df = add_index_column(right_df, '__right_index', temp_directory)
+
+    first_result, n_matches = process_fuzzy_mapping(fuzzy_map=mapping[0],
+                                                    left_df=left_df,
+                                                    right_df=right_df,
+                                                    existing_matches=None,
+                                                    local_temp_dir_ref=temp_directory,
+                                                    i=1,
+                                                    flowfile_logger=flow_logger,
+                                                    existing_number_of_matches=None)
+
+    second_result, n_matches = process_fuzzy_mapping(fuzzy_map=mapping[1],
+                                                     left_df=left_df,
+                                                     right_df=right_df,
+                                                     existing_matches=first_result,
+                                                     local_temp_dir_ref=temp_directory,
+                                                     i=2,
+                                                     flowfile_logger=flow_logger,
+                                                     existing_number_of_matches=n_matches)
+
+    third_result, n_matches = process_fuzzy_mapping(fuzzy_map=mapping[2],
+                                                    left_df=left_df,
+                                                    right_df=right_df,
+                                                    existing_matches=second_result,
+                                                    local_temp_dir_ref=temp_directory,
+                                                    i=3,
+                                                    flowfile_logger=flow_logger,
+                                                    existing_number_of_matches=n_matches)
+
+    first_count = first_result.select(pl.len()).collect()[0, 0]
+    second_count = second_result.select(pl.len()).collect()[0, 0]
+    third_count = third_result.select(pl.len()).collect()[0, 0]
+    assert first_count >= second_count >= third_count, "Expected decreasing number of matches"
+
+
+def test_perform_all_fuzzy_matches(temp_directory, flow_logger):
+    left_df, right_df, mapping = create_test_data(10)
+
+    left_df, right_df, mapping = pre_process_for_fuzzy_matching(left_df, right_df, mapping, flow_logger)
+    left_df = add_index_column(left_df, '__left_index', temp_directory)
+    right_df = add_index_column(right_df, '__right_index', temp_directory)
+
+    all_matches = perform_all_fuzzy_matches(left_df, right_df, mapping, flow_logger, temp_directory)
+    assert len(all_matches) == len(mapping), "Expected one result per mapping"
+
+
+def test_fuzzy_match_dfs(flow_logger):
+    left_df, right_df, mapping = generate_small_fuzzy_test_data()
+    result = fuzzy_match_dfs(left_df.lazy(), right_df.lazy(), mapping, flow_logger)
+    result = result.sort('id')
+    assert result is not None
+    expected_match_data = pl.DataFrame(
+        {'id': [1, 2, 3, 4, 5], 'company_name': ['Apple Inc.', 'Microsft', 'Amazon', 'Gogle', 'Facebok'],
+         'address': ['1 Apple Park', 'One Microsoft Way', '410 Terry Ave N', '1600 Amphitheatre', '1 Hacker Way'],
+         'contact': ['Tim Cook', 'Satya Ndella', 'Andy Jessy', 'Sundar Pichai', 'Mark Zukerberg'],
+         'fuzzy_score_0': [0.88, 0.9142857142857143, 0.8857142857142858, 0.8666666666666667, 0.9166666666666667],
+         'fuzzy_score_1': [0.6666666666666667, 0.9230769230769231, 0.9, 1.0, 0.9333333333333333],
+         'id_right': [101, 102, 103, 104, 105],
+         'organization': ['Apple Incorporated', 'Microsoft Corp', 'Amazon.com Inc', 'Google LLC', 'Facebook Inc'],
+         'location': ['Apple Park, Cupertino', 'Microsoft Way, Redmond', 'Terry Ave North, Seattle',
+                      'Amphitheatre Pkwy, Mountain View', 'Hacker Way, Menlo Park'],
+         'ceo': ['Timothy Cook', 'Satya Nadella', 'Andy Jassy', 'Sundar Pichai', 'Mark Zuckerberg']}
+
+    )
+    assert result.equals(expected_match_data), "Unexpected match data"
+
+
+def test_unique_df_large(temp_directory):
+    """Test the unique_df_large function for handling large dataframes with duplicates."""
+    # Create a sample dataframe with intentional duplicates
+    data = {
+        "category": ["A", "A", "B", "B", "C"] * 20,  # Categories with repetition
+        "value": [1, 1, 2, 2, 3] * 20,  # Values with repetition
+        "id": list(range(100))  # Unique IDs to make rows distinct
+    }
+    df = pl.DataFrame(data)
+
+    # Test with columns specified
+    result_with_cols = unique_df_large(df, cols=["category", "value"])
+
+    # Verify the results
+    assert result_with_cols.shape[0] == 3, "Expected 3 unique combinations of category and value"
+    assert set(result_with_cols["category"].to_list()) == {"A", "B", "C"}, "Unexpected categories"
+    assert set(result_with_cols["value"].to_list()) == {1, 2, 3}, "Unexpected values"
+
+    # Test with default columns (all columns)
+    result_all_cols = unique_df_large(df)
+
+    # Since we have unique IDs, each row should be unique when considering all columns
+    assert result_all_cols.shape[0] == 100, "Expected 100 unique rows when considering all columns"
+
+
+def test_combine_matches(temp_directory):
+    """Test the combine_matches function for merging multiple match datasets."""
+    # Create sample matching dataframes
+    match1 = pl.DataFrame({
+        "__left_index": [0, 1, 2, 3],
+        "__right_index": [5, 6, 7, 8],
+        "fuzzy_score_0": [0.9, 0.8, 0.7, 0.6]
+    }).lazy()
+
+    match2 = pl.DataFrame({
+        "__left_index": [0, 1, 2, 3],
+        "__right_index": [5, 6, 7, 8],
+        "fuzzy_score_1": [0.85, 0.75, 0.65, 0.55]
+    }).lazy()
+
+    match3 = pl.DataFrame({
+        "__left_index": [0, 1],  # Subset of matches to test joining behavior
+        "__right_index": [5, 6],
+        "fuzzy_score_2": [0.95, 0.92]
+    }).lazy()
+
+    # Test combining all matches
+    matching_dfs = [match1, match2, match3]
+    result = combine_matches(matching_dfs).collect()
+
+    # Verify structure and content
+    assert result.shape[0] == 2, "Expected 2 rows after combining (limited by match3)"
+    assert set(result.columns) == {"__left_index", "__right_index", "fuzzy_score_0", "fuzzy_score_1",
+                                   "fuzzy_score_2"}, "Unexpected columns"
+
+    # Verify values for specific matches
+    first_match = result.filter(pl.col("__left_index") == 0).select(
+        ["fuzzy_score_0", "fuzzy_score_1", "fuzzy_score_2"]).row(0)
+    assert first_match == (0.9, 0.85, 0.95), "Unexpected scores for first match"
+
+    # Test with empty list
+    with pytest.raises(IndexError):
+        combine_matches([])
+
+    # Test with single match dataframe
+    single_result = combine_matches([match1]).collect()
+    assert single_result.shape[0] == 4, "Expected 4 rows from single match"
+    assert set(single_result.columns) == {"__left_index", "__right_index",
+                                          "fuzzy_score_0"}, "Unexpected columns with single match"
+
