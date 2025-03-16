@@ -26,11 +26,16 @@ def cross_join_large_files(left_fuzzy_frame: pl.LazyFrame,
                            ) -> pl.LazyFrame:
     if not HAS_POLARS_SIM:
         raise Exception('The polars-sim library is required to perform this operation.')
+    import polars_sim as ps
+    left_frame = collect_lazy_frame(left_fuzzy_frame)
+    right_frame = collect_lazy_frame(right_fuzzy_frame)
+
+
     matches: pl.DataFrame = ps.join_sim(left=collect_lazy_frame(left_fuzzy_frame),
                                         right=collect_lazy_frame(right_fuzzy_frame),
                                         right_on=right_col_name,
                                         left_on=left_col_name,
-                                        ntop=100,
+                                        top_n=100,
                                         add_similarity=False)
     return matches.lazy()
 

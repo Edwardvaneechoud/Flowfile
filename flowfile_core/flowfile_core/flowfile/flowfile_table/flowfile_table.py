@@ -231,6 +231,7 @@ class FlowfileTable:
     def _finalize_initialization(self, name: str, optimize_memory: bool, schema: Optional[Any],
                                  calculate_schema_stats: bool):
         """Finalize initialization by setting remaining attributes."""
+        _ = calculate_schema_stats
         self.name = name
         self._optimize_memory = optimize_memory
         pl_schema = self.data_frame.collect_schema()
@@ -605,7 +606,7 @@ class FlowfileTable:
 
         return FlowfileTable(result)
 
-    def do_pivot(self, pivot_input: transform_schemas.PivotInput, logger: NodeLogger = None) -> "FlowfileTable":
+    def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> "FlowfileTable":
         """Convert data from long to wide format with aggregations."""
         # Get unique values for pivot columns
         max_unique_vals = 200
@@ -614,9 +615,9 @@ class FlowfileTable:
                                               .sort(pivot_input.pivot_column)
                                               .limit(max_unique_vals).cast(pl.String))
         if len(new_cols_unique) >= max_unique_vals:
-            if logger:
-                logger.warning('Pivot column has too many unique values. Please consider using a different column.'
-                               f' Max unique values: {max_unique_vals}')
+            if node_logger:
+                node_logger.warning('Pivot column has too many unique values. Please consider using a different column.'
+                                    f' Max unique values: {max_unique_vals}')
 
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
@@ -670,6 +671,7 @@ class FlowfileTable:
         try:
             f = to_expr(predicate)
         except Exception as e:
+            logger.warning(f'Error in filter expression: {e}')
             f = to_expr("False")
         df = self.data_frame.filter(f)
         return FlowfileTable(df, schema=self.schema, streamable=self._streamable)
@@ -872,7 +874,8 @@ class FlowfileTable:
 
     # Join Methods
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowfileTable", file_ref: str, flow_id: int = -1, node_id: int | str = -1) -> "FlowfileTable":
+                      other: "FlowfileTable", file_ref: str, flow_id: int = -1,
+                      node_id: int | str = -1) -> "FlowfileTable":
         """
         Perform a fuzzy join with another DataFrame.
 
@@ -969,10 +972,10 @@ class FlowfileTable:
 
         if verify_integrity:
             return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                    number_of_records=n_records, streamable=False)
+                                 number_of_records=n_records, streamable=False)
         else:
             fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                  number_of_records=0, streamable=False)
+                               number_of_records=0, streamable=False)
             return fl
 
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
@@ -1028,10 +1031,10 @@ class FlowfileTable:
 
         if verify_integrity:
             return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=True,
-                                    number_of_records=n_records, streamable=False)
+                                 number_of_records=n_records, streamable=False)
         else:
             fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                  number_of_records=0, streamable=False)
+                               number_of_records=0, streamable=False)
             return fl
 
     # Graph Operations
@@ -1126,6 +1129,7 @@ class FlowfileTable:
 
         Args:
             warn: Whether to warn about expensive operations
+            force_calculate: Whether to force recalculation
 
         Returns:
             int: Number of records
