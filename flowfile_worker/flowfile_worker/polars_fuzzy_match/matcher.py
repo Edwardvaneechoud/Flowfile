@@ -232,7 +232,7 @@ def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.Laz
         flowfile_logger.error(f'The cartesian product of the two dataframes is too large to process: {cartesian_size}')
         raise Exception('The cartesian product of the two dataframes is too large to process.')
     if cartesian_size > 100_000_000:
-        flowfile_logger.info('Performing large file cross join, meaning that ')
+        flowfile_logger.info('Performing approximate fuzzy match for large dataframes to reduce memory usage.')
         cross_join_frame = cross_join_large_files(left_fuzzy_frame, right_fuzzy_frame, left_col_name=left_col_name,
                                                   right_col_name=right_col_name, flowfile_logger=flowfile_logger)
     else:

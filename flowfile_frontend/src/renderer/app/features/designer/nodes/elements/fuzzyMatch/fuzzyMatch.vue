@@ -59,18 +59,18 @@
                   /></el-col>
                 </el-row>
                 <el-row>
-                  <el-col :span="10" class="grid-content">Type of matching</el-col>
-                  <el-col :span="8" class="grid-content"
-                    ><select v-model="fuzzyMap.fuzzy_type">
-                      <option
-                        v-for="option in fuzzyMatchOptions"
-                        :key="option.value"
-                        :value="option.value"
-                      ></option>
-                    </select>
-                  </el-col>
+                  <el-col :span="8" class="grid-content">
+                  <select v-model="fuzzyMap.fuzzy_type">
+                    <option
+                      v-for="option in fuzzyMatchOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </el-col>
                 </el-row>
-
                 <div class="action-buttons">
                   <button
                     v-if="nodeFuzzyJoin?.join_input.join_mapping.length > 1"
@@ -159,8 +159,11 @@ const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean
 
 const fuzzyMatchOptions = [
   { value: "levenshtein", label: "Levenshtein" },
+  { value: "jaro", label: "Jaro" },
   { value: "jaro_winkler", label: "Jaro Winkler" },
+  { value: "hamming", label: "Hamming" },
   { value: "damerau_levenshtein", label: "Damerau Levenshtein" },
+  { value: "indel", label: "Indel" },
 ];
 
 const hasInvalidFields = computed(() => {
