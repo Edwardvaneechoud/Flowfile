@@ -107,7 +107,7 @@ def test_cross_join_small_files(temp_directory):
 def create_test_dir():
     return tempfile.TemporaryDirectory()
 
-def test_cross_join_large_files(temp_directory):
+def test_cross_join_large_files(temp_directory, flow_logger):
     """Test the cross_join_large_files function."""
     left_df, right_df, mapping = create_test_data(10_000)  # Smaller size for test speed
 
@@ -132,7 +132,8 @@ def test_cross_join_large_files(temp_directory):
     logging.info(f"Left columns: {left_fuzzy_frame.columns}")
     logging.info(f"Right columns: {right_fuzzy_frame.columns}")
 
-    result_df = cross_join_large_files(left_fuzzy_frame, right_fuzzy_frame, left_col_name, right_col_name).collect()
+    result_df = cross_join_large_files(left_fuzzy_frame, right_fuzzy_frame, left_col_name, right_col_name,
+                                       flow_logger).collect()
 
     logging.info(f"Result columns: {result_df.columns}")
     assert result_df.select(pl.len())[0, 0] > 0  # Should return some rows
