@@ -205,7 +205,7 @@ def test_cross_join_filter_existing_fuzzy_results(temp_directory):
         existing_matches.collect()), "Result should have same number of rows as existing matches"
 
 
-def test_cross_join_no_existing_fuzzy_results(temp_directory):
+def test_cross_join_no_existing_fuzzy_results(temp_directory, flow_logger):
     """Test cross_join_no_existing_fuzzy_results function."""
     left_df, right_df, mapping = create_deterministic_test_data(20)
 
@@ -222,7 +222,8 @@ def test_cross_join_no_existing_fuzzy_results(temp_directory):
         right_df,
         left_col_name,
         right_col_name,
-        temp_directory
+        temp_directory,
+        flow_logger
     ).collect()
 
     # Verify results
