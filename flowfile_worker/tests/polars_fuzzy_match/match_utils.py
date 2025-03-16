@@ -430,3 +430,67 @@ def generate_small_fuzzy_test_data() -> Tuple[pl.DataFrame, pl.DataFrame, List[F
     right_df = generate_small_fuzzy_test_data_right()
     fuzzy_mappings = generate_small_fuzzy_test_mappings()
     return left_df, right_df, fuzzy_mappings
+
+
+def create_deterministic_test_data(size=20):
+    """
+    Creates deterministic test data with guaranteed unique values for cross join testing.
+
+    Parameters:
+    -----------
+    size : int
+        The number of rows in each dataframe
+
+    Returns:
+    --------
+    Tuple[pl.LazyFrame, pl.LazyFrame, List[FuzzyMapping]]
+        A tuple containing left dataframe, right dataframe, and fuzzy mappings
+    """
+    import polars as pl
+    from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
+
+    # Create deterministic data with unique values
+    left_data = {
+        "id": list(range(1, size + 1)),
+        "company_name": [f"Company_{i}" for i in range(1, size + 1)],
+        "address": [f"Address_{i}" for i in range(1, size + 1)],
+        "country": [f"Country_{i % 5}" for i in range(1, size + 1)]
+    }
+
+    right_data = {
+        "id": list(range(101, size + 101)),
+        "organization": [f"Organization_{i}" for i in range(1, size + 1)],
+        "location": [f"Location_{i}" for i in range(1, size + 1)],
+        "country_code": [f"Code_{i % 5}" for i in range(1, size + 1)]
+    }
+
+    # Create the LazyFrames
+    left_df = pl.DataFrame(left_data).lazy()
+    right_df = pl.DataFrame(right_data).lazy()
+
+    # Create fuzzy mappings
+    fuzzy_mappings = [
+        FuzzyMapping(
+            left_col="company_name",
+            right_col="organization",
+            fuzzy_type="levenshtein",
+            threshold_score=80.0,
+            perc_unique=1.0
+        ),
+        FuzzyMapping(
+            left_col="address",
+            right_col="location",
+            fuzzy_type="levenshtein",
+            threshold_score=80.0,
+            perc_unique=1.2
+        ),
+        FuzzyMapping(
+            left_col="country",
+            right_col="country_code",
+            fuzzy_type="jaro_winkler",
+            threshold_score=90.0,
+            perc_unique=0.5
+        )
+    ]
+
+    return left_df, right_df, fuzzy_mappings

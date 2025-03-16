@@ -9,7 +9,7 @@ try:
 except NameError:
     sys.path.append(os.path.dirname(os.path.abspath('flowfile_worker/tests/polars_fuzzy_match/test_matcher.py')))
 
-from match_utils import (generate_small_fuzzy_test_data_left, generate_small_fuzzy_test_data_right,
+from match_utils import (generate_small_fuzzy_test_data_left, create_deterministic_test_data,
                          create_test_data, generate_small_fuzzy_test_data)
 
 import polars as pl
@@ -158,10 +158,6 @@ def test_cross_join_filter_existing_fuzzy_results(temp_directory):
     left_collected = left_df.collect()
     right_collected = right_df.collect()
 
-    print(f"Left DataFrame (first few rows):\n{left_collected.head(3)}")
-    print(f"Right DataFrame (first few rows):\n{right_collected.head(3)}")
-    print(f"Existing matches:\n{existing_matches.collect()}")
-
     # Run the filter function
     result_df = cross_join_filter_existing_fuzzy_results(
         left_df,
@@ -170,8 +166,6 @@ def test_cross_join_filter_existing_fuzzy_results(temp_directory):
         left_col_name,
         right_col_name
     ).collect()
-
-    print(f"Filter result:\n{result_df}")
 
     # Verify results
     assert "__left_index" in result_df.columns
@@ -208,7 +202,7 @@ def test_cross_join_filter_existing_fuzzy_results(temp_directory):
 
 def test_cross_join_no_existing_fuzzy_results(temp_directory):
     """Test cross_join_no_existing_fuzzy_results function."""
-    left_df, right_df, mapping = create_test_data(20)
+    left_df, right_df, mapping = create_deterministic_test_data(20)
 
     left_col_name = mapping[0].left_col
     right_col_name = mapping[0].right_col
@@ -241,12 +235,12 @@ def test_process_fuzzy_mapping_no_existing_matches(temp_directory, flow_logger):
     fuzzy_map = mapping[0]
 
     result, _ = process_fuzzy_mapping(fuzzy_map=fuzzy_map,
-                                   left_df=left_df,
-                                   right_df=right_df,
-                                   existing_matches=None,
-                                   local_temp_dir_ref=temp_directory,
-                                   i=1,
-                                   flowfile_logger=flow_logger)
+                                      left_df=left_df,
+                                      right_df=right_df,
+                                      existing_matches=None,
+                                      local_temp_dir_ref=temp_directory,
+                                      i=1,
+                                      flowfile_logger=flow_logger)
     test_result = (result.join(left_df, on='__left_index')
                    .join(right_df, on='__right_index')
                    .select(["company_name", "organization", "fuzzy_score_1"]).collect())
@@ -426,4 +420,3 @@ def test_combine_matches(temp_directory):
     assert single_result.shape[0] == 4, "Expected 4 rows from single match"
     assert set(single_result.columns) == {"__left_index", "__right_index",
                                           "fuzzy_score_0"}, "Unexpected columns with single match"
-
