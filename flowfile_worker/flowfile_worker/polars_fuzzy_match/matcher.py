@@ -19,6 +19,65 @@ except ImportError:
     ps = PolarsSim()
 
 
+def ensure_left_is_larger(left_df: pl.DataFrame,
+                          right_df: pl.DataFrame,
+                          left_col_name: str,
+                          right_col_name: str) -> tuple:
+    """
+    Ensures that the left dataframe is always the larger one.
+    If the right dataframe is larger, swaps them.
+
+    Args:
+        left_df: The left dataframe
+        right_df: The right dataframe
+        left_col_name: Column name for the left dataframe
+        right_col_name: Column name for the right dataframe
+
+    Returns:
+        tuple: (left_df, right_df, left_col_name, right_col_name)
+    """
+    left_frame_len = left_df.select(pl.len())[0, 0]
+    right_frame_len = right_df.select(pl.len())[0, 0]
+
+    # Swap dataframes if right is larger than left
+    if right_frame_len > left_frame_len:
+        return right_df, left_df, right_col_name, left_col_name
+
+    return left_df, right_df, left_col_name, right_col_name
+
+
+def split_dataframe(df: pl.DataFrame, max_chunk_size: int = 500_000) -> List[pl.DataFrame]:
+    """
+    Split a Polars DataFrame into multiple DataFrames with a maximum size.
+
+    Args:
+        df: The Polars DataFrame to split
+        max_chunk_size: Maximum number of rows per chunk (default: 500,000)
+
+    Returns:
+        List of Polars DataFrames, each containing at most max_chunk_size rows
+    """
+    total_rows = df.select(pl.len())[0, 0]
+
+    # If DataFrame is smaller than max_chunk_size, return it as is
+    if total_rows <= max_chunk_size:
+        return [df]
+
+    # Calculate number of chunks needed
+    num_chunks = (total_rows + max_chunk_size - 1) // max_chunk_size  # Ceiling division
+
+    chunks = []
+    for i in range(num_chunks):
+        start_idx = i * max_chunk_size
+        end_idx = min((i + 1) * max_chunk_size, total_rows)
+
+        # Extract chunk using slice
+        chunk = df.slice(start_idx, end_idx - start_idx)
+        chunks.append(chunk)
+
+    return chunks
+
+
 def cross_join_large_files(left_fuzzy_frame: pl.LazyFrame,
                            right_fuzzy_frame: pl.LazyFrame,
                            left_col_name: str,
@@ -26,17 +85,29 @@ def cross_join_large_files(left_fuzzy_frame: pl.LazyFrame,
                            ) -> pl.LazyFrame:
     if not HAS_POLARS_SIM:
         raise Exception('The polars-sim library is required to perform this operation.')
-    import polars_sim as ps
-    left_frame = collect_lazy_frame(left_fuzzy_frame)
-    right_frame = collect_lazy_frame(right_fuzzy_frame)
 
+    left_df = collect_lazy_frame(left_fuzzy_frame)
+    right_df = collect_lazy_frame(right_fuzzy_frame)
 
-    matches: pl.DataFrame = ps.join_sim(left=collect_lazy_frame(left_fuzzy_frame),
-                                        right=collect_lazy_frame(right_fuzzy_frame),
-                                        right_on=right_col_name,
-                                        left_on=left_col_name,
-                                        top_n=100,
-                                        add_similarity=False)
+    # Ensure left dataframe is the larger one
+    left_df, right_df, left_col_name, right_col_name = ensure_left_is_larger(
+        left_df, right_df, left_col_name, right_col_name
+    )
+
+    # Split dataframes into chunks for processing
+    left_chunks = split_dataframe(left_df, max_chunk_size=500_000)
+    print(f'Left chunks: {len(left_chunks)}')
+    right_chunks = split_dataframe(right_df, max_chunk_size=500_000)
+    df_matches = []
+    for _left_df in left_chunks:
+        for _right_df in right_chunks:
+            df_matches.append(ps.join_sim(left=_left_df,
+                                          right=_right_df,
+                                          right_on=right_col_name,
+                                          left_on=left_col_name,
+                                          top_n=100,
+                                          add_similarity=False))
+    matches = pl.concat(df_matches)
     return matches.lazy()
 
 
@@ -128,7 +199,7 @@ def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.Laz
     1. Processes input frames using the process_fuzzy_frames helper function
     2. Calculates the size of the cartesian product to determine processing approach
     3. Uses either cross_join_large_files or cross_join_small_files based on the size:
-       - For cartesian products > 10M but < 1T (or 10M without polars-sim), uses large file method
+       - For cartesian products > 100M but < 1T (or 10M without polars-sim), uses large file method
        - For smaller products, uses the small file method
     4. Raises an exception if the cartesian product exceeds the maximum allowed size
 
@@ -136,7 +207,7 @@ def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.Laz
     -------
     Exception
         If the cartesian product of the two dataframes exceeds the maximum allowed size
-        (1 trillion with polars-sim, 10 million without).
+        (1 trillion with polars-sim, 100 million without).
     """
     (left_fuzzy_frame,
      right_fuzzy_frame,
@@ -149,12 +220,13 @@ def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.Laz
     max_size = 1_000_000_000_000 if HAS_POLARS_SIM else 10_000_000
     if cartesian_size > max_size:
         raise Exception('The cartesian product of the two dataframes is too large to process.')
-    if cartesian_size > 10_000_000:
+    if cartesian_size > 100_000_000:
         cross_join_frame = cross_join_large_files(left_fuzzy_frame, right_fuzzy_frame, left_col_name=left_col_name,
                                                   right_col_name=right_col_name)
     else:
         cross_join_frame = cross_join_small_files(left_fuzzy_frame, right_fuzzy_frame)
-    return cross_join_frame
+    cross_join_temp_frame = cache_polars_frame_to_temp(cross_join_frame, temp_dir_ref)
+    return cross_join_temp_frame
 
 
 def unique_df_large(_df: pl.DataFrame | pl.LazyFrame, cols: Optional[List[str]] = None) -> pl.DataFrame:

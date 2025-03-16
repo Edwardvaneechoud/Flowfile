@@ -11,7 +11,7 @@ class PolarsSim:
                  right: Union[pl.DataFrame, pl.LazyFrame],
                  left_on: Union[str, List[str]],
                  right_on: Optional[Union[str, List[str]]] = None,
-                 ntop: int = 1,
+                 top_n: int = 1,
                  add_similarity: bool = True,
                  method: str = "jaro_winkler",
                  threshold: float = 0.0,
@@ -24,7 +24,7 @@ class PolarsSim:
             right: Right DataFrame
             left_on: Column(s) from left DataFrame to join on
             right_on: Column(s) from right DataFrame to join on
-            ntop: Number of top matches to return per left row
+            top_n: Number of top matches to return per left row
             add_similarity: Whether to add similarity scores
             method: Similarity method to use
             threshold: Minimum similarity threshold

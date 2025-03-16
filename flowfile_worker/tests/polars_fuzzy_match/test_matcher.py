@@ -31,6 +31,8 @@ from flowfile_worker.polars_fuzzy_match.matcher import (
     fuzzy_match_dfs,
     process_fuzzy_mapping,
     perform_all_fuzzy_matches,
+    ensure_left_is_larger,
+    split_dataframe
 
 )
 
@@ -102,9 +104,12 @@ def test_cross_join_small_files(temp_directory):
                                       '__right_index'}, 'Unexpected columns'
 
 
+def create_test_dir():
+    return tempfile.TemporaryDirectory()
+
 def test_cross_join_large_files(temp_directory):
     """Test the cross_join_large_files function."""
-    left_df, right_df, mapping = create_test_data(1000)  # Smaller size for test speed
+    left_df, right_df, mapping = create_test_data(10_000)  # Smaller size for test speed
 
     left_col_name = mapping[0].left_col
     right_col_name = mapping[0].right_col
@@ -420,3 +425,61 @@ def test_combine_matches(temp_directory):
     assert single_result.shape[0] == 4, "Expected 4 rows from single match"
     assert set(single_result.columns) == {"__left_index", "__right_index",
                                           "fuzzy_score_0"}, "Unexpected columns with single match"
+
+
+def test_ensure_left_is_larger():
+    """Test the ensure_left_is_larger function to verify it correctly swaps dataframes when necessary."""
+    # Create test data with left larger than right
+    left_larger_df = pl.DataFrame({
+        "id": list(range(20)),
+        "value": ["test"] * 20
+    })
+    right_smaller_df = pl.DataFrame({
+        "id": list(range(10)),
+        "value": ["test"] * 10
+    })
+
+    # Create test data with right larger than left
+    left_smaller_df = pl.DataFrame({
+        "id": list(range(5)),
+        "value": ["test"] * 5
+    })
+    right_larger_df = pl.DataFrame({
+        "id": list(range(15)),
+        "value": ["test"] * 15
+    })
+
+    # Test case where left is already larger
+    result_df1, result_df2, result_col1, result_col2 = ensure_left_is_larger(
+        left_larger_df, right_smaller_df, "left_col", "right_col"
+    )
+
+    # Verify no swap occurred
+    assert result_df1.select(pl.len())[0, 0] == 20, "Left dataframe should still have 20 rows"
+    assert result_df2.select(pl.len())[0, 0] == 10, "Right dataframe should still have 10 rows"
+    assert result_col1 == "left_col", "Left column name should remain unchanged"
+    assert result_col2 == "right_col", "Right column name should remain unchanged"
+
+    # Test case where right is larger and should be swapped
+    result_df1, result_df2, result_col1, result_col2 = ensure_left_is_larger(
+        left_smaller_df, right_larger_df, "left_col", "right_col"
+    )
+
+    # Verify swap occurred correctly
+    assert result_df1.select(pl.len())[0, 0] == 15, "Left dataframe should now have 15 rows (was right)"
+    assert result_df2.select(pl.len())[0, 0] == 5, "Right dataframe should now have 5 rows (was left)"
+    assert result_col1 == "right_col", "Left column name should now be right_col"
+    assert result_col2 == "left_col", "Right column name should now be left_col"
+
+
+def test_split_single_df():
+    left_df, right_df, fuzzy_map = create_test_data(100_000)
+    all_dfs = split_dataframe(left_df.collect(), 100_000)
+    assert len(all_dfs) == 1, "Expected a single dataframe with all rows"
+
+
+def test_split_dataframe():
+    left_df, right_df, fuzzy_map = create_test_data(100_000)
+    all_dfs = split_dataframe(left_df.collect(), 10_000)
+    assert len(all_dfs) == 10, "Expected 10 dataframes with 10,000 rows each"
+    assert all(len(df) == 10_000 for df in all_dfs), "Expected all dataframes to have 10,000 rows"
