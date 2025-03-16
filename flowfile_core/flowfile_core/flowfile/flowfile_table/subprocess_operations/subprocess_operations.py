@@ -450,7 +450,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
             if logger:
                 logger.warning(f"Failed reading external file: {str(e)}")
 
-        unique_values = (lf.unique().collect(streaming=True)[:, 0].to_list())
+        unique_values = (lf.unique().collect(engine="streaming")[:, 0].to_list())
 
         if not unique_values:
             raise ValueError(f"No unique values found in lazyframe")

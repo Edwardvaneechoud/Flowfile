@@ -82,7 +82,7 @@ def write_polars_frame(_df: pl.LazyFrame | pl.DataFrame, path: str, data_type: s
             logger.info("Writing in memory efficient mode")
             write_method = getattr(_df, 'sink_' + data_type)
             try:
-                write_method(path, streaming=True)
+                write_method(path)
                 return True
             except Exception as e:
                 pass
@@ -98,9 +98,9 @@ def write_polars_frame(_df: pl.LazyFrame | pl.DataFrame, path: str, data_type: s
 
 def collect(df: pl.LazyFrame, streamable: bool = True):
     try:
-        return df.collect(streaming=streamable)
+        return df.collect(engine="streaming" if streamable else "auto")
     except:
-        return df.collect(streaming=False)
+        return df.collect(engine="auto")
 
 
 def cache_polars_frame_to_temp(_df: pl.LazyFrame | pl.DataFrame, tempdir: str = None) -> pl.LazyFrame:

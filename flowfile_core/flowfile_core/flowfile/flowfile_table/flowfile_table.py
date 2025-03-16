@@ -321,7 +321,7 @@ class FlowfileTable:
             if self._streamable:
                 try:
                     logger.info('Collecting data in streaming mode')
-                    return self.data_frame.collect(streaming=True)
+                    return self.data_frame.collect(engine="streaming")
                 except PanicException:
                     self._streamable = False
 
@@ -332,7 +332,7 @@ class FlowfileTable:
             return self._collect_from_external_source(n_records)
 
         if self._streamable:
-            return self.data_frame.head(n_records).collect(streaming=True, comm_subplan_elim=False)
+            return self.data_frame.head(n_records).collect(engine="streaming", comm_subplan_elim=False)
         return self.data_frame.head(n_records).collect()
 
     def _collect_from_external_source(self, n_records: int) -> pl.DataFrame:
@@ -456,7 +456,7 @@ class FlowfileTable:
     def to_pylist(self) -> List[Dict]:
         """Convert the DataFrame to a list of dictionaries."""
         if self.lazy:
-            return self.data_frame.collect(streaming=self._streamable).to_dicts()
+            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
     @classmethod
@@ -797,7 +797,7 @@ class FlowfileTable:
                 df = df.head(n_rows).collect()
             except Exception as e:
                 logger.warning(f'Error in getting sample: {e}')
-                df = df.head(n_rows).collect(streaming=False)
+                df = df.head(n_rows).collect(engine="auto")
         else:
             df = self.collect()
         return FlowfileTable(df, number_of_records=len(df), schema=self.schema)
@@ -824,7 +824,8 @@ class FlowfileTable:
                 self.collect_external()
 
             if self.lazy and shuffle:
-                sample_df = self.data_frame.collect(streaming=self._streamable).sample(n_rows, seed=seed,
+                sample_df = self.data_frame.collect(engine="streaming" if self._streamable else "auto").sample(n_rows,
+                                                                                                               seed=seed,
                                                                                        shuffle=shuffle)
             elif shuffle:
                 sample_df = self.data_frame.sample(n_rows, seed=seed, shuffle=shuffle)
@@ -1148,7 +1149,8 @@ class FlowfileTable:
                 if warn:
                     logger.warning('Calculating the number of records this can be expensive on a lazy frame')
                 try:
-                    self.number_of_records = self.data_frame.select(pl.len()).collect(streaming=self._streamable)[0, 0]
+                    self.number_of_records = self.data_frame.select(pl.len()).collect(
+                        engine="streaming" if self._streamable else "auto")[0, 0]
                 except Exception:
                     raise Exception('Could not get number of records')
             else:
@@ -1184,7 +1186,7 @@ class FlowfileTable:
                     df = self.collect()
                     self.data_frame = df
                 else:
-                    self.data_frame = self.data_frame.collect(streaming=self._streamable)
+                    self.data_frame = self.data_frame.collect(engine="streaming" if self._streamable else "auto")
             self._lazy = exec_lazy
 
     @property
