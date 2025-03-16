@@ -67,6 +67,9 @@ jobs:
         shell: pwsh
         run: |
           poetry install
+
+      - name: Install polars-sim with pip
+        run: |
           pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
 
 
