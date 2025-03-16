@@ -67,6 +67,8 @@ jobs:
         shell: pwsh
         run: |
           poetry install
+          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
+
 
       - name: Build Python services
         shell: pwsh

@@ -81,34 +81,43 @@ def split_dataframe(df: pl.DataFrame, max_chunk_size: int = 500_000) -> List[pl.
 def cross_join_large_files(left_fuzzy_frame: pl.LazyFrame,
                            right_fuzzy_frame: pl.LazyFrame,
                            left_col_name: str,
-                           right_col_name: str
+                           right_col_name: str,
+                           flowfile_logger: Logger,
                            ) -> pl.LazyFrame:
     if not HAS_POLARS_SIM:
         raise Exception('The polars-sim library is required to perform this operation.')
+    import polars_sim as ps
 
     left_df = collect_lazy_frame(left_fuzzy_frame)
     right_df = collect_lazy_frame(right_fuzzy_frame)
 
-    # Ensure left dataframe is the larger one
     left_df, right_df, left_col_name, right_col_name = ensure_left_is_larger(
         left_df, right_df, left_col_name, right_col_name
     )
-
-    # Split dataframes into chunks for processing
-    left_chunks = split_dataframe(left_df, max_chunk_size=500_000)
-    print(f'Left chunks: {len(left_chunks)}')
-    right_chunks = split_dataframe(right_df, max_chunk_size=500_000)
+    left_chunks = split_dataframe(left_df, max_chunk_size=500_000)  # Reduced chunk size
+    flowfile_logger.info(f"Splitting left dataframe into {len(left_chunks)} chunks.")
     df_matches = []
-    for _left_df in left_chunks:
-        for _right_df in right_chunks:
-            df_matches.append(ps.join_sim(left=_left_df,
-                                          right=_right_df,
-                                          right_on=right_col_name,
-                                          left_on=left_col_name,
-                                          top_n=100,
-                                          add_similarity=False))
-    matches = pl.concat(df_matches)
-    return matches.lazy()
+
+    # Process each chunk combination with error handling
+    for i, left_chunk in enumerate(left_chunks):
+        chunk_matches = ps.join_sim(
+            left=left_chunk,
+            right=right_df,
+            left_on=left_col_name,
+            right_on=right_col_name,
+            top_n=100,
+            add_similarity=False,
+        )
+        flowfile_logger.info(f"Processed chunk {int(i)} with {len(chunk_matches)} matches.")
+        df_matches.append(chunk_matches)
+
+
+    # Combine all matches
+    if df_matches:
+        return pl.concat(df_matches).lazy()
+    else:
+        columns = list(set(left_df.columns).union(set(right_df.columns)))
+        return pl.DataFrame(schema={col: pl.Null for col in columns}).lazy()
 
 
 def cross_join_small_files(left_df: pl.LazyFrame, right_df: pl.LazyFrame) -> pl.LazyFrame:
@@ -165,7 +174,8 @@ def cross_join_filter_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl
 
 
 def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.LazyFrame, left_col_name: str,
-                                         right_col_name: str, temp_dir_ref: str):
+                                         right_col_name: str, temp_dir_ref: str,
+                                         flowfile_logger: Logger) -> pl.LazyFrame:
     """
     Generate fuzzy matching results by performing a cross join between dataframes.
 
@@ -217,16 +227,17 @@ def cross_join_no_existing_fuzzy_results(left_df: pl.LazyFrame, right_df: pl.Laz
      len_right_df) = process_fuzzy_frames(left_df=left_df, right_df=right_df, left_col_name=left_col_name,
                                           right_col_name=right_col_name, temp_dir_ref=temp_dir_ref)
     cartesian_size = len_left_df * len_right_df
-    max_size = 1_000_000_000_000 if HAS_POLARS_SIM else 10_000_000
+    max_size = 100_000_000_000_000 if HAS_POLARS_SIM else 10_000_000
     if cartesian_size > max_size:
+        flowfile_logger.error(f'The cartesian product of the two dataframes is too large to process: {cartesian_size}')
         raise Exception('The cartesian product of the two dataframes is too large to process.')
     if cartesian_size > 100_000_000:
+        flowfile_logger.info('Performing large file cross join, meaning that ')
         cross_join_frame = cross_join_large_files(left_fuzzy_frame, right_fuzzy_frame, left_col_name=left_col_name,
-                                                  right_col_name=right_col_name)
+                                                  right_col_name=right_col_name, flowfile_logger=flowfile_logger)
     else:
         cross_join_frame = cross_join_small_files(left_fuzzy_frame, right_fuzzy_frame)
-    cross_join_temp_frame = cache_polars_frame_to_temp(cross_join_frame, temp_dir_ref)
-    return cross_join_temp_frame
+    return cross_join_frame
 
 
 def unique_df_large(_df: pl.DataFrame | pl.LazyFrame, cols: Optional[List[str]] = None) -> pl.DataFrame:
@@ -329,7 +340,8 @@ def process_fuzzy_mapping(
             right_df=right_df,
             left_col_name=fuzzy_map.left_col,
             right_col_name=fuzzy_map.right_col,
-            temp_dir_ref=local_temp_dir_ref
+            temp_dir_ref=local_temp_dir_ref,
+            flowfile_logger=flowfile_logger
         )
 
     # Calculate fuzzy match scores
