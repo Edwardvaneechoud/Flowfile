@@ -32,14 +32,14 @@ jobs:
           curl -sSL https://install.python-poetry.org | python -
           echo "$HOME/.poetry/bin" >> $GITHUB_PATH
 
-      # Cache the Poetry dependencies
-      - name: Cache Poetry dependencies
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pypoetry
-          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-poetry-${{ matrix.python-version }}-
+#      # Cache the Poetry dependencies
+#      - name: Cache Poetry dependencies
+#        uses: actions/cache@v3
+#        with:
+#          path: ~/.cache/pypoetry
+#          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+#          restore-keys: |
+#            ${{ runner.os }}-poetry-${{ matrix.python-version }}-
 
       # No need for separate Airbyte install - Poetry will handle it
 
