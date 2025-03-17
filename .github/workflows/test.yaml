@@ -47,18 +47,24 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      # We're going to always install polars-sim, but use the cache to speed it up
-      - name: Cache pip
-        id: cache-pip
+      # Cache the built polars-sim wheel
+      - name: Cache polars-sim wheel
+        id: cache-polars-sim-wheel
         uses: actions/cache@v3
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}-polars-sim
+          path: ~/.cache/pip/wheels
+          key: ${{ runner.os }}-pip-wheel-polars-sim-${{ matrix.python-version }}-${{ hashFiles('.github/workflows/run-tests.yml') }}
 
-      # Always install polars-sim to ensure it's properly registered in the environment
+      # Install polars-sim - using the cached wheel if available
       - name: Install polars-sim with pip
         run: |
-          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+          if [ -d ~/.cache/pip/wheels ] && [ "$(find ~/.cache/pip/wheels -name "polars_sim*.whl" | wc -l)" -gt 0 ]; then
+            echo "Installing polars-sim from cached wheel"
+            pip install $(find ~/.cache/pip/wheels -name "polars_sim*.whl") --no-index
+          else
+            echo "Building and installing polars-sim"
+            pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+          fi
 
       - name: Run pytest for flowfile_worker
         run: poetry run pytest flowfile_worker/tests --disable-warnings
@@ -140,18 +146,24 @@ jobs:
         run: |
           poetry install
 
-      # We're going to always install polars-sim, but use the cache to speed it up
-      - name: Cache pip for macOS
-        id: cache-pip-macos
+      # Cache the built polars-sim wheel for macOS
+      - name: Cache polars-sim wheel
+        id: cache-polars-sim-wheel-macos
         uses: actions/cache@v3
         with:
-          path: ~/Library/Caches/pip
-          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('**/poetry.lock') }}-polars-sim
+          path: ~/Library/Caches/pip/wheels
+          key: ${{ runner.os }}-pip-wheel-polars-sim-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
 
-      # Always install polars-sim to ensure it's properly registered in the environment
+      # Install polars-sim - using the cached wheel if available
       - name: Install polars-sim with pip
         run: |
-          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+          if [ -d ~/Library/Caches/pip/wheels ] && [ "$(find ~/Library/Caches/pip/wheels -name "polars_sim*.whl" | wc -l)" -gt 0 ]; then
+            echo "Installing polars-sim from cached wheel"
+            pip install $(find ~/Library/Caches/pip/wheels -name "polars_sim*.whl") --no-index
+          else
+            echo "Building and installing polars-sim"
+            pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+          fi
 
       - name: Build Python services
         run: |
@@ -210,18 +222,32 @@ jobs:
         run: |
           poetry install
 
-      # We're going to always install polars-sim, but use the cache to speed it up
-      - name: Cache pip for Windows
-        id: cache-pip-windows
+      # Cache the built polars-sim wheel for Windows
+      - name: Cache polars-sim wheel
+        id: cache-polars-sim-wheel-windows
         uses: actions/cache@v3
         with:
-          path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('**/poetry.lock') }}-polars-sim
+          path: ~\AppData\Local\pip\Cache\wheels
+          key: ${{ runner.os }}-pip-wheel-polars-sim-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
 
-      # Always install polars-sim to ensure it's properly registered in the environment
+      # Install polars-sim - using the cached wheel if available
       - name: Install polars-sim with pip
+        shell: pwsh
         run: |
-          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+          $wheelPath = "~\AppData\Local\pip\Cache\wheels"
+          if (Test-Path $wheelPath) {
+            $wheel = Get-ChildItem -Path $wheelPath -Recurse -Filter "polars_sim*.whl" | Select-Object -First 1 -ExpandProperty FullName
+            if ($wheel) {
+              Write-Host "Installing polars-sim from cached wheel"
+              pip install $wheel --no-index
+            } else {
+              Write-Host "Building and installing polars-sim"
+              pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+            }
+          } else {
+            Write-Host "Building and installing polars-sim"
+            pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
+          }
 
       - name: Build Python services
         shell: pwsh
