@@ -49,6 +49,7 @@ jobs:
 
       # Cache the polars-sim package
       - name: Cache polars-sim package
+        id: cache-polars-sim
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
@@ -57,6 +58,7 @@ jobs:
             ${{ runner.os }}-pip-polars-sim-${{ matrix.python-version }}-
 
       - name: Install polars-sim with pip
+        if: steps.cache-polars-sim.outputs.cache-hit != 'true'
         run: |
           pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
 
@@ -142,6 +144,7 @@ jobs:
 
       # Cache polars-sim for macOS
       - name: Cache polars-sim package
+        id: cache-polars-sim-macos
         uses: actions/cache@v3
         with:
           path: ~/Library/Caches/pip
@@ -150,6 +153,7 @@ jobs:
             ${{ runner.os }}-pip-polars-sim-3.11-
 
       - name: Install polars-sim with pip
+        if: steps.cache-polars-sim-macos.outputs.cache-hit != 'true'
         run: |
           pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
 
@@ -212,6 +216,7 @@ jobs:
 
       # Cache polars-sim for Windows
       - name: Cache polars-sim package
+        id: cache-polars-sim-windows
         uses: actions/cache@v3
         with:
           path: ~\AppData\Local\pip\Cache
@@ -220,6 +225,7 @@ jobs:
             ${{ runner.os }}-pip-polars-sim-3.11-
 
       - name: Install polars-sim with pip
+        if: steps.cache-polars-sim-windows.outputs.cache-hit != 'true'
         run: |
           pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
 
