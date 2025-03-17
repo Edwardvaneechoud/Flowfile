@@ -32,14 +32,14 @@ jobs:
           curl -sSL https://install.python-poetry.org | python -
           echo "$HOME/.poetry/bin" >> $GITHUB_PATH
 
-#      # Cache the Poetry dependencies
-#      - name: Cache Poetry dependencies
-#        uses: actions/cache@v3
-#        with:
-#          path: ~/.cache/pypoetry
-#          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
-#          restore-keys: |
-#            ${{ runner.os }}-poetry-${{ matrix.python-version }}-
+      # Cache the Poetry dependencies
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-${{ matrix.python-version }}-
 
       # No need for separate Airbyte install - Poetry will handle it
 
@@ -47,20 +47,18 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      # Cache the polars-sim package
-      - name: Cache polars-sim package
-        id: cache-polars-sim
+      # We're going to always install polars-sim, but use the cache to speed it up
+      - name: Cache pip
+        id: cache-pip
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-polars-sim-${{ matrix.python-version }}-${{ hashFiles('.github/workflows/run-tests.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-polars-sim-${{ matrix.python-version }}-
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}-polars-sim
 
+      # Always install polars-sim to ensure it's properly registered in the environment
       - name: Install polars-sim with pip
-        if: steps.cache-polars-sim.outputs.cache-hit != 'true'
         run: |
-          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
+          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
 
       - name: Run pytest for flowfile_worker
         run: poetry run pytest flowfile_worker/tests --disable-warnings
@@ -142,20 +140,18 @@ jobs:
         run: |
           poetry install
 
-      # Cache polars-sim for macOS
-      - name: Cache polars-sim package
-        id: cache-polars-sim-macos
+      # We're going to always install polars-sim, but use the cache to speed it up
+      - name: Cache pip for macOS
+        id: cache-pip-macos
         uses: actions/cache@v3
         with:
           path: ~/Library/Caches/pip
-          key: ${{ runner.os }}-pip-polars-sim-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-polars-sim-3.11-
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('**/poetry.lock') }}-polars-sim
 
+      # Always install polars-sim to ensure it's properly registered in the environment
       - name: Install polars-sim with pip
-        if: steps.cache-polars-sim-macos.outputs.cache-hit != 'true'
         run: |
-          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
+          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
 
       - name: Build Python services
         run: |
@@ -214,20 +210,18 @@ jobs:
         run: |
           poetry install
 
-      # Cache polars-sim for Windows
-      - name: Cache polars-sim package
-        id: cache-polars-sim-windows
+      # We're going to always install polars-sim, but use the cache to speed it up
+      - name: Cache pip for Windows
+        id: cache-pip-windows
         uses: actions/cache@v3
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-pip-polars-sim-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-polars-sim-3.11-
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('**/poetry.lock') }}-polars-sim
 
+      # Always install polars-sim to ensure it's properly registered in the environment
       - name: Install polars-sim with pip
-        if: steps.cache-polars-sim-windows.outputs.cache-hit != 'true'
         run: |
-          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
+          pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
 
       - name: Build Python services
         shell: pwsh
