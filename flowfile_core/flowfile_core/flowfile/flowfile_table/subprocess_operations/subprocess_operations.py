@@ -264,7 +264,8 @@ class BaseFetcher:
 class ExternalDfFetcher(BaseFetcher):
     status: Optional[Status] = None
 
-    def __init__(self, flow_id: int, node_id : int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
+    def __init__(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None,
+                 wait_on_completion: bool = True,
                  operation_type: OperationType = 'store'):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf

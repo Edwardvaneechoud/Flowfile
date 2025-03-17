@@ -152,6 +152,22 @@ def aggregate_output(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
     return left_df, right_df
 
 
+def report_on_order_of_fuzzy_maps(fuzzy_maps: List[FuzzyMapping], flowfile_logger: Logger) -> None:
+    """
+    Log the order of fuzzy mappings based on uniqueness.
+    Parameters
+    ----------
+    fuzzy_maps: List[FuzzyMapping]
+    flowfile_logger: Logger
+
+    -------
+    """
+    flowfile_logger.info('Fuzzy mappings sorted by uniqueness')
+    for i, fuzzy_map in enumerate(fuzzy_maps):
+        flowfile_logger.info(f'{i}. Fuzzy mapping: {fuzzy_map.left_col} -> {fuzzy_map.right_col} '
+                             f'Uniqueness: {fuzzy_map.perc_unique}')
+
+
 def pre_process_for_fuzzy_matching(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
                                    fuzzy_maps: List[FuzzyMapping],
                                    flowfile_logger: Logger) -> Tuple[pl.LazyFrame, pl.LazyFrame, List[FuzzyMapping]]:
@@ -185,6 +201,8 @@ def pre_process_for_fuzzy_matching(left_df: pl.LazyFrame, right_df: pl.LazyFrame
     fuzzy_maps = fill_perc_unique_in_fuzzy_maps(left_df, right_df, fuzzy_maps, flowfile_logger, left_df_len,
                                                 right_df_len)
     fuzzy_maps = determine_order_of_fuzzy_maps(fuzzy_maps)
+    report_on_order_of_fuzzy_maps(fuzzy_maps, flowfile_logger)
+
     uniqueness_rate = calculate_uniqueness_rate(fuzzy_maps)
     flowfile_logger.info(f'Uniqueness rate: {uniqueness_rate}')
     if determine_need_for_aggregation(uniqueness_rate, left_df_len * right_df_len):

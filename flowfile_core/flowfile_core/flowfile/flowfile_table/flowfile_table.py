@@ -826,7 +826,7 @@ class FlowfileTable:
             if self.lazy and shuffle:
                 sample_df = self.data_frame.collect(engine="streaming" if self._streamable else "auto").sample(n_rows,
                                                                                                                seed=seed,
-                                                                                       shuffle=shuffle)
+                                                                                     shuffle=shuffle)
             elif shuffle:
                 sample_df = self.data_frame.sample(n_rows, seed=seed, shuffle=shuffle)
             else:
@@ -873,7 +873,30 @@ class FlowfileTable:
         for batch in batches:
             yield FlowfileTable(batch)
 
-    # Join Methods
+    def start_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
+                         other: "FlowfileTable", file_ref: str, flow_id: int = -1,
+                         node_id: int | str = -1) -> ExternalFuzzyMatchFetcher:
+        """
+        Starts a fuzzy join with another DataFrame and returns the object to track.
+
+        Args:
+            fuzzy_match_input: Fuzzy matching parameters
+            other: Right DataFrame for join
+            file_ref: Reference for temporary files
+            flow_id: Flow ID for tracking
+            node_id: Node ID for tracking
+        Returns:
+            FlowfileTable: New instance with joined data
+        """
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
+                                                    fuzzy_match_input=fuzzy_match_input)
+        return ExternalFuzzyMatchFetcher(left_df, right_df,
+                                         fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+                                         file_ref=file_ref + '_fm',
+                                         wait_on_completion=False,
+                                         flow_id=flow_id,
+                                         node_id=node_id)
+
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
                       other: "FlowfileTable", file_ref: str, flow_id: int = -1,
                       node_id: int | str = -1) -> "FlowfileTable":
@@ -891,7 +914,8 @@ class FlowfileTable:
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
-        f = ExternalFuzzyMatchFetcher(left_df, right_df, fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+        f = ExternalFuzzyMatchFetcher(left_df, right_df,
+                                      fuzzy_maps=fuzzy_match_input.fuzzy_maps,
                                       file_ref=file_ref + '_fm',
                                       wait_on_completion=True,
                                       flow_id=flow_id,

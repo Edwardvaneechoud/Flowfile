@@ -1,122 +1,172 @@
 <template>
-  <div v-if="isLoaded && nodeFuzzyJoin" class="listbox-wrapper">
+  <div v-if="isLoaded && nodeFuzzyJoin" class="fuzzy-join-container">
     <generic-node-settings v-model="nodeFuzzyJoin">
-      <div class="listbox-wrapper">
-        <div class="listbox-subtitle">Fuzzy match settings</div>
-        <div class="table-wrapper">
-          <div v-if="nodeFuzzyJoin?.join_input" class="selectors-container">
-            <div
-              v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping"
-              :key="index"
-              class="selectors-row"
-            >
-              <div class="listbox-wrapper">
-                <div class="listbox-subtitle">
-                  <unavailableField
-                    v-if="
-                      !(
-                        containsVal(result?.main_input?.columns ?? [], fuzzyMap.left_col) &&
-                        containsVal(result?.right_input?.columns ?? [], fuzzyMap.right_col)
-                      )
-                    "
-                    tooltip-text="Join is not valid"
-                    class="unavailable-field"
-                  />
-                  Setting {{ index + 1 }}
-                </div>
-                <div class="selectors-row">
-                  <el-row style="overflow: visible">
-                    <div class="grid-content">
-                      Left column
-                      <column-selector
-                        v-model="fuzzyMap.left_col"
-                        :value="fuzzyMap.left_col"
-                        :column-options="result?.main_input?.columns"
-                        @update:value="(value: string) => handleChange(value, index, 'left')"
-                      />
-                    </div>
-                    <div class="grid-content">
-                      Right column
-                      <column-selector
-                        v-model="fuzzyMap.right_col"
-                        :value="fuzzyMap.right_col"
-                        :column-options="result?.right_input?.columns"
-                        @update:value="(value: string) => handleChange(value, index, 'right')"
-                      />
-                    </div>
-                  </el-row>
-                </div>
-
-                <el-row>
-                  <el-col :span="10" class="grid-content">Threshold score</el-col>
-                  <el-col :span="8" class="grid-content"
-                    ><input
-                      v-model="fuzzyMap.threshold_score"
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="1"
-                  /></el-col>
-                </el-row>
-                <el-row>
-                  <el-col :span="8" class="grid-content">
-                  <select v-model="fuzzyMap.fuzzy_type">
-                    <option
-                      v-for="option in fuzzyMatchOptions"
-                      :key="option.value"
-                      :value="option.value"
-                    >
-                      {{ option.label }}
-                    </option>
-                  </select>
-                </el-col>
-                </el-row>
-                <div class="action-buttons">
-                  <button
+      <!-- Tabs Navigation -->
+      <div class="tabs-navigation">
+        <button 
+          class="tab-button" 
+          :class="{ 'active': activeTab === 'match' }"
+          @click="activeTab = 'match'"
+        >
+          Match Settings
+        </button>
+        <button 
+          class="tab-button" 
+          :class="{ 'active': activeTab === 'fields' }"
+          @click="activeTab = 'fields'"
+        >
+          Select Fields
+        </button>
+      </div>
+      
+      <!-- Match Settings Tab -->
+      <div v-if="activeTab === 'match'" class="tab-content">
+        <div class="settings-card">
+          <div class="card-header">
+            <h3 class="section-title">Fuzzy match settings</h3>
+          </div>
+          
+          <div class="card-content">
+            <div v-if="nodeFuzzyJoin?.join_input" class="join-settings">
+              <div 
+                v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping" 
+                :key="index"
+                class="setting-panel"
+              >
+                <div class="setting-header">
+                  <h4 class="setting-title">
+                    <unavailableField
+                      v-if="
+                        !(
+                          containsVal(result?.main_input?.columns ?? [], fuzzyMap.left_col) &&
+                          containsVal(result?.right_input?.columns ?? [], fuzzyMap.right_col)
+                        )
+                      "
+                      tooltip-text="Join is not valid"
+                      class="unavailable-field"
+                    />
+                    Setting {{ index + 1 }}
+                  </h4>
+                  <button 
                     v-if="nodeFuzzyJoin?.join_input.join_mapping.length > 1"
-                    class="remove-setting"
+                    class="remove-button"
                     @click="removeJoinCondition(index)"
+                    type="button"
+                    aria-label="Remove setting"
                   >
                     Remove setting
                   </button>
                 </div>
+                
+                <div class="columns-grid">
+                  <div class="column-field">
+                    <label>Left column</label>
+                    <column-selector
+                      v-model="fuzzyMap.left_col"
+                      :value="fuzzyMap.left_col"
+                      :column-options="result?.main_input?.columns"
+                      @update:value="(value: string) => handleChange(value, index, 'left')"
+                    />
+                  </div>
+                  
+                  <div class="column-field">
+                    <label>Right column</label>
+                    <column-selector
+                      v-model="fuzzyMap.right_col"
+                      :value="fuzzyMap.right_col"
+                      :column-options="result?.right_input?.columns"
+                      @update:value="(value: string) => handleChange(value, index, 'right')"
+                    />
+                  </div>
+                </div>
+                
+                <div class="settings-grid">
+                  <div class="threshold-field">
+                    <label for="threshold-score">Threshold score</label>
+                    <div class="range-container">
+                      <input
+                        :id="`threshold-score-${index}`"
+                        v-model="fuzzyMap.threshold_score"
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        class="range-slider"
+                      />
+                      <div class="range-value">{{ fuzzyMap.threshold_score }}%</div>
+                    </div>
+                  </div>
+                  
+                  <div class="select-field">
+                    <label for="fuzzy-type">Match algorithm</label>
+                    <div class="select-wrapper">
+                      <select 
+                        :id="`fuzzy-type-${index}`"
+                        v-model="fuzzyMap.fuzzy_type"
+                        class="select-input"
+                      >
+                        <option
+                          v-for="option in fuzzyMatchOptions"
+                          :key="option.value"
+                          :value="option.value"
+                        >
+                          {{ option.label }}
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="action-buttons">
-              <button class="add-setting" @click="addJoinCondition()">Add setting</button>
+              
+              <button class="add-button" @click="addJoinCondition()" type="button">
+                Add setting
+              </button>
             </div>
           </div>
         </div>
       </div>
-      <div class="listbox-subtitle">Select fields</div>
+      
+      <!-- Select Fields Tab -->
+      <div v-if="activeTab === 'fields'" class="tab-content">
+        <div class="settings-card">
+          <div class="card-header">
+            <h3 class="section-title">Select fields to include</h3>
+          </div>
+          
+          <div class="card-content">
+            <select-dynamic
+              v-if="nodeFuzzyJoin?.join_input"
+              :select-inputs="nodeFuzzyJoin?.join_input.right_select.renames"
+              :show-keep-option="true"
+              :show-headers="true"
+              :show-new-columns="false"
+              :show-title="true"
+              :show-data="true"
+              title="Right data"
+              @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
+              class="select-section"
+            />
 
-      <select-dynamic
-        v-if="nodeFuzzyJoin?.join_input"
-        :select-inputs="nodeFuzzyJoin?.join_input.right_select.renames"
-        :show-keep-option="true"
-        :show-headers="true"
-        :show-new-columns="false"
-        :show-title="true"
-        :show-data="true"
-        title="Right data"
-        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
-      />
-
-      <select-dynamic
-        v-if="nodeFuzzyJoin?.join_input"
-        :select-inputs="nodeFuzzyJoin?.join_input.left_select.renames"
-        :show-keep-option="true"
-        :show-title="true"
-        :show-headers="true"
-        :show-new-columns="false"
-        :show-data="true"
-        title="Left data"
-        @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
-      />
+            <select-dynamic
+              v-if="nodeFuzzyJoin?.join_input"
+              :select-inputs="nodeFuzzyJoin?.join_input.left_select.renames"
+              :show-keep-option="true"
+              :show-title="true"
+              :show-headers="true"
+              :show-new-columns="false"
+              :show-data="true"
+              title="Left data"
+              @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
+              class="select-section"
+            />
+          </div>
+        </div>
+      </div>
     </generic-node-settings>
   </div>
   <CodeLoader v-else />
 </template>
+
 <script lang="ts" setup>
 import { ref, onMounted, nextTick, computed } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -127,6 +177,8 @@ import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue"
 import unavailableField from "../../../baseNode/selectComponents/UnavailableFields.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CodeLoader } from "vue-content-loader";
+
+const activeTab = ref('match'); // Default to match settings tab
 
 const containsVal = (arr: string[], val: string) => {
   return arr.includes(val);
@@ -245,7 +297,6 @@ const handleChange = (newValue: string, index: number, side: string) => {
 };
 
 const pushNodeData = async () => {
-  //await insertSelect(nodeSelect.value)
   isLoaded.value = false;
   nodeStore.isDrawerOpen = false;
   if (nodeFuzzyJoin.value) {
@@ -277,55 +328,283 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* Flex container for rows of items */
-.selectors-row,
-.fuzzy-settings-row,
-.action-buttons {
+/* Modern styling for an AI app */
+.fuzzy-join-container {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #1a202c;
+  max-width: 100%;
+}
+
+/* Tabs Navigation */
+.tabs-navigation {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 1.25rem;
+  background-color: #f8fafc;
+  border-radius: 8px 8px 0 0;
+  overflow: hidden;
 }
 
-/* Individual wrappers for aligning form elements with their labels */
-.column-selector-wrapper,
-.threshold-score,
-.fuzzy-type {
-  display: flex;
-  align-items: center;
-}
-
-/* Input and select box styling */
-input[type="number"],
-select {
-  padding: 2px;
-  border: 1px solid #ccc;
-  border-radius: 5px;
-  margin-left: 10px; /* Space between label and input/select */
-  margin-top: 5px;
-  margin-bottom: 5px;
-}
-
-/* Button styling */
-button {
-  padding: 5px 10px;
-  border: 1px solid #ccc;
-  border-radius: 5px;
+.tab-button {
+  background: none;
+  border: none;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #718096;
   cursor: pointer;
-  background-color: #f5f5f5;
+  transition: all 0.2s ease;
+  border-bottom: 2px solid transparent;
+  outline: none;
+  flex: 1;
   text-align: center;
-  white-space: nowrap; /* Prevents wrapping of text in buttons */
 }
 
-/* Hover effect for buttons */
-button:hover {
-  background-color: #e6e6e6;
+.tab-button:hover {
+  color: #4a5568;
+  background-color: #edf2f7;
 }
-.grid-content {
-  border-radius: 2px;
-  min-height: 2px;
+
+.tab-button.active {
+  border-bottom-color: #3182ce;
+  color: #3182ce;
+  background-color: #ebf8ff;
 }
+
+.tab-content {
+  min-height: 300px;
+}
+
+/* Card styling */
+.settings-card {
+  background-color: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  margin-bottom: 1.5rem;
+  border: 1px solid #edf2f7;
+  overflow: hidden;
+}
+
+.card-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #edf2f7;
+  background-color: #fafafa;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.card-content {
+  padding: 1rem 1.25rem;
+}
+
+/* Join Settings */
+.join-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.setting-panel {
+  background-color: #f8fafc;
+  border-radius: 6px;
+  padding: 1rem;
+  border: 1px solid #edf2f7;
+  transition: all 0.2s ease;
+}
+
+.setting-panel:hover {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+  border-color: #e2e8f0;
+}
+
+.setting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.setting-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #4a5568;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+
 .unavailable-field {
-  margin-right: 8px;
+  margin-right: 0.5rem;
+}
+
+/* Column Selection Grid */
+.columns-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.column-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.column-field label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #4a5568;
+}
+
+/* Settings Grid */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.threshold-field, .select-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.threshold-field label, .select-field label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #4a5568;
+}
+
+/* Range Input */
+.range-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.range-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: #e2e8f0;
+  outline: none;
+}
+
+.range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3182ce;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.range-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #3182ce;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.range-value {
+  min-width: 3rem;
+  text-align: right;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #4a5568;
+}
+
+/* Select Input */
+.select-wrapper {
+  position: relative;
+}
+
+.select-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background-color: #fff;
+  color: #4a5568;
+  appearance: none;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.select-input:focus {
+  border-color: #3182ce;
+  box-shadow: 0 0 0 2px rgba(49, 130, 206, 0.15);
+}
+
+/* Buttons */
+.add-button, 
+.remove-button {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background-color: #f7fafc;
+  color: #4a5568;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.add-button {
+  background-color: #ebf8ff;
+  color: #3182ce;
+  margin-top: 0.5rem;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.add-button:hover {
+  background-color: #bee3f8;
+}
+
+.remove-button {
+  background-color: transparent;
+  border: 1px solid #e2e8f0;
+}
+
+.remove-button:hover {
+  background-color: #FEE2E2;
+  color: #E53E3E;
+  border-color: #FBD5D5;
+}
+
+.select-section {
+  margin-top: 1rem;
+}
+
+.select-section + .select-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #edf2f7;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .columns-grid,
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
