@@ -25,19 +25,36 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'  # Enable pip caching
 
       - name: Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python -
           echo "$HOME/.poetry/bin" >> $GITHUB_PATH
 
-      - name: Install Airbyte with pip
-        run: |
-          pip install https://github.com/Edwardvaneechoud/PyAirbyte/releases/download/v0.20.1.flowfile2/airbyte-0.0.0-py3-none-any.whl
+      # Cache the Poetry dependencies
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-${{ matrix.python-version }}-
+
+      # No need for separate Airbyte install - Poetry will handle it
 
       - name: Install Dependencies (excluding Airbyte)
         run: |
           poetry install --no-interaction --no-ansi
+
+      # Cache the polars-sim package
+      - name: Cache polars-sim package
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-polars-sim-${{ matrix.python-version }}-${{ hashFiles('.github/workflows/run-tests.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-polars-sim-${{ matrix.python-version }}-
 
       - name: Install polars-sim with pip
         run: |
@@ -61,6 +78,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'flowfile_frontend/package-lock.json'
 
       - name: Install Node Dependencies
         run: npm ci
@@ -82,7 +101,7 @@ jobs:
 
   electron-tests-macos:
     runs-on: macos-latest
-    needs: 
+    needs:
       - backend-tests
       - test-web
     steps:
@@ -93,11 +112,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'flowfile_frontend/package-lock.json'
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Poetry
         shell: bash
@@ -105,9 +127,27 @@ jobs:
           curl -sSL https://install.python-poetry.org | python -
           echo "${HOME}/.local/bin" >> $GITHUB_PATH
 
+      # Cache Poetry dependencies for macOS
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/Library/Caches/pypoetry
+          key: ${{ runner.os }}-poetry-3.11-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-3.11-
+
       - name: Install Python dependencies
         run: |
           poetry install
+
+      # Cache polars-sim for macOS
+      - name: Cache polars-sim package
+        uses: actions/cache@v3
+        with:
+          path: ~/Library/Caches/pip
+          key: ${{ runner.os }}-pip-polars-sim-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-polars-sim-3.11-
 
       - name: Install polars-sim with pip
         run: |
@@ -130,7 +170,7 @@ jobs:
 
   electron-tests-windows:
     runs-on: windows-latest
-    needs: 
+    needs:
       - backend-tests
       - test-web
     steps:
@@ -141,11 +181,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'flowfile_frontend/package-lock.json'
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install Poetry
         shell: pwsh
@@ -153,15 +196,32 @@ jobs:
           (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
           echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      # Cache Poetry dependencies for Windows
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~\AppData\Local\pypoetry\Cache
+          key: ${{ runner.os }}-poetry-3.11-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-3.11-
+
       - name: Install Python dependencies
         shell: pwsh
         run: |
           poetry install
 
+      # Cache polars-sim for Windows
+      - name: Cache polars-sim package
+        uses: actions/cache@v3
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-polars-sim-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-polars-sim-3.11-
+
       - name: Install polars-sim with pip
         run: |
           pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main --force-reinstall
-
 
       - name: Build Python services
         shell: pwsh
@@ -174,7 +234,7 @@ jobs:
         run: |
           npm install
           npm run build:test
-    
+
       - name: Run integration tests
         shell: pwsh
         working-directory: flowfile_frontend
