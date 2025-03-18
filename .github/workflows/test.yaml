@@ -42,7 +42,9 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-${{ hashFiles('.github/workflows/test.yaml') }}
+          key: ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-
 
       # Build the wheel if not cached
       - name: Build polars-sim wheel if needed
@@ -51,10 +53,19 @@ jobs:
           mkdir -p ./polars_sim_wheel
           pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
 
-      # Install from the wheel
-      - name: Install polars-sim from wheel
+      # Install polars-sim directly into Poetry's virtual environment
+      - name: Install polars-sim into Poetry environment
         run: |
-          pip install --no-index --find-links=./polars_sim_wheel polars_sim
+          # Get the path to the Poetry virtual environment
+          VENV_PATH=$(poetry env info -p)
+          echo "Poetry virtual environment: $VENV_PATH"
+          
+          # Install polars-sim directly into the Poetry virtual environment
+          $VENV_PATH/bin/pip install --no-index --find-links=./polars_sim_wheel polars_sim
+          
+          # Verify the installation
+          poetry run pip list | grep polars
+          poetry run python -c "try: import polars_sim; print('polars_sim successfully imported'); except ImportError as e: print(f'Import error: {e}'); exit(1)"
 
       - name: Run pytest for flowfile_worker
         run: poetry run pytest flowfile_worker/tests --disable-warnings
@@ -133,7 +144,9 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
+          key: ${{ runner.os }}-polars-sim-wheel-3.11-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-polars-sim-wheel-3.11-
 
       # Build the wheel if not cached
       - name: Build polars-sim wheel if needed
@@ -142,10 +155,19 @@ jobs:
           mkdir -p ./polars_sim_wheel
           pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
 
-      # Install from the wheel
-      - name: Install polars-sim from wheel
+      # Install polars-sim directly into Poetry's virtual environment
+      - name: Install polars-sim into Poetry environment
         run: |
-          pip install --no-index --find-links=./polars_sim_wheel polars_sim
+          # Get the path to the Poetry virtual environment
+          VENV_PATH=$(poetry env info -p)
+          echo "Poetry virtual environment: $VENV_PATH"
+          
+          # Install polars-sim directly into the Poetry virtual environment
+          $VENV_PATH/bin/pip install --no-index --find-links=./polars_sim_wheel polars_sim
+          
+          # Verify the installation
+          poetry run pip list | grep polars
+          poetry run python -c "try: import polars_sim; print('polars_sim successfully imported'); except ImportError as e: print(f'Import error: {e}'); exit(1)"
 
       - name: Build Python services
         run: |
@@ -201,7 +223,9 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-3.11-${{ hashFiles('.github/workflows/run-tests.yml') }}
+          key: ${{ runner.os }}-polars-sim-wheel-3.11-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-polars-sim-wheel-3.11-
 
       # Build the wheel if not cached
       - name: Build polars-sim wheel if needed
@@ -211,11 +235,20 @@ jobs:
           mkdir -Force ./polars_sim_wheel
           pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
 
-      # Install from the wheel
-      - name: Install polars-sim from wheel
+      # Install polars-sim directly into Poetry's virtual environment
+      - name: Install polars-sim into Poetry environment
         shell: pwsh
         run: |
-          pip install --no-index --find-links=./polars_sim_wheel polars_sim
+          # Get the path to the Poetry virtual environment
+          $VENV_PATH = $(poetry env info -p)
+          Write-Output "Poetry virtual environment: $VENV_PATH"
+          
+          # Install polars-sim directly into the Poetry virtual environment
+          & "$VENV_PATH\Scripts\pip" install --no-index --find-links=./polars_sim_wheel polars_sim
+          
+          # Verify the installation
+          poetry run pip list | findstr polars
+          poetry run python -c "try: import polars_sim; print('polars_sim successfully imported'); except ImportError as e: print(f'Import error: {e}'); exit(1)"
 
       - name: Build Python services
         shell: pwsh
