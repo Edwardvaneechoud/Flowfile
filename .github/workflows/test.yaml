@@ -42,7 +42,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-${{ hashFiles('.github/workflows/test.yml') }}
+          key: ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-${{ hashFiles('.github/workflows/test.yaml') }}
 
       # Build the wheel if not cached
       - name: Build polars-sim wheel if needed
