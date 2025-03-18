@@ -65,7 +65,7 @@ jobs:
           
           # Verify the installation
           poetry run pip list | grep polars
-          poetry run python -c "try: import polars_sim; print('polars_sim successfully imported'); except ImportError as e: print(f'Import error: {e}'); exit(1)"
+          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
 
       - name: Run pytest for flowfile_worker
         run: poetry run pytest flowfile_worker/tests --disable-warnings
@@ -167,7 +167,7 @@ jobs:
           
           # Verify the installation
           poetry run pip list | grep polars
-          poetry run python -c "try: import polars_sim; print('polars_sim successfully imported'); except ImportError as e: print(f'Import error: {e}'); exit(1)"
+          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
 
       - name: Build Python services
         run: |
@@ -248,7 +248,7 @@ jobs:
           
           # Verify the installation
           poetry run pip list | findstr polars
-          poetry run python -c "try: import polars_sim; print('polars_sim successfully imported'); except ImportError as e: print(f'Import error: {e}'); exit(1)"
+          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
 
       - name: Build Python services
         shell: pwsh
