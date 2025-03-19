@@ -231,6 +231,7 @@ class FlowfileTable:
     def _finalize_initialization(self, name: str, optimize_memory: bool, schema: Optional[Any],
                                  calculate_schema_stats: bool):
         """Finalize initialization by setting remaining attributes."""
+        _ = calculate_schema_stats
         self.name = name
         self._optimize_memory = optimize_memory
         pl_schema = self.data_frame.collect_schema()
@@ -320,7 +321,7 @@ class FlowfileTable:
             if self._streamable:
                 try:
                     logger.info('Collecting data in streaming mode')
-                    return self.data_frame.collect(streaming=True)
+                    return self.data_frame.collect(engine="streaming")
                 except PanicException:
                     self._streamable = False
 
@@ -331,7 +332,7 @@ class FlowfileTable:
             return self._collect_from_external_source(n_records)
 
         if self._streamable:
-            return self.data_frame.head(n_records).collect(streaming=True, comm_subplan_elim=False)
+            return self.data_frame.head(n_records).collect(engine="streaming", comm_subplan_elim=False)
         return self.data_frame.head(n_records).collect()
 
     def _collect_from_external_source(self, n_records: int) -> pl.DataFrame:
@@ -455,7 +456,7 @@ class FlowfileTable:
     def to_pylist(self) -> List[Dict]:
         """Convert the DataFrame to a list of dictionaries."""
         if self.lazy:
-            return self.data_frame.collect(streaming=self._streamable).to_dicts()
+            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
     @classmethod
@@ -605,7 +606,7 @@ class FlowfileTable:
 
         return FlowfileTable(result)
 
-    def do_pivot(self, pivot_input: transform_schemas.PivotInput, logger: NodeLogger = None) -> "FlowfileTable":
+    def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> "FlowfileTable":
         """Convert data from long to wide format with aggregations."""
         # Get unique values for pivot columns
         max_unique_vals = 200
@@ -614,9 +615,9 @@ class FlowfileTable:
                                               .sort(pivot_input.pivot_column)
                                               .limit(max_unique_vals).cast(pl.String))
         if len(new_cols_unique) >= max_unique_vals:
-            if logger:
-                logger.warning('Pivot column has too many unique values. Please consider using a different column.'
-                               f' Max unique values: {max_unique_vals}')
+            if node_logger:
+                node_logger.warning('Pivot column has too many unique values. Please consider using a different column.'
+                                    f' Max unique values: {max_unique_vals}')
 
         if len(pivot_input.index_columns) == 0:
             no_index_cols = True
@@ -670,6 +671,7 @@ class FlowfileTable:
         try:
             f = to_expr(predicate)
         except Exception as e:
+            logger.warning(f'Error in filter expression: {e}')
             f = to_expr("False")
         df = self.data_frame.filter(f)
         return FlowfileTable(df, schema=self.schema, streamable=self._streamable)
@@ -795,7 +797,7 @@ class FlowfileTable:
                 df = df.head(n_rows).collect()
             except Exception as e:
                 logger.warning(f'Error in getting sample: {e}')
-                df = df.head(n_rows).collect(streaming=False)
+                df = df.head(n_rows).collect(engine="auto")
         else:
             df = self.collect()
         return FlowfileTable(df, number_of_records=len(df), schema=self.schema)
@@ -822,8 +824,9 @@ class FlowfileTable:
                 self.collect_external()
 
             if self.lazy and shuffle:
-                sample_df = self.data_frame.collect(streaming=self._streamable).sample(n_rows, seed=seed,
-                                                                                       shuffle=shuffle)
+                sample_df = self.data_frame.collect(engine="streaming" if self._streamable else "auto").sample(n_rows,
+                                                                                                               seed=seed,
+                                                                                     shuffle=shuffle)
             elif shuffle:
                 sample_df = self.data_frame.sample(n_rows, seed=seed, shuffle=shuffle)
             else:
@@ -870,9 +873,33 @@ class FlowfileTable:
         for batch in batches:
             yield FlowfileTable(batch)
 
-    # Join Methods
+    def start_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
+                         other: "FlowfileTable", file_ref: str, flow_id: int = -1,
+                         node_id: int | str = -1) -> ExternalFuzzyMatchFetcher:
+        """
+        Starts a fuzzy join with another DataFrame and returns the object to track.
+
+        Args:
+            fuzzy_match_input: Fuzzy matching parameters
+            other: Right DataFrame for join
+            file_ref: Reference for temporary files
+            flow_id: Flow ID for tracking
+            node_id: Node ID for tracking
+        Returns:
+            FlowfileTable: New instance with joined data
+        """
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
+                                                    fuzzy_match_input=fuzzy_match_input)
+        return ExternalFuzzyMatchFetcher(left_df, right_df,
+                                         fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+                                         file_ref=file_ref + '_fm',
+                                         wait_on_completion=False,
+                                         flow_id=flow_id,
+                                         node_id=node_id)
+
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowfileTable", file_ref: str, flow_id: int = -1, node_id: int | str = -1) -> "FlowfileTable":
+                      other: "FlowfileTable", file_ref: str, flow_id: int = -1,
+                      node_id: int | str = -1) -> "FlowfileTable":
         """
         Perform a fuzzy join with another DataFrame.
 
@@ -887,7 +914,8 @@ class FlowfileTable:
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
-        f = ExternalFuzzyMatchFetcher(left_df, right_df, fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+        f = ExternalFuzzyMatchFetcher(left_df, right_df,
+                                      fuzzy_maps=fuzzy_match_input.fuzzy_maps,
                                       file_ref=file_ref + '_fm',
                                       wait_on_completion=True,
                                       flow_id=flow_id,
@@ -969,10 +997,10 @@ class FlowfileTable:
 
         if verify_integrity:
             return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                    number_of_records=n_records, streamable=False)
+                                 number_of_records=n_records, streamable=False)
         else:
             fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                  number_of_records=0, streamable=False)
+                               number_of_records=0, streamable=False)
             return fl
 
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
@@ -1028,10 +1056,10 @@ class FlowfileTable:
 
         if verify_integrity:
             return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=True,
-                                    number_of_records=n_records, streamable=False)
+                                 number_of_records=n_records, streamable=False)
         else:
             fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                  number_of_records=0, streamable=False)
+                               number_of_records=0, streamable=False)
             return fl
 
     # Graph Operations
@@ -1126,6 +1154,7 @@ class FlowfileTable:
 
         Args:
             warn: Whether to warn about expensive operations
+            force_calculate: Whether to force recalculation
 
         Returns:
             int: Number of records
@@ -1144,7 +1173,8 @@ class FlowfileTable:
                 if warn:
                     logger.warning('Calculating the number of records this can be expensive on a lazy frame')
                 try:
-                    self.number_of_records = self.data_frame.select(pl.len()).collect(streaming=self._streamable)[0, 0]
+                    self.number_of_records = self.data_frame.select(pl.len()).collect(
+                        engine="streaming" if self._streamable else "auto")[0, 0]
                 except Exception:
                     raise Exception('Could not get number of records')
             else:
@@ -1180,7 +1210,7 @@ class FlowfileTable:
                     df = self.collect()
                     self.data_frame = df
                 else:
-                    self.data_frame = self.data_frame.collect(streaming=self._streamable)
+                    self.data_frame = self.data_frame.collect(engine="streaming" if self._streamable else "auto")
             self._lazy = exec_lazy
 
     @property

@@ -7,6 +7,14 @@ from flowfile_core.flowfile.flowfile_table.flow_file_column.main import Flowfile
 def verify_join_select_integrity(join_input: transform_schema.JoinInput | transform_schema.CrossJoinInput,
                                  left_columns: List[str],
                                  right_columns: List[str]):
+    """
+    Verify column availability for join selection and update availability flags.
+
+    Args:
+        join_input: Join configuration input containing column selections
+        left_columns: List of available column names in left table
+        right_columns: List of available column names in right table
+    """
     for c in join_input.left_select.renames:
         if c.old_name not in left_columns:
             c.is_available = False
@@ -23,6 +31,16 @@ def verify_join_map_integrity(join_input: transform_schema.JoinInput,
                               left_columns: List[FlowfileColumn],
                               right_columns: List[FlowfileColumn]
                               ):
+    """
+    Verify data type compatibility for join mappings between tables.
+
+    Args:
+        join_input: Join configuration with mappings between columns
+        left_columns: Schema columns from left table
+        right_columns: Schema columns from right table
+    Returns:
+        bool: True if join mapping is valid, False otherwise
+    """
     join_mappings = join_input.join_mapping
     left_column_dict = {lc.name: lc for lc in left_columns}
     right_column_dict = {rc.name: rc for rc in right_columns}

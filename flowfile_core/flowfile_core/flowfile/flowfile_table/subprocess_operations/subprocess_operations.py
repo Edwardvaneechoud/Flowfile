@@ -264,7 +264,8 @@ class BaseFetcher:
 class ExternalDfFetcher(BaseFetcher):
     status: Optional[Status] = None
 
-    def __init__(self, flow_id: int, node_id : int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None, wait_on_completion: bool = True,
+    def __init__(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None,
+                 wait_on_completion: bool = True,
                  operation_type: OperationType = 'store'):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
@@ -450,7 +451,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
             if logger:
                 logger.warning(f"Failed reading external file: {str(e)}")
 
-        unique_values = (lf.unique().collect(streaming=True)[:, 0].to_list())
+        unique_values = (lf.unique().collect(engine="streaming")[:, 0].to_list())
 
         if not unique_values:
             raise ValueError(f"No unique values found in lazyframe")

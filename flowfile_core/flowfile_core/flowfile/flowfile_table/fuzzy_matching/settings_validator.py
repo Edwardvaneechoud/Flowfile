@@ -13,19 +13,6 @@ def calculate_uniqueness(a: float, b: float) -> float:
     return ((pow(a + 0.5, 2) + pow(b + 0.5, 2)) / 2 - pow(0.5, 2)) + 0.5 * abs(a - b)
 
 
-def finetune_fuzzy_mapping_settings(left_schema: List[FlowfileColumn],
-                                    fuzzy_match_input: transform_schema.FuzzyMatchInput,
-                                    right_schema: List[FlowfileColumn]) -> transform_schema.FuzzyMatchInput:
-    for fuzzy_mapping in fuzzy_match_input.join_mapping:
-        left_col_stat = next((col for col in left_schema if col.name == fuzzy_mapping.left_col), None)
-        right_col_stat = next((col for col in right_schema if col.name == fuzzy_mapping.right_col), None)
-        fuzzy_mapping.perc_unique = calculate_uniqueness(left_col_stat.perc_unique, right_col_stat.perc_unique)
-    fuzzy_match_input.join_mapping.sort(key=lambda x: x.perc_unique, reverse=True)
-    uniqueness_rate = sum(jm.perc_unique for jm in fuzzy_match_input.join_mapping)
-    fuzzy_match_input.aggregate_output = uniqueness_rate < 1.2
-    return fuzzy_match_input
-
-
 def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
                                  left_schema: List[FlowfileColumn],
                                  right_schema: List[FlowfileColumn]):

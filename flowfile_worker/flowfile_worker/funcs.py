@@ -126,7 +126,7 @@ def calculate_schema_logic(df: pl.LazyFrame, optimize_memory: bool = True, flowf
             df = df.drop(null_cols)
             pl_stats = df.describe()
         n_unique_per_cols = list(df.select(pl.all().approx_n_unique()).collect(
-            streaming=collected_streaming_info.streaming_collect_available).to_dicts()[0].values()
+            engine="streaming" if collected_streaming_info.streaming_collect_available else "auto").to_dicts()[0].values()
                                  )
         stats_headers = pl_stats.drop_in_place('statistic').to_list()
         stats = {v['column_name']: v for v in pl_stats.transpose(include_header=True, header_name='column_name',

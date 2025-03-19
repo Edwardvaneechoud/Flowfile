@@ -20,6 +20,7 @@ def string_concat(*column: str):
     return pl.col(column).cast(pl.Utf8).str.concat(delimiter=',')
 
 JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']
+FuzzyTypeLiteral = Literal['levenshtein','jaro', 'jaro_winkler', 'hamming', 'damerau_levenshtein', 'indel']
 
 
 @dataclass
@@ -142,13 +143,13 @@ class JoinMap:
 @dataclass
 class FuzzyMap(JoinMap):
     threshold_score: Optional[float] = 80.0
-    fuzzy_type: Optional[str] = 'levenshtein'
+    fuzzy_type: Optional[FuzzyTypeLiteral] = 'levenshtein'
     perc_unique: Optional[float] = 0.0
     output_column_name: Optional[str] = None
     valid: Optional[bool] = True
 
     def __init__(self, left_col: str, right_col: str = None, threshold_score: float = 80.0,
-                 fuzzy_type: str = 'levenshtein', perc_unique: float = 0, output_column_name: str = None,
+                 fuzzy_type: FuzzyTypeLiteral = 'levenshtein', perc_unique: float = 0, output_column_name: str = None,
                  _output_col_name: str = None, valid: bool = True, output_col_name: str = None):
         if right_col is None:
             right_col = left_col

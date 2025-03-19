@@ -1,5 +1,4 @@
 import datetime
-import os
 import pickle
 import polars as pl
 import fastexcel
@@ -24,7 +23,7 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
-from flowfile_core.flowfile.node_step.node_step import NodeStep, NodeResults
+from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import ExternalAirbyteFetcher
@@ -450,8 +449,11 @@ class EtlGraph:
 
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "EtlGraph":
         def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
-            return main.do_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
+            f = main.start_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
                                       flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
+            logger.info("Started the fuzzy match action")
+            node._fetch_cached_df = f
+            return FlowfileTable(f.get_result())
 
         self.add_node_step(node_id=fuzzy_settings.node_id,
                            function=_func,

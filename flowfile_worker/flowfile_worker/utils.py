@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 def collect_lazy_frame(lf: pl.LazyFrame) -> pl.DataFrame:
     try:
-        return lf.collect(streaming=True)
+        return lf.collect(engine="streaming")
     except PanicException:
-        return lf.collect()
+        return lf.collect(engine="auto")
 
 
 @dataclass
@@ -19,7 +19,7 @@ class CollectStreamingInfo:
 
 def collect_lazy_frame_and_get_streaming_info(lf: pl.LazyFrame) -> CollectStreamingInfo:
     try:
-        df = lf.collect(streaming=True)
+        df = lf.collect(engine="streaming")
         return CollectStreamingInfo(df, True)
     except PanicException:
         return CollectStreamingInfo(lf.collect(), False)
