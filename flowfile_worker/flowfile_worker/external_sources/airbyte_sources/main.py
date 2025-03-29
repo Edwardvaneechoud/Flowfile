@@ -51,7 +51,7 @@ class AirbyteGetter:
                         config=self.config,
                         streams=self.stream,
                         docker_image=True,
-                        version='6.2.22'
+                        version='6.2.21'
                     )
 
                     logger.debug(f'Starting to load data for {self.stream}')  # Changed to debug level
