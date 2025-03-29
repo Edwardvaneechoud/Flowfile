@@ -34,7 +34,7 @@ def test_read_airbyte():
                      'isOpen': False, 'airbyte_secret': False, 'input_value': 4, 'default': 4}],
                 'mapped_config_spec': {'count': 1000, 'seed': -1, 'records_per_slice': 1000, 'always_updated': True,
                                        'parallelism': 4}, 'config_mode': 'in_line', 'selected_stream': 'products',
-                'source_name': 'faker', 'fields': []}}
+                'source_name': 'faker', 'fields': [], 'version': '6.2.21'}}
         external_source_input = input_schema.NodeAirbyteReader(**settings)
 
         airbyte_settings = airbyte_settings_from_config(external_source_input.source_settings, flow_id=1,
