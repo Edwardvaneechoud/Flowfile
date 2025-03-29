@@ -32,6 +32,7 @@ class AirbyteSource(ExternalDataSource):
     _airbyte_response: Optional[AirbyteResponse] = None
     _airbyte_module = None
     _enforce_full_refresh: Optional[bool] = True
+    version: Optional[str] = None
 
     def __init__(self, airbyte_settings: AirbyteSettings):
         self.is_collected = False
@@ -39,6 +40,8 @@ class AirbyteSource(ExternalDataSource):
         self.stream = airbyte_settings.stream
         self.source_name = airbyte_settings.source_name
         self._enforce_full_refresh = airbyte_settings.enforce_full_refresh
+        if hasattr(airbyte_settings, 'version'):
+            self.version = airbyte_settings.version
 
         # Handle config
         if airbyte_settings.config_ref and not airbyte_settings.config:
@@ -88,7 +91,8 @@ class AirbyteSource(ExternalDataSource):
                 name=self.source_name,
                 config=self.config,
                 streams=self.stream,
-                docker_image=True
+                docker_image=True,
+                version=self.version
             )
 
             try:

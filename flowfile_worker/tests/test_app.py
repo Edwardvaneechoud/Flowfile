@@ -195,7 +195,8 @@ def test_store_airbyte_result():
     airbyte_settings = AirbyteSettings(**{'source_name': 'source-faker', 'stream': 'users', 'config_ref': None,
                                           'config': {'count': 1000, 'seed': -1, 'records_per_slice': 1000,
                                                      'always_updated': True, 'parallelism': 4}, 'fields': None,
-                                          'enforce_full_refresh': True})
+                                          'enforce_full_refresh': True,
+                                          'version': '6.2.21'})
     v = client.post('/store_airbyte_result', json=airbyte_settings.dict())
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'

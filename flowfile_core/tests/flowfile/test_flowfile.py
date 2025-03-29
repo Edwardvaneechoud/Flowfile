@@ -1,4 +1,3 @@
-
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
 from flowfile_core.schemas import input_schema, transform_schema, schemas
@@ -19,11 +18,11 @@ def flow_logger() -> FlowLogger:
 
 
 @pytest.fixture
-def raw_data()-> List[Dict]:
+def raw_data() -> List[Dict]:
     return [{'name': 'John', 'city': 'New York'},
-                {'name': 'Jane', 'city': 'Los Angeles'},
-                {'name': 'Edward', 'city': 'Chicago'},
-                {'name': 'Courtney', 'city': 'Chicago'}]
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}]
 
 
 def handle_run_info(run_info: RunInformation):
@@ -56,7 +55,8 @@ def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
     return graph
 
 
-def add_node_promise_for_manual_input(graph: EtlGraph, node_type: str = 'manual_input', node_id: int = 1, flow_id: int = 1):
+def add_node_promise_for_manual_input(graph: EtlGraph, node_type: str = 'manual_input', node_id: int = 1,
+                                      flow_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(node_promise)
     return graph
@@ -287,7 +287,8 @@ def test_add_record_count():
 def test_add_read_excel():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
-                'received_file': {'id': None, 'name': 'fake_data.xlsx', 'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
+                'received_file': {'id': None, 'name': 'fake_data.xlsx',
+                                  'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
                                   'directory': None, 'analysis_file_available': False, 'status': None,
                                   'file_type': 'excel', 'fields': [], 'reference': '', 'starting_from_line': 0,
                                   'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
@@ -335,8 +336,10 @@ def test_add_and_run_group_by():
     node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
     graph.add_group_by(node_group_by)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'groups', 'sales_data_output'}, 'Columns should be groups, Country, sales_data_sum'
-    assert {'numeric', 'numeric'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    assert set(predicted_df.columns) == {'groups',
+                                         'sales_data_output'}, 'Columns should be groups, Country, sales_data_sum'
+    assert {'numeric', 'numeric'} == set(
+        p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
 
@@ -375,8 +378,10 @@ def test_add_pivot():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_sum', '3_sum', '2_sum', '1_sum'}, 'Columns should be Country, 0_sum, 3_sum, 2_sum, 1_sum'
-    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    assert set(predicted_df.columns) == {'Country', '0_sum', '3_sum', '2_sum',
+                                         '1_sum'}, 'Columns should be Country, 0_sum, 3_sum, 2_sum, 1_sum'
+    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
+        p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
 
@@ -395,8 +400,10 @@ def test_add_pivot_string_count():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_count', '3_count', '2_count', '1_count'}, 'Columns should be Country, 0_count, 3_count, 2_count, 1_count'
-    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
+    assert set(predicted_df.columns) == {'Country', '0_count', '3_count', '2_count',
+                                         '1_count'}, 'Columns should be Country, 0_count, 3_count, 2_count, 1_count'
+    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
+        p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
 
@@ -415,7 +422,8 @@ def test_add_pivot_string_concat():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_concat', '3_concat', '2_concat', '1_concat'}, 'Columns should be Country, 0_concat, 3_concat, 2_concat, 1_concat'
+    assert set(predicted_df.columns) == {'Country', '0_concat', '3_concat', '2_concat',
+                                         '1_concat'}, 'Columns should be Country, 0_concat, 3_concat, 2_concat, 1_concat'
     assert {'str'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -436,7 +444,7 @@ def test_try_add_to_big_pivot():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    expected_columns = ['Country'] + [f'{i+1}_sum' for i in range(200)]
+    expected_columns = ['Country'] + [f'{i + 1}_sum' for i in range(200)]
     assert set(predicted_df.columns) == set(expected_columns), 'Should not have calculated the columns'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -500,40 +508,42 @@ def test_add_external_source():
 def test_airbyte():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 110.87272727272727, 'pos_y': 298.4,
                 'is_setup': True, 'description': '', 'node_type': 'airbyte_reader', 'source_settings': {
-            'parsed_config': [{'title': 'Count', 'type': 'integer', 'key': 'count', 'properties': [], 'required': False,
-                               'description': 'How many users should be generated in total. The purchases table will be scaled to match, with 10 purchases created per 10 users. This setting does not apply to the products stream.',
-                               'isOpen': False, 'airbyte_secret': False, 'input_value': 1000, 'default': 1000},
-                              {'title': 'Seed', 'type': 'integer', 'key': 'seed', 'properties': [], 'required': False,
-                               'description': 'Manually control the faker random seed to return the same values on subsequent runs (leave -1 for random)',
-                               'isOpen': False, 'airbyte_secret': False, 'input_value': -1, 'default': -1},
-                              {'title': 'Records Per Stream Slice', 'type': 'integer', 'key': 'records_per_slice',
-                               'properties': [], 'required': False,
-                               'description': 'How many fake records will be in each page (stream slice), before a state message is emitted?',
-                               'isOpen': False, 'airbyte_secret': False, 'input_value': 1000, 'default': 1000},
-                              {'title': 'Always Updated', 'type': 'boolean', 'key': 'always_updated', 'properties': [],
-                               'required': False,
-                               'description': 'Should the updated_at values for every record be new each sync?  Setting this to false will case the source to stop emitting records after COUNT records have been emitted.',
-                               'isOpen': False, 'airbyte_secret': False, 'input_value': True, 'default': True},
-                              {'title': 'Parallelism', 'type': 'integer', 'key': 'parallelism', 'properties': [],
-                               'required': False,
-                               'description': 'How many parallel workers should we use to generate fake data?  Choose a value equal to the number of CPUs you will allocate to this source.',
-                               'isOpen': False, 'airbyte_secret': False, 'input_value': 4, 'default': 4}],
+            'parsed_config': [
+                {'title': 'Count', 'type': 'integer', 'key': 'count', 'properties': [], 'required': False,
+                 'description': 'How many users should be generated in total. The purchases table will be scaled to match, with 10 purchases created per 10 users. This setting does not apply to the products stream.',
+                 'isOpen': False, 'airbyte_secret': False, 'input_value': 1000, 'default': 1000},
+                {'title': 'Seed', 'type': 'integer', 'key': 'seed', 'properties': [], 'required': False,
+                 'description': 'Manually control the faker random seed to return the same values on subsequent runs (leave -1 for random)',
+                 'isOpen': False, 'airbyte_secret': False, 'input_value': -1, 'default': -1},
+                {'title': 'Records Per Stream Slice', 'type': 'integer', 'key': 'records_per_slice',
+                 'properties': [], 'required': False,
+                 'description': 'How many fake records will be in each page (stream slice), before a state message is emitted?',
+                 'isOpen': False, 'airbyte_secret': False, 'input_value': 1000, 'default': 1000},
+                {'title': 'Always Updated', 'type': 'boolean', 'key': 'always_updated', 'properties': [],
+                 'required': False,
+                 'description': 'Should the updated_at values for every record be new each sync?  Setting this to false will case the source to stop emitting records after COUNT records have been emitted.',
+                 'isOpen': False, 'airbyte_secret': False, 'input_value': True, 'default': True},
+                {'title': 'Parallelism', 'type': 'integer', 'key': 'parallelism', 'properties': [],
+                 'required': False,
+                 'description': 'How many parallel workers should we use to generate fake data?  Choose a value equal to the number of CPUs you will allocate to this source.',
+                 'isOpen': False, 'airbyte_secret': False, 'input_value': 4, 'default': 4}],
             'mapped_config_spec': {'count': 1000, 'seed': -1, 'records_per_slice': 1000, 'always_updated': True,
                                    'parallelism': 4}, 'config_mode': 'in_line', 'selected_stream': 'products',
-            'source_name': 'faker', 'fields': []}}
+            'source_name': 'faker', 'fields': [], 'version': '6.2.21'}}
     graph = create_graph()
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
     graph.add_node_promise(node_promise)
     external_source_input = input_schema.NodeAirbyteReader(**settings)
     graph.add_external_source(external_source_input)
     data = graph.get_node(1).get_resulting_data()
-    assert data.get_number_of_records(force_calculate=True)>0
+    assert data.get_number_of_records(force_calculate=True) > 0
 
 
 def test_read_excel():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
-                'received_file': {'id': None, 'name': 'fake_data.xlsx', 'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
+                'received_file': {'id': None, 'name': 'fake_data.xlsx',
+                                  'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
                                   'directory': None, 'analysis_file_available': False, 'status': None,
                                   'file_type': 'excel', 'fields': [], 'reference': '', 'starting_from_line': 0,
                                   'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
@@ -553,7 +563,8 @@ def test_read_excel():
 def test_read_csv():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 304.8727272727273,
                 'pos_y': 549.5272727272727, 'is_setup': True, 'description': 'Test csv',
-                'received_file': {'id': None, 'name': 'fake_data.csv', 'path': 'flowfile_core/tests/support_files/data/fake_data.csv',
+                'received_file': {'id': None, 'name': 'fake_data.csv',
+                                  'path': 'flowfile_core/tests/support_files/data/fake_data.csv',
                                   'directory': None, 'analysis_file_available': False, 'status': None,
                                   'file_type': 'csv', 'fields': [], 'reference': '', 'starting_from_line': 0,
                                   'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
@@ -573,7 +584,8 @@ def test_read_csv():
 def test_read_parquet():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 421.8727272727273,
                 'pos_y': 224.52727272727273, 'is_setup': True, 'description': '', 'node_type': 'read',
-                'received_file': {'name': 'fake_data.parquet', 'path': 'flowfile_core/tests/support_files/data/fake_data.parquet',
+                'received_file': {'name': 'fake_data.parquet',
+                                  'path': 'flowfile_core/tests/support_files/data/fake_data.parquet',
                                   'file_type': 'parquet'}}
     graph = create_graph()
     add_node_promise_on_type(graph, 'read', 1)
@@ -685,17 +697,17 @@ def test_polars_code():
 
 def get_join_data(how: str = 'inner'):
     return {'flow_id': 1, 'node_id': 3, 'cache_results': False, 'pos_x': 788.8727272727273, 'pos_y': 186.4,
-             'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
-             'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
-                                                      'left_select': {'renames': [
-                                                          {'old_name': 'name', 'new_name': 'name', 'data_type': None,
-                                                           'data_type_change': False, 'join_key': False,
-                                                           'is_altered': False, 'position': None, 'is_available': True,
-                                                           'keep': True}]}, 'right_select': {'renames': [
-            {'old_name': 'name', 'new_name': 'right_name', 'data_type': None, 'data_type_change': False,
-             'join_key': False, 'is_altered': False, 'position': None, 'is_available': True, 'keep': True}]},
-                                                      'how': how}, 'auto_keep_all': True, 'auto_keep_right': True,
-             'auto_keep_left': True}
+            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
+                                                     'left_select': {'renames': [
+                                                         {'old_name': 'name', 'new_name': 'name', 'data_type': None,
+                                                          'data_type_change': False, 'join_key': False,
+                                                          'is_altered': False, 'position': None, 'is_available': True,
+                                                          'keep': True}]}, 'right_select': {'renames': [
+                {'old_name': 'name', 'new_name': 'right_name', 'data_type': None, 'data_type_change': False,
+                 'join_key': False, 'is_altered': False, 'position': None, 'is_available': True, 'keep': True}]},
+                                                     'how': how}, 'auto_keep_all': True, 'auto_keep_right': True,
+            'auto_keep_left': True}
 
 
 def test_add_join():
@@ -717,4 +729,3 @@ def test_add_join():
     graph.add_join(input_schema.NodeJoin(**data))
     run_info = graph.run_graph()
     handle_run_info(run_info)
-
