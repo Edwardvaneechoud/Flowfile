@@ -17,6 +17,7 @@ class AirbyteGetter:
     _type: str
     _airbyte_module = None
     _enforce_full_refresh: Optional[bool] = True
+    version: Optional[str] = None
 
     def __init__(self, airbyte_settings: AirbyteSettings):
         self._airbyte_response = None
@@ -24,6 +25,8 @@ class AirbyteGetter:
         self.source_name = airbyte_settings.source_name
         self._enforce_full_refresh = airbyte_settings.enforce_full_refresh
         self.cache_manager = DuckDBCacheManager()
+        if hasattr(airbyte_settings, 'version'):
+            self.version = airbyte_settings.version
 
         # Handle config
         if airbyte_settings.config_ref and not airbyte_settings.config:
@@ -51,7 +54,7 @@ class AirbyteGetter:
                         config=self.config,
                         streams=self.stream,
                         docker_image=True,
-                        version='6.2.21'
+                        version=self.version
                     )
 
                     logger.debug(f'Starting to load data for {self.stream}')  # Changed to debug level
