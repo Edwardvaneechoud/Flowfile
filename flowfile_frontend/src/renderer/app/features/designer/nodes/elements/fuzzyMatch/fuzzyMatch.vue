@@ -3,33 +3,33 @@
     <generic-node-settings v-model="nodeFuzzyJoin">
       <!-- Tabs Navigation -->
       <div class="tabs-navigation">
-        <button 
-          class="tab-button" 
-          :class="{ 'active': activeTab === 'match' }"
+        <button
+          class="tab-button"
+          :class="{ active: activeTab === 'match' }"
           @click="activeTab = 'match'"
         >
           Match Settings
         </button>
-        <button 
-          class="tab-button" 
-          :class="{ 'active': activeTab === 'fields' }"
+        <button
+          class="tab-button"
+          :class="{ active: activeTab === 'fields' }"
           @click="activeTab = 'fields'"
         >
           Select Fields
         </button>
       </div>
-      
+
       <!-- Match Settings Tab -->
       <div v-if="activeTab === 'match'" class="tab-content">
         <div class="settings-card">
           <div class="card-header">
             <h3 class="section-title">Fuzzy match settings</h3>
           </div>
-          
+
           <div class="card-content">
             <div v-if="nodeFuzzyJoin?.join_input" class="join-settings">
-              <div 
-                v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping" 
+              <div
+                v-for="(fuzzyMap, index) in nodeFuzzyJoin?.join_input.join_mapping"
                 :key="index"
                 class="setting-panel"
               >
@@ -47,17 +47,17 @@
                     />
                     Setting {{ index + 1 }}
                   </h4>
-                  <button 
+                  <button
                     v-if="nodeFuzzyJoin?.join_input.join_mapping.length > 1"
                     class="remove-button"
-                    @click="removeJoinCondition(index)"
                     type="button"
                     aria-label="Remove setting"
+                    @click="removeJoinCondition(index)"
                   >
                     Remove setting
                   </button>
                 </div>
-                
+
                 <div class="columns-grid">
                   <div class="column-field">
                     <label>Left column</label>
@@ -68,7 +68,7 @@
                       @update:value="(value: string) => handleChange(value, index, 'left')"
                     />
                   </div>
-                  
+
                   <div class="column-field">
                     <label>Right column</label>
                     <column-selector
@@ -79,7 +79,7 @@
                     />
                   </div>
                 </div>
-                
+
                 <div class="settings-grid">
                   <div class="threshold-field">
                     <label for="threshold-score">Threshold score</label>
@@ -96,11 +96,11 @@
                       <div class="range-value">{{ fuzzyMap.threshold_score }}%</div>
                     </div>
                   </div>
-                  
+
                   <div class="select-field">
                     <label for="fuzzy-type">Match algorithm</label>
                     <div class="select-wrapper">
-                      <select 
+                      <select
                         :id="`fuzzy-type-${index}`"
                         v-model="fuzzyMap.fuzzy_type"
                         class="select-input"
@@ -117,22 +117,22 @@
                   </div>
                 </div>
               </div>
-              
-              <button class="add-button" @click="addJoinCondition()" type="button">
+
+              <button class="add-button" type="button" @click="addJoinCondition()">
                 Add setting
               </button>
             </div>
           </div>
         </div>
       </div>
-      
+
       <!-- Select Fields Tab -->
       <div v-if="activeTab === 'fields'" class="tab-content">
         <div class="settings-card">
           <div class="card-header">
             <h3 class="section-title">Select fields to include</h3>
           </div>
-          
+
           <div class="card-content">
             <select-dynamic
               v-if="nodeFuzzyJoin?.join_input"
@@ -143,8 +143,10 @@
               :show-title="true"
               :show-data="true"
               title="Right data"
-              @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
               class="select-section"
+              @update-select-inputs="
+                (updatedInputs) => updateSelectInputsHandler(updatedInputs, false)
+              "
             />
 
             <select-dynamic
@@ -156,8 +158,10 @@
               :show-new-columns="false"
               :show-data="true"
               title="Left data"
-              @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
               class="select-section"
+              @update-select-inputs="
+                (updatedInputs) => updateSelectInputsHandler(updatedInputs, true)
+              "
             />
           </div>
         </div>
@@ -178,7 +182,7 @@ import unavailableField from "../../../baseNode/selectComponents/UnavailableFiel
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { CodeLoader } from "vue-content-loader";
 
-const activeTab = ref('match'); // Default to match settings tab
+const activeTab = ref("match"); // Default to match settings tab
 
 const containsVal = (arr: string[], val: string) => {
   return arr.includes(val);
@@ -469,13 +473,15 @@ onMounted(async () => {
   gap: 1rem;
 }
 
-.threshold-field, .select-field {
+.threshold-field,
+.select-field {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
-.threshold-field label, .select-field label {
+.threshold-field label,
+.select-field label {
   font-size: 0.875rem;
   font-weight: 500;
   color: #4a5568;
@@ -552,7 +558,7 @@ onMounted(async () => {
 }
 
 /* Buttons */
-.add-button, 
+.add-button,
 .remove-button {
   padding: 0.5rem 0.75rem;
   border: 1px solid #e2e8f0;
@@ -585,9 +591,9 @@ onMounted(async () => {
 }
 
 .remove-button:hover {
-  background-color: #FEE2E2;
-  color: #E53E3E;
-  border-color: #FBD5D5;
+  background-color: #fee2e2;
+  color: #e53e3e;
+  border-color: #fbd5d5;
 }
 
 .select-section {
