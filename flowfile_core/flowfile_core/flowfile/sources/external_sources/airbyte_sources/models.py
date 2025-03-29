@@ -163,6 +163,7 @@ class AirbyteSettings(BaseModel):
     enforce_full_refresh: Optional[bool] = True
     flowfile_flow_id: int
     flowfile_node_id: int
+    version: Optional[str] = None
 
 
 def get_source_instance(*args, **kwargs) -> 'Source':

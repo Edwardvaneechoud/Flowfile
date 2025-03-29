@@ -12,6 +12,7 @@ class AirbyteConfig(BaseModel):
     mapped_config_spec: Optional[Dict[str, Any]] = Field(default_factory=dict)
     parsed_config: Optional[Any] = None
     connection_name: Optional[str] = None
+    version: Optional[str] = None
 
     @property
     def full_source_name(self) -> str:
