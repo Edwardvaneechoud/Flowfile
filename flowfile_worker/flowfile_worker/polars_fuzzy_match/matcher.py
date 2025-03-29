@@ -1,22 +1,17 @@
 import polars as pl
 from typing import List, Optional, Tuple
 import tempfile
+from logging import Logger
 
 from flowfile_worker.polars_fuzzy_match.process import calculate_and_parse_fuzzy, process_fuzzy_frames
 from flowfile_worker.polars_fuzzy_match.pre_process import pre_process_for_fuzzy_matching
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
 from flowfile_worker.polars_fuzzy_match.utils import cache_polars_frame_to_temp
-from flowfile_worker.polars_fuzzy_match.polars_sim_mock import PolarsSim
-from logging import Logger
 from flowfile_worker.utils import collect_lazy_frame
+import polars_sim as ps
 
-try:
-    import polars_sim as ps
 
-    HAS_POLARS_SIM = True
-except ImportError:
-    HAS_POLARS_SIM = False
-    ps = PolarsSim()
+HAS_POLARS_SIM = True
 
 
 def ensure_left_is_larger(left_df: pl.DataFrame,
@@ -86,7 +81,6 @@ def cross_join_large_files(left_fuzzy_frame: pl.LazyFrame,
                            ) -> pl.LazyFrame:
     if not HAS_POLARS_SIM:
         raise Exception('The polars-sim library is required to perform this operation.')
-    import polars_sim as ps
 
     left_df = collect_lazy_frame(left_fuzzy_frame)
     right_df = collect_lazy_frame(right_fuzzy_frame)

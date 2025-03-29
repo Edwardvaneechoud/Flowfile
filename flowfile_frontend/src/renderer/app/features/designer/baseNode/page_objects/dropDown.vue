@@ -35,7 +35,11 @@
         v-if="showOptions && !isLoading && Array.isArray(column_options)"
         class="options-container"
       >
-        <ul :id="`${uniqueId}-listbox`" class="options-list" role="listbox">
+        <ul
+          :id="`${uniqueId}-listbox`"
+          class="options-list"
+          role="listbox"
+        >
           <li
             v-for="(option, index) in displayedOptions"
             :id="`${uniqueId}-option-${index}`"
@@ -57,16 +61,7 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  defineProps,
-  defineEmits,
-  ref,
-  computed,
-  watch,
-  onMounted,
-  onUnmounted,
-  nextTick,
-} from "vue";
+import { defineProps, defineEmits, ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 
 const props = defineProps({
   modelValue: {
@@ -120,7 +115,7 @@ const displayedOptions = computed(() => {
 const onFocus = () => {
   showOptions.value = true;
   hasTyped.value = false;
-
+  
   // Position the dropdown properly on focus
   nextTick(() => {
     positionDropdown();
@@ -132,15 +127,15 @@ const onInput = () => {
   hasError.value = false;
   activeIndex.value = -1;
   hasTyped.value = true;
-
+  
   if (inputTimeout) clearTimeout(inputTimeout);
-
+  
   if (props.allowOther) {
     inputTimeout = window.setTimeout(() => {
       doUpdate();
     }, 300); // Reduced from 500ms to 300ms for more responsive feel
   }
-
+  
   // Position the dropdown when filtering
   nextTick(() => {
     positionDropdown();
@@ -231,30 +226,30 @@ const scrollActiveOptionIntoView = () => {
   nextTick(() => {
     const activeElement = document.getElementById(`${uniqueId}-option-${activeIndex.value}`);
     if (activeElement) {
-      activeElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      activeElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   });
 };
 
 // Function to position the dropdown
 const positionDropdown = () => {
-  const inputEl = dropdownRef.value?.querySelector(".select-box");
-  const dropdownEl = dropdownRef.value?.querySelector(".options-container");
-
+  const inputEl = dropdownRef.value?.querySelector('.select-box');
+  const dropdownEl = dropdownRef.value?.querySelector('.options-container');
+  
   if (inputEl && dropdownEl) {
     const inputRect = inputEl.getBoundingClientRect();
-    const dropdownEl = dropdownRef.value?.querySelector(".options-container") as HTMLElement;
-
+    const dropdownEl = dropdownRef.value?.querySelector('.options-container') as HTMLElement;
+    
     if (dropdownEl) {
       dropdownEl.style.width = `${inputRect.width}px`;
       dropdownEl.style.top = `${inputRect.bottom}px`;
       dropdownEl.style.left = `${inputRect.left}px`;
-
+      
       // Check if dropdown would go offscreen at the bottom
       const dropdownHeight = dropdownEl.offsetHeight;
       const viewportHeight = window.innerHeight;
       const spaceBelow = viewportHeight - inputRect.bottom;
-
+      
       if (dropdownHeight > spaceBelow) {
         // Position above the input if there's not enough space below
         dropdownEl.style.top = `${inputRect.top - dropdownHeight}px`;
@@ -277,21 +272,21 @@ const handleScroll = () => {
 };
 
 onMounted(() => {
-  document.addEventListener("click", handleClickOutside);
-  window.addEventListener("scroll", handleScroll, true);
-  window.addEventListener("resize", positionDropdown);
+  document.addEventListener('click', handleClickOutside);
+  window.addEventListener('scroll', handleScroll, true);
+  window.addEventListener('resize', positionDropdown);
   isLoaded.value = true;
 });
 
 onUnmounted(() => {
-  document.removeEventListener("click", handleClickOutside);
-  window.removeEventListener("scroll", handleScroll, true);
-  window.removeEventListener("resize", positionDropdown);
-
+  document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('scroll', handleScroll, true);
+  window.removeEventListener('resize', positionDropdown);
+  
   if (inputTimeout) {
     clearTimeout(inputTimeout);
   }
-
+  
   isLoaded.value = false;
 });
 
@@ -311,7 +306,7 @@ watch(
         positionDropdown();
       });
     }
-  },
+  }
 );
 </script>
 
@@ -431,7 +426,7 @@ watch(
   border-left: 2px solid transparent;
 }
 
-.option-item:hover,
+.option-item:hover, 
 .option-item.is-active {
   background-color: #ebf8ff;
   color: #3182ce;
@@ -456,24 +451,16 @@ watch(
 }
 
 @keyframes spin {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* Fade transition for dropdown */
-.fade-enter-active,
-.fade-leave-active {
-  transition:
-    opacity 0.15s,
-    transform 0.15s;
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.15s, transform 0.15s;
 }
 
-.fade-enter-from,
-.fade-leave-to {
+.fade-enter-from, .fade-leave-to {
   opacity: 0;
   transform: translateY(-5px);
 }
