@@ -8,8 +8,60 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-polars-sim:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.12"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      # Check if polars-sim wheel is already cached with a more efficient key
+      - name: Check for cached polars-sim wheel
+        id: check-wheel-cache
+        uses: actions/cache@v3
+        with:
+          path: ./polars_sim_wheel
+          key: polars-sim-wheel-${{ runner.os }}-python-${{ matrix.python-version }}
+
+      # Build the wheel only if needed for Linux/macOS
+      - name: Build polars-sim wheel if needed (Linux/macOS)
+        if: steps.check-wheel-cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p ./polars_sim_wheel
+          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
+          echo "Wheels after building:"
+          ls -la ./polars_sim_wheel
+
+      # Build the wheel only if needed for Windows
+      - name: Build polars-sim wheel if needed (Windows)
+        if: steps.check-wheel-cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -Path "./polars_sim_wheel" -ItemType Directory -Force
+          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
+          Write-Output "Wheels after building:"
+          Get-ChildItem -Path "./polars_sim_wheel"
+
   backend-tests:
     runs-on: ubuntu-latest
+    needs: build-polars-sim
     strategy:
       fail-fast: false
       matrix:
@@ -36,42 +88,12 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      # Check if polars-sim wheel is already cached
-      - name: Check for cached polars-sim wheel
-        id: check-wheel-cache
+      # Restore cached polars-sim wheel
+      - name: Restore polars-sim wheel
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-polars-sim-wheel-${{ matrix.python-version }}-
-
-      # Check if the wheel files exist in the cache directory
-      - name: Check if wheel files exist
-        id: check-wheels
-        run: |
-          # Create directory if it doesn't exist to avoid errors in ls command
-          mkdir -p ./polars_sim_wheel
-          echo "Checking wheel directory contents:"
-          ls -la ./polars_sim_wheel || echo "Directory is empty"
-          
-          # Check for any polars_sim wheel file pattern
-          if ls ./polars_sim_wheel/polars_sim*.whl 2>/dev/null; then
-            echo "polars_sim wheel found"
-            echo "wheel_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "No polars_sim wheel found"
-            echo "wheel_exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      # Build the wheel only if needed
-      - name: Build polars-sim wheel if needed
-        if: steps.check-wheels.outputs.wheel_exists != 'true'
-        run: |
-          mkdir -p ./polars_sim_wheel
-          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
-          echo "Wheels after building:"
-          ls -la ./polars_sim_wheel
+          key: polars-sim-wheel-${{ runner.os }}-python-${{ matrix.python-version }}
 
       # Install polars-sim directly into Poetry's virtual environment
       - name: Install polars-sim into Poetry environment
@@ -131,6 +153,7 @@ jobs:
     needs:
       - backend-tests
       - test-web
+      - build-polars-sim
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -158,42 +181,12 @@ jobs:
         run: |
           poetry install
 
-      # Check if polars-sim wheel is already cached for macOS
-      - name: Check for cached polars-sim wheel
-        id: check-wheel-cache-macos
+      # Restore cached polars-sim wheel
+      - name: Restore polars-sim wheel
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-3.11-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-polars-sim-wheel-3.11-
-
-      # Check if the wheel files exist in the cache directory
-      - name: Check if wheel files exist
-        id: check-wheels-macos
-        run: |
-          # Create directory if it doesn't exist to avoid errors in ls command
-          mkdir -p ./polars_sim_wheel
-          echo "Checking wheel directory contents:"
-          ls -la ./polars_sim_wheel || echo "Directory is empty"
-          
-          # Check for any polars_sim wheel file pattern
-          if ls ./polars_sim_wheel/polars_sim*.whl 2>/dev/null; then
-            echo "polars_sim wheel found"
-            echo "wheel_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "No polars_sim wheel found"
-            echo "wheel_exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      # Build the wheel only if needed
-      - name: Build polars-sim wheel if needed
-        if: steps.check-wheels-macos.outputs.wheel_exists != 'true'
-        run: |
-          mkdir -p ./polars_sim_wheel
-          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
-          echo "Wheels after building:"
-          ls -la ./polars_sim_wheel
+          key: polars-sim-wheel-${{ runner.os }}-python-3.11
 
       # Install polars-sim directly into Poetry's virtual environment
       - name: Install polars-sim into Poetry environment
@@ -229,6 +222,7 @@ jobs:
     needs:
       - backend-tests
       - test-web
+      - build-polars-sim
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -257,46 +251,12 @@ jobs:
         run: |
           poetry install
 
-      # Check if polars-sim wheel is already cached for Windows
-      - name: Check for cached polars-sim wheel
-        id: check-wheel-cache-windows
+      # Restore cached polars-sim wheel
+      - name: Restore polars-sim wheel
         uses: actions/cache@v3
         with:
           path: ./polars_sim_wheel
-          key: ${{ runner.os }}-polars-sim-wheel-3.11-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-polars-sim-wheel-3.11-
-
-      # Check if the wheel files exist in the cache directory
-      - name: Check if wheel files exist
-        id: check-wheels-windows
-        shell: pwsh
-        run: |
-          # Create directory if it doesn't exist
-          New-Item -Path "./polars_sim_wheel" -ItemType Directory -Force | Out-Null
-          
-          Write-Output "Checking wheel directory contents:"
-          Get-ChildItem -Path "./polars_sim_wheel" -ErrorAction SilentlyContinue | ForEach-Object { Write-Output $_.Name }
-          
-          # Check for any polars_sim wheel file pattern
-          $wheelFiles = Get-ChildItem -Path "./polars_sim_wheel" -Filter "polars_sim*.whl" -ErrorAction SilentlyContinue
-          if ($wheelFiles.Count -gt 0) {
-            Write-Output "polars_sim wheel found"
-            Write-Output "wheel_exists=true" >> $env:GITHUB_OUTPUT
-          } else {
-            Write-Output "No polars_sim wheel found"
-            Write-Output "wheel_exists=false" >> $env:GITHUB_OUTPUT
-          }
-
-      # Build the wheel only if needed
-      - name: Build polars-sim wheel if needed
-        if: steps.check-wheels-windows.outputs.wheel_exists != 'true'
-        shell: pwsh
-        run: |
-          mkdir -Force ./polars_sim_wheel
-          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
-          Write-Output "Wheels after building:"
-          Get-ChildItem -Path "./polars_sim_wheel"
+          key: polars-sim-wheel-${{ runner.os }}-python-3.11
 
       # Install polars-sim directly into Poetry's virtual environment
       - name: Install polars-sim into Poetry environment
