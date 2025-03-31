@@ -1,15 +1,32 @@
 
+import asyncio
+import os
+import signal
+from contextlib import asynccontextmanager
+
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import signal
-import asyncio
-from contextlib import asynccontextmanager
-from flowfile_core.routes import router
-from flowfile_core.configs.flow_logger import clear_all_flow_logs  # Import the cleanup function
-from flowfile_core import ServerRun
 
-# Global shutdown flag and server reference
+from flowfile_core import ServerRun
+from flowfile_core.app_routes.auth import router as auth_router
+from flowfile_core.app_routes.secrets import router as secrets_router
+from flowfile_core.configs.flow_logger import clear_all_flow_logs
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import engine, SessionLocal
+from flowfile_core.database.init_db import create_default_local_user
+from flowfile_core.routes import router
+
+os.environ["FLOWFILE_MODE"] = "electron"
+
+db_models.Base.metadata.create_all(bind=engine)
+
+db = SessionLocal()
+try:
+    create_default_local_user(db)
+finally:
+    db.close()
+
 should_exit = False
 server_instance = None
 
@@ -56,6 +73,8 @@ app.add_middleware(
 
 # Include the router with all endpoints
 app.include_router(router)
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 
 
 @app.post("/shutdown")

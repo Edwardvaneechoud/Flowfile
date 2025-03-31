@@ -1,0 +1,32 @@
+# Generate a random secure password and hash it
+import secrets
+import string
+from sqlalchemy.orm import Session
+from flowfile_core.database import models as db_models
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+
+def create_default_local_user(db: Session):
+    # Check if local user already exists
+    local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
+
+    if not local_user:
+        # Generate a random secure password (that won't actually be used)
+        random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        # Hash the password properly even though it's not intended for use
+        hashed_password = pwd_context.hash(random_password)
+
+        # Create the default local user
+        local_user = db_models.User(
+            username="local_user",
+            email="local@flowfile.app",
+            full_name="Local User",
+            hashed_password=hashed_password
+        )
+        db.add(local_user)
+        db.commit()
+        return True
+    else:
+        return False
