@@ -3,10 +3,12 @@ import secrets
 import string
 from sqlalchemy.orm import Session
 from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import engine, SessionLocal
+
 from passlib.context import CryptContext
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-
+db_models.Base.metadata.create_all(bind=engine)
 
 def create_default_local_user(db: Session):
     # Check if local user already exists
@@ -30,3 +32,16 @@ def create_default_local_user(db: Session):
         return True
     else:
         return False
+
+
+def init_db():
+    db = SessionLocal()
+    try:
+        create_default_local_user(db)
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    init_db()
+    print("Local user created successfully")

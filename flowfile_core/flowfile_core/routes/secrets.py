@@ -15,7 +15,7 @@ from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
 def get_master_key():

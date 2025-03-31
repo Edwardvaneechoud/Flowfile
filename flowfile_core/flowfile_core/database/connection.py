@@ -30,7 +30,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db():
-    print("Getting DB")
     db = SessionLocal()
     try:
         yield db

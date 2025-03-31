@@ -32,25 +32,3 @@ async def login_for_access_token(request: Request, db: Session = Depends(get_db)
 @router.get("/users/me", response_model=User)
 async def read_users_me(current_user=Depends(get_current_active_user)):
     return current_user
-
-
-# Simple token endpoint for testing
-@router.get("/electron-token")
-async def get_electron_token():
-    """Get a token without needing form data (for testing)"""
-    access_token = create_access_token(data={"sub": "local_user"})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
-# Protected endpoint for testing
-@router.get("/authenticated-endpoint")
-async def authenticated_endpoint(current_user=Depends(get_current_active_user)):
-    """This endpoint is protected and requires authentication"""
-    print("Current user: ", current_user, type(current_user))
-    return {
-        "message": "You have successfully accessed a protected endpoint",
-        "user": {
-            "username": current_user.username if hasattr(current_user, 'username') else current_user.get("username"),
-            "id": current_user.id
-        }
-    }

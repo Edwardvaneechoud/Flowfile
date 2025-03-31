@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body
+from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body, Depends
 from fastapi.responses import JSONResponse, Response, RedirectResponse, StreamingResponse
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import logging
@@ -11,6 +11,7 @@ import time
 import aiofiles
 
 # Core modules
+from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
@@ -49,7 +50,7 @@ from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models impo
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 
 # Router setup
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 # Initialize services
 file_explorer = FileExplorer('/app/shared' if IS_RUNNING_IN_DOCKER else None)
