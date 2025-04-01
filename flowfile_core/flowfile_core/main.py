@@ -14,6 +14,7 @@ from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.public import router as public_router
+from flowfile_core.routes.logs import router as logs_router
 
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.database.init_db import init_db
@@ -69,8 +70,10 @@ app.add_middleware(
 
 app.include_router(public_router)
 app.include_router(router)
+app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
+
 
 
 @app.post("/shutdown")

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import keyring
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -19,7 +19,7 @@ router = APIRouter()
 
 # Constants for JWT
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 
@@ -95,3 +95,46 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, get_jwt_secret(), algorithm=ALGORITHM)
     return encoded_jwt
 
+
+async def get_current_user_from_query(
+    access_token: str = Query(..., description="JWT access token"),
+    db: Session = Depends(get_db)
+):
+    """
+    Authenticate user using only the query parameter token.
+    Specialized for log streaming where header-based auth isn't possible.
+    """
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if not access_token:
+        raise credentials_exception
+
+    try:
+        # Decode token
+        payload = jwt.decode(access_token, get_jwt_secret(), algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+
+    # Handle authentication based on deployment mode (same as your existing logic)
+    if os.environ.get("FLOWFILE_MODE") == "electron":
+        if token_data.username == "local_user":
+            electron_user = User(username="local_user", id=1, disabled=False)
+            return electron_user
+        else:
+            raise credentials_exception
+    else:
+        # In Docker mode, get user from database
+        user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
+        if user is None:
+            raise credentials_exception
+        if user.disabled:
+            raise HTTPException(status_code=400, detail="Inactive user")
+        return user

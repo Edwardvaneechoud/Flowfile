@@ -91,13 +91,13 @@ dev = ["pylint (==3.1.0)"]
 
 [[package]]
 name = "airbyte-cdk"
-version = "6.42.1"
+version = "6.44.0"
 description = "A framework for writing Airbyte Connectors."
 optional = false
 python-versions = "<3.13,>=3.10"
 files = [
-    {file = "airbyte_cdk-6.42.1-py3-none-any.whl", hash = "sha256:7a23fa4d3711173b7dbc1f20d94c8f10bb3fae3f164464be63cf60ad631782ab"},
-    {file = "airbyte_cdk-6.42.1.tar.gz", hash = "sha256:c8fd4760cd68f8a93ea32bdafadd0d436f8274ee01ca316ab574f99433d4684b"},
+    {file = "airbyte_cdk-6.44.0-py3-none-any.whl", hash = "sha256:2896179a9d1c6b4f2f27827dd3b92f24493dd872308a679bbbee0bae1466525c"},
+    {file = "airbyte_cdk-6.44.0.tar.gz", hash = "sha256:47aa0c9c372b3d443dae50fea097c6eb37cb8e7c82797795d2831c4b492b4264"},
 ]
 
 [package.dependencies]
@@ -2129,20 +2129,20 @@ pyyaml = ">=5.1"
 
 [[package]]
 name = "mkdocs-material"
-version = "9.6.10"
+version = "9.6.11"
 description = "Documentation that simply works"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "mkdocs_material-9.6.10-py3-none-any.whl", hash = "sha256:36168548df4e2ddeb9a334ddae4ab9c388ccfea4dd50ffee657d22b93dcb1c3e"},
-    {file = "mkdocs_material-9.6.10.tar.gz", hash = "sha256:25a453c1f24f34fcf1f53680c03d2c1421b52ce5247f4468153c87a70cd5f1fc"},
+    {file = "mkdocs_material-9.6.11-py3-none-any.whl", hash = "sha256:47f21ef9cbf4f0ebdce78a2ceecaa5d413581a55141e4464902224ebbc0b1263"},
+    {file = "mkdocs_material-9.6.11.tar.gz", hash = "sha256:0b7f4a0145c5074cdd692e4362d232fb25ef5b23328d0ec1ab287af77cc0deff"},
 ]
 
 [package.dependencies]
 babel = ">=2.10,<3.0"
 backrefs = ">=5.7.post1,<6.0"
 colorama = ">=0.4,<1.0"
-jinja2 = ">=3.0,<4.0"
+jinja2 = ">=3.1,<4.0"
 markdown = ">=3.2,<4.0"
 mkdocs = ">=1.6,<2.0"
 mkdocs-material-extensions = ">=1.3,<2.0"
@@ -2732,21 +2732,22 @@ pydantic = ">=2.9.2"
 
 [[package]]
 name = "polars-grouper"
-version = "0.2.0"
-description = "Graph solving and grouping extension for Polars DataFrames"
+version = "0.3.0"
+description = "High-performance graph analysis and pattern mining extension for Polars"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "polars_grouper-0.2.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:abecde0f1d778a381f5623f7181d5b85d507ab30183ed2ee951ae668873bbaf3"},
-    {file = "polars_grouper-0.2.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:873e29369fd159bc38437c44ffc09186cdf03fb71de3708614900dafa303582b"},
-    {file = "polars_grouper-0.2.0-cp38-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:10f48d915e32e366de78e376095c0db9eb9ad7e5b31aeef9ff07663e5fbc452f"},
-    {file = "polars_grouper-0.2.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a0bf39a829c912d10a78d65978996e59ad1d64b4e94e52e6310a58417a810226"},
-    {file = "polars_grouper-0.2.0-cp38-abi3-win_amd64.whl", hash = "sha256:d9919f7880f8d8476879a634358e7795875119806f440b4f881e2b644a99f0d8"},
-    {file = "polars_grouper-0.2.0.tar.gz", hash = "sha256:15e9c2cb7370a43b89d22b6e438d4ae51a8e9a0335f59e11115c61aa8159d4ca"},
+    {file = "polars_grouper-0.3.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:6a2c56eb4621502447268c2d40bfc7696fe291691fe777b257cdda869bfbdde2"},
+    {file = "polars_grouper-0.3.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:3701fea159f2104d78e8aaad65c2af698275a8b8aa036a8c1d98ef18de06a822"},
+    {file = "polars_grouper-0.3.0-cp38-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:29cb97892720b464a9109c31229a4df086665cfcad7390a90c0417fcbfb0b9fd"},
+    {file = "polars_grouper-0.3.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:447974f42782c9998a49d70e82caf124c39c69094a5d845d4d3778e084409ebc"},
+    {file = "polars_grouper-0.3.0-cp38-abi3-win_amd64.whl", hash = "sha256:1fc5e028c0bb1c2e3e5d18d4357da3b06502cfcfd14061d23e15520dcf7caa5e"},
+    {file = "polars_grouper-0.3.0.tar.gz", hash = "sha256:76707a74ab55cca25b1c5066a293a29ae48baac3cc0db152983ed5230feeb622"},
 ]
 
 [package.extras]
-dev = ["mypy", "pytest", "ruff"]
+dev = ["black (>=23.0.0)", "isort (>=5.0.0)", "mypy (>=1.0.0)", "pytest (>=7.0.0)", "ruff (>=0.1.0)"]
+docs = ["mkdocs (>=1.5.0)", "mkdocs-material", "mkdocstrings"]
 
 [[package]]
 name = "proto-plus"
@@ -4531,13 +4532,13 @@ files = [
 
 [[package]]
 name = "url-normalize"
-version = "2.0.1"
+version = "2.2.0"
 description = "URL normalization for Python"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "url_normalize-2.0.1-py3-none-any.whl", hash = "sha256:c15cabbee757b94c86868bc2adb1d31679851307681e2f3d424b40e652799231"},
-    {file = "url_normalize-2.0.1.tar.gz", hash = "sha256:f45566acecd1a10b198b22bac6737887a261d08f4254c058294bd10e777fb5cf"},
+    {file = "url_normalize-2.2.0-py3-none-any.whl", hash = "sha256:3fe387b62f5b66db94304bc703bf6d34de52aaa9590d4d1f1bbdf305a1430064"},
+    {file = "url_normalize-2.2.0.tar.gz", hash = "sha256:0f0b7cc95a95d2d9b0c9a51d47a326559bc05bd1558accdada21bb0c9504de85"},
 ]
 
 [package.dependencies]
@@ -4794,4 +4795,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "a8055592cad3fa616be83dbe644f753df593966eb97a3d3368a9107213dd4094"
+content-hash = "2bde27c144674ca4b79f5d0dbdec5138c7f2d02c4530e777e17b472de1cc12b1"

@@ -103,10 +103,12 @@ class AuthService {
   }
   
   private calculateExpiration(hoursTilExpire = 1): number {
-    return Date.now() + hoursTilExpire * 60 * 60 * 1000;
+    return Date.now() + hoursTilExpire * 59;
   }
   
   hasValidToken(): boolean {
+    console.log('token',this.token.value)
+    console.log('tokenExpiration',this.tokenExpiration.value)
     return !!(
       this.token.value && 
       this.tokenExpiration.value && 
