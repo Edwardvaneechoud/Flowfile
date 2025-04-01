@@ -281,6 +281,7 @@ jobs:
       - backend-tests
       - test-web
       - build-polars-sim
+      - backend-tests-windows
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
