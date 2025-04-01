@@ -1,6 +1,8 @@
 /* styles/base/_variables.css - Refined version */
 :root {
-  /* Colors - keeping your existing colors and adding just essential new ones */
+
+  --font-family-base: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+
   --color-primary: #176598;
   --color-primary-dark: #05314f;
   --color-background: #fff;
