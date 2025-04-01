@@ -2,6 +2,7 @@ import pytest
 import subprocess
 from fastapi.testclient import TestClient
 import polars as pl
+import platform
 import base64
 from io import BytesIO
 from flowfile_worker import main
@@ -11,8 +12,11 @@ from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSetti
 
 client = TestClient(main.app)
 
+
 def is_docker_available():
     """Check if Docker is running."""
+    if platform.system() == "Windows":
+        return False
     try:
         subprocess.run(["docker", "info"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         return True
