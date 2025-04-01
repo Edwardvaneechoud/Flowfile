@@ -1,38 +1,19 @@
 # app_routes/secrets.py
 
-
-
 import os
 from typing import List
 
-import keyring
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
+from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
-
-
-def get_master_key():
-    # If in Electron mode, get or create from keyring
-    if os.environ.get("FLOWFILE_MODE") == "electron" or 1 == 1:
-        key = keyring.get_password("flowfile", "master_key")
-        if not key:
-            # Generate a new key (must be valid Fernet key)
-            key = Fernet.generate_key().decode()
-            keyring.set_password("flowfile", "master_key", key)
-        return key
-    else:
-        # In Docker mode, get from environment
-        key = os.environ.get("MASTER_KEY")
-        if not key:
-            raise Exception("MASTER_KEY environment variable must be set in Docker mode")
-        return key
 
 
 def encrypt_secret(secret_value):

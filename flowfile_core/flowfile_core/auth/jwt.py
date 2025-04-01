@@ -5,11 +5,11 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-import keyring
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from flowfile_core.auth.secrets import get_password, set_password
 
 from flowfile_core.auth.models import User, TokenData
 from flowfile_core.database import models as db_models
@@ -25,11 +25,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token", auto_error=False)
 
 
 def get_jwt_secret():
-    if os.environ.get("FLOWFILE_MODE") == "electron" or 1 == 1:
-        key = keyring.get_password("flowfile", "jwt_secret")
+    if os.environ.get("FLOWFILE_MODE") == "electron":
+        key = get_password("flowfile", "jwt_secret")
         if not key:
             key = secrets.token_hex(32)
-            keyring.set_password("flowfile", "jwt_secret", key)
+            set_password("flowfile", "jwt_secret", key)
         return key
     else:
         key = os.environ.get("JWT_SECRET_KEY")
