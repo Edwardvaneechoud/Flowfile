@@ -14,7 +14,21 @@
 @import './components/_modals.css';
 @import './utils/_layout.css';
 
-/* Keep your existing Element Plus styling */
+
+/* styles/base/_variables.css */
+:root {
+  /* Fonts */
+  --font-family-base: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  
+  /* Colors */
+  --primary-blue: #081b30;
+  --primary-blue-hover: #0d2640;
+  --primary-blue-light: #00040a;
+  --light-blue: #2C74B3;
+  --hover-blue: #f0f7ff;
+  --border-color: #e0e0e0;
+}
+
 /* General Element Plus styling */
 [class^="el-"] {
   font-family: var(--font-family-base) !important;
