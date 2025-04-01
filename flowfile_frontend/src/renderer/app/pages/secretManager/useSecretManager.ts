@@ -1,71 +1,61 @@
-// src/components/secrets/useSecretManager.ts
-
-import { ref, computed, onMounted, type Ref } from 'vue';
-import type { Secret, SecretInput } from './secretTypes';
+// secretManager/composables/useSecrets.ts
+import { ref, computed } from 'vue';
+import type { Ref } from 'vue';
 import { fetchSecretsApi, addSecretApi, getSecretValueApi, deleteSecretApi } from './secretApi';
+import type { Secret, SecretInput } from './secretTypes';
 
 export function useSecretManager() {
   const secrets: Ref<Secret[]> = ref([]);
-  const newSecret = ref<SecretInput>({ name: '', value: '' });
   const isLoading = ref(true);
-  const isSubmitting = ref(false);
-  const isDeleting = ref(false);
-  const showNewSecret = ref(false);
-  const visibleSecrets = ref<string[]>([]);
   const searchTerm = ref('');
-  const showDeleteModal = ref(false);
-  const secretToDelete = ref('');
+  const visibleSecrets = ref<string[]>([]);
   const copyMessage = ref('');
 
+  // Filtered and sorted secrets
   const filteredSecrets = computed(() => {
+    const sortedSecrets = [...secrets.value].sort((a, b) => a.name.localeCompare(b.name));
     if (!searchTerm.value) {
-        return [...secrets.value].sort((a, b) => a.name.localeCompare(b.name));
+      return sortedSecrets;
     }
     const term = searchTerm.value.toLowerCase();
-    const filtered = secrets.value.filter(secret =>
+    return sortedSecrets.filter(secret =>
       secret.name.toLowerCase().includes(term)
     );
-    // Also sort the filtered results
-    return filtered.sort((a, b) => a.name.localeCompare(b.name));
   });
 
-  // Methods
+  // Load secrets from API
   const loadSecrets = async () => {
     isLoading.value = true;
     visibleSecrets.value = []; // Reset visibility on reload
     try {
       secrets.value = await fetchSecretsApi();
-      // toast.success('Secrets loaded successfully');
     } catch (error) {
       console.error('Failed to load secrets:', error);
       secrets.value = []; // Clear secrets on error
+      throw error; // Allow caller to handle notification
     } finally {
       isLoading.value = false;
     }
   };
 
-  const addSecret = async () => {
-    if (!newSecret.value.name || !newSecret.value.value) return;
-
-    if (secrets.value.some(s => s.name === newSecret.value.name)) {
-         alert(`Secret with name "${newSecret.value.name}" already exists.`);
-         return;
+  // Add a new secret
+  const addSecret = async (secretInput: SecretInput) => {
+    // Basic validation: Check if secret name already exists (case-sensitive)
+    if (secrets.value.some(s => s.name === secretInput.name)) {
+      throw new Error(`Secret with name "${secretInput.name}" already exists.`);
     }
 
-    isSubmitting.value = true;
     try {
-      await addSecretApi(newSecret.value);
+      await addSecretApi({ ...secretInput }); // Pass a copy
       await loadSecrets(); // Reload the list after adding
-      newSecret.value = { name: '', value: '' }; // Reset form
-      showNewSecret.value = false; // Hide password field
-    } catch (error: any) {
+      return secretInput.name; // Return name for success feedback
+    } catch (error) {
       console.error('Failed to add secret:', error);
-      alert(error.message || 'An unknown error occurred while adding the secret.'); // Display specific error
-    } finally {
-      isSubmitting.value = false;
+      throw error; // Allow caller to handle notification
     }
   };
 
+  // Toggle secret visibility icon
   const toggleSecretVisibility = (secretName: string) => {
     const index = visibleSecrets.value.indexOf(secretName);
     if (index === -1) {
@@ -75,76 +65,56 @@ export function useSecretManager() {
     }
   };
 
+  // Copy secret value to clipboard
   const copySecretToClipboard = async (secretName: string) => {
+    copyMessage.value = ''; // Clear previous message
     try {
       const secretValue = await getSecretValueApi(secretName);
-
       await navigator.clipboard.writeText(secretValue);
-
       copyMessage.value = `Value for '${secretName}' copied!`;
+      
+      // Auto-clear message after delay
       setTimeout(() => {
         copyMessage.value = '';
       }, 2500);
-
+      
+      return true;
     } catch (error) {
       console.error('Failed to copy secret:', error);
-      alert('Failed to retrieve or copy secret value.');
+      copyMessage.value = `Failed to copy ${secretName}.`;
+      
+      // Auto-clear error message after delay
+      setTimeout(() => {
+        copyMessage.value = '';
+      }, 3000);
+      
+      throw error; // Allow caller to handle notification
     }
   };
 
-
-  const confirmDelete = (secretName: string) => {
-    secretToDelete.value = secretName;
-    showDeleteModal.value = true;
-  };
-
-  const cancelDelete = () => {
-    showDeleteModal.value = false;
-    secretToDelete.value = '';
-  };
-
-  const deleteSecret = async () => {
-    if (!secretToDelete.value) return;
-
-    isDeleting.value = true;
+  // Delete a secret
+  const deleteSecret = async (secretName: string) => {
     try {
-      const nameToDelete = secretToDelete.value;
-      await deleteSecretApi(nameToDelete);
-      await loadSecrets();
-      showDeleteModal.value = false;
-      secretToDelete.value = '';
+      await deleteSecretApi(secretName);
+      await loadSecrets(); // Refresh the list
+      return secretName; // Return name for success feedback
     } catch (error) {
       console.error('Failed to delete secret:', error);
-      alert('Failed to delete secret. Please try again.');
-    } finally {
-      isDeleting.value = false;
+      throw error; // Allow caller to handle notification
     }
   };
 
-  onMounted(() => {
-    loadSecrets();
-  });
-
-  // Return everything the component template needs
   return {
     secrets,
-    newSecret,
-    isLoading,
-    isSubmitting,
-    isDeleting,
-    showNewSecret,
-    visibleSecrets,
-    searchTerm,
-    showDeleteModal,
-    secretToDelete,
-    copyMessage,
     filteredSecrets,
+    isLoading,
+    searchTerm,
+    visibleSecrets,
+    copyMessage,
+    loadSecrets,
     addSecret,
     toggleSecretVisibility,
     copySecretToClipboard,
-    confirmDelete,
-    cancelDelete, // Expose cancel function for modal overlay click
-    deleteSecret,
-    loadSecrets // Expose if manual refresh is needed
+    deleteSecret
   };
 }

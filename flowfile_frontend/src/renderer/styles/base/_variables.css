@@ -1,31 +1,52 @@
+/* styles/base/_variables.css - Refined version */
 :root {
-    /* Colors */
-    --color-primary: #176598;
-    --color-primary-dark: #05314f;
-    --color-background: #fff;
-    --color-text: #333;
-    --color-border: #ddd;
-    --color-hover: #f5f5f5;
-    --color-selected: #e0f7fa;
-    --color-selected-text: #0c254a;
-    
-    /* Spacing */
-    --spacing-xs: 4px;
-    --spacing-sm: 8px;
-    --spacing-md: 12px;
-    --spacing-lg: 16px;
-    
-    /* Shadows */
-    --shadow-default: 0 2px 8px rgba(0, 0, 0, 0.1);
-    
-    /* Border Radius */
-    --border-radius-sm: 4px;
-    --border-radius-md: 8px;
-    
-    /* Typography */
-    --font-size-sm: 12px;
-    --font-size-md: 14px;
-    --font-size-lg: 16px;
-    --font-weight-bold: 600;
-  }
+  /* Colors - keeping your existing colors and adding just essential new ones */
+  --color-primary: #176598;
+  --color-primary-dark: #05314f;
+  --color-background: #fff;
+  --color-text: #333;
+  --color-border: #ddd;
+  --color-hover: #f5f5f5;
+  --color-selected: #e0f7fa;
+  --color-selected-text: #0c254a;
   
+  /* Essential new colors */
+  --color-success: #2f855a;
+  --color-danger: #e53e3e;
+  --color-info: #3182ce;
+  --color-gray-100: #f7fafc;
+  --color-gray-300: #e2e8f0;
+  --color-gray-500: #a0aec0;
+  --color-gray-700: #4a5568;
+  
+  /* Spacing - keeping your existing ones */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  
+  /* Shadow - simplified */
+  --shadow-default: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07);
+  
+  /* Border Radius - keeping your existing ones */
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  
+  /* Typography - adjusted for smaller sizes */
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  
+  /* Line heights - compact */
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.4;
+  
+  /* Animation - simplified */
+  --transition-fast: 150ms;
+}
