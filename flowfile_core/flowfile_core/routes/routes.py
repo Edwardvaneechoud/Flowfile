@@ -63,11 +63,6 @@ def get_node_model(setting_name_ref: str):
             return ref
 
 
-@router.get("/", tags=['admin'])
-async def docs_redirect():
-    return RedirectResponse(url='/docs')
-
-
 @router.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
     file_location = f"uploads/{file.filename}"

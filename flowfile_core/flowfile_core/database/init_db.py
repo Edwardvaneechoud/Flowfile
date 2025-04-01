@@ -11,16 +11,12 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 db_models.Base.metadata.create_all(bind=engine)
 
 def create_default_local_user(db: Session):
-    # Check if local user already exists
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
 
     if not local_user:
-        # Generate a random secure password (that won't actually be used)
         random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
-        # Hash the password properly even though it's not intended for use
         hashed_password = pwd_context.hash(random_password)
 
-        # Create the default local user
         local_user = db_models.User(
             username="local_user",
             email="local@flowfile.app",
