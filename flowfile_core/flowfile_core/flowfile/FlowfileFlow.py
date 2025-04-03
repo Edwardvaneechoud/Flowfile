@@ -707,6 +707,10 @@ class EtlGraph:
         logger.info('Adding google sheet reader')
         self.add_external_source(external_source_input)
 
+    def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
+        logger.info('Adding sql source')
+        self.add_external_source(external_source_input)
+
     def add_external_source(self,
                             external_source_input: input_schema.NodeExternalSource | input_schema.NodeAirbyteReader):
 

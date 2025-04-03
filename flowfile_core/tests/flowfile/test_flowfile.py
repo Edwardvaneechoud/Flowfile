@@ -534,7 +534,7 @@ def test_airbyte():
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
     graph.add_node_promise(node_promise)
     external_source_input = input_schema.NodeAirbyteReader(**settings)
-    graph.add_external_source(external_source_input)
+    graph.add_airbyte_reader(external_source_input)
     data = graph.get_node(1).get_resulting_data()
     assert data.get_number_of_records(force_calculate=True) > 0
 

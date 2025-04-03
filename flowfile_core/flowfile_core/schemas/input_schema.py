@@ -254,6 +254,22 @@ class NodeRead(NodeBase):
     received_file: ReceivedTable
 
 
+class DataBaseConnection(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    url: Optional[str] = None
+
+
+class NodeDatabaseReader(NodeBase):
+    database_connection: DataBaseConnection
+    table: Optional[str] = None
+    query: Optional[str] = None
+    fields: Optional[List[MinimalFieldInfo]] = None
+
+
 class ExternalSource(BaseModel):
     orientation: str = 'row'
     fields: Optional[List[MinimalFieldInfo]] = None
@@ -292,17 +308,6 @@ class NodeExternalSource(NodeBase):
 class NodeAirbyteReader(NodeExternalSource):
     identifier: str = 'airbyte'
     source_settings: AirbyteReader
-
-
-class DataBaseConnection(ExternalSource):
-    table: str
-    encryption_key: str
-    user: str
-    password: str
-    database: str
-    server: str
-    driver: str
-    port: int
 
 
 class NodeFormula(NodeSingleInput):
