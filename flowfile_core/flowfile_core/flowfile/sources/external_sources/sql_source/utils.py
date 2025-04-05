@@ -1,5 +1,5 @@
 # Comprehensive mapping from SQLAlchemy types to Polars types
-from typing import Dict, Type, Union, cast
+from typing import Dict, Type, Union, cast, TYPE_CHECKING, Any
 from pydantic import SecretStr
 
 import polars as pl
@@ -24,22 +24,24 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 
-# Define type variables and types for type hinting
-SqlType = Union[
-    Type[_Binary], Type[ARRAY], Type[BIGINT], Type[BigInteger], Type[BINARY],
-    Type[BLOB], Type[BOOLEAN], Type[Boolean], Type[CHAR], Type[CLOB],
-    Type[Concatenable], Type[DATE], Type[Date], Type[DATETIME], Type[DateTime],
-    Type[DECIMAL], Type[DOUBLE], Type[Double], Type[DOUBLE_PRECISION], Type[Enum],
-    Type[FLOAT], Type[Float], Type[Indexable], Type[INT], Type[INTEGER],
-    Type[Integer], Type[Interval], Type[JSON], Type[LargeBinary], Type[MatchType],
-    Type[NCHAR], Type[NULLTYPE], Type[NullType], Type[NUMERIC], Type[Numeric],
-    Type[NVARCHAR], Type[PickleType], Type[REAL], Type[SchemaType], Type[SMALLINT],
-    Type[SmallInteger], Type[String], Type[STRINGTYPE], Type[TEXT], Type[Text],
-    Type[TIME], Type[Time], Type[TIMESTAMP], Type[TupleType], Type[Unicode],
-    Type[UnicodeText], Type[UUID], Type[Uuid], Type[VARBINARY], Type[VARCHAR],
-    Type[TypeDecorator], Type[TypeEngine], Type[UserDefinedType], Type[Variant],
-    Type[ExternalType]
-]
+if TYPE_CHECKING:
+    SqlType = Union[
+        Type[_Binary], Type[ARRAY], Type[BIGINT], Type[BigInteger], Type[BINARY],
+        Type[BLOB], Type[BOOLEAN], Type[Boolean], Type[CHAR], Type[CLOB],
+        Type[Concatenable], Type[DATE], Type[Date], Type[DATETIME], Type[DateTime],
+        Type[DECIMAL], Type[DOUBLE], Type[Double], Type[DOUBLE_PRECISION], Type[Enum],
+        Type[FLOAT], Type[Float], Type[Indexable], Type[INT], Type[INTEGER],
+        Type[Integer], Type[Interval], Type[JSON], Type[LargeBinary], Type[MatchType],
+        Type[NCHAR], Type[NULLTYPE], Type[NullType], Type[NUMERIC], Type[Numeric],
+        Type[NVARCHAR], Type[PickleType], Type[REAL], Type[SchemaType], Type[SMALLINT],
+        Type[SmallInteger], Type[String], Type[STRINGTYPE], Type[TEXT], Type[Text],
+        Type[TIME], Type[Time], Type[TIMESTAMP], Type[TupleType], Type[Unicode],
+        Type[UnicodeText], Type[UUID], Type[Uuid], Type[VARBINARY], Type[VARCHAR],
+        Type[TypeDecorator], Type[TypeEngine], Type[UserDefinedType], Type[Variant],
+        Type[ExternalType]
+    ]
+else:
+    SqlType = Any
 
 
 # Comprehensive mapping from SQLAlchemy types to Polars types
