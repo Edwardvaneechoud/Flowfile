@@ -19,6 +19,7 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations.models import (
     Status
 )
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import AirbyteSettings
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import DatabaseExternalReadSettings
 from flowfile_core.schemas.input_schema import (
     ReceivedCsvTable,
     ReceivedExcelTable,
@@ -81,6 +82,14 @@ def trigger_create_operation(flow_id: int, node_id: int | str, received_table: R
 
 def trigger_airbyte_collector(airbyte_settings: AirbyteSettings):
     f = requests.post(url=f'{WORKER_URL}/store_airbyte_result', data=airbyte_settings.model_dump_json())
+    if not f.ok:
+        raise Exception(f'Could not cache the data, {f.text}')
+    return Status(**f.json())
+
+
+def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
+    f = requests.post(url=f'{WORKER_URL}/store_database_read_result',
+                      data=database_external_read_settings.model_dump_json())
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
     return Status(**f.json())
@@ -320,6 +329,16 @@ class ExternalCreateFetcher(BaseFetcher):
 class ExternalAirbyteFetcher(BaseFetcher):
     def __init__(self, airbyte_settings: AirbyteSettings, wait_on_completion: bool = True):
         r = trigger_airbyte_collector(airbyte_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == 'Processing'
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalDatabaseFetcher(BaseFetcher):
+    def __init__(self, database_external_read_settings: DatabaseExternalReadSettings,
+                 wait_on_completion: bool = True):
+        r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:

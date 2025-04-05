@@ -513,3 +513,25 @@ def test_error_run_flow_while_running():
     thread.join()
     for response in responses:
         assert response.status_code == 422, 'Flow should not be able to run while running'
+
+
+def test_add_database_input():
+    flow_id = ensure_clean_flow()
+    response = client.post("/editor/add_node",
+                           params={'flow_id': flow_id, 'node_id': 1, 'node_type': 'database_reader', 'pos_x': 0,
+                                   'pos_y': 0})
+    assert response.status_code == 200, 'Node not added'
+    assert flow_file_handler.get_node(flow_id, 1).node_type == 'database_reader', 'Node type not set'
+    database_connection = input_schema.DataBaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+    node_database_reader = input_schema.NodeDatabaseReader(database_connection=database_connection, node_id=1,
+                                                           flow_id=flow_id, schema_name='public', table_name='movies',
+                                                           user_id=1)
+    r = client.post("/update_settings/", json=node_database_reader.model_dump(), params={"node_type": "database_reader"})
+    assert r.status_code == 200, 'Settings not added'
+    flow_file_handler.get_flow(flow_id).run_graph()
+    assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), 'Node should not need to run'

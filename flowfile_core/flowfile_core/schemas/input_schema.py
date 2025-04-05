@@ -267,9 +267,16 @@ class DataBaseConnection(BaseModel):
 
 class NodeDatabaseReader(NodeBase):
     database_connection: DataBaseConnection
-    table: Optional[str] = None
+    schema_name: Optional[str] = None
+    table_name: Optional[str] = None
     query: Optional[str] = None
     fields: Optional[List[MinimalFieldInfo]] = None
+
+    @model_validator(mode='after')
+    def validate_table_or_query(self):
+        if not self.table_name and not self.query:
+            raise ValueError("Either 'table' or 'query' must be provided")
+        return self
 
 
 class ExternalSource(BaseModel):

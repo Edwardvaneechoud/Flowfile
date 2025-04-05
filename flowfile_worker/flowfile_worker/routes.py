@@ -11,7 +11,7 @@ from flowfile_worker.spawner import start_process, start_fuzzy_process, start_ge
 from flowfile_worker.create import table_creator_factory_method, received_table_parser, FileType
 from flowfile_worker.configs import logger
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
-from flowfile_worker.external_sources.sql_source.models import SQLSourceSettings
+from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.airbyte_sources.main import read_airbyte_source
 
@@ -51,8 +51,6 @@ class BackgroundTaskSample:
 
     def add_task(self, func, **kwargs):
         return func(**kwargs)
-
-
 
 
 @router.post('/store_sample/')
@@ -160,13 +158,13 @@ def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: Ba
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/store_sql_result')
-def store_sql_db_result(sql_source_settings: SQLSourceSettings, background_tasks: BackgroundTasks) -> models.Status:
+@router.post('/store_database_read_result')
+def store_sql_db_result(database_read_settings: DatabaseReadSettings, background_tasks: BackgroundTasks) -> models.Status:
     """
     Store the result of an Airbyte source operation.
 
     Args:
-        sql_source_settings (SQLSourceSettings): Settings for the SQL source operation
+        database_read_settings (SQLSourceSettings): Settings for the SQL source operation
         background_tasks (BackgroundTasks): FastAPI background tasks handler
 
     Returns:
@@ -182,9 +180,9 @@ def store_sql_db_result(sql_source_settings: SQLSourceSettings, background_tasks
         status_dict[task_id] = status
         logger.info(f"Starting reading from database source task: {task_id}")
         background_tasks.add_task(start_generic_process, func_ref=read_sql_source, file_ref=file_path,
-                                  flowfile_flow_id=sql_source_settings.flowfile_flow_id,
-                                  flowfile_node_id=sql_source_settings.flowfile_node_id,
-                                  task_id=task_id, kwargs=dict(sql_source_settings=sql_source_settings))
+                                  flowfile_flow_id=database_read_settings.flowfile_flow_id,
+                                  flowfile_node_id=database_read_settings.flowfile_node_id,
+                                  task_id=task_id, kwargs=dict(database_read_settings=database_read_settings))
         return status
 
     except Exception as e:

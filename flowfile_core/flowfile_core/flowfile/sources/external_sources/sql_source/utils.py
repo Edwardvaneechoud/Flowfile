@@ -307,7 +307,7 @@ def get_polars_type(sqlalchemy_type: Union[SqlType, str]):
 
 
 def construct_sql_uri(
-        db_type: str = "postgresql",
+        database_type: str = "postgresql",
         host: Optional[str] = None,
         port: Optional[int] = None,
         username: Optional[str] = None,
@@ -320,7 +320,7 @@ def construct_sql_uri(
     Constructs a SQL URI string from the provided parameters.
 
     Args:
-        db_type: Database type (postgresql, mysql, sqlite, etc.)
+        database_type: Database type (postgresql, mysql, sqlite, etc.)
         host: Database host address
         port: Database port number
         username: Database username
@@ -340,7 +340,7 @@ def construct_sql_uri(
         return url
 
     # For SQLite, we handle differently since it uses a file path
-    if db_type.lower() == "sqlite":
+    if database_type.lower() == "sqlite":
         # For SQLite, database is the path to the file
         path = database or "./database.db"
         return f"sqlite:///{path}"
@@ -365,9 +365,9 @@ def construct_sql_uri(
 
     # Create base URI
     if database:
-        base_uri = f"{db_type}://{credentials}{host}{port_section}/{database}"
+        base_uri = f"{database_type}://{credentials}{host}{port_section}/{database}"
     else:
-        base_uri = f"{db_type}://{credentials}{host}{port_section}"
+        base_uri = f"{database_type}://{credentials}{host}{port_section}"
 
     # Add any additional connection parameters
     if kwargs:

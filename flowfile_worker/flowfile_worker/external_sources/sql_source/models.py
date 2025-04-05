@@ -9,7 +9,7 @@ class DataBaseConnection(BaseModel):
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None  # The database name
-    db_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     url: Optional[str] = None
 
     def create_uri(self) -> str:
@@ -26,7 +26,7 @@ class DataBaseConnection(BaseModel):
             return self.url
 
         # Validate that required fields are present
-        if not all([self.host, self.db_type]):
+        if not all([self.host, self.database_type]):
             raise ValueError("Host and database type are required to create a URI")
 
         # Create credential part if username is provided
@@ -45,13 +45,13 @@ class DataBaseConnection(BaseModel):
             port_section = f":{self.port}"
         if self.database:
 
-            base_uri = f"{self.db_type}://{credentials}{self.host}{port_section}/{self.database}"
+            base_uri = f"{self.database_type}://{credentials}{self.host}{port_section}/{self.database}"
         else:
-            base_uri = f"{self.db_type}://{credentials}{self.host}{port_section}"
+            base_uri = f"{self.database_type}://{credentials}{self.host}{port_section}"
         return base_uri
 
 
-class SQLSourceSettings(BaseModel):
+class DatabaseReadSettings(BaseModel):
     """Settings for SQL source."""
     connection: DataBaseConnection
     query: str

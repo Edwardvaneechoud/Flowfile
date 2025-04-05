@@ -9,7 +9,6 @@ from flowfile_worker import main
 from flowfile_worker import models
 from polars_grouper import graph_solver
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
-from flowfile_worker.external_sources.sql_source.models import SQLSourceSettings, DataBaseConnection
 
 client = TestClient(main.app)
 
@@ -216,7 +215,7 @@ def test_store_airbyte_result():
 def test_store_sql_result():
     database_connection = dict(host='localhost', password='testpass', username='testuser', port=5433, database='testdb')
     sql_source_settings = dict(connection=database_connection, query='SELECT * FROM public.movies')
-    v = client.post('/store_sql_result', json=sql_source_settings)
+    v = client.post('/store_database_read_result', json=sql_source_settings)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status = models.Status.model_validate(v.json())

@@ -3,6 +3,7 @@ from polars import DataFrame
 import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.schemas.input_schema import MinimalFieldInfo
 from sqlalchemy import Engine, inspect, create_engine, text
 
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
@@ -56,7 +57,7 @@ class SqlSource(ExternalDataSource):
     table_name: Optional[str] = None
     connection_string: Optional[str]
     query: Optional[str] = None
-    sql_schema: Optional[str]
+    schema_name: Optional[str]
     query_mode: QueryMode = 'sql'
     read_result: Optional[DataFrame] = None
     schema: Optional[List[FlowfileColumn]] = None
@@ -65,8 +66,8 @@ class SqlSource(ExternalDataSource):
                  connection_string: str,
                  query: str = None,
                  table_name: str = None,
-                 sql_schema: str = None,
-                 schema: Optional[List[FlowfileColumn]] = None):
+                 schema_name: str = None,
+                 fields: Optional[List[MinimalFieldInfo]] = None):
 
         self.connection_string = connection_string
         if query is not None and table_name is not None:
@@ -77,21 +78,19 @@ class SqlSource(ExternalDataSource):
             self.query_mode = 'query'
             self.query = query
 
-        elif table_name is None and sql_schema is None:
+        elif table_name is None and schema_name is None:
             raise ValueError("schema must be provided if table_name is not provided")
         else:
             self.query_mode = 'table'
-            if sql_schema is not None:
-                self.query = f"SELECT * FROM {sql_schema}.{table_name}"
+            if schema_name is not None:
+                self.query = f"SELECT * FROM {schema_name}.{table_name}"
             else:
                 self.query = f"SELECT * FROM {table_name}"
             self.table_name = table_name
-            self.sql_schema = sql_schema
+            self.schema_name = schema_name
         self.read_result = None
-        if not schema:
-            self.schema = self.get_flow_file_columns()
-        else:
-            self.schema = schema
+        if fields:
+            self.schema = [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in schema]
 
     def get_initial_data(self) -> List[Dict[str, Any]]:
         return []
@@ -142,8 +141,8 @@ class SqlSource(ExternalDataSource):
 
         if self.query_mode == 'table':
             try:
-                if self.sql_schema is not None:
-                    return self._get_columns_from_table_and_schema(engine, self.table_name, self.sql_schema)
+                if self.schema_name is not None:
+                    return self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
                 if self.table_name is not None:
                     return self._get_columns_from_table(engine, self.table_name)
             except Exception as e:
@@ -229,6 +228,9 @@ class SqlSource(ExternalDataSource):
             return None, table_name
 
     def parse_schema(self) -> List[FlowfileColumn]:
-        return self.get_flow_file_columns()
+        return self.get_schema()
 
-
+    def get_schema(self) -> List[FlowfileColumn]:
+        if self.schema is None:
+            self.schema = self.get_flow_file_columns()
+        return self.schema

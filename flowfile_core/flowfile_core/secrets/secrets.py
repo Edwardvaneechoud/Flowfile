@@ -1,5 +1,6 @@
 
 from cryptography.fernet import Fernet
+from sqlalchemy import and_
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.auth.secrets import get_master_key
@@ -23,9 +24,8 @@ def decrypt_secret(encrypted_value) -> SecretStr:
 def get_encrypted_secret(current_user_id: int, secret_name: str) -> str|None:
     with get_db_context() as db:
         user_id = current_user_id
-        # Get secrets from database
-        db_secret = db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id and
-                                                      db_models.Secret.name == secret_name).first()
+        db_secret = db.query(db_models.Secret).filter(and_(db_models.Secret.user_id == user_id,
+                                                      db_models.Secret.name == secret_name)).first()
         if db_secret:
             return db_secret.encrypted_value
         else:

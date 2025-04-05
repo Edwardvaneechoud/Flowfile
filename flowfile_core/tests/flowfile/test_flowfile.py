@@ -729,3 +729,28 @@ def test_add_join():
     graph.add_join(input_schema.NodeJoin(**data))
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+
+def test_add_database_reader():
+    graph = create_graph()
+    add_node_promise_on_type(graph, 'database_reader', 1)
+    database_connection = input_schema.DataBaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+    node_database_reader = input_schema.NodeDatabaseReader(database_connection=database_connection, node_id=1,
+                                                           flow_id=1, schema_name='public', table_name='movies',
+                                                           user_id=1)
+    graph.add_database_reader(node_database_reader)
+    node = graph.get_node(1)
+    assert node.name == 'database_reader', 'Node name should be database_reader'
+    predicted_schema = node.get_predicted_schema()
+    assert len(predicted_schema) == 20, 'Expected 20 columns in the schema'
+    predicted_lf = node.get_predicted_resulting_data()
+    assert len(predicted_lf.collect()) == 0, 'Should be able to predict data frame without actually getting any data'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
