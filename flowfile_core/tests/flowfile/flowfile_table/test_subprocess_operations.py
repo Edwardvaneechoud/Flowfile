@@ -1,8 +1,11 @@
 import polars as pl
+import pytest
+
 from flowfile_core.flowfile.flowfile_table.subprocess_operations import (trigger_database_read_collector,
                                                                          DatabaseExternalReadSettings,
                                                                          ExternalDatabaseFetcher)
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import ExtDataBaseConnection
+from tests.utils import is_docker_available
 
 
 def test_trigger_database_read_collector():
@@ -19,6 +22,7 @@ def test_trigger_database_read_collector():
     assert result_status.status == "Starting", "Failed to trigger database read collector"
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_external_database_fetcher_wait_on_completion():
     database_connection = ExtDataBaseConnection(database_type='postgresql',
                                                 username='testuser',
@@ -36,9 +40,10 @@ def test_external_database_fetcher_wait_on_completion():
     assert not external_database_fetcher.running, "Fetcher should not be running"
     assert isinstance(external_database_fetcher.result, pl.LazyFrame), "Result should be a Polars LazyFrame"
     df = external_database_fetcher.result.collect()
-    assert len(df)>0, "DataFrame should not be empty"
+    assert len(df) > 0, "DataFrame should not be empty"
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_external_database_fetcher_not_wait_on_completion():
     database_connection = ExtDataBaseConnection(database_type='postgresql',
                                                 username='testuser',

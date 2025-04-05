@@ -212,6 +212,7 @@ def test_store_airbyte_result():
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_sql_result():
     database_connection = dict(host='localhost', password='testpass', username='testuser', port=5433, database='testdb')
     sql_source_settings = dict(connection=database_connection, query='SELECT * FROM public.movies')

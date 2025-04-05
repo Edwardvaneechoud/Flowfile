@@ -7,7 +7,16 @@ to start and stop PostgreSQL containers with sample data.
 
 import argparse
 import sys
+import logging
 from . import fixtures
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("postgres_commands")
 
 
 def start_postgres():
@@ -21,6 +30,15 @@ def start_postgres():
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    # Check if Docker is available first
+    if not fixtures.is_docker_available():
+        logger.warning("Docker is not available. Cannot start PostgreSQL container.")
+        print("\n" + "=" * 50)
+        print("SKIPPING: Docker is not available on this system")
+        print("Tests requiring Docker will need to be skipped")
+        print("=" * 50 + "\n")
+        return 0  # Return success to allow pipeline to continue
+
     parser = argparse.ArgumentParser(description="Start PostgreSQL container with sample data")
     parser.add_argument("--schema", choices=["movies", "stocks"], default="movies",
                         help="Sample schema to use (movies or stocks)")
@@ -59,6 +77,11 @@ def stop_postgres():
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    # Check if Docker is available first
+    if not fixtures.is_docker_available():
+        logger.warning("Docker is not available. No PostgreSQL container to stop.")
+        return 0  # Return success to allow pipeline to continue
+
     parser = argparse.ArgumentParser(description="Stop PostgreSQL container")
     parser.add_argument("--container-name", default="test-postgres-sample",
                         help="Docker container name (default: test-postgres-sample)")

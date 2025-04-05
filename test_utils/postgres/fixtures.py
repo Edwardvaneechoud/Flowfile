@@ -9,6 +9,7 @@ import os
 import time
 import logging
 import subprocess
+import shutil
 from contextlib import contextmanager
 from typing import Dict, Generator, Optional, Tuple
 
@@ -38,9 +39,53 @@ STARTUP_CHECK_INTERVAL = 2  # seconds
 SAMPLES_REPO_URL = "https://github.com/zseta/postgres-docker-samples.git"
 SAMPLES_REPO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "postgres-docker-samples")
 
+# Operating system detection
+IS_MACOS = os.uname().sysname == 'Darwin' if hasattr(os, 'uname') else False
+IS_WINDOWS = os.name == 'nt'
+
+
+def is_docker_available() -> bool:
+    """
+    Check if Docker is available on the system.
+
+    Returns:
+        bool: True if Docker is available and working, False otherwise
+    """
+    # Skip Docker on macOS and Windows in CI
+    if (IS_MACOS or IS_WINDOWS) and os.environ.get('CI', '').lower() in ('true', '1', 'yes'):
+        logger.info("Skipping Docker on macOS/Windows in CI environment")
+        return False
+
+    # If docker executable is not in PATH
+    if shutil.which("docker") is None:
+        logger.warning("Docker executable not found in PATH")
+        return False
+
+    # Try a simple docker command
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False  # Don't raise exception on non-zero return code
+        )
+
+        if result.returncode != 0:
+            logger.warning("Docker is not operational")
+            return False
+
+        return True
+    except (subprocess.SubprocessError, OSError):
+        logger.warning("Error running Docker command")
+        return False
+
 
 def is_container_running(container_name: str) -> bool:
     """Check if the postgres container is already running."""
+    if not is_docker_available():
+        return False
+
     try:
         result = subprocess.run(
             ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.Names}}"],
@@ -50,7 +95,7 @@ def is_container_running(container_name: str) -> bool:
         )
         return container_name in result.stdout.strip()
     except subprocess.CalledProcessError:
-        logger.error("Failed to check if container is running. Is Docker installed?")
+        logger.error("Failed to check if container is running.")
         return False
 
 
@@ -77,6 +122,7 @@ def can_connect_to_db() -> bool:
         logger.debug(f"Could not connect to database: {e}")
         return False
 
+
 def setup_postgres_samples(
         schema: str = POSTGRES_SCHEMA,
         port: int = POSTGRES_PORT,
@@ -100,6 +146,11 @@ def setup_postgres_samples(
     Returns:
         True if setup succeeds, False otherwise
     """
+    # Check Docker availability
+    if not is_docker_available():
+        logger.warning("Docker not available, skipping Postgres sample setup")
+        return False
+
     # Clone the repository if it doesn't exist
     if not os.path.exists(SAMPLES_REPO_DIR):
         logger.info(f"Cloning postgres-docker-samples repository to {SAMPLES_REPO_DIR}")
@@ -169,6 +220,11 @@ def start_postgres_container(
     Returns:
         Tuple containing the process object (or None) and a success flag
     """
+    # Check Docker availability
+    if not is_docker_available():
+        logger.warning("Docker not available, skipping PostgreSQL container start")
+        return None, False
+
     logger.info(f"Starting PostgreSQL container with sample data...")
 
     # Check if container is already running
@@ -224,6 +280,11 @@ def stop_postgres_container(container_name: str = POSTGRES_CONTAINER_NAME, timeo
     Returns:
         True if stop succeeds or container not running, False otherwise
     """
+    # Check Docker availability
+    if not is_docker_available():
+        logger.warning("Docker not available, skipping PostgreSQL container stop")
+        return True
+
     logger.info(f"Stopping PostgreSQL container {container_name}...")
 
     if not is_container_running(container_name):
@@ -266,6 +327,13 @@ def print_connection_info(
         password: PostgreSQL password
         container_name: Docker container name
     """
+    if not is_docker_available():
+        print("\n" + "=" * 50)
+        print("PostgreSQL with Docker not available on this system")
+        print("Tests requiring Docker will be skipped")
+        print("=" * 50 + "\n")
+        return
+
     print("\n" + "=" * 50)
     print("PostgreSQL Connection Information:")
     print("=" * 50)
@@ -288,8 +356,14 @@ def managed_postgres() -> Generator[Dict[str, any], None, None]:
     Ensures proper cleanup even when tests fail.
 
     Yields:
-        Dictionary with database connection information
+        Dictionary with database connection information or empty dict if Docker isn't available
     """
+    # Check Docker availability
+    if not is_docker_available():
+        logger.warning("Docker not available, skipping managed_postgres context")
+        yield {}
+        return
+
     # Setup
     if not setup_postgres_samples():
         logger.error("Failed to set up postgres samples")
@@ -325,8 +399,13 @@ def get_db_engine():
     Create a SQLAlchemy engine connected to the test database.
 
     Returns:
-        SQLAlchemy engine object
+        SQLAlchemy engine object or None if Docker isn't available
     """
+    # Check Docker availability
+    if not is_docker_available():
+        logger.warning("Docker not available, skipping get_db_engine")
+        return None
+
     try:
         from sqlalchemy import create_engine
 

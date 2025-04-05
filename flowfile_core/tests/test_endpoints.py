@@ -1,17 +1,23 @@
+
+import os
+import threading
+import pickle
+import pytest
+
+from fastapi.testclient import TestClient
+from time import sleep
+from typing import Dict
+
+from flowfile_core import main
+from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
 from flowfile_core.routes.routes import (add_node,
                                          flow_file_handler,
                                          input_schema,
                                          connect_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
-from time import sleep
-import os
-import threading
-from typing import Dict
-from fastapi.testclient import TestClient
-import pickle
-from flowfile_core import main
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
+
+from tests.utils import is_docker_available
 
 FlowId = int
 
@@ -515,6 +521,7 @@ def test_error_run_flow_while_running():
         assert response.status_code == 422, 'Flow should not be able to run while running'
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_input():
     flow_id = ensure_clean_flow()
     response = client.post("/editor/add_node",

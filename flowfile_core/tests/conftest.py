@@ -11,6 +11,7 @@ from typing import Tuple, Generator
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+from tests.utils import is_docker_available
 from test_utils.postgres import fixtures as pg_fixtures
 import socket
 
@@ -203,6 +204,11 @@ def postgres_db():
     """
     if is_port_in_use(5433) or pg_fixtures.can_connect_to_db():
         print("PostgreSQL is already running on port 5433, skipping container creation")
+        yield
+        return
+
+    elif not is_docker_available():
+        print("Docker is not available, skipping PostgreSQL container creation")
         yield
         return
 

@@ -81,19 +81,6 @@ jobs:
       - name: Set up Docker on macOS
         if: runner.os == 'macOS'
         run: |
-      - name: Set up Docker
-        run: |
-          brew install docker
-          brew install docker-compose
-          brew install colima
-          
-          # Start Colima (lightweight Docker Desktop alternative for macOS)
-          colima start --cpu 2 --memory 4
-          
-          # Verify Docker installation
-          docker --version
-          docker-compose --version
-          docker ps
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
