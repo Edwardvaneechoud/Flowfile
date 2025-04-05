@@ -33,15 +33,16 @@ def sql_source():
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_sql_source_with_table_and_schema(expected_schema):
     sql_source = SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
-                           table_name='credits', sql_schema='public')
-    assert sql_source.schema == expected_schema, "Schema does not match expected schema"
+                           table_name='credits',
+                           schema_name='public')
+    assert sql_source.get_schema() == expected_schema, "Schema does not match expected schema"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_sql_source_with_table_and_no_schema(expected_schema):
     sql_source = SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
                            table_name='public.credits')
-    assert sql_source.schema == expected_schema, "Schema does not match expected schema"
+    assert sql_source.get_schema() == expected_schema, "Schema does not match expected schema"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
@@ -49,7 +50,7 @@ def test_sql_source_with_query(expected_schema):
     sql_source = SqlSource(connection_string="postgresql://testuser:testpass@localhost:5433/testdb",
                            query="SELECT * FROM credits")
     expected_columns = ['movie_id', 'title', 'cast', 'crew']
-    assert [s.column_name for s in sql_source.schema] == expected_columns, "Schema does not match expected schema"
+    assert [s.column_name for s in sql_source.get_schema()] == expected_columns, "Schema does not match expected schema"
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
