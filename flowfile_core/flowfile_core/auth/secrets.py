@@ -2,10 +2,10 @@
 
 from cryptography.fernet import Fernet
 import os
-import secrets
 from pathlib import Path
 import json
 import logging
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -158,16 +158,4 @@ def get_master_key():
     return key
 
 
-def encrypt_secret(secret_value):
-    """Encrypt a secret value using the master key."""
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return f.encrypt(secret_value.encode()).decode()
-
-
-def decrypt_secret(encrypted_value):
-    """Decrypt an encrypted value using the master key."""
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return f.decrypt(encrypted_value.encode()).decode()
 

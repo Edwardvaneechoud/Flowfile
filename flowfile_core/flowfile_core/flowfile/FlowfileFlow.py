@@ -27,6 +27,8 @@ from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import ExternalAirbyteFetcher
+from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
+from flowfile_core.flowfile.sources.external_sources.sql_source import sql_source, utils as sql_utils
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -658,6 +660,23 @@ class EtlGraph:
                            input_columns=[],
                            node_type='output',
                            setting_input=output_file)
+
+    def add_sql_reader(self, sql_source_input: input_schema.NodeDatabaseReader):
+        logger.info("Adding sql reader")
+        node_type = 'sql_reader'
+        database_connection: input_schema.DataBaseConnection = sql_source_input.database_connection
+        encrypted_secret = get_encrypted_secret(sql_source_input.user_id, sql_source_input.password_ref)
+        if encrypted_secret is not None:
+            password = decrypt_secret(encrypted_secret)
+            database_uri = sql_utils.construct_sql_uri(db_type=database_connection.database_type,
+                                                        host=database_connection.host,
+                                                        port=database_connection.port,
+                                                        database=database_connection.database,
+                                                        user=sql_source_input.user_id,
+
+                                                       database_connection, password=password)
+
+
 
     def add_airbyte_reader(self, external_source_input: input_schema.NodeAirbyteReader):
         logger.info('Adding airbyte reader')

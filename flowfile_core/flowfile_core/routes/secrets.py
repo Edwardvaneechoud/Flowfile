@@ -3,29 +3,16 @@
 import os
 from typing import List
 
-from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
-from flowfile_core.auth.secrets import get_master_key
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
+from flowfile_core.secrets.secrets import encrypt_secret
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
-
-
-def encrypt_secret(secret_value):
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return f.encrypt(secret_value.encode()).decode()
-
-
-def decrypt_secret(encrypted_value):
-    key = get_master_key().encode()
-    f = Fernet(key)
-    return f.decrypt(encrypted_value.encode()).decode()
 
 
 # Get all secrets for current user
@@ -85,7 +72,7 @@ async def create_secret(secret: SecretInput, current_user=Depends(get_current_ac
 @router.get("/secrets/{secret_name}", response_model=Secret)
 async def get_secret(secret_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)):
     # Get user ID
-    user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" or 1 == 1 else current_user.id
+    user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     # Get secret from database
     db_secret = db.query(db_models.Secret).filter(

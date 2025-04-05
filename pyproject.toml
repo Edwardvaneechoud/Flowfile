@@ -7,6 +7,8 @@ packages = [
     { include = "flowfile_core", from = "flowfile_core" },
     { include = "flowfile_worker", from = "flowfile_worker" },
     { include = "build_backends", from = "build_backends" },
+    { include = "test_utils" },
+
 ]
 
 [tool.poetry.dependencies]
@@ -49,10 +51,14 @@ flowfile_worker = "flowfile_worker.main:run"
 flowfile_core = "flowfile_core.main:run"
 build_backends = "build_backends.main:main"
 build_backends_prd = "build_backends.main_prd:main"
+start_postgres = "test_utils.postgres.commands:start_postgres"
+stop_postgres = "test_utils.postgres.commands:stop_postgres"
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
 mkdocs-material = "^9.5.46"
+psycopg2-binary = "^2.9.9"
+sqlalchemy = "^2.0.27"
 
 [build-system]
 requires = ["poetry-core"]

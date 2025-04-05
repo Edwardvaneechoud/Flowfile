@@ -11,6 +11,8 @@ from flowfile_worker.spawner import start_process, start_fuzzy_process, start_ge
 from flowfile_worker.create import table_creator_factory_method, received_table_parser, FileType
 from flowfile_worker.configs import logger
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
+from flowfile_worker.external_sources.sql_source.models import SQLSourceSettings
+from flowfile_worker.external_sources.sql_source.main import read_sql_source
 from flowfile_worker.external_sources.airbyte_sources.main import read_airbyte_source
 
 
@@ -155,6 +157,38 @@ def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: Ba
 
     except Exception as e:
         logger.error(f"Error processing Airbyte source: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/store_sql_result')
+def store_sql_db_result(sql_source_settings: SQLSourceSettings, background_tasks: BackgroundTasks) -> models.Status:
+    """
+    Store the result of an Airbyte source operation.
+
+    Args:
+        sql_source_settings (SQLSourceSettings): Settings for the SQL source operation
+        background_tasks (BackgroundTasks): FastAPI background tasks handler
+
+    Returns:
+        models.Status: Status object tracking the Sql operation
+    """
+    logger.info("Processing Airbyte source operation")
+
+    try:
+        task_id = str(uuid.uuid4())
+        file_path = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
+                               result_type="polars")
+        status_dict[task_id] = status
+        logger.info(f"Starting reading from database source task: {task_id}")
+        background_tasks.add_task(start_generic_process, func_ref=read_sql_source, file_ref=file_path,
+                                  flowfile_flow_id=sql_source_settings.flowfile_flow_id,
+                                  flowfile_node_id=sql_source_settings.flowfile_node_id,
+                                  task_id=task_id, kwargs=dict(sql_source_settings=sql_source_settings))
+        return status
+
+    except Exception as e:
+        logger.error(f"Error processing sql source: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -177,6 +177,7 @@ class NodeBase(BaseModel):
     pos_y: Optional[float] = 0
     is_setup: Optional[bool] = True
     description: Optional[str] = ''
+    user_id: Optional[int] = None
 
     @classmethod
     def overridden_hash(cls):
@@ -255,8 +256,9 @@ class NodeRead(NodeBase):
 
 
 class DataBaseConnection(BaseModel):
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     username: Optional[str] = None
-    password: Optional[str] = None
+    password_ref: Optional[str] = None
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None
