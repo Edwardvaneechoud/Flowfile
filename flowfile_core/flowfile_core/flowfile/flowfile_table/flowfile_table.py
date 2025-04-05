@@ -472,6 +472,11 @@ class FlowfileTable:
         return ff
 
     @classmethod
+    def create_from_sql(cls, sql: str, conn: Any) -> "FlowfileTable":
+        """Create a FlowfileTable from a SQL query."""
+        return cls(pl.read_sql(sql, conn))
+
+    @classmethod
     def create_from_schema(cls, schema: List[FlowfileColumn]) -> "FlowfileTable":
         """Create a FlowfileTable from a schema definition."""
         pl_schema = []

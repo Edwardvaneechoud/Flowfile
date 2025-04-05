@@ -31,6 +31,11 @@ const routes: Array<RouteRecordRaw> = [
         path: "documentation",
         component: () => import("../pages/documentation.vue"),
       },
+      {
+        name: "secretManager",
+        path: "secretManager",
+        component: () => import("../pages/SecretManager.vue"),
+      },
     ],
   },
   {

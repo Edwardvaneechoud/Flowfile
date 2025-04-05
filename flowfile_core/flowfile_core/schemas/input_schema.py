@@ -177,6 +177,7 @@ class NodeBase(BaseModel):
     pos_y: Optional[float] = 0
     is_setup: Optional[bool] = True
     description: Optional[str] = ''
+    user_id: Optional[int] = None
 
     @classmethod
     def overridden_hash(cls):
@@ -254,6 +255,30 @@ class NodeRead(NodeBase):
     received_file: ReceivedTable
 
 
+class DataBaseConnection(BaseModel):
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    username: Optional[str] = None
+    password_ref: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    url: Optional[str] = None
+
+
+class NodeDatabaseReader(NodeBase):
+    database_connection: DataBaseConnection
+    schema_name: Optional[str] = None
+    table_name: Optional[str] = None
+    query: Optional[str] = None
+    fields: Optional[List[MinimalFieldInfo]] = None
+
+    @model_validator(mode='after')
+    def validate_table_or_query(self):
+        if not self.table_name and not self.query:
+            raise ValueError("Either 'table' or 'query' must be provided")
+        return self
+
+
 class ExternalSource(BaseModel):
     orientation: str = 'row'
     fields: Optional[List[MinimalFieldInfo]] = None
@@ -292,17 +317,6 @@ class NodeExternalSource(NodeBase):
 class NodeAirbyteReader(NodeExternalSource):
     identifier: str = 'airbyte'
     source_settings: AirbyteReader
-
-
-class DataBaseConnection(ExternalSource):
-    table: str
-    encryption_key: str
-    user: str
-    password: str
-    database: str
-    server: str
-    driver: str
-    port: int
 
 
 class NodeFormula(NodeSingleInput):

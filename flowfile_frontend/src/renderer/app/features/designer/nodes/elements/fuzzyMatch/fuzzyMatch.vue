@@ -143,7 +143,7 @@
               :show-title="true"
               :show-data="true"
               title="Right data"
-              @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
+              @update-select-inputs="(updatedInputs: any) => updateSelectInputsHandler(updatedInputs, false)"
               class="select-section"
             />
 
@@ -156,7 +156,7 @@
               :show-new-columns="false"
               :show-data="true"
               title="Left data"
-              @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
+              @update-select-inputs="(updatedInputs: any) => updateSelectInputsHandler(updatedInputs, true)"
               class="select-section"
             />
           </div>

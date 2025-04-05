@@ -26,7 +26,11 @@ from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_fr
 from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import ExternalAirbyteFetcher
+from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
+                                                                                               ExternalDatabaseFetcher)
+from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
+from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -659,6 +663,64 @@ class EtlGraph:
                            node_type='output',
                            setting_input=output_file)
 
+    def add_database_reader(self, node_database_reader: input_schema.NodeDatabaseReader):
+        logger.info("Adding database reader")
+        node_type = 'database_reader'
+        database_connection: input_schema.DataBaseConnection = node_database_reader.database_connection
+        encrypted_secret = get_encrypted_secret(current_user_id=node_database_reader.user_id,
+                                                secret_name=database_connection.password_ref)
+        if encrypted_secret is None:
+            raise HTTPException(status_code=400, detail="Password not found")
+        sql_source = SqlSource(connection_string=
+                               sql_utils.construct_sql_uri(database_type=database_connection.database_type,
+                                                           host=database_connection.host,
+                                                           port=database_connection.port,
+                                                           database=database_connection.database,
+                                                           username=database_connection.username,
+                                                           password=decrypt_secret(encrypted_secret)),
+                               query=node_database_reader.query,
+                               table_name=node_database_reader.table_name,
+                               schema_name=node_database_reader.schema_name,
+                               fields=node_database_reader.fields,
+                               )
+
+        def _func():
+            database_external_read_settings = (
+                sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
+                    node_database_reader=node_database_reader,
+                    password=decrypt_secret(encrypted_secret),
+                    query=sql_source.query
+                )
+            )
+
+            external_database_fetcher = ExternalDatabaseFetcher(database_external_read_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_database_fetcher
+            fl = FlowfileTable(external_database_fetcher.get_result())
+            node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
+            return fl
+
+        def schema_callback():
+            return sql_source.get_schema()
+
+        node = self.get_node(node_database_reader.node_id)
+        if node:
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_database_reader
+            node.node_settings.cache_results = node_database_reader.cache_results
+            if node_database_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
+                self._flow_starts.append(node)
+            node.schema_callback = schema_callback
+        else:
+            node = NodeStep(node_database_reader.node_id, function=_func,
+                            setting_input=node_database_reader,
+                            name=node_type, node_type=node_type, parent_uuid=self.uuid,
+                            schema_callback=schema_callback)
+            self._node_db[node_database_reader.node_id] = node
+            self._flow_starts.append(node)
+            self._node_ids.append(node_database_reader.node_id)
+
     def add_airbyte_reader(self, external_source_input: input_schema.NodeAirbyteReader):
         logger.info('Adding airbyte reader')
         node_type = 'airbyte_reader'
@@ -679,8 +741,7 @@ class EtlGraph:
             return fl
 
         def schema_callback():
-            return [FlowfileColumn.from_input(f.name, f.data_type) for f in
-                    external_source.schema]
+            return [FlowfileColumn.from_input(f.name, f.data_type) for f in external_source.schema]
 
         node = self.get_node(external_source_input.node_id)
         if node:
@@ -705,6 +766,10 @@ class EtlGraph:
 
     def add_google_sheet(self, external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding google sheet reader')
+        self.add_external_source(external_source_input)
+
+    def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
+        logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
     def add_external_source(self,

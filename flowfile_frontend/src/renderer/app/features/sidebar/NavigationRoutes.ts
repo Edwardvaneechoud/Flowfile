@@ -16,14 +16,21 @@ export default {
       name: "designer",
       displayName: "menu.designer",
       meta: {
-        icon: "fa-solid fa-diagram-project", // Flow designer icon
+        icon: "fa-solid fa-diagram-project",
       },
     },
     {
-      name: "documentation",  // This should match the route name in your router
+      name: "documentation",
       displayName: "menu.documentation",
       meta: {
-        icon: "fa-solid fa-book", // Documentation icon
+        icon: "fa-solid fa-book",
+      },
+    },
+    {
+      name: "secretManager",
+      displayName: "menu.secretManager",
+      meta: {
+        icon: "fa-solid fa-cog",
       },
     },
   ] as INavigationRoute[],

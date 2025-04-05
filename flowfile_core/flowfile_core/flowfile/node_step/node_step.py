@@ -133,6 +133,7 @@ class NodeStep:
                     pos_y: float = 0,
                     schema_callback: Callable = None,
                     ):
+
         self.schema_callback = schema_callback
         self.node_information.y_position = pos_y
         self.node_information.x_position = pos_x

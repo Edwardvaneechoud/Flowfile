@@ -1,22 +1,44 @@
-from flowfile_core.routes import (add_node,
-                                  flow_file_handler,
-                                  input_schema,
-                                  connect_node,
-                                  output_model,)
-from flowfile_core.schemas.transform_schema import SelectInput
-from time import sleep
+
 import os
 import threading
-from typing import Dict, Literal
-from fastapi.testclient import TestClient
 import pickle
-from flowfile_core import main
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
+import pytest
 
-client = TestClient(main.app)
+from fastapi.testclient import TestClient
+from time import sleep
+from typing import Dict
+
+from flowfile_core import main
+from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
+from flowfile_core.routes.routes import (add_node,
+                                         flow_file_handler,
+                                         input_schema,
+                                         connect_node,
+                                         output_model, )
+from flowfile_core.schemas.transform_schema import SelectInput
+from flowfile_core.secrets.secrets import get_encrypted_secret
+
+from tests.utils import is_docker_available, ensure_password_is_available
 
 FlowId = int
 
+def get_auth_token():
+    """Get authentication token for testing"""
+    with TestClient(main.app) as client:
+        response = client.post("/auth/token")
+        return response.json()["access_token"]
+
+# Create an authenticated test client
+def get_test_client():
+    """Get an authenticated test client"""
+    token = get_auth_token()
+    _client = TestClient(main.app)
+    _client.headers = {
+        "Authorization": f"Bearer {token}"
+    }
+    return _client
+
+client = get_test_client()
 
 def get_flow_settings() -> Dict:
     return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
@@ -26,17 +48,17 @@ def get_flow_settings() -> Dict:
 
 def get_join_data(flow_id: int, how: str = 'inner'):
     return {'flow_id': flow_id, 'node_id': 3, 'cache_results': False, 'pos_x': 788.8727272727273, 'pos_y': 186.4,
-             'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
-             'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
-                                                      'left_select': {'renames': [
-                                                          {'old_name': 'name', 'new_name': 'name', 'data_type': None,
-                                                           'data_type_change': False, 'join_key': False,
-                                                           'is_altered': False, 'position': None, 'is_available': True,
-                                                           'keep': True}]}, 'right_select': {'renames': [
-            {'old_name': 'name', 'new_name': 'right_name', 'data_type': None, 'data_type_change': False,
-             'join_key': False, 'is_altered': False, 'position': None, 'is_available': True, 'keep': True}]},
-                                                      'how': how}, 'auto_keep_all': True, 'auto_keep_right': True,
-             'auto_keep_left': True}
+            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
+                                                     'left_select': {'renames': [
+                                                         {'old_name': 'name', 'new_name': 'name', 'data_type': None,
+                                                          'data_type_change': False, 'join_key': False,
+                                                          'is_altered': False, 'position': None, 'is_available': True,
+                                                          'keep': True}]}, 'right_select': {'renames': [
+                {'old_name': 'name', 'new_name': 'right_name', 'data_type': None, 'data_type_change': False,
+                 'join_key': False, 'is_altered': False, 'position': None, 'is_available': True, 'keep': True}]},
+                                                     'how': how}, 'auto_keep_all': True, 'auto_keep_right': True,
+            'auto_keep_left': True}
 
 
 def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
@@ -54,7 +76,7 @@ def remove_flow(file_path: str):
 
 def add_node_placeholder(node_type: str, flow_id: FlowId = 1, node_id: int = 1):
     client.post("/editor/add_node", params={'flow_id': flow_id, 'node_id': node_id, 'node_type': node_type,
-                                                       'pos_x': 0, 'pos_y': 0})
+                                            'pos_x': 0, 'pos_y': 0})
 
 
 def ensure_no_flow_registered():
@@ -122,7 +144,7 @@ def create_flow_with_manual_input() -> FlowId:
                                                         {'name': 'Jane', 'city': 'Los Angeles'},
                                                         {'name': 'Edward', 'city': 'Chicago'},
                                                         {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
-    client.post("/update_settings/", json=input_file, params={ "node_type": "manual_input"})
+    client.post("/update_settings/", json=input_file, params={"node_type": "manual_input"})
     return flow_id
 
 
@@ -149,7 +171,9 @@ def test_get_flow():
 
 def test_add_node():
     flow_id = ensure_clean_flow()
-    response = client.post("/editor/add_node", params={'flow_id': flow_id, 'node_id': 1, 'node_type': 'manual_input', 'pos_x': 0, 'pos_y': 0})
+    response = client.post("/editor/add_node",
+                           params={'flow_id': flow_id, 'node_id': 1, 'node_type': 'manual_input', 'pos_x': 0,
+                                   'pos_y': 0})
     assert response.status_code == 200, 'Node not added'
     assert flow_file_handler.get_node(flow_id, 1).node_type == 'manual_input', 'Node type not set'
 
@@ -182,7 +206,7 @@ def test_create_flow_with_join():
     flow_id = create_join_graph()
     data = get_join_data(flow_id, how='inner')
     flow = flow_file_handler.get_flow(flow_id)
-    r = client.post("/update_settings/", json=data, params={ "node_type": "join"})
+    r = client.post("/update_settings/", json=data, params={"node_type": "join"})
     assert r.status_code == 200, 'Settings not added'
     assert flow.get_node(3).setting_input.join_input.how == 'inner', 'Settings not set'
     assert flow.get_node(3).node_inputs.main_inputs[0].node_id == 1, 'Node not connected'
@@ -195,7 +219,8 @@ def test_delete_main_connection():
     flow = flow_file_handler.get_flow(flow_id)
     client.post("/update_settings/", json=data, params={"node_type": "join"})
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 3)
-    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id": flow_id})
+    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(),
+                           params={"flow_id": flow_id})
     assert response.status_code == 200, 'Connection not deleted'
     assert flow.get_node(1).leads_to_nodes == [], 'Connection not deleted'
     assert flow.get_node(3).node_inputs.main_inputs == [], 'Connection not deleted'
@@ -235,7 +260,8 @@ def test_run_error_flow_with_join():
     client.post("/update_settings/", json=data, params={"node_type": "join"})
     right_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(2, 3)
     right_connection.input_connection.connection_class = 'input-1'
-    response = client.post("/editor/delete_connection", data=right_connection.model_dump_json(), params={"flow_id": flow_id})
+    response = client.post("/editor/delete_connection", data=right_connection.model_dump_json(),
+                           params={"flow_id": flow_id})
     assert response.status_code == 200, 'Connection not deleted, breaking off test'
     response = client.post("/flow/run/", params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow should just start as normal'
@@ -259,7 +285,8 @@ def test_delete_connection():
     if not flow_file_handler.get_node(flow_id, 1).leads_to_nodes:
         raise Exception('Node not connected, breaking off test')
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id":flow_id})
+    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(),
+                           params={"flow_id": flow_id})
     assert response.status_code == 200, 'Connection not deleted'
     assert 2 not in flow_file_handler.get_node(flow_id, 1).leads_to_nodes, 'Connection not deleted'
     assert 1 not in flow_file_handler.get_node(flow_id, 2).all_inputs, 'Connection not deleted'
@@ -273,7 +300,8 @@ def test_run_invalid_flow():
     if not flow_file_handler.get_node(flow_id, 1).leads_to_nodes:
         raise Exception('Node not connected, breaking off test')
     node_connection: input_schema.NodeConnection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(), params={"flow_id": flow_id})
+    response = client.post("/editor/delete_connection", data=node_connection.model_dump_json(),
+                           params={"flow_id": flow_id})
     assert response.status_code == 200, 'Connection not deleted, breaking off test'
     response = client.post("/flow/run/", params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow should just start as normal'
@@ -310,7 +338,14 @@ def test_get_flow_data_v2():
     client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
     response = client.get('/flow_data/v2', params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow data not retrieved'
-    expected_data = {'node_edges': [{'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}], 'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1, 'image': 'manual_input.png', 'multi': False, 'node_group': 'input', 'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0}, {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1, 'image': 'select.png', 'multi': False, 'node_group': 'transform', 'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
+    expected_data = {'node_edges': [
+        {'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}],
+                     'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
+                                      'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
+                                      'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
+                                     {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
+                                      'image': 'select.png', 'multi': False, 'node_group': 'transform',
+                                      'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
     assert response.json() == expected_data, 'Flow data not correct'
 
 
@@ -320,7 +355,7 @@ def create_flow_with_graphic_walker_input() -> FlowId:
     assert flow_file_handler.get_node(flow_id, 2) is not None, 'Node not added stopping test'
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
-    return  flow_id
+    return flow_id
 
 
 def test_get_graphic_walker_input():
@@ -355,7 +390,8 @@ def test_instant_function_result():
     connect_node(flow_id, connection)
 
     # Await the result
-    response = client.get("/custom_functions/instant_result", params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
+    response = client.get("/custom_functions/instant_result",
+                          params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
     assert response.status_code == 200, 'Instant function result failed'
     assert response.json()['success'], 'Instant function result failed'
 
@@ -387,7 +423,8 @@ def test_instant_function_result_after_run():
     connect_node(flow_id, connection)
     flow = flow_file_handler.get_flow(flow_id)
     flow.run_graph()
-    response = client.get("/custom_functions/instant_result", params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
+    response = client.get("/custom_functions/instant_result",
+                          params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
     assert response.status_code == 200, 'Instant function result failed'
     assert response.json().get('success'), 'Instant function result did not fail'
 
@@ -483,3 +520,47 @@ def test_error_run_flow_while_running():
     thread.join()
     for response in responses:
         assert response.status_code == 422, 'Flow should not be able to run while running'
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+def test_add_database_input():
+    ensure_password_is_available()
+    flow_id = ensure_clean_flow()
+    response = client.post("/editor/add_node",
+                           params={'flow_id': flow_id, 'node_id': 1, 'node_type': 'database_reader', 'pos_x': 0,
+                                   'pos_y': 0})
+    assert response.status_code == 200, 'Node not added'
+    assert flow_file_handler.get_node(flow_id, 1).node_type == 'database_reader', 'Node type not set'
+    database_connection = input_schema.DataBaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+    node_database_reader = input_schema.NodeDatabaseReader(database_connection=database_connection, node_id=1,
+                                                           flow_id=flow_id, schema_name='public', table_name='movies',
+                                                           user_id=1)
+    r = client.post("/update_settings/", json=node_database_reader.model_dump(), params={"node_type": "database_reader"})
+    assert r.status_code == 200, 'Settings not added'
+    flow_file_handler.get_flow(flow_id).run_graph()
+    assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), 'Node should not need to run'
+
+
+def test_create_secret():
+    response = client.post("/secrets/secrets",
+                           json={'name': 'test_secret', 'value': 'test_value'},)
+    assert response.status_code == 200, 'Secret not created'
+    created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
+    assert created_secret is not None, 'Secret not created'
+
+
+def remove_secret():
+    if get_encrypted_secret(current_user_id=1, secret_name='test_secret'):
+        response = client.post("/secrets/secrets",
+                               json={'name': 'test_secret', 'value': 'test_value'},)
+        created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
+        assert created_secret is not None, 'Secret not created'
+    response = client.delete("/secrets/secrets/test_secret",)
+    assert response.status_code == 204, 'Secret not deleted'
+    created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
+    assert created_secret is None, 'Secret not deleted'
