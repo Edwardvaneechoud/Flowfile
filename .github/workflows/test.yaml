@@ -78,6 +78,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Docker on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install docker
+          brew install colima
+          colima start
+          # Verify Docker is working
+          docker version
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
