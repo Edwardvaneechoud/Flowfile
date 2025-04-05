@@ -10,7 +10,7 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.secrets.secrets import encrypt_secret
+from flowfile_core.secrets.secrets import encrypt_secret, store_secret, delete_secret as delete_secret_action
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -51,20 +51,7 @@ async def create_secret(secret: SecretInput, current_user=Depends(get_current_ac
     if existing_secret:
         raise HTTPException(status_code=400, detail="Secret with this name already exists")
 
-    # Encrypt secret
-    encrypted_value = encrypt_secret(secret.value)
-
-    # Store in database
-    db_secret = db_models.Secret(
-        name=secret.name,
-        encrypted_value=encrypted_value,
-        iv="",  # Not used with Fernet
-        user_id=user_id
-    )
-    db.add(db_secret)
-    db.commit()
-    db.refresh(db_secret)
-
+    encrypted_value = store_secret(db, secret, user_id)
     return Secret(name=secret.name, value=encrypted_value, user_id=str(user_id))
 
 
@@ -94,18 +81,5 @@ async def get_secret(secret_name: str, current_user=Depends(get_current_active_u
 async def delete_secret(secret_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)):
     # Get user ID
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" or 1 == 1 else current_user.id
-
-    # Find secret
-    db_secret = db.query(db_models.Secret).filter(
-        db_models.Secret.user_id == user_id,
-        db_models.Secret.name == secret_name
-    ).first()
-
-    if not db_secret:
-        raise HTTPException(status_code=404, detail="Secret not found")
-
-    # Delete secret
-    db.delete(db_secret)
-    db.commit()
-
+    delete_secret_action(db, secret_name, user_id)
     return None

@@ -5,7 +5,7 @@ from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 
-from tests.utils import is_docker_available
+from tests.utils import is_docker_available, ensure_password_is_available
 
 import pytest
 from pathlib import Path
@@ -733,6 +733,7 @@ def test_add_join():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_reader():
+    ensure_password_is_available()
     graph = create_graph()
     add_node_promise_on_type(graph, 'database_reader', 1)
     database_connection = input_schema.DataBaseConnection(database_type='postgresql',

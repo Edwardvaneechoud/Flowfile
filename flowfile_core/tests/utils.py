@@ -1,6 +1,10 @@
 
 import subprocess
 import platform
+from flowfile_core.secrets.secrets import store_secret, get_encrypted_secret
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.auth.models import SecretInput
+
 
 
 def is_docker_available():
@@ -12,3 +16,11 @@ def is_docker_available():
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+
+def ensure_password_is_available():
+    if not get_encrypted_secret(1, 'test_database_pw'):
+        secret = SecretInput(name='test_database_pw', value='testpass')
+        with get_db_context() as db:
+            store_secret(db, secret, 1)
+

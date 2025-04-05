@@ -16,8 +16,9 @@ from flowfile_core.routes.routes import (add_node,
                                          connect_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
+from flowfile_core.secrets.secrets import get_encrypted_secret
 
-from tests.utils import is_docker_available
+from tests.utils import is_docker_available, ensure_password_is_available
 
 FlowId = int
 
@@ -523,6 +524,7 @@ def test_error_run_flow_while_running():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_input():
+    ensure_password_is_available()
     flow_id = ensure_clean_flow()
     response = client.post("/editor/add_node",
                            params={'flow_id': flow_id, 'node_id': 1, 'node_type': 'database_reader', 'pos_x': 0,
@@ -542,3 +544,23 @@ def test_add_database_input():
     assert r.status_code == 200, 'Settings not added'
     flow_file_handler.get_flow(flow_id).run_graph()
     assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), 'Node should not need to run'
+
+
+def test_create_secret():
+    response = client.post("/secrets/secrets",
+                           json={'name': 'test_secret', 'value': 'test_value'},)
+    assert response.status_code == 200, 'Secret not created'
+    created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
+    assert created_secret is not None, 'Secret not created'
+
+
+def remove_secret():
+    if get_encrypted_secret(current_user_id=1, secret_name='test_secret'):
+        response = client.post("/secrets/secrets",
+                               json={'name': 'test_secret', 'value': 'test_value'},)
+        created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
+        assert created_secret is not None, 'Secret not created'
+    response = client.delete("/secrets/secrets/test_secret",)
+    assert response.status_code == 204, 'Secret not deleted'
+    created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
+    assert created_secret is None, 'Secret not deleted'
