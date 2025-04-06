@@ -30,6 +30,7 @@ from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings im
     airbyte_config_handler,
     AirbyteHandler
 )
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 # Schema and models
 from flowfile_core.schemas import input_schema, schemas, output_model
@@ -316,7 +317,8 @@ def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
 
 
 @router.post('/update_settings/', tags=['transform'])
-def add_generic_settings(input_data: Dict[str, Any], node_type: str):
+def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)):
+    input_data['user_id'] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
     logger.info(f'Updating the data for flow: {flow_id}, node {input_data["node_id"]}')
@@ -341,6 +343,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str):
     try:
         add_func(parsed_input)
     except Exception as e:
+        logger.error(e)
         raise HTTPException(419, str(f'error: {e}'))
 
 
@@ -496,3 +499,20 @@ async def get_excel_sheet_names(path: str) -> List[str] | None:
         return sheet_names
     else:
         raise HTTPException(404, 'File not found')
+
+
+@router.post("/validate_db_settings")
+async def validate_db_settings(
+        database_settings: input_schema.DatabaseSettings,
+        current_user=Depends(get_current_active_user)
+):
+    """
+    Validate the query settings for a database connection.
+    """
+    # Validate the query settings
+    try:
+        sql_source = create_sql_source_from_db_settings(database_settings, user_id=current_user.id)
+        sql_source.validate()
+        return {"message": "Query settings are valid"}
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=str(e))

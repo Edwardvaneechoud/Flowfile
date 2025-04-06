@@ -352,4 +352,27 @@ export interface NodeGraphSolver extends NodeSingleInput {
 
 export interface NodeFormula extends NodeSingleInput {
   function: FormulaInput
+} 
+
+export interface DatabaseConnection {
+  database_type: "postgresql" | "mysql"
+  username: string
+  password_ref: string
+  host?: string
+  port?: number
+  database?: string
+  url?: string
+}
+
+export interface DatabaseSettings {
+  database_connection: DatabaseConnection
+  query_mode: "query" | "table"
+  schema_name?: string
+  table_name?: string
+  query: string
+}
+
+export interface NodeDatabaseReader extends NodeBase {
+  database_settings: DatabaseSettings
+  fields?: MinimalFieldInput[]
 }

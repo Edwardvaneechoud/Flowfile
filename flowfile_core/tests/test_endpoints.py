@@ -1,4 +1,3 @@
-
 import os
 import threading
 import pickle
@@ -22,11 +21,13 @@ from tests.utils import is_docker_available, ensure_password_is_available
 
 FlowId = int
 
+
 def get_auth_token():
     """Get authentication token for testing"""
     with TestClient(main.app) as client:
         response = client.post("/auth/token")
         return response.json()["access_token"]
+
 
 # Create an authenticated test client
 def get_test_client():
@@ -38,7 +39,9 @@ def get_test_client():
     }
     return _client
 
+
 client = get_test_client()
+
 
 def get_flow_settings() -> Dict:
     return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
@@ -340,12 +343,12 @@ def test_get_flow_data_v2():
     assert response.status_code == 200, 'Flow data not retrieved'
     expected_data = {'node_edges': [
         {'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}],
-                     'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
-                                      'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
-                                      'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
-                                     {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
-                                      'image': 'select.png', 'multi': False, 'node_group': 'transform',
-                                      'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
+        'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
+                         'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
+                         'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
+                        {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
+                         'image': 'select.png', 'multi': False, 'node_group': 'transform',
+                         'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
     assert response.json() == expected_data, 'Flow data not correct'
 
 
@@ -522,7 +525,8 @@ def test_error_run_flow_while_running():
         assert response.status_code == 422, 'Flow should not be able to run while running'
 
 
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+@pytest.mark.skipif(not is_docker_available(),
+                    reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_input():
     ensure_password_is_available()
     flow_id = ensure_clean_flow()
@@ -531,24 +535,124 @@ def test_add_database_input():
                                    'pos_y': 0})
     assert response.status_code == 200, 'Node not added'
     assert flow_file_handler.get_node(flow_id, 1).node_type == 'database_reader', 'Node type not set'
-    database_connection = input_schema.DataBaseConnection(database_type='postgresql',
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
                                                           username='testuser',
                                                           password_ref='test_database_pw',
                                                           host='localhost',
                                                           port=5433,
                                                           database='testdb')
-    node_database_reader = input_schema.NodeDatabaseReader(database_connection=database_connection, node_id=1,
+
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='movies')
+    node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
                                                            flow_id=flow_id, schema_name='public', table_name='movies',
                                                            user_id=1)
-    r = client.post("/update_settings/", json=node_database_reader.model_dump(), params={"node_type": "database_reader"})
+    r = client.post("/update_settings/", json=node_database_reader.model_dump(),
+                    params={"node_type": "database_reader"})
     assert r.status_code == 200, 'Settings not added'
     flow_file_handler.get_flow(flow_id).run_graph()
     assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), 'Node should not need to run'
 
 
+def test_add_database_input_with_query():
+    ensure_password_is_available()
+    flow_id = ensure_clean_flow()
+    response = client.post("/editor/add_node",
+                           params={'flow_id': flow_id, 'node_id': 1, 'node_type': 'database_reader', 'pos_x': 0,
+                                   'pos_y': 0})
+    assert response.status_code == 200, 'Node not added'
+
+    input_data = {
+        'flow_id': flow_id, 'node_id': 2, 'cache_results': False, 'pos_x': 389.87716758034446,
+        'pos_y': 281.12954906116835, 'is_setup': True, 'description': '', 'user_id': 1,
+        'database_settings': {
+            'database_connection': {'database_type': 'postgresql', 'username': 'testuser',
+                                    'password_ref': 'test_database_pw', 'host': 'localhost', 'port': 5433,
+                                    'database': 'testdb', 'url': None}, 'schema_name': None, 'table_name': None,
+            'query': 'select * from movies', 'query_mode': 'query'},
+        'fields': [{'name': 'number', 'data_type': 'Int32'}]}
+    r = client.post("/update_settings/", json=input_data,
+                    params={"node_type": "database_reader"})
+    node_database_reader = input_schema.NodeDatabaseReader.model_validate(input_data)
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason="Docker is not available or not running so database reader cannot be tested")
+def test_validate_db_settings():
+    ensure_password_is_available()
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='movies')
+
+    r = client.post("/validate_db_settings", json=database_settings.model_dump())
+    assert r.status_code == 200, 'Settings not validated'
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason="Docker is not available or not running so database reader cannot be tested")
+def test_validate_db_settings_non_existing_password():
+    ensure_password_is_available()
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_databasse_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='movies')
+
+    r = client.post("/validate_db_settings", json=database_settings.model_dump())
+    assert r.status_code == 422, 'Settings should not be validated'
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason="Docker is not available or not running so database reader cannot be tested")
+def test_validate_db_settings_non_existing_table():
+    ensure_password_is_available()
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='MOV')
+
+    r = client.post("/validate_db_settings", json=database_settings.model_dump())
+    assert r.status_code == 422, 'Settings should not be validated'
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason="Docker is not available or not running so database reader cannot be tested")
+def test_validate_db_settings_wrong_query():
+    ensure_password_is_available()
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      query='SELECT *  public.movies')
+
+    r = client.post("/validate_db_settings", json=database_settings.model_dump())
+    assert r.status_code == 422, 'Settings should not be validated'
+
+
 def test_create_secret():
+    if get_encrypted_secret(current_user_id=1, secret_name='test_secret'):
+        response = client.delete("/secrets/secrets/test_secret", )
     response = client.post("/secrets/secrets",
-                           json={'name': 'test_secret', 'value': 'test_value'},)
+                           json={'name': 'test_secret', 'value': 'test_value'}, )
     assert response.status_code == 200, 'Secret not created'
     created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
     assert created_secret is not None, 'Secret not created'
@@ -557,10 +661,10 @@ def test_create_secret():
 def remove_secret():
     if get_encrypted_secret(current_user_id=1, secret_name='test_secret'):
         response = client.post("/secrets/secrets",
-                               json={'name': 'test_secret', 'value': 'test_value'},)
+                               json={'name': 'test_secret', 'value': 'test_value'}, )
         created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
         assert created_secret is not None, 'Secret not created'
-    response = client.delete("/secrets/secrets/test_secret",)
+    response = client.delete("/secrets/secrets/test_secret", )
     assert response.status_code == 204, 'Secret not deleted'
     created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
     assert created_secret is None, 'Secret not deleted'

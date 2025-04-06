@@ -5,11 +5,13 @@ from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 
-from tests.utils import is_docker_available, ensure_password_is_available
-
 import pytest
 from pathlib import Path
 from typing import List, Dict
+
+
+from tests.utils import is_docker_available, ensure_password_is_available
+
 
 
 @pytest.fixture
@@ -736,14 +738,16 @@ def test_add_database_reader():
     ensure_password_is_available()
     graph = create_graph()
     add_node_promise_on_type(graph, 'database_reader', 1)
-    database_connection = input_schema.DataBaseConnection(database_type='postgresql',
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
                                                           username='testuser',
                                                           password_ref='test_database_pw',
                                                           host='localhost',
                                                           port=5433,
                                                           database='testdb')
-    node_database_reader = input_schema.NodeDatabaseReader(database_connection=database_connection, node_id=1,
-                                                           flow_id=1, schema_name='public', table_name='movies',
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='movies')
+    node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
+                                                           flow_id=1,
                                                            user_id=1)
     graph.add_database_reader(node_database_reader)
     node = graph.get_node(1)

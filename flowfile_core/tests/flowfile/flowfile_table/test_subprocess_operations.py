@@ -4,12 +4,12 @@ import pytest
 from flowfile_core.flowfile.flowfile_table.subprocess_operations import (trigger_database_read_collector,
                                                                          DatabaseExternalReadSettings,
                                                                          ExternalDatabaseFetcher)
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import ExtDataBaseConnection
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import ExtDatabaseConnection
 from tests.utils import is_docker_available
 
 
 def test_trigger_database_read_collector():
-    database_connection = ExtDataBaseConnection(database_type='postgresql',
+    database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
                                                 password='testpass',
                                                 host='localhost',
@@ -24,7 +24,7 @@ def test_trigger_database_read_collector():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_external_database_fetcher_wait_on_completion():
-    database_connection = ExtDataBaseConnection(database_type='postgresql',
+    database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
                                                 password='testpass',
                                                 host='localhost',
@@ -45,7 +45,7 @@ def test_external_database_fetcher_wait_on_completion():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_external_database_fetcher_not_wait_on_completion():
-    database_connection = ExtDataBaseConnection(database_type='postgresql',
+    database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
                                                 password='testpass',
                                                 host='localhost',

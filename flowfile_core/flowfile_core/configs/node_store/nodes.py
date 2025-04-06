@@ -42,7 +42,7 @@ nodes_list: List[NodeTemplate] = [
                  node_group='transform'),
     NodeTemplate(name="Polars code", item="polars_code", input=1, output=1, image='polars_code.png',
                  node_group='transform'),
-    NodeTemplate(name="Read from Database", item="database_reader", input=0, output=1, image='database_reader.png',
+    NodeTemplate(name="Read from Database", item="database_reader", input=0, output=1, image='database_reader.svg',
                  node_group='input'),
 ]
 

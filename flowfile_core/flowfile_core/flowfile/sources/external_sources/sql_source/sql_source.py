@@ -3,11 +3,12 @@ from polars import DataFrame
 import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
-from flowfile_core.schemas.input_schema import MinimalFieldInfo
+from flowfile_core.schemas.input_schema import MinimalFieldInfo, DatabaseSettings
 from sqlalchemy import Engine, inspect, create_engine, text
+from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
-from flowfile_core.flowfile.sources.external_sources.sql_source.utils import get_polars_type
+from flowfile_core.flowfile.sources.external_sources.sql_source.utils import get_polars_type, construct_sql_uri
 
 QueryMode = Literal['table', 'query']
 
@@ -35,7 +36,7 @@ def get_query_columns(engine: Engine, query_text: str):
         return list(column_names)
 
 
-def get_table_column_types(engine: Engine, table_name: str, schema: str =None) -> List[Tuple[str, Any]]:
+def get_table_column_types(engine: Engine, table_name: str, schema: str = None) -> List[Tuple[str, Any]]:
     """
     Get column types from a database table using a SQLAlchemy engine
 
@@ -70,6 +71,8 @@ class SqlSource(ExternalDataSource):
                  fields: Optional[List[MinimalFieldInfo]] = None):
 
         self.connection_string = connection_string
+        if schema_name == '':
+            schema_name = None
         if query is not None and table_name is not None:
             raise ValueError("Only one of table_name or query can be provided")
         if query is None and table_name is None:
@@ -82,7 +85,7 @@ class SqlSource(ExternalDataSource):
             raise ValueError("schema must be provided if table_name is not provided")
         else:
             self.query_mode = 'table'
-            if schema_name is not None:
+            if schema_name is not None and schema_name != '':
                 self.query = f"SELECT * FROM {schema_name}.{table_name}"
             else:
                 self.query = f"SELECT * FROM {table_name}"
@@ -90,10 +93,26 @@ class SqlSource(ExternalDataSource):
             self.schema_name = schema_name
         self.read_result = None
         if fields:
-            self.schema = [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in schema]
+            self.schema = [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in fields]
 
     def get_initial_data(self) -> List[Dict[str, Any]]:
         return []
+
+    def validate(self) -> None:
+        try:
+            engine = create_engine(self.connection_string)
+            if self.query_mode == 'table':
+                if self.schema_name is not None:
+                    self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
+                if self.table_name is not None:
+                    self._get_columns_from_table(engine, self.table_name)
+            else:
+                c = self._get_columns_from_query(engine, self.query)
+                if len(c) == 0:
+                    raise ValueError("No columns found in the query")
+        except Exception as e:
+            logger.error(f"Error validating SQL source: {e}")
+            raise e
 
     def get_iter(self) -> Generator[Dict[str, Any], None, None]:
         logger.warning('Getting data in iteration, this is suboptimal')
@@ -201,11 +220,12 @@ class SqlSource(ExternalDataSource):
         try:
             column_names = get_query_columns(engine, query)
 
-            columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in column_names]
+            columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in
+                       column_names]
             return columns
         except Exception as e:
             logger.error(f"Error getting column info for query: {e}")
-            return []
+            raise e
 
     @staticmethod
     def _parse_table_name(table_name: str) -> tuple[Optional[str], str]:
@@ -234,3 +254,24 @@ class SqlSource(ExternalDataSource):
         if self.schema is None:
             self.schema = self.get_flow_file_columns()
         return self.schema
+
+
+def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> SqlSource:
+    database_connection = database_settings.database_connection
+    encrypted_secret = get_encrypted_secret(current_user_id=user_id,
+                                            secret_name=database_connection.password_ref)
+    if encrypted_secret is None:
+        raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
+
+    sql_source = SqlSource(connection_string=
+                           construct_sql_uri(database_type=database_connection.database_type,
+                                             host=database_connection.host,
+                                             port=database_connection.port,
+                                             database=database_connection.database,
+                                             username=database_connection.username,
+                                             password=decrypt_secret(encrypted_secret)),
+                           query=None if database_settings.query_mode == 'table' else database_settings.query,
+                           table_name=database_settings.table_name,
+                           schema_name=database_settings.schema_name,
+                           )
+    return sql_source

@@ -11,7 +11,7 @@ const eventSourceRef = ref<EventSource | null>(null);
 const autoScroll = ref(true);
 const connectionRetries = ref(0);
 const maxRetries = 5;
-const connectionStatus = ref<'connected' | 'disconnected' | 'error'>('disconnected');
+const connectionStatus = ref<"connected" | "disconnected" | "error">("disconnected");
 const errorMessage = ref<string | null>(null);
 
 const scrollToBottom = () => {
@@ -33,34 +33,34 @@ watch(
 
 const startStreamingLogs = async () => {
   if (eventSourceRef.value) eventSourceRef.value.close();
-  
+
   logs.value = "";
   connectionRetries.value = 0;
   errorMessage.value = null;
-  connectionStatus.value = 'disconnected';
+  connectionStatus.value = "disconnected";
   console.log("Starting log streaming");
-  
+
   try {
     // Get the auth token
     const token = await authService.getToken();
     if (!token) {
       console.error("No auth token available for log streaming");
       errorMessage.value = "Authentication failed. Please log in again.";
-      connectionStatus.value = 'error';
+      connectionStatus.value = "error";
       return;
     }
-    
+
     // Create URL with token as query parameter
     const url = new URL(`${flowfileCorebaseURL}logs/${nodeStore.flow_id}`);
-    url.searchParams.append('access_token', token);
-    
+    url.searchParams.append("access_token", token);
+
     const eventSource = new EventSource(url.toString());
     eventSourceRef.value = eventSource;
 
     let hasReceivedMessage = false;
 
     eventSource.onopen = () => {
-      connectionStatus.value = 'connected';
+      connectionStatus.value = "connected";
       console.log("Log connection established");
     };
 
@@ -76,25 +76,26 @@ const startStreamingLogs = async () => {
 
     eventSource.onerror = async (error) => {
       console.error("EventSource error:", error);
-      
+
       if (!hasReceivedMessage && nodeStore.isRunning) {
         if (connectionRetries.value < maxRetries) {
           connectionRetries.value++;
           console.log(`Retrying log connection (${connectionRetries.value}/${maxRetries})...`);
           errorMessage.value = `Connection failed. Retrying (${connectionRetries.value}/${maxRetries})...`;
-          connectionStatus.value = 'error';
+          connectionStatus.value = "error";
           stopStreamingLogs();
-          
+
           // Check if token is still valid, refresh if needed
           if (!authService.hasValidToken()) {
             await authService.getToken();
           }
-          
+
           setTimeout(startStreamingLogs, 1000 * connectionRetries.value); // Exponential backoff
         } else {
           console.error("Max retries reached for log connection");
-          errorMessage.value = "Failed to connect after multiple attempts. Try refreshing the page.";
-          connectionStatus.value = 'error';
+          errorMessage.value =
+            "Failed to connect after multiple attempts. Try refreshing the page.";
+          connectionStatus.value = "error";
           stopStreamingLogs();
         }
       } else {
@@ -104,16 +105,16 @@ const startStreamingLogs = async () => {
     };
   } catch (error) {
     console.error("Failed to start log streaming:", error);
-    errorMessage.value = `Error: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    connectionStatus.value = 'error';
+    errorMessage.value = `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
+    connectionStatus.value = "error";
   }
 };
 
 const stopStreamingLogs = () => {
   eventSourceRef.value?.close();
   eventSourceRef.value = null;
-  if (connectionStatus.value === 'connected') {
-    connectionStatus.value = 'disconnected';
+  if (connectionStatus.value === "connected") {
+    connectionStatus.value = "disconnected";
   }
 };
 
@@ -133,16 +134,19 @@ const setupTokenRefresh = () => {
   if (tokenRefreshInterval) {
     clearInterval(tokenRefreshInterval);
   }
-  
+
   // Check token every 5 minutes
-  tokenRefreshInterval = window.setInterval(async () => {
-    if (eventSourceRef.value && !authService.hasValidToken()) {
-      console.log("Token expired, reconnecting log stream");
-      stopStreamingLogs();
-      await authService.getToken();
-      startStreamingLogs();
-    }
-  }, 5 * 60 * 1000);
+  tokenRefreshInterval = window.setInterval(
+    async () => {
+      if (eventSourceRef.value && !authService.hasValidToken()) {
+        console.log("Token expired, reconnecting log stream");
+        stopStreamingLogs();
+        await authService.getToken();
+        startStreamingLogs();
+      }
+    },
+    5 * 60 * 1000,
+  );
 };
 
 // Lifecycle Hooks
@@ -180,32 +184,40 @@ const isErrorLine = (line: string): boolean => {
   <div class="log-container" @scroll="handleScroll">
     <div class="log-header">
       <div class="log-status">
-        <span :class="['status-indicator', {
-          'active': connectionStatus === 'connected',
-          'error': connectionStatus === 'error'
-        }]"></span>
-        {{ connectionStatus === 'connected' ? 'Connected' : 
-           connectionStatus === 'error' ? 'Connection Error' : 'Disconnected' }}
+        <span
+          :class="[
+            'status-indicator',
+            {
+              active: connectionStatus === 'connected',
+              error: connectionStatus === 'error',
+            },
+          ]"
+        ></span>
+        {{
+          connectionStatus === "connected"
+            ? "Connected"
+            : connectionStatus === "error"
+              ? "Connection Error"
+              : "Disconnected"
+        }}
       </div>
       <div class="log-controls">
         <el-button size="small" @click="startStreamingLogs">Fetch logs</el-button>
         <el-button size="small" :disabled="!logs || autoScroll" @click="scrollToBottom">
           Scroll to Bottom
         </el-button>
-        <el-button size="small" type="danger" @click="clearLogs">
-          Clear
-        </el-button>
+        <el-button size="small" type="danger" @click="clearLogs"> Clear </el-button>
       </div>
     </div>
-    
+
     <div v-if="errorMessage" class="error-banner">
       {{ errorMessage }}
     </div>
-    
+
     <div v-if="logLines.length === 0 && !errorMessage" class="empty-state">
       No logs available. Start running your flow to see logs appear here.
     </div>
-    
+
     <div class="logs" :class="{ 'auto-scroll': autoScroll }">
       <div
         v-for="(line, index) in logLines"

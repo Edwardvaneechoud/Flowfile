@@ -255,7 +255,7 @@ class NodeRead(NodeBase):
     received_file: ReceivedTable
 
 
-class DataBaseConnection(BaseModel):
+class DatabaseConnection(BaseModel):
     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     username: Optional[str] = None
     password_ref: Optional[str] = None
@@ -265,18 +265,23 @@ class DataBaseConnection(BaseModel):
     url: Optional[str] = None
 
 
-class NodeDatabaseReader(NodeBase):
-    database_connection: DataBaseConnection
+class DatabaseSettings(BaseModel):
+    database_connection: DatabaseConnection
     schema_name: Optional[str] = None
     table_name: Optional[str] = None
     query: Optional[str] = None
-    fields: Optional[List[MinimalFieldInfo]] = None
+    query_mode: Literal['query', 'table'] = 'table'
 
     @model_validator(mode='after')
     def validate_table_or_query(self):
         if not self.table_name and not self.query:
             raise ValueError("Either 'table' or 'query' must be provided")
         return self
+
+
+class NodeDatabaseReader(NodeBase):
+    database_settings: DatabaseSettings
+    fields: Optional[List[MinimalFieldInfo]] = None
 
 
 class ExternalSource(BaseModel):

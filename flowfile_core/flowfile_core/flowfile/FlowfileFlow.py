@@ -666,7 +666,8 @@ class EtlGraph:
     def add_database_reader(self, node_database_reader: input_schema.NodeDatabaseReader):
         logger.info("Adding database reader")
         node_type = 'database_reader'
-        database_connection: input_schema.DataBaseConnection = node_database_reader.database_connection
+        database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
+        database_connection: input_schema.DatabaseConnection = database_settings.database_connection
         encrypted_secret = get_encrypted_secret(current_user_id=node_database_reader.user_id,
                                                 secret_name=database_connection.password_ref)
         if encrypted_secret is None:
@@ -678,9 +679,9 @@ class EtlGraph:
                                                            database=database_connection.database,
                                                            username=database_connection.username,
                                                            password=decrypt_secret(encrypted_secret)),
-                               query=node_database_reader.query,
-                               table_name=node_database_reader.table_name,
-                               schema_name=node_database_reader.schema_name,
+                               query=None if database_settings.query_mode == 'table' else database_settings.query,
+                               table_name=database_settings.table_name,
+                               schema_name=database_settings.schema_name,
                                fields=node_database_reader.fields,
                                )
 
