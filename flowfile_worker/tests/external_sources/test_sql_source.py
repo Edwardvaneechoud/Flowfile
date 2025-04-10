@@ -5,6 +5,7 @@ from flowfile_worker.external_sources.sql_source.models import DatabaseReadSetti
 from flowfile_worker.external_sources.sql_source.main import read_sql_source, read_query_as_pd_df
 from tests.utils import is_docker_available
 
+
 def test_database_connection_uri_parsing():
     database_connection = DataBaseConnection(host='localhost', password='testpass', username='testuser', port=5433,
                                              database='testdb')
