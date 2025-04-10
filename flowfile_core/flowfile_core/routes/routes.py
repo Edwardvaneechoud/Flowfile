@@ -3,6 +3,7 @@ import logging
 import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body, Depends
 from fastapi.responses import JSONResponse, Response
@@ -40,7 +41,10 @@ from flowfile_core.utils.utils import camel_case_to_snake_case
 from flowfile_core import flow_file_handler
 from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
                                                                                get_database_connection,
-                                                                               delete_database_connection)
+                                                                               delete_database_connection,
+                                                                               get_all_database_connections_interface)
+from flowfile_core.database.connection import get_db
+
 
 
 # Router setup
@@ -247,9 +251,47 @@ def delete_connection(flow_id: int,
                                   connection_type=node_connection.input_connection.connection_class)
 
 
-@router.post("/create_db_connection", tags=['editor'])
-def create_db_connection(input_connection: input_schema.FullDatabaseConnection):
-    ...
+@router.post("/db_connection_lib", tags=['db_connections'])
+def create_db_connection(input_connection: input_schema.FullDatabaseConnection,
+                         current_user=Depends(get_current_active_user),
+                         db: Session = Depends(get_db)
+                         ):
+    """
+    Create a database connection.
+    """
+    logger.info(f'Creating database connection {input_connection.connection_name}')
+    try:
+        store_database_connection(db, input_connection, current_user.id)
+    except ValueError:
+        raise HTTPException(422, 'Connection name already exists')
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(422, str(e))
+    return {"message": "Database connection created successfully"}
+
+
+@router.delete('/db_connection_lib', tags=['db_connections'])
+def delete_db_connection(connection_name: str,
+                         current_user=Depends(get_current_active_user),
+                         db: Session = Depends(get_db)
+                         ):
+    """
+    Delete a database connection.
+    """
+    logger.info(f'Deleting database connection {connection_name}')
+    db_connection = get_database_connection(db, connection_name, current_user.id)
+    if db_connection is None:
+        raise HTTPException(404, 'Database connection not found')
+    delete_database_connection(db, connection_name, current_user.id)
+    return {"message": "Database connection deleted successfully"}
+
+
+@router.get('/db_connection_lib', tags=['db_connections'],
+            response_model=List[input_schema.FullDatabaseConnectionInterface])
+def get_db_connections(
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_active_user)) -> List[input_schema.FullDatabaseConnectionInterface]:
+    return get_all_database_connections_interface(db, current_user.id)
 
 
 @router.post('/editor/connect_node/', tags=['editor'])

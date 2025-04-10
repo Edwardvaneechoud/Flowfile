@@ -47,3 +47,4 @@ saved_flows/
 /flowfile_worker.spec
 /flowfile_frontend/test-results/.last-run.json
 /test_utils/postgres/postgres-docker-samples/
+**/test_flowfile.db

@@ -10,6 +10,13 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
     """
     # Encrypt the password
 
+    existing_database_connection = get_database_connection(db, connection.connection_name, user_id)
+    if existing_database_connection:
+        raise ValueError(
+            f"Database connection with name '{connection.connection_name}' already exists for user {user_id}."
+            f" Please use a unique connection name or delete the existing connection first."
+        )
+
     password_id = store_secret(db, SecretInput(name=connection.connection_name, value=connection.password), user_id).id
 
     # Create a new database connection object

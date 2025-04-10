@@ -1,4 +1,5 @@
 import os
+os.environ['TESTING'] = 'True'
 import threading
 import pickle
 import pytest
@@ -16,6 +17,11 @@ from flowfile_core.routes.routes import (add_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
 from flowfile_core.secrets.secrets import get_encrypted_secret
+from flowfile_core.database.connection import get_db_context, SessionLocal
+from flowfile_core.database import models as db_models
+from flowfile_core.flowfile.database_connection_manager.db_connections import (get_database_connection,
+                                                                               delete_database_connection,
+                                                                               get_all_database_connections_interface)
 
 from tests.utils import is_docker_available, ensure_password_is_available
 
@@ -658,7 +664,7 @@ def test_create_secret():
     assert created_secret is not None, 'Secret not created'
 
 
-def remove_secret():
+def test_remove_secret():
     if get_encrypted_secret(current_user_id=1, secret_name='test_secret'):
         response = client.post("/secrets/secrets",
                                json={'name': 'test_secret', 'value': 'test_value'}, )
@@ -668,3 +674,112 @@ def remove_secret():
     assert response.status_code == 204, 'Secret not deleted'
     created_secret = get_encrypted_secret(current_user_id=1, secret_name='test_secret')
     assert created_secret is None, 'Secret not deleted'
+
+
+#
+#
+#
+# @router.post("/db_connection_lib", tags=['db_connections'])
+# def create_db_connection(input_connection: input_schema.FullDatabaseConnection,
+#                          current_user=Depends(get_current_active_user),
+#                          db: Session = Depends(get_db)
+#                          ):
+#     """
+#     Create a database connection.
+#     """
+#     logger.info(f'Creating database connection {input_connection.connection_name}')
+#     try:
+#         store_database_connection(db, input_connection, current_user.id)
+#     except ValueError:
+#         raise HTTPException(422, 'Connection name already exists')
+#     except Exception as e:
+#         logger.error(e)
+#         raise HTTPException(422, str(e))
+#     return {"message": "Database connection created successfully"}
+#
+
+
+def test_create_db_connection():
+    ensure_password_is_available()
+    with get_db_context() as db:
+        for con_name in ['test_connection', 'test_connection_2']:
+            db_connection = get_database_connection(db, con_name, 1)
+            if db_connection is not None:
+                delete_database_connection(db, con_name, 1)
+    database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
+                                                              username='testuser',
+                                                              password='test_database_pw',
+                                                              host='localhost',
+                                                              port=5433,
+                                                              database='testdb',
+                                                              connection_name='test_connection')
+    db_data = database_connection.model_dump()
+    db_data['password'] = 'test_database_pw'
+    response = client.post("/db_connection_lib", json=db_data)
+    assert response.status_code == 200, 'Connection not created'
+
+    response = client.post("/db_connection_lib", json=db_data)
+    assert response.status_code == 422, 'Connection should not be created, since already exists'
+    db_data['connection_name'] = 'test_connection_2'
+    response = client.post("/db_connection_lib", json=db_data)
+    assert response.status_code == 200, 'Connection_2 not created'
+
+    with get_db_context() as db:
+        db_connections = [get_database_connection(db, c, 1) for c in ('test_connection', 'test_connection_2')]
+        assert all(dbc is not None for dbc in db_connections), 'Connections not created'
+        for db_connection in db_connections:
+            delete_database_connection(db, db_connection.connection_name, 1)
+
+
+def test_delete_db_connection():
+    ensure_password_is_available()
+    with get_db_context() as db:
+        for con_name in ['test_connection', 'test_connection_2']:
+            db_connection = get_database_connection(db, con_name, 1)
+            if db_connection is None:
+                database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
+                                                                          username='testuser',
+                                                                          password='test_database_pw',
+                                                                          host='localhost',
+                                                                          port=5433,
+                                                                          database='testdb',
+                                                                          connection_name=con_name)
+
+                db_data = database_connection.model_dump()
+                db_data['password'] = 'test_database_pw'
+                response = client.post("/db_connection_lib", json=db_data)
+                assert response.status_code == 200, 'Connection not created'
+    for con_name in ['test_connection', 'test_connection_2']:
+        response = client.delete("/db_connection_lib", params={'connection_name': con_name})
+        assert response.status_code == 200, 'Connection not deleted'
+    with get_db_context() as db:
+        db_connections = [get_database_connection(db, c, 1) for c in ('test_connection', 'test_connection_2')]
+        assert all(dbc is None for dbc in db_connections), 'Connections not deleted'
+
+
+def test_get_db_connection_libs():
+    ensure_password_is_available()
+    with get_db_context() as db:
+        for con_name in ['test_connection', 'test_connection_2']:
+            db_connection = get_database_connection(db, con_name, 1)
+            if db_connection is None:
+                database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
+                                                                          username='testuser',
+                                                                          password='test_database_pw',
+                                                                          host='localhost',
+                                                                          port=5433,
+                                                                          database='testdb',
+                                                                          connection_name=con_name)
+
+                db_data = database_connection.model_dump()
+                db_data['password'] = 'test_database_pw'
+                response = client.post("/db_connection_lib", json=db_data)
+                assert response.status_code == 200, 'Connection not created'
+    all_connections = client.get('/db_connection_lib')
+    assert all_connections.status_code == 200, 'Connections not retrieved'
+    connections = all_connections.json()
+    assert len(connections) == 2, 'Not all connections not retrieved'
+    parsed_connections = [input_schema.FullDatabaseConnectionInterface.model_validate(c) for c in connections]
+    with get_db_context() as db:
+        for con_name in ['test_connection', 'test_connection_2']:
+            delete_database_connection(db, con_name, 1)

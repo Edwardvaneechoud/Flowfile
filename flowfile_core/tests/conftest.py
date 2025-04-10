@@ -10,6 +10,9 @@ from contextlib import contextmanager
 from typing import Tuple, Generator
 import sys
 import os
+
+os.environ['TESTING'] = 'True'
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from tests.utils import is_docker_available
 from test_utils.postgres import fixtures as pg_fixtures
@@ -42,6 +45,35 @@ WORKER_URL = f"http://{WORKER_HOST}:{WORKER_PORT}/docs"
 STARTUP_TIMEOUT = int(os.environ.get("FLOWFILE_STARTUP_TIMEOUT", 30))  # seconds
 STARTUP_CHECK_INTERVAL = 2  # seconds
 SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
+
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_db():
+    """Setup the test database and clean up after tests"""
+    # Just use your existing init_db function to create tables and set up the database
+    from flowfile_core.database.init_db import init_db
+    from flowfile_core.database.models import Base
+    from flowfile_core.database.connection import get_database_url, engine
+
+    init_db()
+
+    yield
+
+    # Cleanup after all tests
+    if os.environ.get("TESTING") == "True" and "sqlite" in get_database_url():
+        logger.info(f"Trying to cleanup: {get_database_url()}")
+        try:
+            # Drop all tables
+            Base.metadata.drop_all(bind=engine)
+
+            # If using file-based SQLite, remove the file
+            db_path = get_database_url().replace("sqlite:///", "")
+            if db_path != ":memory:" and os.path.exists(db_path):
+                os.remove(db_path)
+                logger.info("Removed test database file")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 
 def is_worker_running() -> bool:

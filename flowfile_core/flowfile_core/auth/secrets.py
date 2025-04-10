@@ -11,9 +11,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
+    raise ImportError("Keyring not available")
     import keyring
-
-    # Test if keyring actually works
     test_key = f"_test_{os.getpid()}"
     keyring.set_password("flowfile", test_key, "test")
     test_value = keyring.get_password("flowfile", test_key)
@@ -31,13 +30,15 @@ class KeyringFallback:
     """A simple fallback when keyring is not available"""
 
     def __init__(self):
+        env = os.environ.get("FLOWFILE_MODE")
+        logger.error(f'Keyring not available, using fallback in {env}')
         if os.environ.get("FLOWFILE_MODE") == "electron":
             app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
             self.storage_path = Path(app_data) / "flowfile"
         else:
             self.storage_path = Path(os.environ.get("SECURE_STORAGE_PATH", "/tmp/.flowfile"))
-
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        logger.error(f"Using SECURE_STORAGE_PATH: {self.storage_path}")
         try:
             os.chmod(self.storage_path, 0o700)
         except Exception as _e:
@@ -156,6 +157,3 @@ def get_master_key():
         key = Fernet.generate_key().decode()
         set_password("flowfile", "master_key", key)
     return key
-
-
-

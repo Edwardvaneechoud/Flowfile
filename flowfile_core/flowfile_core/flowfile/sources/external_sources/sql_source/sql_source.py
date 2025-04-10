@@ -98,16 +98,28 @@ class SqlSource(ExternalDataSource):
     def get_initial_data(self) -> List[Dict[str, Any]]:
         return []
 
+    def get_sample_query(self) -> str:
+        if self.query_mode == 'query':
+            return f"select * from ({self.query}) as main_query LIMIT 1"
+        else:
+            return f"{self.query} LIMIT 1"
+
     def validate(self) -> None:
         try:
             engine = create_engine(self.connection_string)
             if self.query_mode == 'table':
-                if self.schema_name is not None:
-                    self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
-                if self.table_name is not None:
-                    self._get_columns_from_table(engine, self.table_name)
+                try:
+                    if self.schema_name is not None:
+                        self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
+                    if self.table_name is not None:
+                        self._get_columns_from_table(engine, self.table_name)
+                except Exception as e:
+                    logger.warning(f"Error getting column info for table {self.table_name}: {e}")
+                    c = self._get_columns_from_query(engine, self.get_sample_query())
+                    if len(c) == 0:
+                        raise ValueError("No columns found in the query")
             else:
-                c = self._get_columns_from_query(engine, self.query)
+                c = self._get_columns_from_query(engine, self.get_sample_query())
                 if len(c) == 0:
                     raise ValueError("No columns found in the query")
         except Exception as e:
@@ -167,7 +179,7 @@ class SqlSource(ExternalDataSource):
             except Exception as e:
                 logger.error(f"Error getting column info for table {self.table_name}: {e}")
 
-        return self._get_columns_from_query(engine, self.query)
+        return self._get_columns_from_query(engine, self.get_sample_query())
 
     @staticmethod
     def _get_columns_from_table(engine: Engine, table_name: str) -> List[FlowfileColumn]:

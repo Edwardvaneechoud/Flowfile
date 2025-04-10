@@ -60,6 +60,7 @@ def test_get_query_columns(engine):
     result_columns = get_query_columns(engine, query_text="SELECT * FROM credits")
     assert result_columns == expected_columns, "Query columns do not match expected columns"
 
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_table_column_types(engine):
     from sqlalchemy.sql.sqltypes import INTEGER, TEXT, Text

@@ -60,4 +60,29 @@ def test_get_database_connection_schema():
         assert database_connection is None, "Database connection should be None after deletion"
 
 
+def test_get_all_database_connections_interface():
+    # ensure that the database is connection created
+    user_id = 1
+    connection = FullDatabaseConnection(username='testuser', password='testpass',
+                                        connection_name='test_connection_v2', host='localhost',
+                                        port=5433, database='testdb', database_type='postgresql', ssl_enabled=False)
 
+    with get_db_context() as db:
+        db_connection = store_database_connection(db, connection, user_id)
+        assert db_connection is not None, "Database connection should not be None"
+        assert db_connection.id is not None, "ID should not be None"
+
+    with get_db_context() as db:
+        # Get all database connections
+        all_connections = get_all_database_connections_interface(db, user_id)
+        assert isinstance(all_connections, list), "All connections should be a list"
+        assert len(all_connections) > 0, "All connections should not be empty"
+        assert isinstance(all_connections[0], FullDatabaseConnectionInterface), "All connections should be of type FullDatabaseConnectionInterface"
+        assert not any(hasattr(acs,'password') for acs in all_connections), "All connections should not have password attribute"
+
+    # Clean up the database connection
+    with get_db_context() as db:
+        delete_database_connection(db, connection.connection_name, user_id)
+        # Verify that the database connection has been deleted
+        database_connection = get_database_connection(db, connection.connection_name, user_id)
+        assert database_connection is None, "Database connection should be None after deletion"
