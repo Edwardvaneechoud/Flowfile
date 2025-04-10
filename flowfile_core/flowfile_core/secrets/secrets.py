@@ -35,8 +35,8 @@ def get_encrypted_secret(current_user_id: int, secret_name: str) -> str|None:
             return None
 
 
-def store_secret(db: Session, secret: SecretInput, user_id: int) -> str:
-    encrypted_value = encrypt_secret(secret.value)
+def store_secret(db: Session, secret: SecretInput, user_id: int) -> db_models.Secret:
+    encrypted_value = encrypt_secret(secret.value.get_secret_value())
 
     # Store in database
     db_secret = db_models.Secret(
@@ -48,7 +48,7 @@ def store_secret(db: Session, secret: SecretInput, user_id: int) -> str:
     db.add(db_secret)
     db.commit()
     db.refresh(db_secret)
-    return encrypted_value
+    return db_secret
 
 
 def delete_secret(db: Session, secret_name: str, user_id: int) -> None:

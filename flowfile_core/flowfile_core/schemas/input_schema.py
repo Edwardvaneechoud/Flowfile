@@ -265,8 +265,33 @@ class DatabaseConnection(BaseModel):
     url: Optional[str] = None
 
 
+class FullDatabaseConnection(BaseModel):
+    connection_name: str
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    username: str
+    password: SecretStr
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    ssl_enabled: Optional[bool] = False
+    url: Optional[str] = None
+
+
+class FullDatabaseConnectionInterface(BaseModel):
+    connection_name: str
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    username: str
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    ssl_enabled: Optional[bool] = False
+    url: Optional[str] = None
+
+
 class DatabaseSettings(BaseModel):
-    database_connection: DatabaseConnection
+    connection_mode: Optional[Literal['inline', 'reference']] = 'inline'
+    database_connection: Optional[DatabaseConnection]
+    database_connection_name: Optional[str] = None
     schema_name: Optional[str] = None
     table_name: Optional[str] = None
     query: Optional[str] = None
@@ -277,6 +302,22 @@ class DatabaseSettings(BaseModel):
         if not self.table_name and not self.query:
             raise ValueError("Either 'table' or 'query' must be provided")
         return self
+
+    @model_validator(mode='after')
+    def validate_table_or_query(self):
+        # Validate that either table_name or query is provided
+        if not self.table_name and not self.query:
+            raise ValueError("Either 'table_name' or 'query' must be provided")
+
+        # Validate correct connection information based on connection_mode
+        if self.connection_mode == 'inline' and self.database_connection is None:
+            raise ValueError("When 'connection_mode' is 'inline', 'database_connection' must be provided")
+
+        if self.connection_mode == 'reference' and not self.database_connection_name:
+            raise ValueError("When 'connection_mode' is 'reference', 'database_connection_name' must be provided")
+
+        return self
+
 
 
 class NodeDatabaseReader(NodeBase):

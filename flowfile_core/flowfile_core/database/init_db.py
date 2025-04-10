@@ -10,6 +10,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 db_models.Base.metadata.create_all(bind=engine)
 
+
 def create_default_local_user(db: Session):
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
 

@@ -51,7 +51,7 @@ async def create_secret(secret: SecretInput, current_user=Depends(get_current_ac
     if existing_secret:
         raise HTTPException(status_code=400, detail="Secret with this name already exists")
 
-    encrypted_value = store_secret(db, secret, user_id)
+    encrypted_value = store_secret(db, secret, user_id).encrypted_value
     return Secret(name=secret.name, value=encrypted_value, user_id=str(user_id))
 
 

@@ -38,6 +38,9 @@ from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir, remove_paths
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from flowfile_core import flow_file_handler
+from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
+                                                                               get_database_connection,
+                                                                               delete_database_connection)
 
 
 # Router setup
@@ -242,6 +245,11 @@ def delete_connection(flow_id: int,
     if to_node is not None:
         to_node.delete_input_node(node_connection.output_connection.node_id,
                                   connection_type=node_connection.input_connection.connection_class)
+
+
+@router.post("/create_db_connection", tags=['editor'])
+def create_db_connection(input_connection: input_schema.FullDatabaseConnection):
+    ...
 
 
 @router.post('/editor/connect_node/', tags=['editor'])

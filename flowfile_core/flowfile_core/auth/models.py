@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from typing import Optional, List
 
 
@@ -26,7 +26,7 @@ class UserInDB(User):
 
 class SecretInput(BaseModel):
     name: str
-    value: str
+    value: SecretStr
 
 
 class Secret(SecretInput):

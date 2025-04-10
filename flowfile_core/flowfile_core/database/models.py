@@ -24,3 +24,18 @@ class Secret(Base):
     encrypted_value = Column(Text)
     iv = Column(String)
     user_id = Column(Integer, ForeignKey("users.id"))
+
+
+class DatabaseConnection(Base):
+    __tablename__ = "database_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, index=True)
+    database_type = Column(String)
+    username = Column(String)
+    host = Column(String)
+    port = Column(Integer)
+    database = Column(String, default=None)
+    ssl_enabled = Column(Boolean, default=False)
+    password_id = Column(Integer, ForeignKey("secrets.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
