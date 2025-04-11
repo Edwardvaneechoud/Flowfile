@@ -1,10 +1,11 @@
+
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
                                                                                get_database_connection,
                                                                                delete_database_connection,
                                                                                get_database_connection_schema,
                                                                                get_all_database_connections_interface)
-from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.connection import get_db_context, SessionLocal
 from flowfile_core.secrets.secrets import get_encrypted_secret
 
 
@@ -50,8 +51,9 @@ def test_get_database_connection_schema():
         assert db_connection.id is not None, "ID should not be None"
     with get_db_context() as db:
         # Get the database connection schema
-        db_connection_schema = get_database_connection_schema(db, connection.connection_name, user_id)
-        assert db_connection_schema == connection, "Database connection schema should match the original connection"
+        db_connection_schema = get_database_connection_schema(db, connection.connection_name, user_id).model_dump()
+        db_connection_schema.pop('password')
+        assert db_connection_schema == {k: v for k, v in connection.model_dump().items() if k!='password'}, "Database connection schema should match the original connection"
     # Clean up the database connection
     with get_db_context() as db:
         delete_database_connection(db, connection.connection_name, user_id)
@@ -78,7 +80,7 @@ def test_get_all_database_connections_interface():
         assert isinstance(all_connections, list), "All connections should be a list"
         assert len(all_connections) > 0, "All connections should not be empty"
         assert isinstance(all_connections[0], FullDatabaseConnectionInterface), "All connections should be of type FullDatabaseConnectionInterface"
-        assert not any(hasattr(acs,'password') for acs in all_connections), "All connections should not have password attribute"
+        assert not any(hasattr(acs, 'password') for acs in all_connections), "All connections should not have password attribute"
 
     # Clean up the database connection
     with get_db_context() as db:

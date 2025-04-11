@@ -1,5 +1,4 @@
 import os
-os.environ['TESTING'] = 'True'
 import threading
 import pickle
 import pytest
@@ -17,13 +16,18 @@ from flowfile_core.routes.routes import (add_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
 from flowfile_core.secrets.secrets import get_encrypted_secret
-from flowfile_core.database.connection import get_db_context, SessionLocal
-from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_database_connection,
                                                                                delete_database_connection,
                                                                                get_all_database_connections_interface)
-
-from tests.utils import is_docker_available, ensure_password_is_available
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 
 FlowId = int
 
@@ -33,6 +37,13 @@ def get_auth_token():
     with TestClient(main.app) as client:
         response = client.post("/auth/token")
         return response.json()["access_token"]
+
+
+def ensure_no_database_connections():
+    with get_db_context() as db:
+        all_connections = get_all_database_connections_interface(db, 1)
+        for connection in all_connections:
+            delete_database_connection(db, connection.connection_name, 1)
 
 
 # Create an authenticated test client
@@ -759,6 +770,7 @@ def test_delete_db_connection():
 
 def test_get_db_connection_libs():
     ensure_password_is_available()
+    ensure_no_database_connections()
     with get_db_context() as db:
         for con_name in ['test_connection', 'test_connection_2']:
             db_connection = get_database_connection(db, con_name, 1)
@@ -778,7 +790,7 @@ def test_get_db_connection_libs():
     all_connections = client.get('/db_connection_lib')
     assert all_connections.status_code == 200, 'Connections not retrieved'
     connections = all_connections.json()
-    assert len(connections) == 2, 'Not all connections not retrieved'
+    assert len(connections) == 2, f'Not all connections not retrieved, number of connections found: {len(connections)}:\n {connections}'
     parsed_connections = [input_schema.FullDatabaseConnectionInterface.model_validate(c) for c in connections]
     with get_db_context() as db:
         for con_name in ['test_connection', 'test_connection_2']:

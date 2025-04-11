@@ -2,12 +2,54 @@
 <template>
   <div v-if="dataLoaded && nodeDatabaseReader" class="db-container">
     <generic-node-settings v-model="nodeDatabaseReader">
+      
       <div class="listbox-wrapper">
+        <div class="form-group">
+  <label>Connection Mode</label>
+  <el-radio-group v-model="nodeDatabaseReader.database_settings.connection_mode">
+    <el-radio 
+      v-for="option in connectionModeOptions" 
+      :key="option" 
+      :label="option"
+    >
+      {{ option }}
+    </el-radio>
+  </el-radio-group>
+</div>
+<div>
+        <div  v-if="nodeDatabaseReader.database_settings.connection_mode == 'inline' && nodeDatabaseReader.database_settings.database_connection" >
         <database-connection-settings
           v-model="nodeDatabaseReader.database_settings.database_connection"
           @change="resetFields"
         />
+      </div>
 
+      
+      <div v-else>
+        <div v-if="connectionsAreLoading">
+          <div class="loading-spinner"></div>
+          <p>Loading connections...</p>
+        </div>
+        <div v-else>
+          <select 
+      id="connection-select" 
+      v-model="nodeDatabaseReader.database_settings.database_connection_name" 
+      class="form-control minimal-select"
+    >
+      <option disabled value="">Choose a connection</option>
+      <option 
+        v-for="conn in connectionInterfaces" 
+        :key="conn.connectionName" 
+        :value="conn.connectionName"
+      >
+        {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }})
+      </option>
+    </select>
+        </div>
+      </div>
+        </div>
+        </div>
+        
         <div class="listbox-wrapper">
           <!-- Query Mode Toggle -->
           <div class="form-group">
@@ -86,7 +128,6 @@
             </div>
           </div>
         </div>
-      </div>
     </generic-node-settings>
   </div>
   <code-loader v-else />
@@ -94,20 +135,24 @@
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { ref } from "vue";
-import { NodeDatabaseReader, MinimalFieldInput } from "../../../baseNode/nodeInput";
+import { ref, onMounted } from "vue";
+import { NodeDatabaseReader, ConnectionModeOption } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { fetchDatabaseConnectionsInterfaces } from '../../../../../pages/databaseManager/api'
+import { FullDatabaseConnectionInterface } from '../../../../../pages/databaseManager/databaseConnectionTypes'
+import { ElMessage, ElRadio } from 'element-plus'
 import DatabaseConnectionSettings from "./DatabaseConnectionSettings.vue";
 import SqlQueryComponent from "./SQLQueryComponent.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import axios from "axios";
-import { nodeData } from "../../../baseNode/nodeInterfaces";
 
 interface Props {
   nodeId: number;
 }
 
+const connectionModeOptions = ref<ConnectionModeOption[]>(['inline', 'reference'])
+const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([])
 const props = defineProps<Props>();
 const nodeStore = useNodeStore();
 const nodeDatabaseReader = ref<null | NodeDatabaseReader>(null);
@@ -115,12 +160,12 @@ const dataLoaded = ref(false);
 const validationError = ref<string | null>(null);
 const validationSuccess = ref<string | null>(null);
 const isValidating = ref(false);
+const connectionsAreLoading = ref(false);
 
 const handleQueryModeChange = (event: Event) => {
   const target = event.target as HTMLSelectElement;
   const selectedMode = target.value;
 
-  // Clear validation messages when changing modes
   validationError.value = null;
   validationSuccess.value = null;
 
@@ -211,6 +256,24 @@ const pushNodeData = async () => {
   dataLoaded.value = false;
 };
 
+const fetchConnections = async () => {
+  connectionsAreLoading.value = true
+  try {
+    connectionInterfaces.value = await fetchDatabaseConnectionsInterfaces()
+  } catch (error) {
+    console.error("Error fetching connections:", error)
+    ElMessage.error('Failed to load database connections')
+  } finally {
+    connectionsAreLoading.value = false
+  }
+}
+
+
+onMounted(async () => {
+  await fetchConnections()
+})
+
+
 defineExpose({
   loadNodeData,
   pushNodeData,
@@ -281,14 +344,6 @@ label {
   font-size: 0.875rem;
 }
 
-select.form-control {
-  appearance: none;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%234a5568' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.5rem center;
-  background-size: 1em;
-  padding-right: 2rem;
-}
 
 /* Validation section styling */
 .validation-section {
@@ -358,4 +413,16 @@ select.form-control {
     gap: 0.5rem;
   }
 }
+
+.el-radio-group {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 1rem;
+}
+
+.el-radio {
+  margin-right: 0 !important; /* Override any existing margins */
+}
+
+
 </style>

@@ -2,6 +2,7 @@ from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatab
 from sqlalchemy.orm import Session
 from flowfile_core.database.models import DatabaseConnection as DBConnectionModel, Secret
 from flowfile_core.secrets.secrets import store_secret, SecretInput, decrypt_secret
+from flowfile_core.database.connection import get_db_context
 
 
 def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
@@ -71,11 +72,16 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
             database=db_connection.database,
             database_type=db_connection.database_type,
             username=db_connection.username,
-            password=decrypt_secret(password_secret.encrypted_value),
+            password=password_secret.encrypted_value,
             ssl_enabled=db_connection.ssl_enabled
         )
 
     return None
+
+
+def get_local_database_connection(connection_name: str, user_id: int) -> FullDatabaseConnection | None:
+    with get_db_context() as db:
+        return get_database_connection_schema(db, connection_name, user_id)
 
 
 def delete_database_connection(db: Session, connection_name: str, user_id: int) -> None:

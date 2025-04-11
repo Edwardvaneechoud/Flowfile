@@ -364,8 +364,12 @@ export interface DatabaseConnection {
   url?: string
 }
 
+export type ConnectionModeOption = "inline" | "reference"
+
 export interface DatabaseSettings {
-  database_connection: DatabaseConnection
+  connection_mode: ConnectionModeOption
+  database_connection?: DatabaseConnection
+  database_connection_name?: string
   query_mode: "query" | "table"
   schema_name?: string
   table_name?: string

@@ -9,6 +9,7 @@ from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.flowfile.sources.external_sources.sql_source.utils import get_polars_type, construct_sql_uri
+from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
 
 QueryMode = Literal['table', 'query']
 
@@ -270,8 +271,14 @@ class SqlSource(ExternalDataSource):
 
 def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> SqlSource:
     database_connection = database_settings.database_connection
-    encrypted_secret = get_encrypted_secret(current_user_id=user_id,
-                                            secret_name=database_connection.password_ref)
+    if database_settings.connection_mode == 'inline':
+        if database_connection is None:
+            raise ValueError("Database connection is required in inline mode")
+        encrypted_secret = get_encrypted_secret(current_user_id=user_id,
+                                                secret_name=database_connection.password_ref)
+    else:
+        database_connection = get_local_database_connection(database_settings.database_connection_name, user_id)
+        encrypted_secret = database_connection.password.get_secret_value()
     if encrypted_secret is None:
         raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
 

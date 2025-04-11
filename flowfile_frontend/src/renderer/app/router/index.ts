@@ -32,6 +32,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../pages/documentation.vue"),
       },
       {
+        name: "databaseManager",
+        path: "databaseManager",
+        component: () => import("../pages/DatabaseManager.vue"),
+      },
+      {
         name: "secretManager",
         path: "secretManager",
         component: () => import("../pages/SecretManager.vue"),

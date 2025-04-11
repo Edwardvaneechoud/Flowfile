@@ -14,7 +14,7 @@ import os
 os.environ['TESTING'] = 'True'
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
-from tests.utils import is_docker_available
+from tests.flowfile_core_test_utils import is_docker_available
 from test_utils.postgres import fixtures as pg_fixtures
 import socket
 

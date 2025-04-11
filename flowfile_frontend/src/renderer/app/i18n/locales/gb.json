@@ -334,6 +334,7 @@
     "spacing": "Spacing",
     "sliders": "Sliders",
     "secretManager": "Secret Manager",
+    "databaseManager": "Database Connection Manager",
     "popovers": "Popovers",
     "chat": "Chat",
     "maplibre-maps": "MapLibre Maps",

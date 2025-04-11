@@ -4,6 +4,7 @@ import { NodeDatabaseReader, DatabaseConnection, DatabaseSettings } from "../../
 export const createNodeDatabaseReader = (flowId: number, nodeId: number): NodeDatabaseReader => {
   const databaseSettings: DatabaseSettings = {
     query_mode: "table",
+    connection_mode: "reference",
     schema_name: undefined,
     table_name: undefined,
     query: '',
@@ -11,8 +12,8 @@ export const createNodeDatabaseReader = (flowId: number, nodeId: number): NodeDa
       database_type: "postgresql",
       username: "",
       password_ref: "",
-      host: "",
-      port: 0,
+      host: "localhost",
+      port: 4322,
       database: "",
       url: undefined,
     } as DatabaseConnection,

@@ -38,7 +38,6 @@ airbyte = { url = "https://github.com/Edwardvaneechoud/PyAirbyte/releases/downlo
 airbyte-cdk = "^6.6.3"
 pytest = "^8.3.4"
 aiofiles = "^24.1.0"
-keyring = "^25.6.0"
 python-jose = "^3.4.0"
 bcrypt = "^4.3.0"
 connectorx = "^0.4.2"

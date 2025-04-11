@@ -27,6 +27,13 @@ export default {
       },
     },
     {
+      name: "databaseManager",
+      displayName: "menu.databaseManager",
+      meta: {
+        icon: "fa-solid fa-database"
+      }
+    },
+    {
       name: "secretManager",
       displayName: "menu.secretManager",
       meta: {

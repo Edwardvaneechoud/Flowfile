@@ -31,6 +31,7 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_oper
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
+from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -667,18 +668,26 @@ class EtlGraph:
         logger.info("Adding database reader")
         node_type = 'database_reader'
         database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
-        database_connection: input_schema.DatabaseConnection = database_settings.database_connection
-        encrypted_secret = get_encrypted_secret(current_user_id=node_database_reader.user_id,
-                                                secret_name=database_connection.password_ref)
-        if encrypted_secret is None:
-            raise HTTPException(status_code=400, detail="Password not found")
+        database_connection: Optional[input_schema.DatabaseConnection | input_schema.FullDatabaseConnection]
+        if database_settings.connection_mode == 'inline':
+            database_connection: input_schema.DatabaseConnection = database_settings.database_connection
+            encrypted_password = get_encrypted_secret(current_user_id=node_database_reader.user_id,
+                                                      secret_name=database_connection.password_ref)
+            if encrypted_password is None:
+                raise HTTPException(status_code=400, detail="Password not found")
+        else:
+            database_reference_settings = get_local_database_connection(database_settings.database_connection_name,
+                                                                        node_database_reader.user_id)
+            database_connection = database_reference_settings
+            encrypted_password = database_reference_settings.password.get_secret_value()
+
         sql_source = SqlSource(connection_string=
                                sql_utils.construct_sql_uri(database_type=database_connection.database_type,
                                                            host=database_connection.host,
                                                            port=database_connection.port,
                                                            database=database_connection.database,
                                                            username=database_connection.username,
-                                                           password=decrypt_secret(encrypted_secret)),
+                                                           password=decrypt_secret(encrypted_password)),
                                query=None if database_settings.query_mode == 'table' else database_settings.query,
                                table_name=database_settings.table_name,
                                schema_name=database_settings.schema_name,
@@ -689,8 +698,10 @@ class EtlGraph:
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,
-                    password=decrypt_secret(encrypted_secret),
-                    query=sql_source.query
+                    password=decrypt_secret(encrypted_password),
+                    query=sql_source.query,
+                    database_reference_settings=(database_reference_settings if database_settings.connection_mode == 'reference'
+                                                 else None),
                 )
             )
 

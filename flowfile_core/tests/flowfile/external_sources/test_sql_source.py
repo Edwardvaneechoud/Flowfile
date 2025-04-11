@@ -1,13 +1,27 @@
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (SqlSource,
                                                                                    get_query_columns,
                                                                                    get_table_column_types,
-                                                                                   get_polars_type)
+                                                                                   get_polars_type,
+                                                                                   create_sql_source_from_db_settings)
 import pytest
 import polars as pl
-from flowfile_core.schemas.input_schema import MinimalFieldInfo
+from flowfile_core.schemas.input_schema import (MinimalFieldInfo, FullDatabaseConnection, DatabaseSettings,
+                                                DatabaseConnection)
+from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
+                                                                               store_database_connection)
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
-from tests.utils import is_docker_available
 from sqlalchemy import create_engine
+
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+
 
 
 @pytest.fixture
@@ -261,3 +275,74 @@ def test_get_polars_type():
     from sqlalchemy.sql.sqltypes import Enum
     unknown_type = get_polars_type(Enum("A", "B"))
     assert isinstance(unknown_type(), pl.String), "Unknown type should convert to polars String"
+
+
+def test_create_sql_source_from_db_settings_connection():
+    """Test the create_sql_source_from_db_settings function."""
+    # Mock the settings
+
+    database_connection = DatabaseConnection(database_type='postgresql',
+                                             username='testuser',
+                                             password_ref='test_database_pw',
+                                             host='localhost',
+                                             port=5433,
+                                             database='testdb')
+    database_settings = DatabaseSettings(database_connection=database_connection,
+                                         schema_name='public', table_name='movies',
+                                         connection_mode='inline')
+    ensure_password_is_available()
+    sql_source = create_sql_source_from_db_settings(database_settings, user_id=1)
+    assert isinstance(sql_source, SqlSource), "Should create an instance of SqlSource"
+
+    try:
+        sql_source.validate()
+    except Exception as e:
+        raise AssertionError(f"Validation failed: {e}")
+
+
+def test_create_sql_source_from_db_settings_connection_reference():
+    """Test the create_sql_source_from_db_settings function."""
+    # Mock the settings
+    database_connection = FullDatabaseConnection(database_type='postgresql',
+                                                 username='testuser',
+                                                 host='localhost',
+                                                 port=5433,
+                                                 database='testdb',
+                                                 password='testpass',
+                                                 connection_name="database_test_connection")
+
+    database_settings = DatabaseSettings(database_connection_name='database_test_connection',
+                                                      schema_name='public', table_name='movies',
+                                                      connection_mode='reference')
+    db_connection = get_local_database_connection('database_test_connection', 1)
+    if db_connection is None:
+        with get_db_context() as db:
+            store_database_connection(db, connection=database_connection, user_id=1)
+
+    sql_source = create_sql_source_from_db_settings(database_settings, user_id=1)
+    assert isinstance(sql_source, SqlSource), "Should create an instance of SqlSource"
+
+    try:
+        sql_source.validate()
+    except Exception as e:
+        raise AssertionError(f"Validation failed: {e}")
+
+
+def test_error_sql_source_validate():
+    database_connection = DatabaseConnection(database_type='postgresql',
+                                             username='testuser',
+                                             password_ref='test_database_pw',
+                                             host='localhost',
+                                             port=5433,
+                                             database='testdb')
+    database_settings = DatabaseSettings(database_connection=database_connection,
+                                         schema_name='public', table_name='moviess',
+                                         connection_mode='inline')
+    ensure_password_is_available()
+    sql_source = create_sql_source_from_db_settings(database_settings, user_id=1)
+    assert isinstance(sql_source, SqlSource), "Should create an instance of SqlSource"
+    with pytest.raises(Exception) as excinfo:
+        sql_source.validate()
+    error_message = str(excinfo.value)
+    assert 'relation "public.moviess" does not exist' in error_message
+    assert 'SELECT * FROM public.moviess LIMIT 1' in error_message

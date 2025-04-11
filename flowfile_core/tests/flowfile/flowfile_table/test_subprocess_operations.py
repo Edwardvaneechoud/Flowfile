@@ -5,7 +5,14 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations import (trigger
                                                                          DatabaseExternalReadSettings,
                                                                          ExternalDatabaseFetcher)
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import ExtDatabaseConnection
-from tests.utils import is_docker_available
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 
 
 def test_trigger_database_read_collector():

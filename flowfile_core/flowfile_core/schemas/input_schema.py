@@ -290,23 +290,23 @@ class FullDatabaseConnectionInterface(BaseModel):
 
 class DatabaseSettings(BaseModel):
     connection_mode: Optional[Literal['inline', 'reference']] = 'inline'
-    database_connection: Optional[DatabaseConnection]
+    database_connection: Optional[DatabaseConnection] = None
     database_connection_name: Optional[str] = None
     schema_name: Optional[str] = None
     table_name: Optional[str] = None
     query: Optional[str] = None
-    query_mode: Literal['query', 'table'] = 'table'
+    query_mode: Literal['query', 'table', 'reference'] = 'table'
 
     @model_validator(mode='after')
     def validate_table_or_query(self):
-        if not self.table_name and not self.query:
+        if (not self.table_name and not self.query) and self.query_mode == 'inline':
             raise ValueError("Either 'table' or 'query' must be provided")
         return self
 
     @model_validator(mode='after')
     def validate_table_or_query(self):
         # Validate that either table_name or query is provided
-        if not self.table_name and not self.query:
+        if (not self.table_name and not self.query) and self.query_mode == 'inline':
             raise ValueError("Either 'table_name' or 'query' must be provided")
 
         # Validate correct connection information based on connection_mode
@@ -317,7 +317,6 @@ class DatabaseSettings(BaseModel):
             raise ValueError("When 'connection_mode' is 'reference', 'database_connection_name' must be provided")
 
         return self
-
 
 
 class NodeDatabaseReader(NodeBase):

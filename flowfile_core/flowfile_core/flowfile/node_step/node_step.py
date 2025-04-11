@@ -13,7 +13,7 @@ from flowfile_core.configs.node_store import nodes as node_interface
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
 from flowfile_core.flowfile.flowfile_table.subprocess_operations import (
-    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result,)
+    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result, ExternalDatabaseFetcher)
 from flowfile_core.flowfile.node_step.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
 from flowfile_core.flowfile.node_step.schema_callback import SingleExecutionFuture
@@ -36,8 +36,8 @@ class NodeStep:
     _function: Callable = None  # the function that needs to be executed when triggered
     _schema_callback: Optional[SingleExecutionFuture] = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
-    _fetch_cached_df: Optional[ExternalDfFetcher] = None
-    _cache_progress: Optional[ExternalDfFetcher] = None
+    _fetch_cached_df: Optional[ExternalDfFetcher | ExternalDatabaseFetcher] = None
+    _cache_progress: Optional[ExternalDfFetcher | ExternalDatabaseFetcher] = None
 
     def post_init(self):
         self.node_inputs = NodeStepInputs()
