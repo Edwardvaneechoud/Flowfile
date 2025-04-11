@@ -27,7 +27,8 @@ from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
-                                                                                               ExternalDatabaseFetcher)
+                                                                                               ExternalDatabaseFetcher,
+                                                                                               ExternalDatabaseWriter)
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
@@ -658,11 +659,64 @@ class EtlGraph:
             df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id)
             return df
 
+        def schema_callback():
+            input_node: NodeStep = self.get_node(output_file.node_id).node_inputs.main_inputs[0]
+
+            return input_node.schema
+
         self.add_node_step(node_id=output_file.node_id,
                            function=_func,
                            input_columns=[],
                            node_type='output',
-                           setting_input=output_file)
+                           setting_input=output_file,
+                           schema_callback=schema_callback)
+
+    def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
+        logger.info("Adding database reader")
+        node_type = 'database_writer'
+        database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
+        database_connection: Optional[input_schema.DatabaseConnection | input_schema.FullDatabaseConnection]
+        if database_settings.connection_mode == 'inline':
+            database_connection: input_schema.DatabaseConnection = database_settings.database_connection
+            encrypted_password = get_encrypted_secret(current_user_id=node_database_writer.user_id,
+                                                      secret_name=database_connection.password_ref)
+            if encrypted_password is None:
+                raise HTTPException(status_code=400, detail="Password not found")
+        else:
+            database_reference_settings = get_local_database_connection(database_settings.database_connection_name,
+                                                                        node_database_writer.user_id)
+            encrypted_password = database_reference_settings.password.get_secret_value()
+
+        def _func(df: FlowfileTable):
+            df.lazy = True
+            database_external_write_settings = (
+                sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
+                    node_database_writer=node_database_writer,
+                    password=decrypt_secret(encrypted_password),
+                    table_name=database_settings.schema_name+'.'+database_settings.table_name,
+                    database_reference_settings=(database_reference_settings if database_settings.connection_mode == 'reference'
+                                                 else None),
+                    lf=df.data_frame
+                )
+            )
+            external_database_writer = ExternalDatabaseWriter(database_external_write_settings, wait_on_completion=False)
+            node._fetch_cached_df = external_database_writer
+            external_database_writer.get_result()
+            return df
+
+        def schema_callback():
+            input_node: NodeStep = self.get_node(node_database_writer.node_id)
+            return input_node.schema
+
+        self.add_node_step(
+            node_id=node_database_writer.node_id,
+            function=_func,
+            input_columns=[],
+            node_type=node_type,
+            setting_input=node_database_writer,
+            schema_callback=schema_callback,
+        )
+        node = self.get_node(node_database_writer.node_id)
 
     def add_database_reader(self, node_database_reader: input_schema.NodeDatabaseReader):
         logger.info("Adding database reader")

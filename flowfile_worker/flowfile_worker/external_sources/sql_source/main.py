@@ -1,5 +1,33 @@
 import polars as pl
-from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
+from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DatabaseWriteSettings
+from io import BytesIO
+
+
+def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWriteSettings):
+    """
+    Writes a Polars DataFrame to a SQL database.
+    Args:
+        df (pl.DataFrame): The DataFrame to write.
+        database_write_settings (DatabaseWriteSettings): The settings for the database connection and table.
+    """
+    # Write the DataFrame to the database
+    df.write_database(table_name=database_write_settings.table_name,
+                      connection=database_write_settings.connection.create_uri(),
+                      if_table_exists=database_write_settings.if_exists)
+    return True
+
+
+def write_serialized_df_to_database(serialized_df: bytes, database_write_settings: DatabaseWriteSettings):
+    """
+    Writes a Polars DataFrame to a SQL database.
+    Args:
+        serialized_df (bytes): The serialized Polars DataFrame to write.
+        database_write_settings (DatabaseWriteSettings): The settings for the database connection and table.
+    """
+    # Write the DataFrame to the database
+    df = pl.LazyFrame.deserialize(BytesIO(serialized_df)).collect()
+    write_df_to_database(df, database_write_settings)
+    return True
 
 
 def read_query_as_pd_df(query: str, uri: str) -> pl.DataFrame:

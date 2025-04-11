@@ -3,28 +3,30 @@
     <NodeButton
       ref="nodeButton"
       :node-id="nodeId"
-      image-src="group_by.png"
-      :title="`${nodeId}: Group by`"
+      image-src="database_writer.svg"
+      :title="`${nodeId}: Database writer`"
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Group by" intro="Group data by a column"> </NodeTitle>
-      <readInput ref="childComp" :node-id="nodeId"> </readInput>
+      <NodeTitle title="Read data from database" intro="Read data from database"> </NodeTitle>
+      <database-writer ref="childComp" :node-id="nodeId"> </database-writer>
     </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from "vue";
-import readInput from "./elements/groupBy/groupBy.vue";
+import DatabaseWriter from "./elements/databaseWriter/DatabaseWriter.vue"
 import { useNodeStore } from "../../../stores/column-store";
 import NodeButton from "../baseNode/nodeButton.vue";
 import NodeTitle from "../baseNode/nodeTitle.vue";
+
 const nodeStore = useNodeStore(); // Use the nodeStore
 
 interface ChildComponentRef {
   loadNodeData: (nodeId: number) => void;
   pushNodeData: () => void;
+  // You can add other methods or properties here as needed
 }
 const childComp = ref<ChildComponentRef | null>(null);
 const props = defineProps({
@@ -46,7 +48,6 @@ const openDrawer = async () => {
   const drawerOpen = nodeStore.isDrawerOpen;
   nodeStore.isDrawerOpen = true;
   await nextTick();
-
   if (childComp.value) {
     childComp.value.loadNodeData(props.nodeId);
     nodeStore.openDrawer(closeOnDrawer);

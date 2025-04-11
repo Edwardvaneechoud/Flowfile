@@ -319,9 +319,22 @@ class DatabaseSettings(BaseModel):
         return self
 
 
+class DatabaseWriteSettings(BaseModel):
+    connection_mode: Optional[Literal['inline', 'reference']] = 'inline'
+    database_connection: Optional[DatabaseConnection] = None
+    database_connection_name: Optional[str] = None
+    table_name: str
+    schema_name: str
+    if_exists: Optional[Literal['append', 'replace', 'fail']] = 'append'
+
+
 class NodeDatabaseReader(NodeBase):
     database_settings: DatabaseSettings
     fields: Optional[List[MinimalFieldInfo]] = None
+
+
+class NodeDatabaseWriter(NodeSingleInput):
+    database_write_settings: DatabaseWriteSettings
 
 
 class ExternalSource(BaseModel):

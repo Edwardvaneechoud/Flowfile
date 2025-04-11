@@ -135,4 +135,4 @@ def run(host: str = None, port: int = None):
 
 
 if __name__ == "__main__":
-    run()  # Use defaults from settings.py
+    run()

@@ -4,6 +4,10 @@
   <div class="database-manager-container">
     <div class="mb-3">
       <h2 class="page-title">Database Connections</h2>
+      <p class="description-text">
+        Database connections allow you to connect to your databases for reading and writing data.
+        Create and manage your connections here to use them in your data workflows.
+      </p>
     </div>
     
     <div class="card mb-3">
@@ -14,6 +18,16 @@
         </button>
       </div>
       <div class="card-content">
+        <!-- Info box about connections -->
+        <div class="info-box mb-3">
+          <i class="fa-solid fa-info-circle"></i>
+          <div>
+            <p><strong>What are database connections?</strong></p>
+            <p>Database connections store the credentials and configuration needed to securely access your databases. 
+            Once set up, you can reuse these connections throughout your workflows without re-entering credentials.</p>
+          </div>
+        </div>
+        
         <!-- Loading state -->
         <div v-if="isLoading" class="loading-state">
           <div class="loading-spinner"></div>
@@ -24,6 +38,7 @@
         <div v-else-if="connectionInterfaces.length === 0" class="empty-state">
           <i class="fa-solid fa-database"></i>
           <p>You haven't added any database connections yet</p>
+          <p class="hint-text">Click the "Add Connection" button to create your first database connection.</p>
         </div>
         
         <!-- List of connections -->
@@ -34,6 +49,11 @@
                 <i class="fa-solid fa-database"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ connection.databaseType }}</span>
+              </div>
+              <div class="connection-details">
+                <span>{{ connection.database ? connection.database : 'No database specified' }}</span>
+                <span class="separator">•</span>
+                <span>{{ connection.host ? connection.host : 'Using connection URL' }}</span>
               </div>
             </div>
             <div class="secret-actions">
@@ -58,6 +78,12 @@
       width="500px"
       :before-close="handleCloseDialog"
     >
+      <div class="modal-description mb-3">
+        <p>
+          Configure your database connection details. You can connect using either host/port information 
+          or a connection URL.
+        </p>
+      </div>
       <DatabaseConnectionForm
         :initial-connection="activeConnection"
         :is-submitting="isSubmitting"
@@ -207,6 +233,41 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.description-text {
+  color: #6c757d;
+  margin-top: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.info-box {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-left: 4px solid #17a2b8;
+  border-radius: 4px;
+}
+
+.info-box i {
+  color: #17a2b8;
+  font-size: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.info-box p {
+  margin: 0;
+  margin-bottom: 0.5rem;
+}
+
+.info-box p:last-child {
+  margin-bottom: 0;
+}
+
+.modal-description {
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
 .badge {
   background-color: #e9ecef;
   border-radius: 1rem;
@@ -226,5 +287,25 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+.connection-details {
+  font-size: 0.85rem;
+  color: #6c757d;
+  margin-top: 0.25rem;
+}
+
+.separator {
+  margin: 0 0.5rem;
+}
+
+.hint-text {
+  color: #6c757d;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+.mb-3 {
+  margin-bottom: 1rem;
 }
 </style>

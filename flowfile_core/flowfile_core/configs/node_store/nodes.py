@@ -44,11 +44,13 @@ nodes_list: List[NodeTemplate] = [
                  node_group='transform'),
     NodeTemplate(name="Read from Database", item="database_reader", input=0, output=1, image='database_reader.svg',
                  node_group='input'),
+    NodeTemplate(name='Write to Database', item='database_writer', input=1, output=0, image='database_writer.svg',
+                 node_group='output'),
 ]
 
 nodes_list.sort(key=lambda x: x.name)
 
-output = ['Explore data', 'Write data']
+output = ['Explore data', 'Write data', 'Write to Database']
 _input = ['Read Airbyte', 'Google sheets', 'Manual input', 'Read data', 'External source', 'Read from Database']
 transform = ['Join', 'Formula', 'Select data', 'Filter data', 'Group by', 'Fuzzy match', 'Sort data', 'Add record Id',
              'Take Sample', 'Pivot data', 'Unpivot data', 'Union data', 'Drop duplicates', 'Graph solver',
@@ -57,7 +59,7 @@ narrow = ['Select data', 'Filter data', 'Take Sample', 'Formula', 'Read data', '
 wide = ['Join', 'Group by', 'Fuzzy match', 'Sort data', 'Pivot data', 'Unpivot data', 'Add record Id',
         'Graph solver', 'Drop duplicates', 'Count records', 'Cross join', 'Text to rows']
 other = ['Explore data', 'Write data', 'Read Airbyte', 'Google sheets', 'Manual input', 'Read data', 'External source',
-         'Read from Database',]
+         'Read from Database', 'Write to Database']
 nodes_with_defaults = {'sample', 'sort', 'union', 'select', 'record_count'}
 
 

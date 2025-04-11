@@ -150,14 +150,6 @@ class AuthService {
       this.tokenExpiration.value > Date.now()
     );
     
-    console.log(`Token validation check:
-      - Has token: ${!!this.token.value}
-      - Has expiration: ${!!this.tokenExpiration.value}
-      - Current time: ${new Date(Date.now())}
-      - Expiration time: ${this.tokenExpiration.value ? new Date(this.tokenExpiration.value) : 'none'}
-      - Is valid: ${isValid}
-    `);
-    
     return isValid;
   }
   

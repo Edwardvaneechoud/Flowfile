@@ -687,29 +687,6 @@ def test_remove_secret():
     assert created_secret is None, 'Secret not deleted'
 
 
-#
-#
-#
-# @router.post("/db_connection_lib", tags=['db_connections'])
-# def create_db_connection(input_connection: input_schema.FullDatabaseConnection,
-#                          current_user=Depends(get_current_active_user),
-#                          db: Session = Depends(get_db)
-#                          ):
-#     """
-#     Create a database connection.
-#     """
-#     logger.info(f'Creating database connection {input_connection.connection_name}')
-#     try:
-#         store_database_connection(db, input_connection, current_user.id)
-#     except ValueError:
-#         raise HTTPException(422, 'Connection name already exists')
-#     except Exception as e:
-#         logger.error(e)
-#         raise HTTPException(422, str(e))
-#     return {"message": "Database connection created successfully"}
-#
-
-
 def test_create_db_connection():
     ensure_password_is_available()
     with get_db_context() as db:

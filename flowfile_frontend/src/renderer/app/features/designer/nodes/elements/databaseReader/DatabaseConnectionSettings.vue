@@ -1,7 +1,7 @@
 <template>
   <div class="connection-settings-container">
     <div class="connection-header" @click="toggleExpanded">
-      <h4 class="connection-title">Connection Settings</h4>
+      <h4 class="connection-title">In line connection settings</h4>
       <button class="toggle-button">
         {{ isExpanded ? "▲" : "▼" }}
       </button>

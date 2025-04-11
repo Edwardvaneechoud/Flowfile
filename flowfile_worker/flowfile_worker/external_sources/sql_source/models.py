@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from pydantic import BaseModel, SecretStr
 
 
@@ -55,5 +55,14 @@ class DatabaseReadSettings(BaseModel):
     """Settings for SQL source."""
     connection: DataBaseConnection
     query: str
+    flowfile_flow_id: int = 1
+    flowfile_node_id: int | str = -1
+
+
+class DatabaseWriteSettings(BaseModel):
+    """Settings for SQL sink."""
+    connection: DataBaseConnection
+    table_name: str
+    if_exists: Literal['append', 'replace', 'fail'] = 'append'
     flowfile_flow_id: int = 1
     flowfile_node_id: int | str = -1

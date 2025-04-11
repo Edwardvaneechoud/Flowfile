@@ -1,3 +1,4 @@
+import { extend } from 'lodash'
 import { ref } from 'vue'
 
 export interface SelectInput {
@@ -379,4 +380,19 @@ export interface DatabaseSettings {
 export interface NodeDatabaseReader extends NodeBase {
   database_settings: DatabaseSettings
   fields?: MinimalFieldInput[]
+}
+
+export type IfExistAction =  'append' | 'replace' | 'fail'
+
+export interface DatabaseWriteSettings {
+  connection_mode: ConnectionModeOption
+  database_connection?: DatabaseConnection
+  database_connection_name?: string
+  schema_name?: string
+  table_name?: string
+  if_exists: IfExistAction
+}
+
+export interface NodeDatabaseWriter extends NodeSingleInput {
+  database_write_settings: DatabaseWriteSettings
 }

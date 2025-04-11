@@ -12,7 +12,7 @@ from flowfile_worker.create import table_creator_factory_method, received_table_
 from flowfile_worker.configs import logger
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.external_sources.sql_source.main import read_sql_source
+from flowfile_worker.external_sources.sql_source.main import read_sql_source, write_serialized_df_to_database
 from flowfile_worker.external_sources.airbyte_sources.main import read_airbyte_source
 
 
@@ -78,6 +78,47 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
 
     except Exception as e:
         logger.error(f"Error storing sample: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/store_database_write_result/')
+def store_in_database(database_script_write: models.DatabaseScriptWrite, background_tasks: BackgroundTasks) -> models.Status:
+    """
+    Write polars dataframe to a file in specified format.
+
+    Args:
+        database_script_write (models.DatabaseScriptWrite): Contains dataframe and write options for database
+        background_tasks (BackgroundTasks): FastAPI background tasks handler
+
+    Returns:
+        models.Status: Status object tracking the write operation
+    """
+    logger.info(f"Starting write operation to: {database_script_write}")
+    try:
+        task_id = str(uuid.uuid4())
+        polars_serializable_object = database_script_write.polars_serializable_object()
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref='',
+                               result_type="other")
+        status_dict[task_id] = status
+        background_tasks.add_task(
+            start_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=task_id,
+            operation="write_to_database",
+            file_ref='',
+            flowfile_flow_id=database_script_write.flowfile_flow_id,
+            flowfile_node_id=database_script_write.flowfile_node_id,
+            kwargs=dict(database_write_settings=database_script_write.get_database_write_settings()),
+            )
+
+        logger.info(
+            f"Started write task: {task_id} to database"
+        )
+
+        return status
+
+    except Exception as e:
+        logger.error(f"Error in write operation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

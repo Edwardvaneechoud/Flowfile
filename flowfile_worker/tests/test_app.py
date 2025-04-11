@@ -7,6 +7,7 @@ import base64
 from io import BytesIO
 from flowfile_worker import main
 from flowfile_worker import models
+from flowfile_worker.external_sources.sql_source.models import DataBaseConnection
 from polars_grouper import graph_solver
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 
@@ -100,7 +101,6 @@ def test_external_package(create_grouper_data):
     lf_test = base64.decodebytes(status.results.encode())
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
-
 
 
 def test_add_fuzzy_join(create_fuzzy_data):
@@ -234,3 +234,25 @@ def test_store_sql_result():
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.shape[0] > 0, 'Expected to get some data from the database'
 
+
+def test_store_in_database():
+    lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
+    s = base64.encodebytes(lf.serialize())
+
+    settings_data = {'connection': {'username': 'testuser', 'password': 'testpass', 'host': 'localhost', 'port': 5433,
+                                    'database': 'testdb', 'database_type': 'postgresql', 'url': None},
+                     'table_name': 'public.test_output', 'if_exists': 'replace', 'flowfile_flow_id': 1,
+                     'flowfile_node_id': -1,
+                     'operation': s.decode()}
+    v = client.post('/store_database_write_result', json=settings_data)
+    assert v.status_code == 200, v.text
+
+    assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
+    status = models.Status.model_validate(v.json())
+    assert status.status == 'Starting', 'Expected status to be Starting'
+    r = client.get(f'/status/{status.background_task_id}')
+    assert r.status_code == 200, r.text
+    status = models.Status.model_validate(r.json())
+    if status.error_message is not None:
+        raise Exception(f'Error message: {status.error_message}')
+    assert status.status == 'Completed', 'Expected status to be Completed'
