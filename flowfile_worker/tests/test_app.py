@@ -234,7 +234,7 @@ def test_store_sql_result():
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.shape[0] > 0, 'Expected to get some data from the database'
 
-
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_database():
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
     s = base64.encodebytes(lf.serialize())

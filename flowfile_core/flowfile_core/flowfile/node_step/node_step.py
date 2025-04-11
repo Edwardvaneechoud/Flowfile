@@ -576,28 +576,6 @@ class NodeStep:
         else:
             logger.error('Could not get the sample data, the external process is not ready')
 
-    def get_sample_data(self):
-        resulting_data = self.get_resulting_data()
-        try:
-            logger.info(f'getting sample data from the resulting data: using streaming ='
-                        f' {self.node_settings.streamable}')
-            sample_data = resulting_data.__get_sample__(streamable=self.node_settings.streamable)
-            if len(sample_data) == 0 and len(resulting_data) > 0:
-                # detect if the result gives null records where it should give at least one
-                self.node_settings.streamable = False
-                sample_data = resulting_data.__get_sample__(streamable=self.node_settings.streamable)
-
-            logger.info('setting the example data')
-            self.results.example_data = sample_data
-            self.node_schema.result_schema = resulting_data.schema
-            if self.results.errors is None:
-                self.node_stats.has_run = True
-        except Exception as e:
-            logger.warning(str(e))
-            logger.warning(f"Error with step {self.__name__}")
-            self.results.errors = str(e)
-            self.node_stats.has_run = False
-
     def needs_reset(self) -> bool:
         return self._hash != self.calculate_hash(self.setting_input)
 
@@ -692,7 +670,7 @@ class NodeStep:
         if self.node_type == 'output':
             self.print('getting the table example')
             return self.main_input[0].get_table_example(include_data)
-        if self.node_stats.has_run and self.is_setup and include_data:
+        if self.is_setup and include_data:
             logger.info('getting the table example since the node has run')
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:

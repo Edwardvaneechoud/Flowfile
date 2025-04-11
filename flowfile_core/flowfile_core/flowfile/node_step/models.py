@@ -104,7 +104,6 @@ class NodeResults:
         self._resulting_data = d
 
     def reset(self):
-        self.example_data = None
         self._resulting_data = None
         self.run_time = -1
 

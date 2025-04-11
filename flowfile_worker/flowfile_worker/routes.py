@@ -93,7 +93,7 @@ def store_in_database(database_script_write: models.DatabaseScriptWrite, backgro
     Returns:
         models.Status: Status object tracking the write operation
     """
-    logger.info(f"Starting write operation to: {database_script_write}")
+    logger.info("Starting write operation to: database")
     try:
         task_id = str(uuid.uuid4())
         polars_serializable_object = database_script_write.polars_serializable_object()
