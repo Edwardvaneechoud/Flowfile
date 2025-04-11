@@ -277,6 +277,7 @@ def test_get_polars_type():
     assert isinstance(unknown_type(), pl.String), "Unknown type should convert to polars String"
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_create_sql_source_from_db_settings_connection():
     """Test the create_sql_source_from_db_settings function."""
     # Mock the settings
@@ -300,6 +301,7 @@ def test_create_sql_source_from_db_settings_connection():
         raise AssertionError(f"Validation failed: {e}")
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_create_sql_source_from_db_settings_connection_reference():
     """Test the create_sql_source_from_db_settings function."""
     # Mock the settings
