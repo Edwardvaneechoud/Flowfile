@@ -1,3 +1,4 @@
+
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
 import polars as pl
 from flowfile_core.schemas import input_schema
@@ -5,7 +6,14 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 
 import pytest
 
-from tests.utils import is_docker_available
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available)
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available)
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")

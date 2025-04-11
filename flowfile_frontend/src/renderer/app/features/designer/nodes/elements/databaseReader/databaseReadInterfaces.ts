@@ -1,0 +1,1 @@
+export const databaseTypes = ["postgresql", "mysql"]

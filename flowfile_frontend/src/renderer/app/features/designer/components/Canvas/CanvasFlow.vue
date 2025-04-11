@@ -170,7 +170,7 @@ const handleNodeChange = (nodeChangesEvent: any) => {
   const nodeChange = nodeChanges[0];
   const nodeChangeId = Number(nodeChange.id);
   if (nodeChange.type === "remove") {
-    deleteNode(1, nodeChangeId);
+    deleteNode(nodeStore.flow_id, nodeChangeId);
   }
 };
 

@@ -2,10 +2,12 @@ from pydantic import BaseModel
 from typing import Optional, Literal, Any
 from base64 import decodebytes
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
+from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 
 
 OperationType = Literal[
-    'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample']
+    'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample',
+    'write_to_database']
 ResultType = Literal['polars', 'other']
 
 
@@ -39,6 +41,28 @@ class PolarsScriptWrite(BaseModel):
 
     def polars_serializable_object(self):
         return decodebytes(self.operation)
+
+
+class DatabaseScriptWrite(DatabaseWriteSettings):
+    operation: bytes
+
+    def polars_serializable_object(self):
+        return decodebytes(self.operation)
+
+    def get_database_write_settings(self) -> DatabaseWriteSettings:
+        """
+        Converts the current instance to a DatabaseWriteSettings object.
+        Returns:
+            DatabaseWriteSettings: The corresponding DatabaseWriteSettings object.
+        """
+
+        return DatabaseWriteSettings(
+            connection=self.connection,
+            table_name=self.table_name,
+            if_exists=self.if_exists,
+            flowfile_flow_id=self.flowfile_flow_id,
+            flowfile_node_id=self.flowfile_node_id
+        )
 
 
 class FuzzyJoinInput(BaseModel):

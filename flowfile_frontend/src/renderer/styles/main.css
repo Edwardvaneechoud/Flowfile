@@ -1,9 +1,18 @@
+/* main.css */
+
+/* Existing imports */
 @import './base/_variables.css';
 @import './components/_listbox.css';
 @import './components/_buttons.css';
 @import './components/_column-options.css';
-@import './components//_styled-table.css';
+@import './components/_styled-table.css';
 @import './utils/_spacing.css';
+
+/* New imports for Secret Manager */
+@import './components/_cards.css';
+@import './components/_forms.css';
+@import './components/_modals.css';
+@import './utils/_layout.css';
 
 
 /* styles/base/_variables.css */

@@ -1,11 +1,12 @@
+import asyncio
 import uvicorn
 import signal
-import asyncio
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from flowfile_worker.routes import router
 from flowfile_worker import mp_context, CACHE_DIR
-from flowfile_worker.configs import logger
+from flowfile_worker.configs import logger, FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT
 
 
 should_exit = False
@@ -63,11 +64,20 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def run(host: str = '0.0.0.0', port: int = 63579):
+def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown"""
     global server_instance
 
-    # Setup signal handlers
+    # Use values from settings if not explicitly provided
+    if host is None:
+        host = SERVICE_HOST
+    if port is None:
+        port = SERVICE_PORT
+
+    # Log service configuration
+    logger.info(f"Starting worker service on {host}:{port}")
+    logger.info(f"Core service configured at {FLOWFILE_CORE_URI}")
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
@@ -94,6 +104,5 @@ def run(host: str = '0.0.0.0', port: int = 63579):
 
 if __name__ == "__main__":
     import multiprocessing
-
     multiprocessing.freeze_support()
     run()

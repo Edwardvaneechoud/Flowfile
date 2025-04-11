@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- Background circular shape for consistency -->
+  <circle cx="100" cy="100" r="85" fill="#00A99D" />
+  
+  <!-- Database cylinder with better proportions -->
+  <ellipse cx="100" cy="70" rx="45" ry="15" fill="#FFFFFF" fill-opacity="0.3" stroke="#FFFFFF" stroke-width="3" />
+  <path d="M55 70 L55 130 C55 142 75 155 100 155 C125 155 145 142 145 130 L145 70" fill="none" stroke="#FFFFFF" stroke-width="3" />
+  
+  <!-- Middle section line of database -->
+  <path d="M55 100 C55 112 75 125 100 125 C125 125 145 112 145 100" fill="none" stroke="#FFFFFF" stroke-width="2" />
+  
+  <!-- SQL text in the center of the database -->
+  <text x="100" y="76" font-family="Arial" font-size="18" font-weight="bold" text-anchor="middle" fill="#FFFFFF">SQL</text>
+  
+  <!-- Data rows with perfect alignment -->
+  <line x1="70" y1="95" x2="130" y2="95" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+  <line x1="70" y1="115" x2="130" y2="115" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" />
+  
+  <!-- Writer text below database - removed arrow -->
+  <text x="100" y="175" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle" fill="#FFFFFF">WRITER</text>
+  
+
+</svg>

@@ -118,3 +118,5 @@ export async function closeElectronApp(app: ElectronApplication | undefined): Pr
     console.error('Error in closeElectronApp:', error);
   }
 }
+
+

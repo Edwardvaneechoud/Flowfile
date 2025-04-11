@@ -174,7 +174,8 @@ def main():
         "multiprocessing",
         "uvicorn.protocols.http",
         "uvicorn.protocols.websockets",
-        "passlib.handlers.bcrypt"
+        "passlib.handlers.bcrypt",
+        "connectorx",
     ]
 
     # Build both projects
