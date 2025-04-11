@@ -328,6 +328,7 @@ def test_create_sql_source_from_db_settings_connection_reference():
         raise AssertionError(f"Validation failed: {e}")
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_error_sql_source_validate():
     database_connection = DatabaseConnection(database_type='postgresql',
                                              username='testuser',

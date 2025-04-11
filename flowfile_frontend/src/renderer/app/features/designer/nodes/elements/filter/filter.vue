@@ -113,7 +113,6 @@ const handleFilterTypeChange = (newValue: string) => {
 };
 
 const loadNodeData = async (nodeId: number) => {
-  console.log("Loading node data");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   if (nodeData.value) {
     nodeFilter.value = nodeData.value.setting_input;
