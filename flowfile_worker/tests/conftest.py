@@ -4,6 +4,7 @@ import os
 import sys
 import socket
 import pytest
+os.environ['TEST_MODE'] = '1'
 
 from tests.utils import is_docker_available
 

@@ -9,6 +9,7 @@ from pydantic import SecretStr
 # Set up logging
 logger = logging.getLogger(__name__)
 
+TEST_MODE = True if 'TEST_MODE' in os.environ else False
 
 class KeyringFallback:
     """A simple fallback for reading keys from storage"""
@@ -51,6 +52,8 @@ def get_password(service_name, username):
 
 def get_master_key():
     """Get the master encryption key."""
+    if TEST_MODE:
+        return "test_master_key"
     key = get_password("flowfile", "master_key")
     if not key:
         raise ValueError("Master key not found in storage.")
