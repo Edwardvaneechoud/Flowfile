@@ -31,7 +31,7 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_oper
                                                                                                ExternalDatabaseWriter)
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
 
 
@@ -692,7 +692,7 @@ class EtlGraph:
             database_external_write_settings = (
                 sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
                     node_database_writer=node_database_writer,
-                    password=decrypt_secret(encrypted_password),
+                    password=encrypted_password,
                     table_name=database_settings.schema_name+'.'+database_settings.table_name,
                     database_reference_settings=(database_reference_settings if database_settings.connection_mode == 'reference'
                                                  else None),
@@ -735,24 +735,16 @@ class EtlGraph:
             database_connection = database_reference_settings
             encrypted_password = database_reference_settings.password.get_secret_value()
 
-        sql_source = SqlSource(connection_string=
-                               sql_utils.construct_sql_uri(database_type=database_connection.database_type,
-                                                           host=database_connection.host,
-                                                           port=database_connection.port,
-                                                           database=database_connection.database,
-                                                           username=database_connection.username,
-                                                           password=decrypt_secret(encrypted_password)),
-                               query=None if database_settings.query_mode == 'table' else database_settings.query,
-                               table_name=database_settings.table_name,
-                               schema_name=database_settings.schema_name,
-                               fields=node_database_reader.fields,
-                               )
-
         def _func():
+            sql_source = BaseSqlSource(query=None if database_settings.query_mode == 'table' else database_settings.query,
+                                       table_name=database_settings.table_name,
+                                       schema_name=database_settings.schema_name,
+                                       fields=node_database_reader.fields,
+                                       )
             database_external_read_settings = (
                 sql_models.DatabaseExternalReadSettings.create_from_from_node_database_reader(
                     node_database_reader=node_database_reader,
-                    password=decrypt_secret(encrypted_password),
+                    password=encrypted_password,
                     query=sql_source.query,
                     database_reference_settings=(database_reference_settings if database_settings.connection_mode == 'reference'
                                                  else None),
@@ -766,6 +758,18 @@ class EtlGraph:
             return fl
 
         def schema_callback():
+            sql_source = SqlSource(connection_string=
+                                   sql_utils.construct_sql_uri(database_type=database_connection.database_type,
+                                                               host=database_connection.host,
+                                                               port=database_connection.port,
+                                                               database=database_connection.database,
+                                                               username=database_connection.username,
+                                                               password=decrypt_secret(encrypted_password)),
+                                   query=None if database_settings.query_mode == 'table' else database_settings.query,
+                                   table_name=database_settings.table_name,
+                                   schema_name=database_settings.schema_name,
+                                   fields=node_database_reader.fields,
+                                   )
             return sql_source.get_schema()
 
         node = self.get_node(node_database_reader.node_id)

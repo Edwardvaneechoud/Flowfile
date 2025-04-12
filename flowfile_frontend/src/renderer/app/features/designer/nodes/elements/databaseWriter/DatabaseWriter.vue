@@ -7,11 +7,7 @@
         <div class="form-group">
           <label>Connection Mode</label>
           <el-radio-group v-model="nodeData.database_write_settings.connection_mode">
-            <el-radio
-              v-for="option in connectionModeOptions"
-              :key="option"
-              :label="option"
-            >
+            <el-radio v-for="option in connectionModeOptions" :key="option" :label="option">
               {{ option }}
             </el-radio>
           </el-radio-group>
@@ -20,7 +16,12 @@
         <!-- Connection Settings -->
         <div>
           <!-- Inline connection settings -->
-          <div v-if="nodeData.database_write_settings.connection_mode === 'inline' && nodeData.database_write_settings.database_connection">
+          <div
+            v-if="
+              nodeData.database_write_settings.connection_mode === 'inline' &&
+              nodeData.database_write_settings.database_connection
+            "
+          >
             <database-connection-settings
               v-model="nodeData.database_write_settings.database_connection"
               @change="resetFields"
@@ -45,16 +46,14 @@
                   :key="conn.connectionName"
                   :value="conn.connectionName"
                 >
-                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{
-                    conn.database
-                  }})
+                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }})
                 </option>
               </select>
             </div>
           </div>
         </div>
       </div>
-      
+
       <!-- Table Settings -->
       <div class="listbox-wrapper">
         <h4 class="section-subtitle">Table Settings</h4>
@@ -92,19 +91,15 @@
             v-model="nodeData.database_write_settings.if_exists"
             class="form-control"
           >
-            <option
-              v-for="action in ifExistActions"
-              :key="action"
-              :value="action"
-            >
+            <option v-for="action in ifExistActions" :key="action" :value="action">
               {{ action.charAt(0).toUpperCase() + action.slice(1) }}
             </option>
           </select>
         </div>
         <div class="form-group">
           <p class="option-description">
-            <strong>Append:</strong> Add new data to existing table<br>
-            <strong>Replace:</strong> Delete existing table and create new one<br>
+            <strong>Append:</strong> Add new data to existing table<br />
+            <strong>Replace:</strong> Delete existing table and create new one<br />
             <strong>Fail:</strong> Abort if table already exists
           </p>
         </div>
@@ -117,7 +112,11 @@
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted } from "vue";
-import { NodeDatabaseWriter, IfExistAction, ConnectionModeOption } from "../../../baseNode/nodeInput";
+import {
+  NodeDatabaseWriter,
+  IfExistAction,
+  ConnectionModeOption,
+} from "../../../baseNode/nodeInput";
 import { createNodeDatabaseWriter } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../pages/databaseManager/api";
@@ -132,7 +131,7 @@ interface Props {
 
 const props = defineProps<Props>();
 const nodeStore = useNodeStore();
-const connectionModeOptions = ref<ConnectionModeOption[]>(['inline', 'reference']);
+const connectionModeOptions = ref<ConnectionModeOption[]>(["inline", "reference"]);
 const ifExistActions = ref<IfExistAction[]>(["append", "replace", "fail"]);
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
 const nodeData = ref<null | NodeDatabaseWriter>(null);
@@ -167,7 +166,7 @@ const pushNodeData = async () => {
   if (!nodeData.value) {
     return;
   }
-  
+
   nodeData.value.is_setup = true;
   try {
     await nodeStore.updateSettings(nodeData);
@@ -302,11 +301,11 @@ select.form-control {
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .half {
     max-width: 100%;
   }
-  
+
   .el-radio-group {
     flex-direction: column !important;
     gap: 0.5rem;

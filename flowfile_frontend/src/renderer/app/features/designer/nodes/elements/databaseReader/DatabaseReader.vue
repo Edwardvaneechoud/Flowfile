@@ -2,132 +2,131 @@
 <template>
   <div v-if="dataLoaded && nodeDatabaseReader" class="db-container">
     <generic-node-settings v-model="nodeDatabaseReader">
-      
       <div class="listbox-wrapper">
         <div class="form-group">
-  <label>Connection Mode</label>
-  <el-radio-group v-model="nodeDatabaseReader.database_settings.connection_mode">
-    <el-radio 
-      v-for="option in connectionModeOptions" 
-      :key="option" 
-      :label="option"
-    >
-      {{ option }}
-    </el-radio>
-  </el-radio-group>
-</div>
-<div>
-        <div  v-if="nodeDatabaseReader.database_settings.connection_mode == 'inline' && nodeDatabaseReader.database_settings.database_connection" >
-        <database-connection-settings
-          v-model="nodeDatabaseReader.database_settings.database_connection"
-          @change="resetFields"
-        />
-      </div>
-
-      
-      <div v-else>
-        <div v-if="connectionsAreLoading">
-          <div class="loading-spinner"></div>
-          <p>Loading connections...</p>
+          <label>Connection Mode</label>
+          <el-radio-group v-model="nodeDatabaseReader.database_settings.connection_mode">
+            <el-radio v-for="option in connectionModeOptions" :key="option" :label="option">
+              {{ option }}
+            </el-radio>
+          </el-radio-group>
         </div>
-        <div v-else>
-          <select 
-      id="connection-select" 
-      v-model="nodeDatabaseReader.database_settings.database_connection_name" 
-      class="form-control minimal-select"
-    >
-      <option disabled value="">Choose a connection</option>
-      <option 
-        v-for="conn in connectionInterfaces" 
-        :key="conn.connectionName" 
-        :value="conn.connectionName"
-      >
-        {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }})
-      </option>
-    </select>
-        </div>
-      </div>
-        </div>
-        </div>
-        
-        <div class="listbox-wrapper">
-          <!-- Query Mode Toggle -->
-          <div class="form-group">
-            <label for="query-mode">Query Mode</label>
-            <select
-              id="query-mode"
-              v-model="nodeDatabaseReader.database_settings.query_mode"
-              class="form-control"
-              @change="handleQueryModeChange"
-            >
-              <option value="table">Table</option>
-              <option value="query">Query</option>
-            </select>
-          </div>
-
-          <!-- Table Mode Fields -->
+        <div>
           <div
-            v-if="nodeDatabaseReader.database_settings.query_mode === 'table'"
-            class="query-section"
+            v-if="
+              nodeDatabaseReader.database_settings.connection_mode == 'inline' &&
+              nodeDatabaseReader.database_settings.database_connection
+            "
           >
-            <h4 class="section-subtitle">Table Selection</h4>
-            <div class="form-row">
-              <div class="form-group half">
-                <label for="schema-name">Schema</label>
-                <input
-                  id="schema-name"
-                  v-model="nodeDatabaseReader.database_settings.schema_name"
-                  type="text"
-                  class="form-control"
-                  placeholder="Enter schema name"
-                  @input="resetFields"
-                />
-              </div>
-
-              <div class="form-group half">
-                <label for="table-name">Table</label>
-                <input
-                  id="table-name"
-                  v-model="nodeDatabaseReader.database_settings.table_name"
-                  type="text"
-                  class="form-control"
-                  placeholder="Enter table name"
-                  @input="resetFields"
-                />
-              </div>
-            </div>
+            <database-connection-settings
+              v-model="nodeDatabaseReader.database_settings.database_connection"
+              @change="resetFields"
+            />
           </div>
 
-          <!-- SQL Query Component -->
-          <sql-query-component
-            v-if="nodeDatabaseReader.database_settings.query_mode === 'query'"
-            v-model="nodeDatabaseReader.database_settings.query"
-            @validate="validateQuery"
-            @input="resetFields"
-          />
-
-          <!-- Validation Section -->
-          <div class="validation-section">
-            <button
-              class="validate-button"
-              :disabled="isValidating"
-              @click="validateDatabaseSettings"
-            >
-              {{ isValidating ? "Validating..." : "Validate Settings" }}
-            </button>
-
-            <!-- Error Message Box -->
-            <div v-if="validationError" class="error-box">
-              <div class="error-title">Validation Error</div>
-              <div class="error-message">{{ validationError }}</div>
+          <div v-else>
+            <div v-if="connectionsAreLoading">
+              <div class="loading-spinner"></div>
+              <p>Loading connections...</p>
             </div>
-
-            <!-- Success Message Box -->
-            <div v-if="validationSuccess" class="success-box">
-              <div class="success-message">{{ validationSuccess }}</div>
+            <div v-else>
+              <select
+                id="connection-select"
+                v-model="nodeDatabaseReader.database_settings.database_connection_name"
+                class="form-control minimal-select"
+              >
+                <option disabled value="">Choose a connection</option>
+                <option
+                  v-for="conn in connectionInterfaces"
+                  :key="conn.connectionName"
+                  :value="conn.connectionName"
+                >
+                  {{ conn.connectionName }} ({{ conn.databaseType }} - {{ conn.database }})
+                </option>
+              </select>
             </div>
           </div>
         </div>
+      </div>
+
+      <div class="listbox-wrapper">
+        <!-- Query Mode Toggle -->
+        <div class="form-group">
+          <label for="query-mode">Query Mode</label>
+          <select
+            id="query-mode"
+            v-model="nodeDatabaseReader.database_settings.query_mode"
+            class="form-control"
+            @change="handleQueryModeChange"
+          >
+            <option value="table">Table</option>
+            <option value="query">Query</option>
+          </select>
+        </div>
+
+        <!-- Table Mode Fields -->
+        <div
+          v-if="nodeDatabaseReader.database_settings.query_mode === 'table'"
+          class="query-section"
+        >
+          <h4 class="section-subtitle">Table Selection</h4>
+          <div class="form-row">
+            <div class="form-group half">
+              <label for="schema-name">Schema</label>
+              <input
+                id="schema-name"
+                v-model="nodeDatabaseReader.database_settings.schema_name"
+                type="text"
+                class="form-control"
+                placeholder="Enter schema name"
+                @input="resetFields"
+              />
+            </div>
+
+            <div class="form-group half">
+              <label for="table-name">Table</label>
+              <input
+                id="table-name"
+                v-model="nodeDatabaseReader.database_settings.table_name"
+                type="text"
+                class="form-control"
+                placeholder="Enter table name"
+                @input="resetFields"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- SQL Query Component -->
+        <sql-query-component
+          v-if="nodeDatabaseReader.database_settings.query_mode === 'query'"
+          v-model="nodeDatabaseReader.database_settings.query"
+          @validate="validateQuery"
+          @input="resetFields"
+        />
+
+        <!-- Validation Section -->
+        <div class="validation-section">
+          <button
+            class="validate-button"
+            :disabled="isValidating"
+            @click="validateDatabaseSettings"
+          >
+            {{ isValidating ? "Validating..." : "Validate Settings" }}
+          </button>
+
+          <!-- Error Message Box -->
+          <div v-if="validationError" class="error-box">
+            <div class="error-title">Validation Error</div>
+            <div class="error-message">{{ validationError }}</div>
+          </div>
+
+          <!-- Success Message Box -->
+          <div v-if="validationSuccess" class="success-box">
+            <div class="success-message">{{ validationSuccess }}</div>
+          </div>
+        </div>
+      </div>
     </generic-node-settings>
   </div>
   <code-loader v-else />
@@ -139,9 +138,9 @@ import { ref, onMounted } from "vue";
 import { NodeDatabaseReader, ConnectionModeOption } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
-import { fetchDatabaseConnectionsInterfaces } from '../../../../../pages/databaseManager/api'
-import { FullDatabaseConnectionInterface } from '../../../../../pages/databaseManager/databaseConnectionTypes'
-import { ElMessage, ElRadio } from 'element-plus'
+import { fetchDatabaseConnectionsInterfaces } from "../../../../../pages/databaseManager/api";
+import { FullDatabaseConnectionInterface } from "../../../../../pages/databaseManager/databaseConnectionTypes";
+import { ElMessage, ElRadio } from "element-plus";
 import DatabaseConnectionSettings from "./DatabaseConnectionSettings.vue";
 import SqlQueryComponent from "./SQLQueryComponent.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -151,8 +150,8 @@ interface Props {
   nodeId: number;
 }
 
-const connectionModeOptions = ref<ConnectionModeOption[]>(['inline', 'reference'])
-const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([])
+const connectionModeOptions = ref<ConnectionModeOption[]>(["inline", "reference"]);
+const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
 const props = defineProps<Props>();
 const nodeStore = useNodeStore();
 const nodeDatabaseReader = ref<null | NodeDatabaseReader>(null);
@@ -257,22 +256,20 @@ const pushNodeData = async () => {
 };
 
 const fetchConnections = async () => {
-  connectionsAreLoading.value = true
+  connectionsAreLoading.value = true;
   try {
-    connectionInterfaces.value = await fetchDatabaseConnectionsInterfaces()
+    connectionInterfaces.value = await fetchDatabaseConnectionsInterfaces();
   } catch (error) {
-    console.error("Error fetching connections:", error)
-    ElMessage.error('Failed to load database connections')
+    console.error("Error fetching connections:", error);
+    ElMessage.error("Failed to load database connections");
   } finally {
-    connectionsAreLoading.value = false
+    connectionsAreLoading.value = false;
   }
-}
-
+};
 
 onMounted(async () => {
-  await fetchConnections()
-})
-
+  await fetchConnections();
+});
 
 defineExpose({
   loadNodeData,
@@ -431,6 +428,4 @@ select.form-control {
 .el-radio {
   margin-right: 0 !important; /* Override any existing margins */
 }
-
-
 </style>

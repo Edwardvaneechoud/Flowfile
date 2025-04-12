@@ -16,7 +16,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from "vue";
-import DatabaseWriter from "./elements/databaseWriter/DatabaseWriter.vue"
+import DatabaseWriter from "./elements/databaseWriter/DatabaseWriter.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import NodeButton from "../baseNode/nodeButton.vue";
 import NodeTitle from "../baseNode/nodeTitle.vue";

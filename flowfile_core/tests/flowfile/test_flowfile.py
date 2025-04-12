@@ -840,7 +840,6 @@ def test_add_database_collector():
                                                            if_exists='replace'
                                                            )
 
-
     node_database_writer = input_schema.NodeDatabaseWriter(database_write_settings=database_write_settings, node_id=2,
                                                            flow_id=1,
                                                            user_id=1)

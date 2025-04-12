@@ -9,7 +9,7 @@
         Create and manage your connections here to use them in your data workflows.
       </p>
     </div>
-    
+
     <div class="card mb-3">
       <div class="card-header">
         <h3 class="card-title">Your Connections ({{ connectionInterfaces.length }})</h3>
@@ -23,27 +23,36 @@
           <i class="fa-solid fa-info-circle"></i>
           <div>
             <p><strong>What are database connections?</strong></p>
-            <p>Database connections store the credentials and configuration needed to securely access your databases. 
-            Once set up, you can reuse these connections throughout your workflows without re-entering credentials.</p>
+            <p>
+              Database connections store the credentials and configuration needed to securely access
+              your databases. Once set up, you can reuse these connections throughout your workflows
+              without re-entering credentials.
+            </p>
           </div>
         </div>
-        
+
         <!-- Loading state -->
         <div v-if="isLoading" class="loading-state">
           <div class="loading-spinner"></div>
           <p>Loading connections...</p>
         </div>
-        
+
         <!-- Empty state -->
         <div v-else-if="connectionInterfaces.length === 0" class="empty-state">
           <i class="fa-solid fa-database"></i>
           <p>You haven't added any database connections yet</p>
-          <p class="hint-text">Click the "Add Connection" button to create your first database connection.</p>
+          <p class="hint-text">
+            Click the "Add Connection" button to create your first database connection.
+          </p>
         </div>
-        
+
         <!-- List of connections -->
         <div v-else class="flex-col gap-2">
-          <div v-for="connection in connectionInterfaces" :key="connection.connectionName" class="secret-item">
+          <div
+            v-for="connection in connectionInterfaces"
+            :key="connection.connectionName"
+            class="secret-item"
+          >
             <div class="secret-info">
               <div class="secret-name">
                 <i class="fa-solid fa-database"></i>
@@ -51,9 +60,11 @@
                 <span class="badge">{{ connection.databaseType }}</span>
               </div>
               <div class="connection-details">
-                <span>{{ connection.database ? connection.database : 'No database specified' }}</span>
+                <span>{{
+                  connection.database ? connection.database : "No database specified"
+                }}</span>
                 <span class="separator">•</span>
-                <span>{{ connection.host ? connection.host : 'Using connection URL' }}</span>
+                <span>{{ connection.host ? connection.host : "Using connection URL" }}</span>
               </div>
             </div>
             <div class="secret-actions">
@@ -61,7 +72,11 @@
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
               </button>
-              <button type="button" class="btn btn-danger" @click="showDeleteModal(connection.connectionName)">
+              <button
+                type="button"
+                class="btn btn-danger"
+                @click="showDeleteModal(connection.connectionName)"
+              >
                 <i class="fa-solid fa-trash-alt"></i>
                 <span>Delete</span>
               </button>
@@ -80,8 +95,8 @@
     >
       <div class="modal-description mb-3">
         <p>
-          Configure your database connection details. You can connect using either host/port information 
-          or a connection URL.
+          Configure your database connection details. You can connect using either host/port
+          information or a connection URL.
         </p>
       </div>
       <DatabaseConnectionForm
@@ -98,12 +113,17 @@
       width="400px"
       :before-close="handleCloseDeleteDialog"
     >
-      <p>Are you sure you want to delete the connection <strong>{{ connectionToDelete }}</strong>?</p>
-      <p class="warning-text">This action cannot be undone and may affect any processes using this connection.</p>
+      <p>
+        Are you sure you want to delete the connection <strong>{{ connectionToDelete }}</strong
+        >?
+      </p>
+      <p class="warning-text">
+        This action cannot be undone and may affect any processes using this connection.
+      </p>
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="deleteDialogVisible = false">Cancel</el-button>
-          <el-button type="danger" @click="handleDeleteConnection" :loading="isDeleting">
+          <el-button type="danger" :loading="isDeleting" @click="handleDeleteConnection">
             Delete
           </el-button>
         </div>
@@ -113,123 +133,125 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue"
-import { ElDialog, ElButton, ElMessage } from 'element-plus'
-import { 
-  fetchDatabaseConnectionsInterfaces, 
-  createDatabaseConnectionApi, 
+import { ref, onMounted } from "vue";
+import { ElDialog, ElButton, ElMessage } from "element-plus";
+import {
+  fetchDatabaseConnectionsInterfaces,
+  createDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
-  convertConnectionInterfacePytoTs 
-} from './databaseManager/api'
-import { 
-  FullDatabaseConnectionInterface, 
-  FullDatabaseConnection 
-} from './databaseManager/databaseConnectionTypes'
-import DatabaseConnectionForm from './databaseManager/DatabaseConnectionSettings.vue'
+  convertConnectionInterfacePytoTs,
+} from "./databaseManager/api";
+import {
+  FullDatabaseConnectionInterface,
+  FullDatabaseConnection,
+} from "./databaseManager/databaseConnectionTypes";
+import DatabaseConnectionForm from "./databaseManager/DatabaseConnectionSettings.vue";
 
 // State
-const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([])
-const isLoading = ref(true)
-const dialogVisible = ref(false)
-const deleteDialogVisible = ref(false)
-const isEditing = ref(false)
-const isSubmitting = ref(false)
-const isDeleting = ref(false)
-const connectionToDelete = ref('')
-const activeConnection = ref<FullDatabaseConnection | undefined>(undefined)
+const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
+const isLoading = ref(true);
+const dialogVisible = ref(false);
+const deleteDialogVisible = ref(false);
+const isEditing = ref(false);
+const isSubmitting = ref(false);
+const isDeleting = ref(false);
+const connectionToDelete = ref("");
+const activeConnection = ref<FullDatabaseConnection | undefined>(undefined);
 
 // Fetch connections
 const fetchConnections = async () => {
-  isLoading.value = true
+  isLoading.value = true;
   try {
-    connectionInterfaces.value = await fetchDatabaseConnectionsInterfaces()
+    connectionInterfaces.value = await fetchDatabaseConnectionsInterfaces();
   } catch (error) {
-    console.error("Error fetching connections:", error)
-    ElMessage.error('Failed to load database connections')
+    console.error("Error fetching connections:", error);
+    ElMessage.error("Failed to load database connections");
   } finally {
-    isLoading.value = false
+    isLoading.value = false;
   }
-}
+};
 
 // Show add connection modal
 const showAddModal = () => {
-  isEditing.value = false
-  activeConnection.value = undefined
-  dialogVisible.value = true
-}
+  isEditing.value = false;
+  activeConnection.value = undefined;
+  dialogVisible.value = true;
+};
 
 // Show edit connection modal
 const showEditModal = (connection: FullDatabaseConnectionInterface) => {
-  isEditing.value = true
+  isEditing.value = true;
   activeConnection.value = {
     connectionName: connection.connectionName,
     databaseType: connection.databaseType,
     username: connection.username,
-    password: '', // Password is not returned from the API
-    host: connection.host || '',
+    password: "", // Password is not returned from the API
+    host: connection.host || "",
     port: connection.port || 5432,
-    database: connection.database || '',
+    database: connection.database || "",
     sslEnabled: connection.sslEnabled,
-    url: connection.url || ''
-  }
-  dialogVisible.value = true
-}
+    url: connection.url || "",
+  };
+  dialogVisible.value = true;
+};
 
 // Show delete confirmation modal
 const showDeleteModal = (connectionName: string) => {
-  connectionToDelete.value = connectionName
-  deleteDialogVisible.value = true
-}
+  connectionToDelete.value = connectionName;
+  deleteDialogVisible.value = true;
+};
 
 // Handle form submission
 const handleFormSubmit = async (connection: FullDatabaseConnection) => {
-  isSubmitting.value = true
+  isSubmitting.value = true;
   try {
-    await createDatabaseConnectionApi(connection)
-    await fetchConnections()
-    dialogVisible.value = false
-    ElMessage.success(`Connection ${isEditing.value ? 'updated' : 'created'} successfully`)
+    await createDatabaseConnectionApi(connection);
+    await fetchConnections();
+    dialogVisible.value = false;
+    ElMessage.success(`Connection ${isEditing.value ? "updated" : "created"} successfully`);
   } catch (error: any) {
-    ElMessage.error(`Failed to ${isEditing.value ? 'update' : 'create'} connection: ${error.message || 'Unknown error'}`)
+    ElMessage.error(
+      `Failed to ${isEditing.value ? "update" : "create"} connection: ${error.message || "Unknown error"}`,
+    );
   } finally {
-    isSubmitting.value = false
+    isSubmitting.value = false;
   }
-}
+};
 
 // Handle delete connection
 const handleDeleteConnection = async () => {
-  if (!connectionToDelete.value) return
-  
-  isDeleting.value = true
+  if (!connectionToDelete.value) return;
+
+  isDeleting.value = true;
   try {
-    await deleteDatabaseConnectionApi(connectionToDelete.value)
-    await fetchConnections()
-    deleteDialogVisible.value = false
-    ElMessage.success('Connection deleted successfully')
+    await deleteDatabaseConnectionApi(connectionToDelete.value);
+    await fetchConnections();
+    deleteDialogVisible.value = false;
+    ElMessage.success("Connection deleted successfully");
   } catch (error) {
-    ElMessage.error('Failed to delete connection')
+    ElMessage.error("Failed to delete connection");
   } finally {
-    isDeleting.value = false
-    connectionToDelete.value = ''
+    isDeleting.value = false;
+    connectionToDelete.value = "";
   }
-}
+};
 
 // Handle close dialog
 const handleCloseDialog = (done: () => void) => {
-  if (isSubmitting.value) return
-  done()
-}
+  if (isSubmitting.value) return;
+  done();
+};
 
 // Handle close delete dialog
 const handleCloseDeleteDialog = (done: () => void) => {
-  if (isDeleting.value) return
-  done()
-}
+  if (isDeleting.value) return;
+  done();
+};
 
 // Load connections on mount
 onMounted(() => {
-  fetchConnections()
-})
+  fetchConnections();
+});
 </script>
 
 <style scoped>

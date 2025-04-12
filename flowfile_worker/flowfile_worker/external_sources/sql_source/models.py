@@ -1,16 +1,20 @@
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Literal
 from pydantic import BaseModel, SecretStr
+from flowfile_worker.secrets import decrypt_secret
 
 
 class DataBaseConnection(BaseModel):
     """Database connection configuration with secure password handling."""
     username: Optional[str] = None
-    password: Optional[SecretStr] = None
+    password: Optional[SecretStr] = None  # Encrypted password
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None  # The database name
     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     url: Optional[str] = None
+
+    def get_decrypted_secret(self) -> SecretStr:
+        return decrypt_secret(self.password.get_secret_value())
 
     def create_uri(self) -> str:
         """
@@ -35,7 +39,7 @@ class DataBaseConnection(BaseModel):
             credentials = self.username
             if self.password:
                 # Get the raw password string from SecretStr
-                password_value = self.password.get_secret_value()
+                password_value = decrypt_secret(self.password.get_secret_value()).get_secret_value()
                 credentials += f":{password_value}"
             credentials += "@"
 

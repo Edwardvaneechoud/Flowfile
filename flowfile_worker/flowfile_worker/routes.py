@@ -46,13 +46,6 @@ def submit_query(polars_script: models.PolarsScript, background_tasks: Backgroun
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class BackgroundTaskSample:
-
-
-    def add_task(self, func, **kwargs):
-        return func(**kwargs)
-
-
 @router.post('/store_sample/')
 def store_sample(polars_script: models.PolarsScriptSample, background_tasks: BackgroundTasks) -> models.Status:
     logger.info(f"Processing sample storage with size: {polars_script.sample_size}")

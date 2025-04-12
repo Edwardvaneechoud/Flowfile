@@ -7,11 +7,15 @@ import base64
 from io import BytesIO
 from flowfile_worker import main
 from flowfile_worker import models
-from flowfile_worker.external_sources.sql_source.models import DataBaseConnection
+from flowfile_worker.secrets import encrypt_secret
 from polars_grouper import graph_solver
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 
 client = TestClient(main.app)
+
+@pytest.fixture
+def pw():
+    return encrypt_secret('testpass')
 
 
 def is_docker_available():
@@ -213,8 +217,8 @@ def test_store_airbyte_result():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_store_sql_result():
-    database_connection = dict(host='localhost', password='testpass', username='testuser', port=5433, database='testdb')
+def test_store_sql_result(pw):
+    database_connection = dict(host='localhost', password=pw, username='testuser', port=5433, database='testdb')
     sql_source_settings = dict(connection=database_connection, query='SELECT * FROM public.movies')
     v = client.post('/store_database_read_result', json=sql_source_settings)
     assert v.status_code == 200, v.text
@@ -234,12 +238,12 @@ def test_store_sql_result():
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.shape[0] > 0, 'Expected to get some data from the database'
 
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_store_in_database():
+def test_store_in_database(pw):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
     s = base64.encodebytes(lf.serialize())
-
-    settings_data = {'connection': {'username': 'testuser', 'password': 'testpass', 'host': 'localhost', 'port': 5433,
+    settings_data = {'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
                                     'database': 'testdb', 'database_type': 'postgresql', 'url': None},
                      'table_name': 'public.test_output', 'if_exists': 'replace', 'flowfile_flow_id': 1,
                      'flowfile_node_id': -1,

@@ -1,5 +1,4 @@
 from typing import Any, Dict, Generator, List, Optional, Literal, Tuple
-from polars import DataFrame
 import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
@@ -55,14 +54,92 @@ def get_table_column_types(engine: Engine, table_name: str, schema: str = None) 
     return [(column['name'], column['type']) for column in columns]
 
 
-class SqlSource(ExternalDataSource):
+class BaseSqlSource:
+    """
+    A simplified base class for SQL sources that handles query generation
+    without requiring database connection details.
+    """
     table_name: Optional[str] = None
-    connection_string: Optional[str]
     query: Optional[str] = None
-    schema_name: Optional[str]
-    query_mode: QueryMode = 'sql'
-    read_result: Optional[DataFrame] = None
+    schema_name: Optional[str] = None
+    query_mode: QueryMode = 'table'
     schema: Optional[List[FlowfileColumn]] = None
+
+    def __init__(self,
+                 query: str = None,
+                 table_name: str = None,
+                 schema_name: str = None,
+                 fields: Optional[List[MinimalFieldInfo]] = None):
+        """
+        Initialize a BaseSqlSource object.
+
+        Args:
+            query: SQL query string (if query_mode is 'query')
+            table_name: Name of the table to query (if query_mode is 'table')
+            schema_name: Optional database schema name
+            fields: Optional list of field information
+        """
+        if schema_name == '':
+            schema_name = None
+
+        # Validate inputs
+        if query is not None and table_name is not None:
+            raise ValueError("Only one of table_name or query can be provided")
+        if query is None and table_name is None:
+            raise ValueError("Either table_name or query must be provided")
+
+        # Set query mode and build query if needed
+        if query is not None:
+            self.query_mode = 'query'
+            self.query = query
+        elif table_name is not None:
+            self.query_mode = 'table'
+            self.table_name = table_name
+            self.schema_name = schema_name
+
+            # Generate the basic query
+            if schema_name is not None and schema_name != '':
+                self.query = f"SELECT * FROM {schema_name}.{table_name}"
+            else:
+                self.query = f"SELECT * FROM {table_name}"
+
+        # Set schema if provided
+        if fields:
+            self.schema = [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in fields]
+
+    def get_sample_query(self) -> str:
+        """
+        Get a sample query that returns a limited number of rows.
+        """
+        if self.query_mode == 'query':
+            return f"select * from ({self.query}) as main_query LIMIT 1"
+        else:
+            return f"{self.query} LIMIT 1"
+
+    @staticmethod
+    def _parse_table_name(table_name: str) -> tuple[Optional[str], str]:
+        """
+        Parse a table name that may include a schema.
+
+        Args:
+            table_name: Table name possibly in the format 'schema.table'
+
+        Returns:
+            Tuple of (schema, table_name)
+        """
+        table_parts = table_name.split('.')
+        if len(table_parts) > 1:
+            # Handle schema.table_name format
+            schema = '.'.join(table_parts[:-1])
+            table = table_parts[-1]
+            return schema, table
+        else:
+            return None, table_name
+
+
+class SqlSource(BaseSqlSource, ExternalDataSource):
+    connection_string: Optional[str]
+    read_result: Optional[pl.DataFrame] = None
 
     def __init__(self,
                  connection_string: str,
@@ -71,39 +148,15 @@ class SqlSource(ExternalDataSource):
                  schema_name: str = None,
                  fields: Optional[List[MinimalFieldInfo]] = None):
 
-        self.connection_string = connection_string
-        if schema_name == '':
-            schema_name = None
-        if query is not None and table_name is not None:
-            raise ValueError("Only one of table_name or query can be provided")
-        if query is None and table_name is None:
-            raise ValueError("Either table_name or query must be provided")
-        if query is not None:
-            self.query_mode = 'query'
-            self.query = query
+        # Initialize the base class first
+        BaseSqlSource.__init__(self, query=query, table_name=table_name, schema_name=schema_name, fields=fields)
 
-        elif table_name is None and schema_name is None:
-            raise ValueError("schema must be provided if table_name is not provided")
-        else:
-            self.query_mode = 'table'
-            if schema_name is not None and schema_name != '':
-                self.query = f"SELECT * FROM {schema_name}.{table_name}"
-            else:
-                self.query = f"SELECT * FROM {table_name}"
-            self.table_name = table_name
-            self.schema_name = schema_name
+        # Set connection-specific attributes
+        self.connection_string = connection_string
         self.read_result = None
-        if fields:
-            self.schema = [FlowfileColumn.from_input(column_name=col.name, data_type=col.data_type) for col in fields]
 
     def get_initial_data(self) -> List[Dict[str, Any]]:
         return []
-
-    def get_sample_query(self) -> str:
-        if self.query_mode == 'query':
-            return f"select * from ({self.query}) as main_query LIMIT 1"
-        else:
-            return f"{self.query} LIMIT 1"
 
     def validate(self) -> None:
         try:
@@ -139,7 +192,7 @@ class SqlSource(ExternalDataSource):
 
     def get_sample(self, n: int = 10000) -> Generator[Dict[str, Any], None, None]:
         if self.query_mode == 'table':
-            query = f"SELECT * FROM {self.table_name} LIMIT {n}"
+            query = f"{self.query} LIMIT {n}"
             try:
                 df = pl.read_database_uri(query, self.connection_string)
                 return (r for r in df.to_dicts())
@@ -168,7 +221,6 @@ class SqlSource(ExternalDataSource):
         Returns:
             List of FlowfileColumn objects representing the columns in the SQL source
         """
-
         engine = create_engine(self.connection_string)
 
         if self.query_mode == 'table':
@@ -194,7 +246,7 @@ class SqlSource(ExternalDataSource):
         Returns:
             List of FlowfileColumn objects
         """
-        schema_name, table = SqlSource._parse_table_name(table_name)
+        schema_name, table = BaseSqlSource._parse_table_name(table_name)
         column_types = get_table_column_types(engine, table, schema=schema_name)
         columns = [FlowfileColumn.create_from_polars_dtype(column_name, get_polars_type(column_type))
                    for column_name, column_type in column_types]
@@ -239,26 +291,6 @@ class SqlSource(ExternalDataSource):
         except Exception as e:
             logger.error(f"Error getting column info for query: {e}")
             raise e
-
-    @staticmethod
-    def _parse_table_name(table_name: str) -> tuple[Optional[str], str]:
-        """
-        Parse a table name that may include a schema
-
-        Args:
-            table_name: Table name possibly in the format 'schema.table'
-
-        Returns:
-            Tuple of (schema, table_name)
-        """
-        table_parts = table_name.split('.')
-        if len(table_parts) > 1:
-            # Handle schema.table_name format
-            schema = '.'.join(table_parts[:-1])
-            table = table_parts[-1]
-            return schema, table
-        else:
-            return None, table_name
 
     def parse_schema(self) -> List[FlowfileColumn]:
         return self.get_schema()

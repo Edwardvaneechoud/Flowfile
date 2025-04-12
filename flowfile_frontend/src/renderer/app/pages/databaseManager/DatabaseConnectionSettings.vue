@@ -17,12 +17,7 @@
 
       <div class="form-field">
         <label for="database-type" class="form-label">Database Type</label>
-        <select
-          id="database-type"
-          v-model="connection.databaseType"
-          class="form-input"
-          required
-        >
+        <select id="database-type" v-model="connection.databaseType" class="form-input" required>
           <option value="postgresql">PostgreSQL</option>
         </select>
       </div>
@@ -109,14 +104,8 @@
     </div>
 
     <div class="form-actions">
-      <button type="button" class="btn btn-secondary" @click="$emit('cancel')">
-        Cancel
-      </button>
-      <button
-        type="submit"
-        class="btn btn-primary"
-        :disabled="!isValid || isSubmitting"
-      >
+      <button type="button" class="btn btn-secondary" @click="$emit('cancel')">Cancel</button>
+      <button type="submit" class="btn btn-primary" :disabled="!isValid || isSubmitting">
         {{ submitButtonText }}
       </button>
     </div>
@@ -124,8 +113,8 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, defineProps, defineEmits, watch } from 'vue';
-import type { FullDatabaseConnection } from './databaseConnectionTypes';
+import { ref, computed, defineProps, defineEmits, watch } from "vue";
+import type { FullDatabaseConnection } from "./databaseConnectionTypes";
 
 const props = defineProps<{
   initialConnection?: FullDatabaseConnection;
@@ -133,26 +122,26 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'submit', connection: FullDatabaseConnection): void;
-  (e: 'cancel'): void;
+  (e: "submit", connection: FullDatabaseConnection): void;
+  (e: "cancel"): void;
 }>();
 
 // Create a default connection object
 const defaultConnection = (): FullDatabaseConnection => ({
-  connectionName: '',
-  databaseType: 'postgresql',
-  username: '',
-  password: '',
-  host: '',
+  connectionName: "",
+  databaseType: "postgresql",
+  username: "",
+  password: "",
+  host: "",
   port: 5432,
-  database: '',
+  database: "",
   sslEnabled: false,
-  url: ''
+  url: "",
 });
 
 // Initialize connection with props or default values
 const connection = ref<FullDatabaseConnection>(
-  props.initialConnection ? { ...props.initialConnection } : defaultConnection()
+  props.initialConnection ? { ...props.initialConnection } : defaultConnection(),
 );
 
 // Watch for changes in initialConnection prop
@@ -162,7 +151,7 @@ watch(
     if (newVal) {
       connection.value = { ...newVal };
     }
-  }
+  },
 );
 
 const showPassword = ref(false);
@@ -180,15 +169,15 @@ const isValid = computed(() => {
 // Computed property for the submit button text
 const submitButtonText = computed(() => {
   if (props.isSubmitting) {
-    return 'Saving...';
+    return "Saving...";
   }
-  return props.initialConnection ? 'Update Connection' : 'Create Connection';
+  return props.initialConnection ? "Update Connection" : "Create Connection";
 });
 
 // Submit form
 const submitForm = () => {
   if (isValid.value) {
-    emit('submit', connection.value);
+    emit("submit", connection.value);
   }
 };
 </script>

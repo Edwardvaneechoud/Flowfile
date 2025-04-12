@@ -8,6 +8,7 @@ from flowfile_core.flowfile.flowfile_table.subprocess_operations import (trigger
                                                                          ExternalDatabaseWriter)
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (ExtDatabaseConnection,
                                                                                DatabaseExternalWriteSettings)
+from flowfile_core.secrets.secrets import encrypt_secret
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 except ModuleNotFoundError:
@@ -18,10 +19,15 @@ except ModuleNotFoundError:
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 
 
-def test_trigger_database_read_collector():
+@pytest.fixture
+def pw():
+    return encrypt_secret('testpass')
+
+
+def test_trigger_database_read_collector(pw):
     database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
-                                                password='testpass',
+                                                password=pw,
                                                 host='localhost',
                                                 port=5433,
                                                 database='testdb',
@@ -33,10 +39,10 @@ def test_trigger_database_read_collector():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_external_database_fetcher_wait_on_completion():
+def test_external_database_fetcher_wait_on_completion(pw):
     database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
-                                                password='testpass',
+                                                password=pw,
                                                 host='localhost',
                                                 port=5433,
                                                 database='testdb',
@@ -54,10 +60,10 @@ def test_external_database_fetcher_wait_on_completion():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_external_database_fetcher_not_wait_on_completion():
+def test_external_database_fetcher_not_wait_on_completion(pw):
     database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
-                                                password='testpass',
+                                                password=pw,
                                                 host='localhost',
                                                 port=5433,
                                                 database='testdb',
@@ -73,12 +79,12 @@ def test_external_database_fetcher_not_wait_on_completion():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_external_database_writer():
+def test_external_database_writer(pw):
 
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
     s = base64.encodebytes(lf.serialize())
 
-    settings_data = {'connection': {'username': 'testuser', 'password': 'testpass', 'host': 'localhost', 'port': 5433,
+    settings_data = {'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
                                     'database': 'testdb', 'database_type': 'postgresql', 'url': None},
                      'table_name': 'public.test_output', 'if_exists': 'replace', 'flowfile_flow_id': 1,
                      'flowfile_node_id': -1,
@@ -91,10 +97,9 @@ def test_external_database_writer():
     assert external_database_fetcher.error_code == 0, "Error code should be 0"
     assert external_database_fetcher.error_description is None, "Error description should be None"
 
-
     database_connection = ExtDatabaseConnection(database_type='postgresql',
                                                 username='testuser',
-                                                password='testpass',
+                                                password=pw,
                                                 host='localhost',
                                                 port=5433,
                                                 database='testdb',
