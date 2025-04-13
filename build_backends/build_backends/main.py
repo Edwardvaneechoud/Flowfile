@@ -28,7 +28,32 @@ def create_spec_file(directory, script_name, output_name, hidden_imports):
     """Create an optimized spec file for faster startup"""
     spec_content = f'''
 import sys
+import os
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+# Add hook to fix connectorx metadata
+def get_connectorx_metadata():
+    try:
+        import connectorx
+        from pathlib import Path
+        import site
+
+        # Find the site-packages directory
+        site_packages = site.getsitepackages()[0]
+
+        # Try both common metadata formats
+        metadata_locations = [
+            os.path.join(site_packages, 'connectorx-0.4.3.dist-info'),
+            os.path.join(site_packages, 'connectorx.egg-info')
+        ]
+
+        for loc in metadata_locations:
+            if os.path.exists(loc):
+                return [(loc, os.path.join('connectorx-0.4.3.dist-info' if 'dist-info' in loc else 'connectorx.egg-info'))]
+
+        return []
+    except:
+        return []
 
 # Collect minimal snowflake dependencies
 snowflake_imports = collect_submodules('snowflake.connector', 
@@ -44,11 +69,12 @@ snowflake_imports = collect_submodules('snowflake.connector',
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
+connectorx_datas = get_connectorx_metadata()
 
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=[],
-    datas=numpy_datas + pyarrow_datas,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas,
     hiddenimports={hidden_imports} + snowflake_imports + [
         'numpy',
         'numpy.core._dtype_ctypes',
@@ -57,6 +83,7 @@ a = Analysis(
         'pyarrow',
         'pyarrow.lib',
         'fastexcel',
+        'importlib.metadata',
     ],
     excludes=[
         'tkinter',
