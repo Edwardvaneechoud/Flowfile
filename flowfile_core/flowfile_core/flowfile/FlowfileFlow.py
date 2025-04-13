@@ -705,7 +705,7 @@ class EtlGraph:
             return df
 
         def schema_callback():
-            input_node: NodeStep = self.get_node(node_database_writer.node_id)
+            input_node: NodeStep = self.get_node(node_database_writer.node_id).node_inputs.main_inputs[0]
             return input_node.schema
 
         self.add_node_step(
