@@ -693,7 +693,8 @@ class EtlGraph:
                 sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
                     node_database_writer=node_database_writer,
                     password=encrypted_password,
-                    table_name=database_settings.schema_name+'.'+database_settings.table_name,
+                    table_name=(database_settings.schema_name+'.'+database_settings.table_name
+                                if database_settings.schema_name else database_settings.table_name),
                     database_reference_settings=(database_reference_settings if database_settings.connection_mode == 'reference'
                                                  else None),
                     lf=df.data_frame
