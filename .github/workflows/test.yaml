@@ -29,7 +29,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          # Removed 'cache: pip' to avoid the error
 
       # Check if polars-sim wheel is already cached with a more efficient key
       - name: Check for cached polars-sim wheel
