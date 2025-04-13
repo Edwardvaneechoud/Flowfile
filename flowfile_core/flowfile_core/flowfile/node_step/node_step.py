@@ -13,7 +13,7 @@ from flowfile_core.configs.node_store import nodes as node_interface
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
 from flowfile_core.flowfile.flowfile_table.subprocess_operations import (
-    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result,)
+    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result, ExternalDatabaseFetcher, ExternalDatabaseWriter)
 from flowfile_core.flowfile.node_step.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
 from flowfile_core.flowfile.node_step.schema_callback import SingleExecutionFuture
@@ -36,8 +36,8 @@ class NodeStep:
     _function: Callable = None  # the function that needs to be executed when triggered
     _schema_callback: Optional[SingleExecutionFuture] = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
-    _fetch_cached_df: Optional[ExternalDfFetcher] = None
-    _cache_progress: Optional[ExternalDfFetcher] = None
+    _fetch_cached_df: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter] = None
+    _cache_progress: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter] = None
 
     def post_init(self):
         self.node_inputs = NodeStepInputs()
@@ -133,6 +133,7 @@ class NodeStep:
                     pos_y: float = 0,
                     schema_callback: Callable = None,
                     ):
+
         self.schema_callback = schema_callback
         self.node_information.y_position = pos_y
         self.node_information.x_position = pos_x
@@ -567,13 +568,6 @@ class NodeStep:
         else:
             node_logger.warning(f'Node {self.__name__} is not setup, cannot run the node')
 
-    def get_sample_data_from_cache(self):
-        resulting_data = self.results.resulting_data
-        self.results.example_data = resulting_data.__get_sample__(streamable=True)
-        self.node_schema.result_schema = resulting_data.schema
-        if self.results.errors is None:
-            self.node_stats.has_run = True
-
     def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
         if external_df_fetcher.status is not None:
             file_ref = external_df_fetcher.status.file_ref
@@ -581,28 +575,6 @@ class NodeStep:
             self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
         else:
             logger.error('Could not get the sample data, the external process is not ready')
-
-    def get_sample_data(self):
-        resulting_data = self.get_resulting_data()
-        try:
-            logger.info(f'getting sample data from the resulting data: using streaming ='
-                        f' {self.node_settings.streamable}')
-            sample_data = resulting_data.__get_sample__(streamable=self.node_settings.streamable)
-            if len(sample_data) == 0 and len(resulting_data) > 0:
-                # detect if the result gives null records where it should give at least one
-                self.node_settings.streamable = False
-                sample_data = resulting_data.__get_sample__(streamable=self.node_settings.streamable)
-
-            logger.info('setting the example data')
-            self.results.example_data = sample_data
-            self.node_schema.result_schema = resulting_data.schema
-            if self.results.errors is None:
-                self.node_stats.has_run = True
-        except Exception as e:
-            logger.warning(str(e))
-            logger.warning(f"Error with step {self.__name__}")
-            self.results.errors = str(e)
-            self.node_stats.has_run = False
 
     def needs_reset(self) -> bool:
         return self._hash != self.calculate_hash(self.setting_input)
@@ -698,7 +670,7 @@ class NodeStep:
         if self.node_type == 'output':
             self.print('getting the table example')
             return self.main_input[0].get_table_example(include_data)
-        if self.node_stats.has_run and self.is_setup and include_data:
+        if self.is_setup and include_data:
             logger.info('getting the table example since the node has run')
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:

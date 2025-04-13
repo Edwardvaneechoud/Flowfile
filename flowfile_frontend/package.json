@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "A tool for designing and executing data flows",
   "main": "main/main.js",
   "scripts": {
@@ -79,6 +79,7 @@
     "medium-editor": "^5.23.3",
     "path-browserify": "^1.0.1",
     "pinia": "^2.0.16",
+    "portfinder": "^1.0.35",
     "prettier": "^3.2.5",
     "prismjs": "^1.29.0",
     "vue": "^3.5.13",

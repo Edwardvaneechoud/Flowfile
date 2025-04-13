@@ -1,0 +1,31 @@
+/* styles/components/_cards.css - Minimalist version */
+.card {
+    background-color: var(--color-background);
+    border-radius: var(--border-radius-sm);
+    box-shadow: var(--shadow-default);
+    margin-bottom: var(--spacing-md);
+    border: 1px solid var(--color-border);
+    overflow: hidden;
+  }
+  
+  .card-header {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--color-border);
+    background-color: var(--color-gray-100);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+  }
+  
+  .card-title {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text);
+  }
+  
+  .card-content {
+    padding: var(--spacing-md);
+  }

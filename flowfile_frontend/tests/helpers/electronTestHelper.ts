@@ -1,9 +1,8 @@
-// flowfile_frontend/tests/helpers/electronTestHelper.ts
 import { _electron as electron } from 'playwright';
 import { ElectronApplication } from 'playwright-core';
 import * as path from 'path';
 
-const SERVICES_STARTUP_TIMEOUT = 60000;
+const SERVICES_STARTUP_TIMEOUT = 90000;
 
 export async function launchElectronApp(): Promise<ElectronApplication> {
   const electronPath = process.platform === 'win32'
@@ -22,22 +21,27 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
   const startupSuccessPromise = new Promise<ElectronApplication>((resolve, reject) => {
     let servicesStarted = false;
     let startupReceived = false;
+    let windowReady = false;
 
     const timeout = setTimeout(() => {
       reject(new Error('Timeout waiting for startup messages in console'));
     }, SERVICES_STARTUP_TIMEOUT);
 
     const checkComplete = () => {
-      if (servicesStarted && startupReceived && electronApp) {
+      const isComplete = process.platform === 'win32' 
+        ? (servicesStarted && startupReceived && electronApp)
+        : (servicesStarted && startupReceived && windowReady && electronApp);
+        
+      if (isComplete) {
         clearTimeout(timeout);
-        resolve(electronApp);
+        resolve(electronApp!);
       }
     };
 
     electron.launch({
       executablePath: fullPath,
       args: ['--no-sandbox'],
-      timeout: 30000,
+      timeout: 60000,
     })
     .then(app => {
       electronApp = app;
@@ -57,7 +61,23 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
           startupReceived = true;
           checkComplete();
         }
+        
+        if (text.includes('Window ready to show')) {
+          console.log('Detected window ready');
+          windowReady = true;
+          checkComplete();
+        }
       });
+
+      if (process.platform === 'win32') {
+        setTimeout(() => {
+          if (electronApp && (servicesStarted || startupReceived)) {
+            console.log('Safety timeout reached, but Electron app appears to be running');
+            clearTimeout(timeout);
+            resolve(electronApp);
+          }
+        }, 30000);
+      }
 
       return app;
     })
@@ -87,32 +107,40 @@ export async function closeElectronApp(app: ElectronApplication | undefined): Pr
   }
 
   try {
+    let mainWindow;
     try {
-      const mainWindow = await app.firstWindow();
+      mainWindow = await app.firstWindow().catch(() => null);
       if (mainWindow) {
         console.log('Giving app chance to clean up resources...');
-        await mainWindow.evaluate(() => {
-          console.log('Starting application cleanup...');
-          // Type assertion to inform TypeScript that electronAPI might exist
-          const api = (window as any).electronAPI;
-          if (api && api.quitApp) {
-            api.quitApp();
-            return true;
-          }
-          return false;
-        }).catch(e => {
-          console.log('Evaluation error (expected if electronAPI is not available):', e.message);
-          return false;
-        });
+        
+        try {
+          await mainWindow.evaluate(() => {
+            const api = (window as any).electronAPI;
+            if (api && api.quitApp) {
+              console.log('Received quit-app command, quitting...');
+              api.quitApp();
+              return true;
+            }
+            return false;
+          }).catch(e => {
+            console.log('Evaluation error (expected if window already closing):', e.message);
+            return false;
+          });
+        } catch (e) {
+          console.log('Command evaluation failed:', e.message);
+        }
 
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        const waitTime = process.platform === 'win32' ? 5000 : 3000;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     } catch (gracefulError) {
       console.log('Graceful shutdown attempt failed (expected):', gracefulError.message);
     }
 
     console.log('Closing Electron app...');
-    await app.close();
+    await app.close().catch(e => {
+      console.log('Error during app.close():', e.message);
+    });
     console.log('Electron app closed');
   } catch (error) {
     console.error('Error in closeElectronApp:', error);

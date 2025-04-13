@@ -2,17 +2,26 @@ import pytest
 import subprocess
 from fastapi.testclient import TestClient
 import polars as pl
+import platform
 import base64
 from io import BytesIO
 from flowfile_worker import main
 from flowfile_worker import models
+from flowfile_worker.secrets import encrypt_secret
 from polars_grouper import graph_solver
 from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 
 client = TestClient(main.app)
 
+@pytest.fixture
+def pw():
+    return encrypt_secret('testpass')
+
+
 def is_docker_available():
     """Check if Docker is running."""
+    if platform.system() == "Windows":
+        return False
     try:
         subprocess.run(["docker", "info"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         return True
@@ -82,7 +91,6 @@ def create_grouper_data():
     return df.select(graph_solver(pl.col("from"), pl.col("to")).alias('group')).lazy()
 
 
-@pytest.mark.worker
 def test_external_package(create_grouper_data):
     df = create_grouper_data
     load = models.PolarsScript(operation=base64.encodebytes(df.serialize()), operation_type='store')
@@ -99,7 +107,6 @@ def test_external_package(create_grouper_data):
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
 
 
-@pytest.mark.worker
 def test_add_fuzzy_join(create_fuzzy_data):
     load = create_fuzzy_data
     v = client.post('/add_fuzzy_join', data=load.json())
@@ -130,7 +137,7 @@ def test_sample():
     result_df = pl.read_ipc(status.file_ref)
     assert result_df.equals(lf.collect().limit(10)), f'Expected:\n{lf.collect()}\n\nResult:\n{result_df}'
 
-@pytest.mark.worker
+
 def test_polars_transformation():
     df = (pl.DataFrame([{'a': 1, 'b': 2}, {'a': 3, 'b': 4}]).lazy()
           .select((pl.col('a') + pl.col('b')).alias('total'))
@@ -149,7 +156,7 @@ def test_polars_transformation():
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
 
-@pytest.mark.worker
+
 def test_create_func():
     received_table = '{"id": null, "name": "cross-verified-database.csv", "path": "flowfile_core/tests/inputFile/Mall_Customers.csv", "directory": null, "analysis_file_available": false, "status": null, "file_type": "csv", "fields": [], "reference": "", "starting_from_line": 0, "delimiter": ",", "has_headers": true, "encoding": "ISO-8859-1", "parquet_ref": null, "row_delimiter": "", "quote_char": "", "infer_schema_length": 260000, "truncate_ragged_lines": false, "ignore_errors": false, "sheet_name": null, "start_row": 0, "start_column": 0, "end_row": 0, "end_column": 0, "type_inference": false}'
     file_type = 'csv'
@@ -169,7 +176,7 @@ def test_create_func():
     except:
         raise Exception(f'Error with deserializing the DataFrame')
 
-@pytest.mark.worker
+
 def test_write_output_csv():
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
     s = base64.encodebytes(lf.serialize())
@@ -189,7 +196,7 @@ def test_write_output_csv():
     df = pl.read_csv(status.file_ref)
     assert df.count()[0, 0] == 3, f'Expected 3 records, got {df.count()[0, 0]}'
 
-@pytest.mark.worker
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_airbyte_result():
     airbyte_settings = AirbyteSettings(**{'source_name': 'source-faker', 'stream': 'users', 'config_ref': None,
@@ -207,3 +214,49 @@ def test_store_airbyte_result():
         raise Exception(f'Error message: {status.error_message}')
     lf_test = base64.decodebytes(status.results.encode())
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_store_sql_result(pw):
+    database_connection = dict(host='localhost', password=pw, username='testuser', port=5433, database='testdb')
+    sql_source_settings = dict(connection=database_connection, query='SELECT * FROM public.movies')
+    v = client.post('/store_database_read_result', json=sql_source_settings)
+    assert v.status_code == 200, v.text
+    assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
+    status = models.Status.model_validate(v.json())
+    assert status.status == 'Starting', 'Expected status to be Starting'
+    r = client.get(f'/status/{status.background_task_id}')
+    assert r.status_code == 200, r.text
+    status = models.Status.model_validate(r.json())
+    if status.error_message is not None:
+        raise Exception(f'Error message: {status.error_message}')
+    assert status.status == 'Completed', 'Expected status to be Completed'
+    try:
+        lf_test = base64.decodebytes(status.results.encode())
+    except:
+        raise Exception(f'Error with deserializing the DataFrame')
+    result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
+    assert result_df.shape[0] > 0, 'Expected to get some data from the database'
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_store_in_database(pw):
+    lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
+    s = base64.encodebytes(lf.serialize())
+    settings_data = {'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
+                                    'database': 'testdb', 'database_type': 'postgresql', 'url': None},
+                     'table_name': 'public.test_output', 'if_exists': 'replace', 'flowfile_flow_id': 1,
+                     'flowfile_node_id': -1,
+                     'operation': s.decode()}
+    v = client.post('/store_database_write_result', json=settings_data)
+    assert v.status_code == 200, v.text
+
+    assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
+    status = models.Status.model_validate(v.json())
+    assert status.status == 'Starting', 'Expected status to be Starting'
+    r = client.get(f'/status/{status.background_task_id}')
+    assert r.status_code == 200, r.text
+    status = models.Status.model_validate(r.json())
+    if status.error_message is not None:
+        raise Exception(f'Error message: {status.error_message}')
+    assert status.status == 'Completed', 'Expected status to be Completed'

@@ -2,7 +2,9 @@
 import logging
 import sys
 from pathlib import Path
-from flowfile_core.configs.key_vault import SimpleKeyVault
+import os
+
+os.environ["FLOWFILE_MODE"] = "electron"
 
 # Create and configure the logger
 logger = logging.getLogger('PipelineHandler')
@@ -30,5 +32,4 @@ except Exception as e:
     logger.warning(f"Failed to create logs directory: {e}")
 
 # Initialize vault
-vault = SimpleKeyVault()
-logger.info("Vault and logging system initialized")
+logger.info("Logging system initialized")

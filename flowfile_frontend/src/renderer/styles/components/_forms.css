@@ -1,0 +1,102 @@
+/* styles/components/_forms.css - Minimalist version */
+/* Form Layout */
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+  }
+  
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+  }
+  
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-sm);
+  }
+  
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+  }
+  
+  /* Form Elements */
+  .form-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-gray-700);
+  }
+  
+  .form-input {
+    width: 100%;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-sm);
+    background-color: var(--color-background);
+    color: var(--color-text);
+    outline: none;
+    transition: border-color var(--transition-fast);
+    box-sizing: border-box;
+  }
+  
+  .form-input:focus {
+    border-color: var(--color-primary);
+  }
+  
+  /* Password field with toggle visibility */
+  .password-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  
+  .password-field .form-input {
+    padding-right: var(--spacing-xl);
+  }
+  
+  .toggle-visibility {
+    position: absolute;
+    right: var(--spacing-xs);
+    background: none;
+    border: none;
+    color: var(--color-gray-500);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  /* Search input */
+  .search-container {
+    position: relative;
+    max-width: 220px;
+  }
+  
+  .search-input {
+    width: 100%;
+    padding: var(--spacing-xs) var(--spacing-sm) var(--spacing-xs) var(--spacing-xl);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-sm);
+    background-color: var(--color-gray-100);
+    box-sizing: border-box; /* Add this line */
+  }
+  
+  .search-icon {
+    position: absolute;
+    left: var(--spacing-sm);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--color-gray-500);
+    font-size: var(--font-size-sm);
+    pointer-events: none;
+  }

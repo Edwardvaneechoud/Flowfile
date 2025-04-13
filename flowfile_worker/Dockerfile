@@ -20,6 +20,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install Python dependencies
 RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: connectorx==0.4.3a1
 
 # Copy the flowfile_core package contents into the container
 COPY flowfile_worker/flowfile_worker /app/flowfile_worker

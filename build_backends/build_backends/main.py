@@ -28,7 +28,103 @@ def create_spec_file(directory, script_name, output_name, hidden_imports):
     """Create an optimized spec file for faster startup"""
     spec_content = f'''
 import sys
+import os
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+# Add hook to fix connectorx metadata
+def get_connectorx_metadata():
+    print("Collecting connectorx metadata...")
+    try:
+        import site
+        import connectorx
+
+        # Find the site-packages directory
+        site_packages = site.getsitepackages()[0]
+        print(f"Site-packages directory: {{site_packages}}")
+
+        # Try both common metadata formats with glob to catch any version
+        import glob
+        metadata_locations = []
+
+        # Look for dist-info directories
+        dist_info_pattern = os.path.join(site_packages, 'connectorx*.dist-info')
+        for dist_info in glob.glob(dist_info_pattern):
+            metadata_locations.append(dist_info)
+
+        # Look for egg-info directories    
+        egg_info_pattern = os.path.join(site_packages, 'connectorx*.egg-info')
+        for egg_info in glob.glob(egg_info_pattern):
+            metadata_locations.append(egg_info)
+
+        # Also try looking in the parent directory of the connectorx package
+        connectorx_dir = os.path.dirname(connectorx.__file__)
+        parent_dir = os.path.dirname(connectorx_dir)
+
+        dist_info_pattern = os.path.join(parent_dir, 'connectorx*.dist-info')
+        for dist_info in glob.glob(dist_info_pattern):
+            metadata_locations.append(dist_info)
+
+        egg_info_pattern = os.path.join(parent_dir, 'connectorx*.egg-info')
+        for egg_info in glob.glob(egg_info_pattern):
+            metadata_locations.append(egg_info)
+
+        found_metadata = []
+        for loc in metadata_locations:
+            if os.path.exists(loc):
+                dest_name = os.path.basename(loc)
+                found_metadata.append((loc, dest_name))
+                print(f"Found metadata at {{loc}}")
+
+        if found_metadata:
+            return found_metadata
+
+        # If we can't find the metadata, create a fake one
+        print("No connectorx metadata found, creating manual metadata...")
+        import tempfile
+        temp_dir = tempfile.mkdtemp()
+        fake_meta_dir = os.path.join(temp_dir, 'connectorx-0.4.3.dist-info')
+        os.makedirs(fake_meta_dir, exist_ok=True)
+
+        # Create minimal METADATA file
+        with open(os.path.join(fake_meta_dir, 'METADATA'), 'w') as f:
+            f.write("""Metadata-Version: 2.1
+Name: connectorx
+Version: 0.4.3
+Summary: ConnectorX: Fast and Reliable Data Loading
+""")
+
+        # Return the fake metadata directory
+        print(f"Created fake metadata at {{fake_meta_dir}}")
+        return [(fake_meta_dir, 'connectorx-0.4.3.dist-info')]
+    except Exception as e:
+        print(f"Error collecting connectorx metadata: {{e}}")
+        return []
+
+# Add runtime hook to handle connectorx metadata issues
+def create_runtime_hook():
+    return """
+# Runtime hook to handle connectorx metadata issues
+import sys
+import importlib.metadata
+
+# Store original version function
+original_version = importlib.metadata.version
+
+# Create patched version function
+def patched_version(distribution_name):
+    try:
+        return original_version(distribution_name)
+    except (importlib.metadata.PackageNotFoundError, StopIteration):
+        # Handle specific packages
+        if distribution_name == 'connectorx':
+            return '0.4.3'  # Hardcode the version
+        # Let other package errors propagate normally
+        raise
+
+# Apply the patch
+importlib.metadata.version = patched_version
+print("Applied connectorx metadata patch")
+"""
 
 # Collect minimal snowflake dependencies
 snowflake_imports = collect_submodules('snowflake.connector', 
@@ -44,11 +140,16 @@ snowflake_imports = collect_submodules('snowflake.connector',
 # Collect numpy and pyarrow data files
 numpy_datas = collect_data_files('numpy')
 pyarrow_datas = collect_data_files('pyarrow')
+connectorx_datas = get_connectorx_metadata()
+
+# Create runtime hook file
+with open('connectorx_hook.py', 'w') as f:
+    f.write(create_runtime_hook())
 
 a = Analysis(
     [r'{os.path.join(directory, script_name)}'],
     binaries=[],
-    datas=numpy_datas + pyarrow_datas,
+    datas=numpy_datas + pyarrow_datas + connectorx_datas,
     hiddenimports={hidden_imports} + snowflake_imports + [
         'numpy',
         'numpy.core._dtype_ctypes',
@@ -57,6 +158,7 @@ a = Analysis(
         'pyarrow',
         'pyarrow.lib',
         'fastexcel',
+        'importlib.metadata',
     ],
     excludes=[
         'tkinter',
@@ -64,6 +166,7 @@ a = Analysis(
         'pytest',
         'unittest'
     ],
+    runtime_hooks=['connectorx_hook.py'],
     noarchive=False,
 )
 
@@ -98,7 +201,6 @@ coll = COLLECT(
     with open(spec_path, 'w') as f:
         f.write(spec_content)
     return spec_path
-
 
 def build_backend(directory, script_name, output_name, hidden_imports=None):
     try:
@@ -174,7 +276,8 @@ def main():
         "multiprocessing",
         "uvicorn.protocols.http",
         "uvicorn.protocols.websockets",
-        "passlib.handlers.bcrypt"
+        "passlib.handlers.bcrypt",
+        "connectorx",
     ]
 
     # Build both projects

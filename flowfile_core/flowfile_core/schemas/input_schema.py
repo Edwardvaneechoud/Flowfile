@@ -177,6 +177,7 @@ class NodeBase(BaseModel):
     pos_y: Optional[float] = 0
     is_setup: Optional[bool] = True
     description: Optional[str] = ''
+    user_id: Optional[int] = None
 
     @classmethod
     def overridden_hash(cls):
@@ -254,6 +255,88 @@ class NodeRead(NodeBase):
     received_file: ReceivedTable
 
 
+class DatabaseConnection(BaseModel):
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    username: Optional[str] = None
+    password_ref: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    url: Optional[str] = None
+
+
+class FullDatabaseConnection(BaseModel):
+    connection_name: str
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    username: str
+    password: SecretStr
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    ssl_enabled: Optional[bool] = False
+    url: Optional[str] = None
+
+
+class FullDatabaseConnectionInterface(BaseModel):
+    connection_name: str
+    database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
+    username: str
+    host: Optional[str] = None
+    port: Optional[int] = None
+    database: Optional[str] = None
+    ssl_enabled: Optional[bool] = False
+    url: Optional[str] = None
+
+
+class DatabaseSettings(BaseModel):
+    connection_mode: Optional[Literal['inline', 'reference']] = 'inline'
+    database_connection: Optional[DatabaseConnection] = None
+    database_connection_name: Optional[str] = None
+    schema_name: Optional[str] = None
+    table_name: Optional[str] = None
+    query: Optional[str] = None
+    query_mode: Literal['query', 'table', 'reference'] = 'table'
+
+    @model_validator(mode='after')
+    def validate_table_or_query(self):
+        if (not self.table_name and not self.query) and self.query_mode == 'inline':
+            raise ValueError("Either 'table' or 'query' must be provided")
+        return self
+
+    @model_validator(mode='after')
+    def validate_table_or_query(self):
+        # Validate that either table_name or query is provided
+        if (not self.table_name and not self.query) and self.query_mode == 'inline':
+            raise ValueError("Either 'table_name' or 'query' must be provided")
+
+        # Validate correct connection information based on connection_mode
+        if self.connection_mode == 'inline' and self.database_connection is None:
+            raise ValueError("When 'connection_mode' is 'inline', 'database_connection' must be provided")
+
+        if self.connection_mode == 'reference' and not self.database_connection_name:
+            raise ValueError("When 'connection_mode' is 'reference', 'database_connection_name' must be provided")
+
+        return self
+
+
+class DatabaseWriteSettings(BaseModel):
+    connection_mode: Optional[Literal['inline', 'reference']] = 'inline'
+    database_connection: Optional[DatabaseConnection] = None
+    database_connection_name: Optional[str] = None
+    table_name: str
+    schema_name: str
+    if_exists: Optional[Literal['append', 'replace', 'fail']] = 'append'
+
+
+class NodeDatabaseReader(NodeBase):
+    database_settings: DatabaseSettings
+    fields: Optional[List[MinimalFieldInfo]] = None
+
+
+class NodeDatabaseWriter(NodeSingleInput):
+    database_write_settings: DatabaseWriteSettings
+
+
 class ExternalSource(BaseModel):
     orientation: str = 'row'
     fields: Optional[List[MinimalFieldInfo]] = None
@@ -292,17 +375,6 @@ class NodeExternalSource(NodeBase):
 class NodeAirbyteReader(NodeExternalSource):
     identifier: str = 'airbyte'
     source_settings: AirbyteReader
-
-
-class DataBaseConnection(ExternalSource):
-    table: str
-    encryption_key: str
-    user: str
-    password: str
-    database: str
-    server: str
-    driver: str
-    port: int
 
 
 class NodeFormula(NodeSingleInput):

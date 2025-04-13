@@ -1,15 +1,25 @@
+import asyncio
+import os
+import signal
+from contextlib import asynccontextmanager
 
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import signal
-import asyncio
-from contextlib import asynccontextmanager
-from flowfile_core.routes import router
-from flowfile_core.configs.flow_logger import clear_all_flow_logs  # Import the cleanup function
-from flowfile_core import ServerRun
 
-# Global shutdown flag and server reference
+from flowfile_core import ServerRun
+from flowfile_core.configs.settings import SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL
+
+from flowfile_core.routes.auth import router as auth_router
+from flowfile_core.routes.secrets import router as secrets_router
+from flowfile_core.routes.routes import router
+from flowfile_core.routes.public import router as public_router
+from flowfile_core.routes.logs import router as logs_router
+
+from flowfile_core.configs.flow_logger import clear_all_flow_logs
+
+os.environ["FLOWFILE_MODE"] = "electron"
+
 should_exit = False
 server_instance = None
 
@@ -54,16 +64,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the router with all endpoints
+app.include_router(public_router)
 app.include_router(router)
+app.include_router(logs_router, tags=["logs"])
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
+app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 
 
 @app.post("/shutdown")
 async def shutdown():
     """Endpoint to handle graceful shutdown"""
-
     ServerRun.exit = True
-    print(ServerRun.exit)
+    print(f"ServerRun.exit = {ServerRun.exit}")
     if server_instance:
         # Schedule the shutdown
         await asyncio.create_task(trigger_shutdown())
@@ -84,9 +96,18 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def run(host: str = '0.0.0.0', port: int = 63578):
+def run(host: str = None, port: int = None):
     """Run the FastAPI app with graceful shutdown"""
     global server_instance
+
+    # Use values from settings if not explicitly provided
+    if host is None:
+        host = SERVER_HOST
+    if port is None:
+        port = SERVER_PORT
+
+    print(f"Starting server on {host}:{port}")
+    print(f"Worker configured at {WORKER_URL} (host: {WORKER_HOST}, port: {WORKER_PORT})")
 
     # Setup signal handlers
     signal.signal(signal.SIGTERM, signal_handler)

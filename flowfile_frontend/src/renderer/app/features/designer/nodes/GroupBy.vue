@@ -41,18 +41,12 @@ const closeOnDrawer = () => {
 };
 
 const openDrawer = async () => {
-  if (nodeStore.node_id === props.nodeId) {
-    // nodeStore.openDrawer(closeOnDrawer);
-    return;
-  }
   nodeStore.closeDrawer();
   drawer.value = true;
   const drawerOpen = nodeStore.isDrawerOpen;
   nodeStore.isDrawerOpen = true;
   await nextTick();
-  if (nodeStore.node_id === props.nodeId && drawerOpen) {
-    return;
-  }
+
   if (childComp.value) {
     childComp.value.loadNodeData(props.nodeId);
     nodeStore.openDrawer(closeOnDrawer);

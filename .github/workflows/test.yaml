@@ -60,18 +60,27 @@ jobs:
           Get-ChildItem -Path "./polars_sim_wheel"
 
   backend-tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     needs: build-polars-sim
     strategy:
       fail-fast: false
       matrix:
         include:
-          - python-version: "3.10"
-          - python-version: "3.11"
-          - python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.11"
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Docker on macOS
+        if: runner.os == 'macOS'
+        run: |
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -84,7 +93,7 @@ jobs:
           curl -sSL https://install.python-poetry.org | python -
           echo "$HOME/.poetry/bin" >> $GITHUB_PATH
 
-      - name: Install Dependencies (excluding Airbyte)
+      - name: Install Dependencies
         run: |
           poetry install --no-interaction --no-ansi
 
@@ -109,11 +118,79 @@ jobs:
           poetry run pip list | grep polars
           poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
 
-      - name: Run pytest for flowfile_worker
-        run: poetry run pytest flowfile_worker/tests --disable-warnings
+      - name: Start Mock Database with Sample Data
+        run: poetry run start_postgres
 
       - name: Run pytest for flowfile_core
         run: poetry run pytest flowfile_core/tests --disable-warnings
+
+      - name: Run pytest for flowfile_worker
+        run: poetry run pytest flowfile_worker/tests --disable-warnings
+
+      - name: Stop Mock Database
+        run: poetry run stop_postgres
+
+  backend-tests-windows:
+    runs-on: windows-latest
+    needs: build-polars-sim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'  # Enable pip caching
+
+      - name: Install Poetry
+        shell: pwsh
+        run: |
+          (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+          echo "$env:APPDATA\Python\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Dependencies
+        shell: pwsh
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      # Restore cached polars-sim wheel
+      - name: Restore polars-sim wheel
+        uses: actions/cache@v3
+        with:
+          path: ./polars_sim_wheel
+          key: polars-sim-wheel-${{ runner.os }}-python-3.11
+
+      # Install polars-sim directly into Poetry's virtual environment
+      - name: Install polars-sim into Poetry environment
+        shell: pwsh
+        run: |
+          # Get the path to the Poetry virtual environment
+          $VENV_PATH = $(poetry env info -p)
+          Write-Output "Poetry virtual environment: $VENV_PATH"
+          
+          # Install polars-sim directly into the Poetry virtual environment
+          & "$VENV_PATH\Scripts\pip" install --no-index --find-links=./polars_sim_wheel polars_sim
+          
+          # Verify the installation
+          poetry run pip list | findstr polars
+          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
+
+      - name: Start Mock Database with Sample Data
+        shell: pwsh
+        run: poetry run start_postgres
+
+      - name: Run pytest for flowfile_core
+        shell: pwsh
+        run: poetry run pytest flowfile_core/tests --disable-warnings
+
+      - name: Run pytest for flowfile_worker
+        shell: pwsh
+        run: poetry run pytest flowfile_worker/tests --disable-warnings
+
+      - name: Stop Mock Database
+        shell: pwsh
+        run: poetry run stop_postgres
+
 
   test-web:
     runs-on: ubuntu-latest
@@ -223,6 +300,7 @@ jobs:
       - backend-tests
       - test-web
       - build-polars-sim
+      - backend-tests-windows
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

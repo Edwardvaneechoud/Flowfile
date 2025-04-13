@@ -42,3 +42,9 @@ services_dist/
 shared_data/
 saved_flows/
 /flowfile_frontend/playwright-report/index.html
+/flowfile.db
+/flowfile_frontend/flowfile.db
+/flowfile_worker.spec
+/flowfile_frontend/test-results/.last-run.json
+/test_utils/postgres/postgres-docker-samples/
+**/test_flowfile.db

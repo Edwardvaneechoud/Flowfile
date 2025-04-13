@@ -33,3 +33,4 @@ def type_to_polars(dtype: str):
 
 def type_to_polars_str(dtype: str) -> pl.DataType:
     return type_to_polars(dtype)()
+

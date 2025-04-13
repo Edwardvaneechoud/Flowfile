@@ -1,23 +1,8 @@
 from typing import Any, Dict, Generator, List, Optional, Callable
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas import input_schema
-from flowfile_core.configs import vault
-from pydantic import BaseModel, SecretStr
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 import polars as pl
-
-
-def check_for_key_vault_existence(obj: BaseModel, flow_id: int, node_id: int):
-    for k, v in obj.__fields__.items():
-        if v.type_ != SecretStr:
-            continue
-        key = f'{flow_id}|{node_id}|{k}|{obj.__class__.__name__}'
-        print('getting here')
-        __s: SecretStr = getattr(obj, k)
-        if __s is None:
-            setattr(obj, k, SecretStr(vault.get_value(key)))
-        else:
-            vault.set_value(key, __s.get_secret_value())
 
 
 class CustomExternalSourceSettings:

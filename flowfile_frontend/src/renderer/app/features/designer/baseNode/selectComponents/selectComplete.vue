@@ -63,8 +63,6 @@ const dataLoaded = ref(false);
 const dataTypes = nodeStore.getDataTypes();
 
 const loadNodeData = async () => {
-  console.log("loading node data");
-  console.log("Nodestore.nodeId: ", nodeStore.node_id);
   const result = await nodeStore.getCurrentNodeData();
 
   if (result) {

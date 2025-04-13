@@ -1,3 +1,4 @@
+import { extend } from 'lodash'
 import { ref } from 'vue'
 
 export interface SelectInput {
@@ -352,4 +353,46 @@ export interface NodeGraphSolver extends NodeSingleInput {
 
 export interface NodeFormula extends NodeSingleInput {
   function: FormulaInput
+} 
+
+export interface DatabaseConnection {
+  database_type: "postgresql" | "mysql"
+  username: string
+  password_ref: string
+  host?: string
+  port?: number
+  database?: string
+  url?: string
+}
+
+export type ConnectionModeOption = "inline" | "reference"
+
+export interface DatabaseSettings {
+  connection_mode: ConnectionModeOption
+  database_connection?: DatabaseConnection
+  database_connection_name?: string
+  query_mode: "query" | "table"
+  schema_name?: string
+  table_name?: string
+  query: string
+}
+
+export interface NodeDatabaseReader extends NodeBase {
+  database_settings: DatabaseSettings
+  fields?: MinimalFieldInput[]
+}
+
+export type IfExistAction =  'append' | 'replace' | 'fail'
+
+export interface DatabaseWriteSettings {
+  connection_mode: ConnectionModeOption
+  database_connection?: DatabaseConnection
+  database_connection_name?: string
+  schema_name?: string
+  table_name?: string
+  if_exists: IfExistAction
+}
+
+export interface NodeDatabaseWriter extends NodeSingleInput {
+  database_write_settings: DatabaseWriteSettings
 }

@@ -1,15 +1,26 @@
+
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
-
-from tests.utils import is_docker_available
+from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
+                                                                               store_database_connection,)
+from flowfile_core.database.connection import get_db_context
 
 import pytest
 from pathlib import Path
 from typing import List, Dict
+
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 
 
 @pytest.fixture
@@ -534,7 +545,7 @@ def test_airbyte():
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
     graph.add_node_promise(node_promise)
     external_source_input = input_schema.NodeAirbyteReader(**settings)
-    graph.add_external_source(external_source_input)
+    graph.add_airbyte_reader(external_source_input)
     data = graph.get_node(1).get_resulting_data()
     assert data.get_number_of_records(force_calculate=True) > 0
 
@@ -729,3 +740,113 @@ def test_add_join():
     graph.add_join(input_schema.NodeJoin(**data))
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+def test_add_database_reader():
+    ensure_password_is_available()
+    graph = create_graph()
+    add_node_promise_on_type(graph, 'database_reader', 1)
+    database_connection = input_schema.DatabaseConnection(database_type='postgresql',
+                                                          username='testuser',
+                                                          password_ref='test_database_pw',
+                                                          host='localhost',
+                                                          port=5433,
+                                                          database='testdb')
+    database_settings = input_schema.DatabaseSettings(database_connection=database_connection,
+                                                      schema_name='public', table_name='movies')
+    node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_reader(node_database_reader)
+    node = graph.get_node(1)
+    assert node.name == 'database_reader', 'Node name should be database_reader'
+    predicted_schema = node.get_predicted_schema()
+    assert len(predicted_schema) == 20, 'Expected 20 columns in the schema'
+    predicted_lf = node.get_predicted_resulting_data()
+    assert len(predicted_lf.collect()) == 0, 'Should be able to predict data frame without actually getting any data'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+def test_add_database_reader_from_stored_database():
+    ensure_password_is_available()
+    graph = create_graph()
+    add_node_promise_on_type(graph, 'database_reader', 1)
+    # Ensure the database connection is stored
+    database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
+                                                              username='testuser',
+                                                              password_ref='test_database_pw',
+                                                              host='localhost',
+                                                              port=5433,
+                                                              database='testdb',
+                                                              password='testpass',
+                                                              connection_name="database_test_connection")
+
+    database_settings = input_schema.DatabaseSettings(database_connection_name='database_test_connection',
+                                                      schema_name='public', table_name='movies',
+                                                      connection_mode='reference')
+    db_connection = get_local_database_connection('database_test_connection', 1)
+    if db_connection is None:
+        with get_db_context() as db:
+            store_database_connection(db, connection=database_connection, user_id=1)
+    # End of ensuring the database connection is stored
+
+    node_database_reader = input_schema.NodeDatabaseReader(database_settings=database_settings, node_id=1,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_reader(node_database_reader)
+    node = graph.get_node(1)
+    assert node.name == 'database_reader', 'Node name should be database_reader'
+    predicted_schema = node.get_predicted_schema()
+    assert len(predicted_schema) == 20, 'Expected 20 columns in the schema'
+    predicted_lf = node.get_predicted_resulting_data()
+    assert len(predicted_lf.collect()) == 0, 'Should be able to predict data frame without actually getting any data'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+def test_add_database_collector():
+    ensure_password_is_available()
+    graph = create_graph()
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_node_promise_on_type(graph, 'database_writer', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    # Ensure the database connection is stored
+    database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
+                                                              username='testuser',
+                                                              password_ref='test_database_pw',
+                                                              host='localhost',
+                                                              port=5433,
+                                                              database='testdb',
+                                                              password='testpass',
+                                                              connection_name="database_test_connection")
+    db_connection = get_local_database_connection('database_test_connection', 1)
+    if db_connection is None:
+        with get_db_context() as db:
+            store_database_connection(db, connection=database_connection, user_id=1)
+
+    database_write_settings = input_schema.DatabaseWriteSettings(database_connection_name='database_test_connection',
+                                                           schema_name='public', table_name='test_table',
+                                                           connection_mode='reference',
+                                                           if_exists='replace'
+                                                           )
+
+    node_database_writer = input_schema.NodeDatabaseWriter(database_write_settings=database_write_settings, node_id=2,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_writer(node_database_writer)
+    node = graph.get_node(2)
+    assert node.name == 'database_writer', 'Node name should be database_reader'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
