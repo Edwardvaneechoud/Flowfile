@@ -885,6 +885,8 @@ def test_add_database_no_schema_writer():
     graph.add_database_writer(node_database_writer)
     node = graph.get_node(2)
     assert node.name == 'database_writer', 'Node name should be database_reader'
+    _ = node.schema
+    assert node.schema == graph.get_node(1).schema, 'Schema should be the same as the input'
     run_info = graph.run_graph()
     assert run_info.success, 'Run should be successful'
     lf = node.get_resulting_data()
