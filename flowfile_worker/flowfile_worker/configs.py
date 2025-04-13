@@ -4,6 +4,8 @@ import logging
 import platform
 import argparse
 import os
+from connectorx import __version__
+
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s: %(message)s')
@@ -87,6 +89,7 @@ CORE_PORT = args.core_port
 # Generate the core URI
 FLOWFILE_CORE_URI = get_core_url(CORE_HOST, CORE_PORT)
 
+logger.info(f"ConnectorX version: {__version__}")
 # Log configuration
 logger.info(f"Worker configured at {SERVICE_HOST}:{SERVICE_PORT}")
 logger.info(f"Core service configured at {FLOWFILE_CORE_URI}")
