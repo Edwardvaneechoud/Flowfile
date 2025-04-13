@@ -3,6 +3,7 @@
 import logging
 import platform
 import argparse
+import os
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s: %(message)s')
@@ -14,6 +15,7 @@ DEFAULT_SERVICE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0
 DEFAULT_SERVICE_PORT = 63579
 DEFAULT_CORE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
 DEFAULT_CORE_PORT = 63578
+TEST_MODE = True if 'TEST_MODE' in os.environ else False
 
 
 def parse_args():
