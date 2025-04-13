@@ -8,7 +8,7 @@
       @click="openDrawer"
     />
     <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="Read data from database" intro="Read data from database"> </NodeTitle>
+      <NodeTitle title="Write data to database" intro="Write data to database"> </NodeTitle>
       <database-writer ref="childComp" :node-id="nodeId"> </database-writer>
     </teleport>
   </div>

@@ -102,33 +102,6 @@ def delete_database_connection(db: Session, connection_name: str, user_id: int) 
         db.commit()
 
 
-#
-# class FullDatabaseConnectionInterface(BaseModel):
-#     connection_name: str
-#     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
-#     username: str
-#     host: Optional[str] = None
-#     port: Optional[int] = None
-#     database: Optional[str] = None
-#     ssl_enabled: Optional[bool] = False
-#     url: Optional[str] = None
-#
-#
-# class DatabaseConnection(Base):
-#     __tablename__ = "database_connections"
-#
-#     id = Column(Integer, primary_key=True, index=True)
-#     connection_name = Column(String, index=True)
-#     database_type = Column(String)
-#     username = Column(String)
-#     host = Column(String)
-#     port = Column(Integer)
-#     database = Column(String, default=None)
-#     ssl_enabled = Column(Boolean, default=False)
-#     password_id = Column(Integer, ForeignKey("secrets.id"))
-#     user_id = Column(Integer, ForeignKey("users.id"))
-
-
 def database_connection_interface_from_db_connection(db_connection: DBConnectionModel) -> FullDatabaseConnectionInterface:
     """
     Convert a database connection from the database model to the interface model.
