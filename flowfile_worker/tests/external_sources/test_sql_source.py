@@ -3,7 +3,8 @@ import pytest
 
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DataBaseConnection, DatabaseWriteSettings
 from flowfile_worker.secrets import encrypt_secret
-from flowfile_worker.external_sources.sql_source.main import read_sql_source, read_query_as_pd_df, write_df_to_database, write_serialized_df_to_database
+from flowfile_worker.external_sources.sql_source.main import (read_sql_source, read_query_as_pd_df,
+                                                              write_df_to_database, write_serialized_df_to_database)
 from tests.utils import is_docker_available
 
 

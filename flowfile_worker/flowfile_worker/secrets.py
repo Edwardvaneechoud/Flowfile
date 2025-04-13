@@ -50,10 +50,10 @@ def get_password(service_name, username):
     return fallback.get_password(service_name, username)
 
 
-def get_master_key():
+def get_master_key() -> str:
     """Get the master encryption key."""
     if TEST_MODE:
-        return b'06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4='
+        return b'06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4='.decode()
     key = get_password("flowfile", "master_key")
     if not key:
         raise ValueError("Master key not found in storage.")
