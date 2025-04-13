@@ -7,9 +7,8 @@ from fastapi import FastAPI
 from flowfile_worker.routes import router
 from flowfile_worker import mp_context, CACHE_DIR
 from flowfile_worker.configs import logger, FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT
-from connectorx import __version__
-
-print(f"ConnectorX version: {__version__}")
+from connectorx import connectorx
+from connectorx.connectorx import read_sql
 
 should_exit = False
 server_instance = None
