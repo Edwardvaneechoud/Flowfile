@@ -43,6 +43,9 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Building Flows: flows/building.md
+  - Guides:
+    - Overview: guides/index.md
+    - Connect to Postgresql: guides/database_connectivity.md
   - Nodes:
     - Overview: nodes/index.md
     - Input Nodes: nodes/input.md
