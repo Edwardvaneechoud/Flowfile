@@ -324,7 +324,7 @@ class DatabaseWriteSettings(BaseModel):
     database_connection: Optional[DatabaseConnection] = None
     database_connection_name: Optional[str] = None
     table_name: str
-    schema_name: str
+    schema_name: Optional[str] = None
     if_exists: Optional[Literal['append', 'replace', 'fail']] = 'append'
 
 

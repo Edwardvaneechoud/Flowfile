@@ -813,7 +813,7 @@ def test_add_database_reader_from_stored_database():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
-def test_add_database_collector():
+def test_add_database_writer():
     ensure_password_is_available()
     graph = create_graph()
     add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
@@ -846,6 +846,47 @@ def test_add_database_collector():
     graph.add_database_writer(node_database_writer)
     node = graph.get_node(2)
     assert node.name == 'database_writer', 'Node name should be database_reader'
+    run_info = graph.run_graph()
+    assert run_info.success, 'Run should be successful'
+    lf = node.get_resulting_data()
+    assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+def test_add_database_no_schema_writer():
+    ensure_password_is_available()
+    graph = create_graph()
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_node_promise_on_type(graph, 'database_writer', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    # Ensure the database connection is stored
+    database_connection = input_schema.FullDatabaseConnection(database_type='postgresql',
+                                                              username='testuser',
+                                                              password_ref='test_database_pw',
+                                                              host='localhost',
+                                                              port=5433,
+                                                              database='testdb',
+                                                              password='testpass',
+                                                              connection_name="database_test_connection")
+    db_connection = get_local_database_connection('database_test_connection', 1)
+    if db_connection is None:
+        with get_db_context() as db:
+            store_database_connection(db, connection=database_connection, user_id=1)
+
+    database_write_settings = input_schema.DatabaseWriteSettings(database_connection_name='database_test_connection',
+                                                                 table_name='test_table',
+                                                                 connection_mode='reference', if_exists='replace'
+                                                                 )
+
+    node_database_writer = input_schema.NodeDatabaseWriter(database_write_settings=database_write_settings, node_id=2,
+                                                           flow_id=1,
+                                                           user_id=1)
+    graph.add_database_writer(node_database_writer)
+    node = graph.get_node(2)
+    assert node.name == 'database_writer', 'Node name should be database_reader'
+    _ = node.schema
+    assert node.schema == graph.get_node(1).schema, 'Schema should be the same as the input'
     run_info = graph.run_graph()
     assert run_info.success, 'Run should be successful'
     lf = node.get_resulting_data()
