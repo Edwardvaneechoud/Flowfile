@@ -1,6 +1,5 @@
 // main.ts
-import { app, ipcMain, BrowserWindow } from "electron";
-import { Menu } from "electron";
+import { app, ipcMain, globalShortcut, BrowserWindow, dialog } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
 import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
@@ -68,11 +67,14 @@ app.whenReady().then(async () => {
   setupAppEventListeners();
 
   try {
+    // Create loading window first
     const loadingWin = createLoadingWindow();
 
+    // Check Docker status
     const dockerStatusResult = await checkDocker();
     console.log("Docker status:", dockerStatusResult);
 
+    // Store the result in the global variable
     globalDockerStatus = dockerStatusResult;
 
     // Update loading window with Docker status
@@ -117,38 +119,20 @@ app.whenReady().then(async () => {
         console.log("Electron app startup successful, sending signal...");
         mainWindow.webContents.send("startup-success");
       });
+    }
 
-      // Set up local window menu with accelerator instead of global shortcut
-      const refreshHandler = async () => {
+    // Register shortcuts
+    globalShortcut.register("CommandOrControl+R", async () => {
+      const mainWindow = getMainWindow();
+      if (mainWindow) {
         try {
           await mainWindow.webContents.session.clearCache();
           loadWindow(mainWindow);
         } catch (error) {
           console.error("Failed to clear cache:", error);
         }
-      };
-
-      // Setup local accelerator through the window's menu
-      const menuTemplate = [
-        {
-          label: "View",
-          submenu: [
-            {
-              label: "Refresh",
-              accelerator: "CommandOrControl+R",
-              click: refreshHandler,
-            },
-          ],
-        },
-      ];
-
-      // Set the menu for the main window
-      const menu = Menu.buildFromTemplate(menuTemplate);
-      Menu.setApplicationMenu(menu);
-
-      // Also handle the refresh event via IPC for custom implementations
-      ipcMain.on("app-refresh", refreshHandler);
-    }
+      }
+    });
   } catch (error) {
     console.error("Fatal error starting services:", error);
     await cleanupProcesses();
