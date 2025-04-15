@@ -31,6 +31,8 @@ services:
       - temp-storage:/app/temp
     networks:
       - flowfile-network
+    secrets:
+      - flowfile_master_key
 
   flowfile-worker:
     build:
@@ -46,6 +48,8 @@ services:
       - TEMP_DIR=/app/temp
     networks:
       - flowfile-network
+    secrets:
+      - flowfile_master_key
 
 networks:
   flowfile-network:
