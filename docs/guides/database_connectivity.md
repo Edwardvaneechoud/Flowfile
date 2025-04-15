@@ -95,7 +95,6 @@ Now that you've successfully read data from your database, you can add transform
         *   **"Append"**: Add new data to the table.
         *   **"Replace"**: Delete the existing table and create a new one with the output data.
         *   **"Fail"**: Abort the flow if the table already exists.
-4.  Click **"Validate Settings"**.
 
 ### ![configure_write_db](../assets/images/guides/database_connectivity/configure_write_db.png) Setup write to database node configuration panel
 *Ensure the image `configure_write_db.png` actually shows the "Write to Database" node's configuration panel.*
