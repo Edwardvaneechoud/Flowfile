@@ -1,5 +1,6 @@
 // main.ts
-import { app, ipcMain, BrowserWindow, dialog } from "electron";
+import { app, ipcMain, BrowserWindow } from "electron";
+import { Menu } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
 import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
@@ -116,7 +117,7 @@ app.whenReady().then(async () => {
         console.log("Electron app startup successful, sending signal...");
         mainWindow.webContents.send("startup-success");
       });
-      
+
       // Set up local window menu with accelerator instead of global shortcut
       const refreshHandler = async () => {
         try {
@@ -126,26 +127,25 @@ app.whenReady().then(async () => {
           console.error("Failed to clear cache:", error);
         }
       };
-      
+
       // Setup local accelerator through the window's menu
       const menuTemplate = [
         {
-          label: 'View',
+          label: "View",
           submenu: [
             {
-              label: 'Refresh',
-              accelerator: 'CommandOrControl+R',
-              click: refreshHandler
-            }
-          ]
-        }
+              label: "Refresh",
+              accelerator: "CommandOrControl+R",
+              click: refreshHandler,
+            },
+          ],
+        },
       ];
-      
+
       // Set the menu for the main window
-      const { Menu } = require('electron');
       const menu = Menu.buildFromTemplate(menuTemplate);
       Menu.setApplicationMenu(menu);
-      
+
       // Also handle the refresh event via IPC for custom implementations
       ipcMain.on("app-refresh", refreshHandler);
     }
