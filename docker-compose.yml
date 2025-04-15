@@ -60,3 +60,7 @@ volumes:
     driver: local
   shared_data:
     driver: local
+
+secrets:
+  flowfile_master_key:
+    file: ./master_key.txt
