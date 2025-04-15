@@ -1,6 +1,7 @@
 # Variables
 PYTHON_DIR := .
 ELECTRON_DIR := flowfile_frontend
+KEY_FILE := master_key.txt
 
 # Detect OS
 ifeq ($(OS),Windows_NT)
@@ -20,7 +21,7 @@ else
 endif
 
 # Default target: install dependencies and build both Python services and Electron app
-all: install_python_deps build_python_services build_electron_app
+all: install_python_deps build_python_services build_electron_app generate_key
 
 # Update Poetry lock file
 update_lock:
@@ -81,5 +82,31 @@ else
 endif
 	@echo "Clean up done."
 
+generate_key:
+	@echo "Checking for master key..."
+ifeq ($(OS),Windows_NT)
+	@if not exist "$(KEY_FILE)" (echo Generating new master key... && $(POETRY_RUN) python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > $(KEY_FILE) && echo Master key generated successfully.)
+else
+	@if [ ! -f "$(KEY_FILE)" ]; then \
+		echo "Generating new master key..."; \
+		$(POETRY_RUN) python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > $(KEY_FILE); \
+		chmod 600 $(KEY_FILE); \
+		echo "Master key generated successfully."; \
+	else \
+		echo "Master key already exists."; \
+	fi
+endif
+
+# Force regenerate Docker master key
+force_key:
+	@echo "Regenerating master key..."
+	$(POETRY_RUN) python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > $(KEY_FILE)
+ifeq ($(OS),Windows_NT)
+	@echo Master key regenerated successfully.
+else
+	@chmod 600 $(KEY_FILE)
+	@echo "Master key regenerated successfully."
+endif
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean
+.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key
