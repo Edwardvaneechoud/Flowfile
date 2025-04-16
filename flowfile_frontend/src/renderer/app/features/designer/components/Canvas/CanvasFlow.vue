@@ -6,9 +6,11 @@ import {
   NodeComponent,
   Node,
   useVueFlow,
-  ConnectionMode,
+  ConnectionMode
 } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
+import { getComponentRaw } from "./componentLoader";
+
 import CustomNode from "./CustomNode.vue";
 import useDragAndDrop from "./useDnD";
 import NodeList from "./NodeList.vue";
@@ -24,11 +26,12 @@ import DraggableItem from "./DraggableItem/DraggableItem.vue";
 import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
+import ContextMenu from "./ContextMenu.vue"
 
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const rawCustomNode = markRaw(CustomNode);
-const { updateEdge, addEdges, fitView } = useVueFlow();
+const { updateEdge, addEdges, fitView, screenToFlowCoordinate } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
@@ -43,6 +46,10 @@ const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
 const selectedNodeIdInTable = ref(0);
+const showContextMenu = ref(false);
+const contextMenuPosition = ref({ x: 0, y: 0 });
+const contextMenuTarget = ref({ type: 'pane', id: '' });
+
 
 interface NodeChange {
   id: string;
@@ -206,12 +213,48 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
 };
 
 const handleDrop = (event: DragEvent) => {
+  console.log(event)
   onDrop(event, nodeStore.flow_id);
 };
 
-const toggleShowRunResult = () => {
-  nodeStore.showFlowResult = !nodeStore.showFlowResult;
+
+const handleContextMenuAction = async (actionData: any) => {
+  const { actionId, targetType, targetId, position } = actionData;
+  if (actionId === 'fit-view') {
+      fitView();
+    } else if (actionId === 'zoom-in') {
+      instance.zoomIn();
+    } else if (actionId === 'zoom-out') {
+      instance.zoomOut();
+    }
+   else if (actionId === 'paste-node') {
+    // Handle paste node action
+      const copiedNodeStr = localStorage.getItem('copiedNode');
+      if (!copiedNodeStr) return;
+      
+      const copiedNode = JSON.parse(copiedNodeStr);
+      const component = await getComponentRaw(copiedNode.type);
+      console.log(component)
+  }
 };
+
+const handleContextMenu = (event: Event) => {
+event.preventDefault();
+let pointerEvent = event as PointerEvent
+const flowPosition = screenToFlowCoordinate({
+        x: pointerEvent.x,
+        y: pointerEvent.y,
+      })
+      contextMenuPosition.value = {
+        x: pointerEvent.x,
+        y: pointerEvent.y,
+      }
+      showContextMenu.value = true
+    ;}
+
+const closeContextMenu = () => {
+  showContextMenu.value = false
+}
 </script>
 
 <template>
@@ -231,9 +274,20 @@ const toggleShowRunResult = () => {
         @node-click="nodeClick"
         @nodes-change="handleNodeChange"
         @edges-change="handleEdgeChange"
+        @pane-context-menu="handleContextMenu"
+        @click="closeContextMenu"
       >
         <MiniMap />
       </VueFlow>
+      <context-menu
+          v-if="showContextMenu"
+          :x="contextMenuPosition.x"
+          :y="contextMenuPosition.y"
+          :target-type="contextMenuTarget.type"
+          :target-id="contextMenuTarget.id"
+          :on-close="closeContextMenu"
+          @action="handleContextMenuAction"
+        />
     </main>
     <draggable-item
       id="dataActions"

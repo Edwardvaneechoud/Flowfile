@@ -1,13 +1,4 @@
-import { useNodeStore } from "../../../../stores/column-store";
 
-const nodeStore = useNodeStore();
-
-export const handleOutsideClick = (event: Event) => {
-  const target = event.target as HTMLElement;
-  if (target.className == "drawflow" || target.className == "parent-drawflow") {
-    nodeStore.closeDrawer();
-  }
-};
 
 export function toCamelCase(str: string) {
   return str

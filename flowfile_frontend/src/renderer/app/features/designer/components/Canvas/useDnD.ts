@@ -1,7 +1,9 @@
+//useDnD.ts
 import { useVueFlow, Node, Position, } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
 import { NodeTemplate, NodeInput, VueFlowInput} from "../../types";
-import { getComponent } from "./componentLoader";
+import { NodeCopyInput } from "./types";
+import { getComponent, getComponentRaw } from "./componentLoader";
 import { insertNode } from './backendInterface'
 
 
@@ -64,9 +66,9 @@ export default function useDragAndDrop() {
     document.removeEventListener("drop", onDragEnd);
   }
 
-  function addNode(node: NodeInput) {
+  function addNode(node: NodeCopyInput) {
     const numberOfInputs: number = (node.multi) ? 1 : node.input;
-    getComponent(node.item).then((component) => {
+    getComponentRaw(node.label).then((component) => {
       const newNode: Node = {
         id: String(node.id),
         type: "custom-node",
@@ -86,6 +88,7 @@ export default function useDragAndDrop() {
             id: `output-${i}`,
             position: Position.Right,
           })),
+          nodeInput: node
         },
       };
       addNodes(newNode);
@@ -123,6 +126,7 @@ export default function useDragAndDrop() {
           id: `output-${i}`,
           position: Position.Right,
         })),
+        nodeInput: node
       },
     };
     return newNode;

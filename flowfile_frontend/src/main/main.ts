@@ -1,5 +1,5 @@
 // main.ts
-import { app, ipcMain, globalShortcut, BrowserWindow, dialog } from "electron";
+import { app, ipcMain, BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
 import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
@@ -55,6 +55,98 @@ async function checkDocker(): Promise<{
   });
 }
 
+function setupCustomMenu(mainWindow: BrowserWindow): void {
+  // Create refresh handler function
+  const refreshHandler = async (): Promise<void> => {
+    try {
+      await mainWindow.webContents.session.clearCache();
+      loadWindow(mainWindow);
+    } catch (error) {
+      console.error("Failed to clear cache:", error);
+    }
+  };
+
+  // Create the menu template with standard items
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: 'File',
+      submenu: [
+        { role: 'close' }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Refresh',
+          accelerator: 'CommandOrControl+R',
+          click: refreshHandler
+        },
+        { type: 'separator' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' }
+      ]
+    },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Learn More',
+          click: async () => {
+            const { shell } = require('electron');
+            await shell.openExternal('https://electronjs.org');
+          }
+        }
+      ]
+    }
+  ];
+
+  // Add macOS-specific menu items
+  if (process.platform === 'darwin') {
+    template.unshift({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    });
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
 app.whenReady().then(async () => {
   const logFile = setupLogging();
   console.log("Logging to:", logFile);
@@ -67,14 +159,11 @@ app.whenReady().then(async () => {
   setupAppEventListeners();
 
   try {
-    // Create loading window first
     const loadingWin = createLoadingWindow();
 
-    // Check Docker status
     const dockerStatusResult = await checkDocker();
     console.log("Docker status:", dockerStatusResult);
 
-    // Store the result in the global variable
     globalDockerStatus = dockerStatusResult;
 
     // Update loading window with Docker status
@@ -119,20 +208,20 @@ app.whenReady().then(async () => {
         console.log("Electron app startup successful, sending signal...");
         mainWindow.webContents.send("startup-success");
       });
-    }
 
-    // Register shortcuts
-    globalShortcut.register("CommandOrControl+R", async () => {
-      const mainWindow = getMainWindow();
-      if (mainWindow) {
+      // Setup menu with custom refresh handler
+      setupCustomMenu(mainWindow);
+
+      // Also handle the refresh event via IPC for custom implementations
+      ipcMain.on("app-refresh", async () => {
         try {
           await mainWindow.webContents.session.clearCache();
           loadWindow(mainWindow);
         } catch (error) {
           console.error("Failed to clear cache:", error);
         }
-      }
-    });
+      });
+    }
   } catch (error) {
     console.error("Fatal error starting services:", error);
     await cleanupProcesses();

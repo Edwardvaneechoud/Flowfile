@@ -1,8 +1,11 @@
-import { ref, onMounted, DefineComponent } from "vue";
+import { ref, onMounted, DefineComponent, Component, markRaw } from "vue";
 import axios from "axios";
 import { NodeTemplate } from "../../types";
+import { NodeCopyInput } from "./types";
 import { toTitleCase } from "./utils";
 import { ENV } from "../../../../../config/environment";
+import { Node, Position } from '@vue-flow/core';
+
 
 export async function getComponent(
   node: NodeTemplate,
@@ -31,3 +34,36 @@ export const useNodes = () => {
 
   return { nodes };
 };
+
+
+/**
+ * Creates a Vue Flow node from input parameters
+ * @param node Node input data
+ * @param component Vue component to use for the node
+ * @returns A formatted Node object ready to be added to the flow
+ */
+function createNode(node: NodeCopyInput, component: Component, id: number): Node {
+  // Calculate the number of inputs - if multi is true, use 1, otherwise use the input value
+  
+  return {
+    id: String(node.id),
+    type: node.type,
+    position: {
+      x: 0,
+      y: 0,
+    },
+    data: {
+      id: node.id,
+      label: node.label,
+      component: markRaw(component),
+      inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
+        id: `input-${i}`,
+        position: Position.Left,
+      })),
+      outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
+        id: `output-${i}`,
+        position: Position.Right,
+      })),
+    },
+  };
+}
