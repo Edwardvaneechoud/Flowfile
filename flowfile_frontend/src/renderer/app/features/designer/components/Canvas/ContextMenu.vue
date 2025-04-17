@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, defineProps, defineEmits } from 'vue';
 import { useNodeStore } from "../../../../stores/column-store";
 import { useVueFlow } from "@vue-flow/core";
+import { ContextMenuAction } from './types'
 
 const props = defineProps({
   x: {
@@ -29,7 +30,6 @@ const props = defineProps({
 
 const emit = defineEmits(['action']);
 const nodeStore = useNodeStore();
-const { addNodes, screenToFlowCoordinate } = useVueFlow();
 
 const menuRef = ref<HTMLElement | null>(null);
 
@@ -44,13 +44,13 @@ const getMenuActions = () => {
     ];
 };
 
-const handleAction = (actionId: string) => {
+const handleAction = (actionId: string): void => {
   emit('action', { 
     actionId, 
-    targetType: props.targetType, 
+    targetType: props.targetType as 'node' | 'edge' | 'pane', 
     targetId: props.targetId,
     position: { x: props.x, y: props.y }
-  });
+  } as ContextMenuAction);
   props.onClose();
 };
 

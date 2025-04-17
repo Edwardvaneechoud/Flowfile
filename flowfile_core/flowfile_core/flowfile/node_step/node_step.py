@@ -151,6 +151,8 @@ class NodeStep:
         self.add_lead_to_in_depend_source()
         _ = self.hash
         self.node_template = node_interface.node_dict.get(self.node_type)
+        if self.node_template is None:
+            raise Exception(f'Node template {self.node_type} not found')
         self.node_default = node_interface.node_defaults.get(self.node_type)
 
     @property

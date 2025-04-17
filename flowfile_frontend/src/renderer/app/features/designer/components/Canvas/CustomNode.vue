@@ -87,7 +87,8 @@ import { Handle } from "@vue-flow/core";
 import { computed, ref, defineProps, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import { VueFlowStore } from '@vue-flow/core';
-import { NodeCopyInput } from './types'
+import { NodeCopyInput, NodeCopyValue } from './types'
+import {toSnakeCase} from './utils'
 
 
 const nodeStore = useNodeStore();
@@ -175,19 +176,19 @@ const closeContextMenu = () => {
 
 
 const copyNode = () => {
-  console.log(props.data)
   // Store the node data in localStorage
-  const nodeToCopy: NodeCopyInput = {
+  const nodeCopyValue: NodeCopyValue = {
     id: props.data.id,
     type: props.data.component.__name || 'unknown',
     label: props.data.label,
     description: description.value,
     numberOfInputs: props.data.inputs.length,
-    numberOfOutputs: props.data.outputs.length
+    numberOfOutputs: props.data.outputs.length,
+    typeSnakeCase: toSnakeCase(props.data.component.__name || 'unknown')
   };
-  localStorage.setItem('copiedNode', JSON.stringify(nodeToCopy));
+  localStorage.setItem('copiedNode', JSON.stringify(nodeCopyValue));
   
-  console.log('Node copied:', nodeToCopy);
+  console.log('Node copied:', nodeCopyValue);
   closeContextMenu();
 };
 

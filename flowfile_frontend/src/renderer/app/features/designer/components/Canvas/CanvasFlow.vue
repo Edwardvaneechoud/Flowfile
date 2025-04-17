@@ -27,6 +27,7 @@ import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue"
+import {NodeCopyInput, NodeCopyValue, ContextMenuAction} from './types'
 
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
@@ -41,7 +42,7 @@ const edges = ref([]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
-const { onDrop, onDragOver, onDragStart, importFlow } = useDragAndDrop();
+const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode } = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
@@ -49,7 +50,6 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: 'pane', id: '' });
-
 
 interface NodeChange {
   id: string;
@@ -218,23 +218,30 @@ const handleDrop = (event: DragEvent) => {
 };
 
 
-const handleContextMenuAction = async (actionData: any) => {
+const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   const { actionId, targetType, targetId, position } = actionData;
   if (actionId === 'fit-view') {
-      fitView();
-    } else if (actionId === 'zoom-in') {
-      instance.zoomIn();
-    } else if (actionId === 'zoom-out') {
-      instance.zoomOut();
-    }
-   else if (actionId === 'paste-node') {
+    fitView();
+  } else if (actionId === 'zoom-in') {
+    instance.zoomIn();
+  } else if (actionId === 'zoom-out') {
+    instance.zoomOut();
+  } else if (actionId === 'paste-node') {
     // Handle paste node action
-      const copiedNodeStr = localStorage.getItem('copiedNode');
-      if (!copiedNodeStr) return;
-      
-      const copiedNode = JSON.parse(copiedNodeStr);
-      const component = await getComponentRaw(copiedNode.type);
-      console.log(component)
+    const copiedNodeStr = localStorage.getItem('copiedNode');
+    if (!copiedNodeStr) return;
+    
+    console.log(position);
+    const nodeCopyValue: NodeCopyValue = JSON.parse(copiedNodeStr);
+
+    const nodeCopyInput: NodeCopyInput = {
+      ...nodeCopyValue,
+      posX: position.x,
+      posY: position.y,
+      flowId: nodeStore.flow_id
+    };
+    console.log(nodeCopyInput)
+    createCopyNode(nodeCopyInput);
   }
 };
 

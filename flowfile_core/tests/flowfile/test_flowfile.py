@@ -334,6 +334,31 @@ def test_add_record_id():
     output_data.assert_equal(expected_data)
 
 
+def test_copy_add_record_id():
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'record_id', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+
+    node_record_id = input_schema.NodeRecordId(flow_id=1, node_id=2, record_id_input=transform_schema.RecordIdInput())
+    graph.add_record_id(node_record_id)
+    copied_info = input_schema.NodePromise(node_type= 'record_id', node_id=3, flow_id=1)
+    graph.copy_node(2, copied_info)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
+    add_connection(graph, connection)
+    graph.run_graph()
+    output_data = graph.get_node(3).get_resulting_data()
+    expected_data = FlowfileTable([{'record_id': 1, 'name': 'eduward'},
+                                   {'record_id': 2, 'name': 'edward'},
+                                   {'record_id': 3, 'name': 'courtney'}]
+                                  )
+    output_data.assert_equal(expected_data)
+
+
 def test_add_and_run_group_by():
     graph = create_graph()
     input_data = (FlowfileTable.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
