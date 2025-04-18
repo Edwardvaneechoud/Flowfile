@@ -22,7 +22,7 @@ const state = {
 export default function useDragAndDrop() {
   const { draggedType, isDragOver, isDragging } = state;
 
-  const { addNodes, screenToFlowCoordinate, onNodesInitialized, updateNode, addEdges, toObject, fromObject } = useVueFlow();
+  const { addNodes, screenToFlowCoordinate, onNodesInitialized, updateNode, addEdges, fromObject } = useVueFlow();
 
   watch(isDragging, (dragging) => {
     document.body.style.userSelect = dragging ? "none" : "";
@@ -98,7 +98,7 @@ export default function useDragAndDrop() {
         pos_y: node.posY,
         cache_results: true
       }
-      copyNode(node.id, nodePromise)
+      copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise)
 
       addNodes(newNode);
     }

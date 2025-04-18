@@ -198,9 +198,11 @@ class NodeStep:
 
     @property
     def is_correct(self):
+        # Check if inputs meet requirements
+        if isinstance(self.setting_input, input_schema.NodePromise):
+            return False
         return (self.node_template.input == len(self.node_inputs.get_all_inputs()) or
-                (self.node_template.multi and len(self.node_inputs.get_all_inputs())> 0)
-                )
+        (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0))
 
     def set_node_information(self):
         logger.info('setting node information')

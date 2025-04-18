@@ -190,30 +190,38 @@ def add_flow_input(input_data: input_schema.NodeDatasource):
 
 
 @router.post('/editor/copy_node', tags=['editor'])
-def copy_node(node_to_copy_from: int, node_promise: input_schema.NodePromise):
+def copy_node(node_id_to_copy_from: int, flow_id_to_copy_from: int, node_promise: input_schema.NodePromise):
     """
     Add a node to the flow.
     Parameters
     ----------
-    node_to_copy_from: int, the id of the node to copy
+    node_id_to_copy_from: int, the id of the node to copy
+    flow_id_to_copy_from: int, the id of the flow to copy from
     node_promise: NodePromise, the node promise that contains all the data
-
     Returns
     -------
-
     """
-    flow = flow_file_handler.get_flow(node_promise.flow_id)
-    logger.info(f'Copying data {node_promise.node_type}')
-    if flow.flow_settings.is_running:
-        raise HTTPException(422, 'Flow is running')
-    node = flow.get_node(node_promise.node_id)
-    if node is not None:
-        flow.delete_node(node_promise.node_id)
-    if node_promise.node_type == 'explore_data':
-        flow.add_initial_node_analysis(node_promise)
-        return
     try:
-        flow.copy_node(node_to_copy_from, node_promise)
+        flow_to_copy_from = flow_file_handler.get_flow(flow_id_to_copy_from)
+        flow = (flow_to_copy_from
+                if flow_id_to_copy_from == node_promise.flow_id
+                else flow_file_handler.get_flow(node_promise.flow_id)
+                )
+        node_to_copy = flow_to_copy_from.get_node(node_id_to_copy_from)
+        logger.info(f"Copying data {node_promise.node_type}")
+
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, "Flow is running")
+
+        if flow.get_node(node_promise.node_id) is not None:
+            flow.delete_node(node_promise.node_id)
+
+        if node_promise.node_type == "explore_data":
+            flow.add_initial_node_analysis(node_promise)
+            return
+
+        flow.copy_node(node_promise, node_to_copy.setting_input, node_to_copy.node_type)
+
     except Exception as e:
         logger.error(e)
         raise HTTPException(422, str(e))

@@ -138,15 +138,15 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
     return response
   }
 
-
-  export const copyNode = async (nodeToCopyFrom: number, nodePromise: NodePromise): Promise<AxiosResponse> => {
+  export const copyNode = async (nodeIdToCopyFrom: number, flowIdToCopyFrom: number, nodePromise: NodePromise): Promise<AxiosResponse> => {
     console.log("copying a note")
       const response = await axios.post(
         'editor/copy_node/',
         nodePromise,
         {
           params: {
-            node_to_copy_from: nodeToCopyFrom
+            node_id_to_copy_from: nodeIdToCopyFrom,
+            flow_id_to_copy_from: flowIdToCopyFrom
           },
           headers: {
             accept: 'application/json',
@@ -156,7 +156,6 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
       
       return response
     }
-
 
 
   export const getAllFlows = async (): Promise<FlowSettings[]> => {

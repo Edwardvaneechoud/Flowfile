@@ -340,7 +340,7 @@ export const useNodeStore = defineStore('node', {
     },
     pushNodeData() {
       // console.log('pushNodeData called in column-store.ts')
-      if (this.drawCloseFunction) {
+      if (this.drawCloseFunction && !this.isRunning) {
         this.drawCloseFunction()
         this.drawCloseFunction = null
       }

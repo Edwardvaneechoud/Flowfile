@@ -2,7 +2,7 @@ import { NodeBase } from './../../baseNode/nodeInput'
 
 
 export interface NodeCopyValue {
-    id: number
+    nodeIdToCopyFrom: number
     type: string // CamelCase
     label: string // readable
     description: string
@@ -10,6 +10,7 @@ export interface NodeCopyValue {
     numberOfOutputs: number
     multi?: boolean;
     typeSnakeCase: string;
+    flowIdToCopyFrom: number
 }
 
 
@@ -17,17 +18,18 @@ export interface NodeCopyInput extends NodeCopyValue {
     posX: number
     posY: number
     flowId: number
+}
 
+export interface CursorPosition {
+  x: number;
+  y: number;
 }
 
 export interface ContextMenuAction {
     actionId: string;
     targetType: 'node' | 'edge' | 'pane';
     targetId: string;
-    position: {
-      x: number;
-      y: number;
-    };
+    position: CursorPosition
   }
 
 

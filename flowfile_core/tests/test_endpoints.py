@@ -690,8 +690,9 @@ def test_remove_secret():
 def test_copy_node_not_run():
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)
-    new_settings = input_schema.NodePromise(flow_id=flow_id, node_id=3, node_type='select')
-    r = client.post('/editor/copy_node', params={'node_to_copy_from': 2}, json=new_settings.__dict__)
+    node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=3, node_type='select')
+    r = client.post('/editor/copy_node', params={'node_id_to_copy_from': 2,
+                                                 'flow_id_to_copy_from': flow_id}, json=node_promise.__dict__)
     assert r.status_code == 200, 'Node not copied'
     copied_node = flow.get_node(3)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
@@ -702,16 +703,27 @@ def test_copy_node_not_run():
     assert copied_node.needs_run(False), 'Node should need to run'
 
 
+def test_from_other_flow():
+    flow_id_to_copy_from = create_flow_with_manual_input_and_select()
+    flow_id_to_copy_to = create_flow_with_manual_input()
+    node_promise = input_schema.NodePromise(flow_id=flow_id_to_copy_to, node_id=34, node_type='select')
+    r = client.post('/editor/copy_node', params={'node_id_to_copy_from': 2,
+                                                 'flow_id_to_copy_from': flow_id_to_copy_from}, json=node_promise.__dict__)
+    assert r.status_code == 200, 'Node not copied'
+    assert flow_file_handler.get_node(flow_id_to_copy_to, 34) is not None, 'Node not copied'
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 34)
+    client.post("/editor/connect_node/", data=connection.model_dump_json(), params={"flow_id": flow_id_to_copy_to})
+    r = flow_file_handler.get_flow(flow_id_to_copy_to).run_graph()
+    assert r.success, 'Flow not run'
+
+
 def test_copy_node_run():
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)
     flow.run_graph()
-    new_settings = input_schema.NodePromise(
-        flow_id=flow_id, node_id=3, node_type="select"
-    )
-    r = client.post(
-        "/editor/copy_node", params={"node_to_copy_from": 2}, json=new_settings.__dict__
-    )
+    node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=3, node_type='select')
+    r = client.post('/editor/copy_node', params={'node_id_to_copy_from': 2,
+                                                 'flow_id_to_copy_from': flow_id}, json=node_promise.__dict__)
     assert r.status_code == 200, "Node not copied"
     copied_node = flow.get_node(3)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 3)

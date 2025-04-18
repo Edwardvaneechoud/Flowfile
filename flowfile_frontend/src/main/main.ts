@@ -1,5 +1,5 @@
 // main.ts
-import { app, ipcMain, BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions } from "electron";
+import { app, ipcMain, BrowserWindow, Menu, MenuItemConstructorOptions, shell } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
 import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
@@ -69,77 +69,71 @@ function setupCustomMenu(mainWindow: BrowserWindow): void {
   // Create the menu template with standard items
   const template: MenuItemConstructorOptions[] = [
     {
-      label: 'File',
-      submenu: [
-        { role: 'close' }
-      ]
+      label: "File",
+      submenu: [{ role: "close" }],
     },
     {
-      label: 'Edit',
+      label: "Edit",
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' }
-      ]
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
     },
     {
-      label: 'View',
+      label: "View",
       submenu: [
         {
-          label: 'Refresh',
-          accelerator: 'CommandOrControl+R',
-          click: refreshHandler
+          label: "Refresh",
+          accelerator: "CommandOrControl+R",
+          click: refreshHandler,
         },
-        { type: 'separator' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' }
-      ]
+        { type: "separator" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
     },
     {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' }
-      ]
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }],
     },
     {
-      role: 'help',
+      role: "help",
       submenu: [
         {
-          label: 'Learn More',
+          label: "Learn More",
           click: async () => {
-            const { shell } = require('electron');
-            await shell.openExternal('https://electronjs.org');
-          }
-        }
-      ]
-    }
+            await shell.openExternal("https://electronjs.org");
+          },
+        },
+      ],
+    },
   ];
 
   // Add macOS-specific menu items
-  if (process.platform === 'darwin') {
+  if (process.platform === "darwin") {
     template.unshift({
       label: app.name,
       submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
+        { role: "about" },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
     });
   }
 

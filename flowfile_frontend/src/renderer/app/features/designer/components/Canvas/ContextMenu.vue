@@ -1,55 +1,54 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineProps, defineEmits } from 'vue';
+import { ref, onMounted, onUnmounted, defineProps, defineEmits } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import { useVueFlow } from "@vue-flow/core";
-import { ContextMenuAction } from './types'
+import { ContextMenuAction } from "./types";
 
 const props = defineProps({
   x: {
     type: Number,
-    required: true
+    required: true,
   },
   y: {
     type: Number,
-    required: true
+    required: true,
   },
   targetType: {
     type: String,
     required: true,
-    validator: (value: string) => ['node', 'edge', 'pane'].includes(value)
+    validator: (value: string) => ["node", "edge", "pane"].includes(value),
   },
   targetId: {
     type: String,
-    default: ''
+    default: "",
   },
   onClose: {
     type: Function,
-    required: true
-  }
+    required: true,
+  },
 });
 
-const emit = defineEmits(['action']);
+const emit = defineEmits(["action"]);
 const nodeStore = useNodeStore();
 
 const menuRef = ref<HTMLElement | null>(null);
 
 // Define menu actions based on the target type
 const getMenuActions = () => {
-
-    return [
-      { id: 'fit-view', label: 'Fit View', icon: '🔍' },
-      { id: 'zoom-in', label: 'Zoom In', icon: '🔍+' },
-      { id: 'zoom-out', label: 'Zoom Out', icon: '🔍-' },
-      { id: 'paste-node', label: 'Paste Node', icon: '📋' }
-    ];
+  return [
+    { id: "fit-view", label: "Fit View", icon: "🔍" },
+    { id: "zoom-in", label: "Zoom In", icon: "🔍+" },
+    { id: "zoom-out", label: "Zoom Out", icon: "🔍-" },
+    { id: "paste-node", label: "Paste Node", icon: "📋" },
+  ];
 };
 
 const handleAction = (actionId: string): void => {
-  emit('action', { 
-    actionId, 
-    targetType: props.targetType as 'node' | 'edge' | 'pane', 
+  emit("action", {
+    actionId,
+    targetType: props.targetType as "node" | "edge" | "pane",
     targetId: props.targetId,
-    position: { x: props.x, y: props.y }
+    position: { x: props.x, y: props.y },
   } as ContextMenuAction);
   props.onClose();
 };
@@ -63,37 +62,43 @@ const handleClickOutside = (event: MouseEvent) => {
 
 // Close the menu when pressing Escape
 const handleKeyDown = (event: KeyboardEvent) => {
-  if (event.key === 'Escape') {
+  if (event.key === "Escape") {
     props.onClose();
   }
 };
 
 onMounted(() => {
-  document.addEventListener('mousedown', handleClickOutside);
-  document.addEventListener('keydown', handleKeyDown);
+  document.addEventListener("mousedown", handleClickOutside);
+  document.addEventListener("keydown", handleKeyDown);
 });
 
 onUnmounted(() => {
-  document.removeEventListener('mousedown', handleClickOutside);
-  document.removeEventListener('keydown', handleKeyDown);
+  document.removeEventListener("mousedown", handleClickOutside);
+  document.removeEventListener("keydown", handleKeyDown);
 });
 </script>
 
 <template>
-  <div 
-    ref="menuRef" 
-    class="context-menu" 
-    :style="{ 
-      left: `${x}px`, 
-      top: `${y}px` 
+  <div
+    ref="menuRef"
+    class="context-menu"
+    :style="{
+      left: `${x}px`,
+      top: `${y}px`,
     }"
   >
     <div class="context-menu-header">
-      <span>{{ targetType === 'node' ? 'Node Actions' : targetType === 'edge' ? 'Edge Actions' : 'Canvas Actions' }}</span>
+      <span>{{
+        targetType === "node"
+          ? "Node Actions"
+          : targetType === "edge"
+            ? "Edge Actions"
+            : "Canvas Actions"
+      }}</span>
     </div>
     <div class="context-menu-items">
-      <div 
-        v-for="action in getMenuActions()" 
+      <div
+        v-for="action in getMenuActions()"
         :key="action.id"
         class="context-menu-item"
         @click="handleAction(action.id)"
