@@ -7,6 +7,7 @@ from time import time
 from functools import partial
 from typing import List, Dict, Union, Callable, Any, Optional, Tuple
 from uuid import uuid1
+from copy import deepcopy
 from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
@@ -142,7 +143,7 @@ class EtlGraph:
             self.add_datasource(input_file=input_flow)
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
-
+        print('adding node promise')
         def placeholder(n: NodeStep = None):
             if n is None:
                 return FlowfileTable()
@@ -1049,6 +1050,7 @@ class EtlGraph:
             execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
                                                                    node not in skip_nodes],
                                                         flow_starts=self._flow_starts)
+
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
@@ -1247,6 +1249,7 @@ class EtlGraph:
         edges: List[schemas.NodeEdge] = []
         nodes: List[schemas.NodeInput] = []
         for node in self.nodes:
+            print(node)
             nodes.append(node.get_node_input())
             edges.extend(node.get_edge_input())
         return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes)
@@ -1254,6 +1257,38 @@ class EtlGraph:
     def reset(self):
         for node in self.nodes:
             node.reset(True)
+
+    def copy_node(self, new_node_settings: input_schema.NodePromise, existing_setting_input: Any, node_type: str) -> None:
+        """Copy an existing node with potentially new settings."""
+        self.add_node_promise(new_node_settings)
+
+        if isinstance(existing_setting_input, input_schema.NodePromise):
+            return
+
+        combined_settings = combine_existing_settings_and_new_settings(
+            existing_setting_input, new_node_settings
+        )
+        getattr(self, f"add_{node_type}")(combined_settings)
+
+
+def combine_existing_settings_and_new_settings(setting_input: Any, new_settings: input_schema.NodePromise) -> Any:
+    """Combine excopy_nodeisting settings with new settings from a NodePromise."""
+    copied_setting_input = deepcopy(setting_input)
+
+    # Update only attributes that exist on new_settings
+    fields_to_update = (
+        "node_id",
+        "pos_x",
+        "pos_y",
+        "description",
+        "flow_id"
+    )
+
+    for field in fields_to_update:
+        if hasattr(new_settings, field) and getattr(new_settings, field) is not None:
+            setattr(copied_setting_input, field, getattr(new_settings, field))
+
+    return copied_setting_input
 
 
 def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection):

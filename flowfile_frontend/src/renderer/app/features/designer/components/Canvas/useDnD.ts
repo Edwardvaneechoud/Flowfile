@@ -1,8 +1,10 @@
+//useDnD.ts
 import { useVueFlow, Node, Position, } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
 import { NodeTemplate, NodeInput, VueFlowInput} from "../../types";
-import { getComponent } from "./componentLoader";
-import { insertNode } from './backendInterface'
+import { NodeCopyInput, NodePromise } from "./types";
+import { getComponent, getComponentRaw } from "./componentLoader";
+import { insertNode, copyNode } from './backendInterface'
 
 
 let id = 0;
@@ -20,7 +22,7 @@ const state = {
 export default function useDragAndDrop() {
   const { draggedType, isDragOver, isDragging } = state;
 
-  const { addNodes, screenToFlowCoordinate, onNodesInitialized, updateNode, addEdges, toObject, fromObject } = useVueFlow();
+  const { addNodes, screenToFlowCoordinate, onNodesInitialized, updateNode, addEdges, fromObject } = useVueFlow();
 
   watch(isDragging, (dragging) => {
     document.body.style.userSelect = dragging ? "none" : "";
@@ -64,30 +66,40 @@ export default function useDragAndDrop() {
     document.removeEventListener("drop", onDragEnd);
   }
 
-  function addNode(node: NodeInput) {
-    const numberOfInputs: number = (node.multi) ? 1 : node.input;
-    getComponent(node.item).then((component) => {
+  function createCopyNode(node: NodeCopyInput) {
+    getComponentRaw(node.type).then((component) => {
+      let nodeId: number = getId()
       const newNode: Node = {
-        id: String(node.id),
-        type: "custom-node",
+        id: String(nodeId),
+        type:  "custom-node",
         position: {
-          x: node.pos_x,
-          y: node.pos_y,
+          x: node.posX,
+          y: node.posY,
         },
         data: {
-          id: node.id,
-          label: node.name,
+          id: nodeId,
+          label: node.label,
           component: markRaw(component),
-          inputs: Array.from({ length: numberOfInputs }, (_, i) => ({
+          inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
             id: `input-${i}`,
             position: Position.Left,
           })),
-          outputs: Array.from({ length: node.output }, (_, i) => ({
+          outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
             id: `output-${i}`,
             position: Position.Right,
-          })),
+          }))
         },
       };
+      const nodePromise: NodePromise = {
+        node_id: nodeId,
+        flow_id: node.flowId,
+        node_type: node.typeSnakeCase,
+        pos_x: node.posX,
+        pos_y: node.posY,
+        cache_results: true
+      }
+      copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise)
+
       addNodes(newNode);
     }
   );
@@ -177,6 +189,7 @@ export default function useDragAndDrop() {
               id: `output-${i}`,
               position: Position.Right,
             })),
+            nodeItem: nodeData.item
           },
         };
         const { off } = onNodesInitialized(() => {
@@ -189,7 +202,9 @@ export default function useDragAndDrop() {
 
           off();
         });
+        console.log("nodeData", nodeData)
         insertNode(flowId, nodeId, nodeData.item)
+        console.log(newNode)
         addNodes(newNode);
       })
       .catch((error) => {
@@ -205,7 +220,7 @@ export default function useDragAndDrop() {
     onDragLeave,
     onDragOver,
     onDrop,
-    addNode,
+    createCopyNode,
     importFlow,
   };
 }

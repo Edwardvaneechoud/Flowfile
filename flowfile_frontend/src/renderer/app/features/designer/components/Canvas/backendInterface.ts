@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios'
 import {VueFlowInput, EdgeInput, NodeInput} from '../../types'
+import { NodePromise } from './types'
 import { FlowSettings } from '../../nodes/nodeLogic'
 
 export interface AxiosResponse {
@@ -116,6 +117,7 @@ export const connectNode = async(flowId: number, nodeConnection: NodeConnection)
 
 
 export const insertNode = async (flow_id: number, node_id: number, node_type: string, pos_x: number = 0, pos_y: number = 0): Promise<AxiosResponse> => {
+  console.log("inserting a note")
     const response = await axios.post(
       'editor/add_node/',
       {},
@@ -132,8 +134,29 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
         },
       },
     )
+    
     return response
   }
+
+  export const copyNode = async (nodeIdToCopyFrom: number, flowIdToCopyFrom: number, nodePromise: NodePromise): Promise<AxiosResponse> => {
+    console.log("copying a note")
+      const response = await axios.post(
+        'editor/copy_node/',
+        nodePromise,
+        {
+          params: {
+            node_id_to_copy_from: nodeIdToCopyFrom,
+            flow_id_to_copy_from: flowIdToCopyFrom
+          },
+          headers: {
+            accept: 'application/json',
+          },
+        },
+      )
+      
+      return response
+    }
+
 
   export const getAllFlows = async (): Promise<FlowSettings[]> => {
     try {

@@ -1,8 +1,11 @@
-import { ref, onMounted, DefineComponent } from "vue";
+import { ref, onMounted, DefineComponent, Component, markRaw } from "vue";
 import axios from "axios";
 import { NodeTemplate } from "../../types";
+import { NodeCopyInput } from "./types";
 import { toTitleCase } from "./utils";
 import { ENV } from "../../../../../config/environment";
+import { Node, Position } from '@vue-flow/core';
+
 
 export async function getComponent(
   node: NodeTemplate,
@@ -31,3 +34,4 @@ export const useNodes = () => {
 
   return { nodes };
 };
+

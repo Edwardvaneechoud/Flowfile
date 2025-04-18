@@ -1,13 +1,4 @@
-import { useNodeStore } from "../../../../stores/column-store";
 
-const nodeStore = useNodeStore();
-
-export const handleOutsideClick = (event: Event) => {
-  const target = event.target as HTMLElement;
-  if (target.className == "drawflow" || target.className == "parent-drawflow") {
-    nodeStore.closeDrawer();
-  }
-};
 
 export function toCamelCase(str: string) {
   return str
@@ -28,3 +19,14 @@ export function toTitleCase(str: string): string {
     .join("");
 }
 
+export function toSnakeCase(str: string): string {
+  // Handle empty strings
+  if (!str) return str;
+  
+  return str
+    // Insert underscore before any uppercase letter and convert to lowercase
+    .replace(/([A-Z])/g, '_$1')
+    // Handle consecutive uppercase letters (like API, HTTP)
+    .replace(/^_/, '')
+    .toLowerCase();
+}

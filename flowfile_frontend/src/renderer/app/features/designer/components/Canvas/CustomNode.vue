@@ -40,7 +40,7 @@
         </div>
       </div>
     </div>
-    <div class="custom-node">
+    <div ref="nodeEl" class="custom-node" @contextmenu.prevent="showContextMenu">
       <component :is="data.component" :node-id="data.id" />
       <div
         v-for="(input, index) in data.inputs"
@@ -58,19 +58,68 @@
       >
         <Handle :id="output.id" type="source" :position="output.position" />
       </div>
+
+      <!-- Teleport Context Menu to body -->
+      <Teleport v-if="showMenu" to="body">
+        <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
+          <div class="context-menu-item" @click="copyNode">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copy</span>
+          </div>
+          <div class="context-menu-item" @click="deleteNode">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
+              ></path>
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+            </svg>
+            <span>Delete</span>
+          </div>
+        </div>
+      </Teleport>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { Handle } from "@vue-flow/core";
-import { computed, ref, defineProps, onMounted, nextTick, watch } from "vue";
+import { computed, ref, defineProps, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
+import { VueFlowStore } from "@vue-flow/core";
+import { NodeCopyValue } from "./types";
+import { toSnakeCase } from "./utils";
 
 const nodeStore = useNodeStore();
+const nodeEl = ref<HTMLElement | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+
 const mouseX = ref<number>(0);
 const mouseY = ref<number>(0);
 const editMode = ref<boolean>(false);
+const showMenu = ref<boolean>(false);
+const contextMenuX = ref<number>(0);
+const contextMenuY = ref<number>(0);
 
 const CHAR_LIMIT = 100;
 
@@ -79,6 +128,113 @@ const onTitleClick = (event: MouseEvent) => {
   mouseX.value = event.clientX;
   mouseY.value = event.clientY;
 };
+
+const showContextMenu = (event: MouseEvent) => {
+  event.preventDefault();
+  event.stopPropagation();
+
+  // Close any existing edit mode
+  if (editMode.value) {
+    toggleEditMode(false);
+  }
+
+  // Store the click position
+  contextMenuX.value = event.clientX;
+  contextMenuY.value = event.clientY;
+
+  // Show the menu
+  showMenu.value = true;
+
+  // Setup click outside handler after a brief delay
+  setTimeout(() => {
+    window.addEventListener("click", handleClickOutsideMenu);
+  }, 0);
+
+  // Update position after the menu is rendered
+  nextTick(() => {
+    updateMenuPosition();
+  });
+};
+
+const updateMenuPosition = () => {
+  if (!menuEl.value) return;
+
+  const menuRect = menuEl.value.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  let left = contextMenuX.value;
+  let top = contextMenuY.value;
+
+  // Adjust if menu would go off-screen
+  if (left + menuRect.width > viewportWidth - 10) {
+    left = viewportWidth - menuRect.width - 10;
+  }
+
+  if (top + menuRect.height > viewportHeight - 10) {
+    top = viewportHeight - menuRect.height - 10;
+  }
+
+  // Update position
+  contextMenuX.value = left;
+  contextMenuY.value = top;
+};
+
+const handleClickOutsideMenu = (event: MouseEvent) => {
+  // Close the menu if click is outside
+  if (menuEl.value && !menuEl.value.contains(event.target as Node)) {
+    closeContextMenu();
+  }
+};
+
+const closeContextMenu = () => {
+  showMenu.value = false;
+  window.removeEventListener("click", handleClickOutsideMenu);
+};
+
+const copyNode = () => {
+  // Store the node data in localStorage
+  const nodeCopyValue: NodeCopyValue = {
+    nodeIdToCopyFrom: props.data.id,
+    type: props.data.component.__name || "unknown",
+    label: props.data.label,
+    description: description.value,
+    numberOfInputs: props.data.inputs.length,
+    numberOfOutputs: props.data.outputs.length,
+    typeSnakeCase: toSnakeCase(props.data.component.__name || "unknown"),
+    flowIdToCopyFrom: nodeStore.flow_id,
+  };
+  localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
+
+  console.log("Node copied:", nodeCopyValue);
+  closeContextMenu();
+};
+
+const deleteNode = () => {
+  // Implementation will be added in the next iteration
+  console.log("Paste node functionality will be implemented in the next step");
+  if (nodeStore.vueFlowInstance) {
+    let vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
+    vueFlow.removeNodes(props.data.id.toLocaleString(), true);
+  }
+
+  closeContextMenu();
+};
+
+onUnmounted(() => {
+  window.removeEventListener("click", handleClickOutsideMenu);
+  window.removeEventListener("resize", updateMenuPosition);
+  window.removeEventListener("keydown", handleKeyDown);
+});
+
+const contextMenuStyle = computed(() => {
+  return {
+    position: "fixed" as const,
+    zIndex: 10000,
+    top: `${contextMenuY.value}px`,
+    left: `${contextMenuX.value}px`,
+  };
+});
 
 const descriptionTextStyle = computed(() => {
   const textLength = description.value.length;
@@ -94,10 +250,21 @@ const descriptionTextStyle = computed(() => {
   };
 });
 
+const handleKeyDown = (event: KeyboardEvent) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "c") {
+    const isNodeSelected = nodeStore.node_id === props.data.id;
+
+    if (isNodeSelected) {
+      copyNode();
+      event.preventDefault();
+    }
+  }
+};
+
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
   const target_data = target.getAttribute("data");
-  console.log(event);
+
   if (
     (target_data == "description_display" || target_data == "description_input") &&
     target.id == props.data.id.toLocaleString()
@@ -194,6 +361,15 @@ function getHandleStyle(index: number, total: number) {
 onMounted(async () => {
   await nextTick();
   await getNodeDescription();
+
+  // Listen for window resize to update context menu position if it's open
+  window.addEventListener("resize", () => {
+    if (showMenu.value) {
+      updateMenuPosition();
+    }
+  });
+
+  window.addEventListener("keydown", handleKeyDown);
 
   watch(
     () => {
@@ -306,5 +482,40 @@ onMounted(async () => {
 .handle-output {
   position: absolute;
   right: -8px;
+}
+
+/* Context Menu Styles */
+.context-menu {
+  position: fixed;
+  z-index: 10000;
+  background-color: white;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  padding: 4px 0;
+  min-width: 120px;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+}
+
+.context-menu-item {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.2s;
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+}
+
+.context-menu-item:hover {
+  background-color: #f5f5f5;
+}
+
+.context-menu-item svg {
+  color: #555;
+}
+
+.context-menu-item span {
+  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 }
 </style>
