@@ -746,9 +746,9 @@ def test_copy_node_run():
 def test_copy_placeholder_node():
     flow_id = ensure_clean_flow()
     add_node_placeholder('manual_input', node_id=1, flow_id=flow_id)
-    new_node = {'flow_id': flow_id, 'node_id': 2, 'node_type': 'manual_input',
-                                            'pos_x': 0, 'pos_y': 0}
-    r = client.post('/editor/copy_node', params={'node_to_copy_from': 1}, json=new_node)
+    new_node = {'flow_id': flow_id, 'node_id': 2, 'node_type': 'manual_input',  'pos_x': 0, 'pos_y': 0}
+    r = client.post('/editor/copy_node', params={'node_id_to_copy_from': 2,
+                                                 'flow_id_to_copy_from': flow_id}, json=new_node.__dict__)
     assert r.status_code == 200, 'Node not copied'
 
 
