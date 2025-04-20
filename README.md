@@ -87,7 +87,7 @@ For a deeper dive into the technical architecture, check out [this article](http
 
 ### Installation Options
 
-#### 1. Desktop Application (Recommended)
+#### 1. Desktop Application
 The desktop version offers the best experience with a native interface and integrated services. You can either:
 
 **Option A: Download Pre-built Application** 
