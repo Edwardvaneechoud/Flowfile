@@ -7,7 +7,6 @@ import {
   Node,
   useVueFlow,
   ConnectionMode,
-  useKeyPress,
 } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
 
@@ -50,7 +49,6 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
-const isPastePressed = useKeyPress(["ctrl+v", "meta+v"]);
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -209,9 +207,10 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
 };
 
 const handleDrop = (event: DragEvent) => {
-  if (!nodeStore.isRunning) { 
-  onDrop(event, nodeStore.flow_id);
-}};
+  if (!nodeStore.isRunning) {
+    onDrop(event, nodeStore.flow_id);
+  }
+};
 
 const copyValue = async (x: number, y: number) => {
   const flowPosition = screenToFlowCoordinate({
@@ -255,13 +254,16 @@ const handleKeyDown = (event: KeyboardEvent) => {
       return;
     }
     copyValue(clickedPosition.value.x, clickedPosition.value.y);
+    event.preventDefault();
   } else if (eventKeyClicked && event.key == "s") {
     if (nodeStore.flow_id) {
+      event.preventDefault();
       emit("save", nodeStore.flow_id);
     }
   } else if (eventKeyClicked && event.key == "e") {
     if (nodeStore.flow_id) {
-      emit("run", nodeStore.flow_id)
+      event.preventDefault();
+      emit("run", nodeStore.flow_id);
     }
   }
 };
@@ -279,7 +281,6 @@ const handleContextMenu = (event: Event) => {
 
 const closeContextMenu = () => {
   showContextMenu.value = false;
-  isPastePressed.value = false;
 };
 
 onMounted(async () => {
@@ -304,7 +305,6 @@ defineExpose({
 <template>
   <div class="container">
     <main ref="mainContainerRef" @drop="handleDrop" @dragover="onDragOver">
-      {{ isPastePressed }}
       <VueFlow
         ref="vueFlow"
         :nodes="nodes"

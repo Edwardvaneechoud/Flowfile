@@ -164,10 +164,10 @@ const openSaveModal = async () => {
 };
 
 const runFlow = () => {
-  if (runButton) {
-    runButton.value?.runFlow()
+  if (runButton.value) {
+    runButton.value?.runFlow();
   }
-}
+};
 
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");

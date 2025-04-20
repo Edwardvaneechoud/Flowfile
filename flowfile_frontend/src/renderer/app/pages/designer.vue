@@ -36,9 +36,13 @@
       </el-button>
     </div>
   </div>
-  <CanvasFlow v-else ref="canvasFlow" class="canvas" 
-  @save="headerButtons?.openSaveModal()"
-  @run="headerButtons?.runFlow()" />
+  <CanvasFlow
+    v-else
+    ref="canvasFlow"
+    class="canvas"
+    @save="headerButtons?.openSaveModal()"
+    @run="headerButtons?.runFlow()"
+  />
 </template>
 
 <script setup lang="ts">
