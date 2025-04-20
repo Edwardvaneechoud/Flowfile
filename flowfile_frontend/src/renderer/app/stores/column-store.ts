@@ -85,7 +85,7 @@ export const useNodeStore = defineStore('node', {
       showFlowResult: false,
       tableVisible: false,
       resultVersion: 0,
-      vueFlowInstance: null as any | null, // Updated type
+      vueFlowInstance: null as any | VueFlowStore,
       allExpressions: null as null| ExpressionsOverview[],
       isShowingLogViewer : false,
       isStreamingLogs: false,
@@ -340,7 +340,7 @@ export const useNodeStore = defineStore('node', {
     },
     pushNodeData() {
       // console.log('pushNodeData called in column-store.ts')
-      if (this.drawCloseFunction) {
+      if (this.drawCloseFunction && !this.isRunning) {
         this.drawCloseFunction()
         this.drawCloseFunction = null
       }
@@ -424,7 +424,6 @@ export const useNodeStore = defineStore('node', {
     },
 
     async getNodeData(node_id: number, useCache = true): Promise<NodeData | null> {
-      console.log('getNodeData called', node_id, useCache)
       if (this.node_id === node_id && useCache) {
         if (this.nodeData) {
           this.is_loaded = true
@@ -454,7 +453,6 @@ export const useNodeStore = defineStore('node', {
       return this.getNodeData(this.node_id, false)
     },
     setFlowIdAndNodeId(flow_id: number, node_id: number) {
-      console.log('setFlowIdAndNodeId called', flow_id, node_id)  
       if (this.node_id === node_id && this.flow_id === flow_id) {
         return
       }

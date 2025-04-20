@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, markRaw, onMounted, defineExpose, nextTick } from "vue";
+import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits } from "vue";
 import {
   VueFlow,
   NodeTypesObject,
@@ -9,6 +9,7 @@ import {
   ConnectionMode,
 } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
+
 import CustomNode from "./CustomNode.vue";
 import useDragAndDrop from "./useDnD";
 import NodeList from "./NodeList.vue";
@@ -24,11 +25,13 @@ import DraggableItem from "./DraggableItem/DraggableItem.vue";
 import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
+import ContextMenu from "./ContextMenu.vue";
+import { NodeCopyInput, NodeCopyValue, ContextMenuAction, CursorPosition } from "./types";
 
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const rawCustomNode = markRaw(CustomNode);
-const { updateEdge, addEdges, fitView } = useVueFlow();
+const { updateEdge, addEdges, fitView, screenToFlowCoordinate } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
@@ -38,11 +41,18 @@ const edges = ref([]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
-const { onDrop, onDragOver, onDragStart, importFlow } = useDragAndDrop();
+const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode } = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
 const selectedNodeIdInTable = ref(0);
+const showContextMenu = ref(false);
+const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
+const contextMenuTarget = ref({ type: "pane", id: "" });
+const emit = defineEmits<{
+  (e: "save", flowId: number): void;
+  (e: "run", flowId: number): void;
+}>();
 
 interface NodeChange {
   id: string;
@@ -78,10 +88,14 @@ interface EdgeChange {
   type: "remove" | "add" | "update";
 }
 
-const closeDrawer = () => {
+const handleCanvasClick = (event: any | PointerEvent) => {
   nodeStore.closeDrawer();
   showTablePreview.value = false;
   nodeStore.hideLogViewer();
+  clickedPosition.value = {
+    x: event.x,
+    y: event.y,
+  };
 };
 
 const toggleShowTablePreview = () => {
@@ -126,15 +140,6 @@ async function onConnect(params: any) {
   }
 }
 
-onMounted(async () => {
-  availableHeight.value = window.innerHeight - 50;
-  tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
-  nodeSettingsHeight.value = availableHeight.value * 0.75; // 70% of the available height
-
-  nodeStore.setVueFlowInstance(instance);
-  loadFlow();
-});
-
 const NodeIsSelected = (nodeId: string) => {
   return selectedNodeIdInTable.value === +nodeId;
 };
@@ -160,10 +165,6 @@ const setNodeTableView = (nodeId: number) => {
     dataPreview.value.downloadData(nodeId);
   }
 };
-
-defineExpose({
-  loadFlow,
-});
 
 const handleNodeChange = (nodeChangesEvent: any) => {
   const nodeChanges = nodeChangesEvent as NodeChange[];
@@ -206,12 +207,99 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
 };
 
 const handleDrop = (event: DragEvent) => {
-  onDrop(event, nodeStore.flow_id);
+  if (!nodeStore.isRunning) {
+    onDrop(event, nodeStore.flow_id);
+  }
 };
 
-const toggleShowRunResult = () => {
-  nodeStore.showFlowResult = !nodeStore.showFlowResult;
+const copyValue = async (x: number, y: number) => {
+  const flowPosition = screenToFlowCoordinate({
+    x: x,
+    y: y,
+  });
+  const copiedNodeStr = localStorage.getItem("copiedNode");
+  if (!copiedNodeStr) return;
+
+  const nodeCopyValue: NodeCopyValue = JSON.parse(copiedNodeStr);
+
+  const nodeCopyInput: NodeCopyInput = {
+    ...nodeCopyValue,
+    posX: flowPosition.x,
+    posY: flowPosition.y,
+    flowId: nodeStore.flow_id,
+  };
+  createCopyNode(nodeCopyInput);
 };
+
+const handleContextMenuAction = async (actionData: ContextMenuAction) => {
+  const { actionId, targetType, targetId, position } = actionData;
+  if (actionId === "fit-view") {
+    fitView();
+  } else if (actionId === "zoom-in") {
+    instance.zoomIn();
+  } else if (actionId === "zoom-out") {
+    instance.zoomOut();
+  } else if (actionId === "paste-node") {
+    copyValue(position.x, position.y);
+  }
+};
+
+const handleKeyDown = (event: KeyboardEvent) => {
+  let eventKeyClicked = event.ctrlKey || event.metaKey;
+  if (eventKeyClicked && event.key === "v" && event.target) {
+    const target = event.target as HTMLElement;
+    const isInputElement =
+      target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+    if (isInputElement) {
+      return;
+    }
+    copyValue(clickedPosition.value.x, clickedPosition.value.y);
+    event.preventDefault();
+  } else if (eventKeyClicked && event.key == "s") {
+    if (nodeStore.flow_id) {
+      event.preventDefault();
+      emit("save", nodeStore.flow_id);
+    }
+  } else if (eventKeyClicked && event.key == "e") {
+    if (nodeStore.flow_id) {
+      event.preventDefault();
+      emit("run", nodeStore.flow_id);
+    }
+  }
+};
+
+const handleContextMenu = (event: Event) => {
+  event.preventDefault();
+  let pointerEvent = event as PointerEvent;
+
+  clickedPosition.value = {
+    x: pointerEvent.x,
+    y: pointerEvent.y,
+  };
+  showContextMenu.value = true;
+};
+
+const closeContextMenu = () => {
+  showContextMenu.value = false;
+};
+
+onMounted(async () => {
+  availableHeight.value = window.innerHeight - 50;
+  tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
+  nodeSettingsHeight.value = availableHeight.value * 0.75; // 70% of the available height
+  window.addEventListener("keydown", handleKeyDown);
+
+  nodeStore.setVueFlowInstance(instance);
+  loadFlow();
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleKeyDown);
+});
+
+defineExpose({
+  loadFlow,
+});
 </script>
 
 <template>
@@ -227,13 +315,24 @@ const toggleShowRunResult = () => {
         :default-viewport="{ zoom: 1 }"
         @edge-update="onEdgeUpdate"
         @connect="onConnect"
-        @pane-click="closeDrawer"
+        @pane-click="handleCanvasClick"
         @node-click="nodeClick"
         @nodes-change="handleNodeChange"
         @edges-change="handleEdgeChange"
+        @pane-context-menu="handleContextMenu"
+        @click="closeContextMenu"
       >
         <MiniMap />
       </VueFlow>
+      <context-menu
+        v-if="showContextMenu"
+        :x="clickedPosition.x"
+        :y="clickedPosition.y"
+        :target-type="contextMenuTarget.type"
+        :target-id="contextMenuTarget.id"
+        :on-close="closeContextMenu"
+        @action="handleContextMenuAction"
+      />
     </main>
     <draggable-item
       id="dataActions"

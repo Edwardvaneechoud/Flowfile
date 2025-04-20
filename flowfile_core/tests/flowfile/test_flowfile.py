@@ -51,10 +51,10 @@ def create_flowfile_handler():
     return handler
 
 
-def create_graph():
+def create_graph(flow_id: int = 1):
     handler = create_flowfile_handler()
-    handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.'))
-    graph = handler.get_flow(1)
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.'))
+    graph = handler.get_flow(flow_id)
     return graph
 
 
@@ -76,6 +76,21 @@ def add_node_promise_for_manual_input(graph: EtlGraph, node_type: str = 'manual_
 def add_node_promise_on_type(graph: EtlGraph, node_type: str, node_id: int, flow_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(node_promise)
+
+
+def get_group_by_flow():
+    graph = create_graph()
+    input_data = (FlowfileTable.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'sales_data']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'group_by', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    group_by_input = transform_schema.GroupByInput([transform_schema.AggColl('groups', 'groupby'),
+                                                    transform_schema.AggColl('sales_data', 'sum', 'sales_data_output')])
+    node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
+    graph.add_group_by(node_group_by)
+    return graph
 
 
 def test_create_flowfile_handler():
@@ -334,18 +349,65 @@ def test_add_record_id():
     output_data.assert_equal(expected_data)
 
 
-def test_add_and_run_group_by():
+def test_copy_add_record_id():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
-                  .select_columns(['groups', 'Country', 'sales_data']))
-    add_manual_input(graph, data=input_data.to_pylist())
-    add_node_promise_on_type(graph, 'group_by', 2)
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'record_id', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph, connection)
-    group_by_input = transform_schema.GroupByInput([transform_schema.AggColl('groups', 'groupby'),
-                                                    transform_schema.AggColl('sales_data', 'sum', 'sales_data_output')])
-    node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
-    graph.add_group_by(node_group_by)
+
+    node_record_id = input_schema.NodeRecordId(flow_id=1, node_id=2, record_id_input=transform_schema.RecordIdInput())
+    graph.add_record_id(node_record_id)
+    copied_info = input_schema.NodePromise(node_type= 'record_id', node_id=3, flow_id=1)
+    node_to_copy = graph.get_node(2)
+    graph.copy_node(new_node_settings=copied_info, existing_setting_input=node_to_copy.setting_input, node_type=node_to_copy.node_type)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 3)
+    add_connection(graph, connection)
+    graph.run_graph()
+    output_data = graph.get_node(3).get_resulting_data()
+    expected_data = FlowfileTable([{'record_id': 1, 'name': 'eduward'},
+                                   {'record_id': 2, 'name': 'edward'},
+                                   {'record_id': 3, 'name': 'courtney'}]
+                                  )
+    output_data.assert_equal(expected_data)
+
+
+def test_copy_from_other_flow():
+    FLOW_ID_TO_COPY = 1
+    NODE_ID_TO_COPY = 1
+    NEW_FLOW_ID = 2
+    NEW_NODE_ID = 44
+
+
+    flow_1 = create_graph(FLOW_ID_TO_COPY)
+
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(flow_1, data=input_data, node_id=NODE_ID_TO_COPY)
+    flow_2 = create_graph(flow_id=NEW_FLOW_ID)
+    copied_info = input_schema.NodePromise(node_type= 'manual_input', node_id=NEW_NODE_ID, flow_id=2)
+    node_to_copy = flow_1.get_node(NODE_ID_TO_COPY)
+    flow_2.copy_node(new_node_settings=copied_info,
+                     existing_setting_input=node_to_copy.setting_input,
+                     node_type=node_to_copy.node_type)
+    copied_node = flow_2.get_node(NEW_NODE_ID)
+    assert copied_node is not None, 'Node should be copied'
+    assert copied_node.node_id == NEW_NODE_ID, f"Node ID should be {NEW_NODE_ID}"
+    assert copied_node.setting_input.flow_id == NEW_FLOW_ID, f"Node flow ID should be {flow_2.flow_id}"
+    # Assert that they are not coupled.
+    assert flow_2.get_node(NEW_NODE_ID).needs_run(False), 'Node should need to run'
+    flow_1.run_graph()
+    assert flow_2.get_node(NEW_NODE_ID).needs_run(False), 'Node should still need to run'
+    # Assert that the data is the same.
+    flow_2.get_node(NEW_NODE_ID).get_resulting_data().assert_equal(node_to_copy.get_resulting_data())
+
+
+def test_add_and_run_group_by():
+    graph = get_group_by_flow()
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
     assert set(predicted_df.columns) == {'groups',
                                          'sales_data_output'}, 'Columns should be groups, Country, sales_data_sum'
@@ -891,3 +953,16 @@ def test_add_database_no_schema_writer():
     assert run_info.success, 'Run should be successful'
     lf = node.get_resulting_data()
     assert lf.count() > 0, 'Should be able to get data frame after running'
+
+
+def test_empty_manual_input_should_run():
+    graph = get_group_by_flow() # create a random graph with working stuff in it
+    r = graph.run_graph()
+    if not r.success:
+        raise 'Cannot start the test'
+    add_node_promise_for_manual_input(graph, node_id=44)
+    try:
+        r = graph.run_graph()
+        assert r.success, 'Should be able to run even with empty manual input'
+    except:
+        raise ValueError('Should be able to run empty manual input')

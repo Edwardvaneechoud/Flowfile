@@ -163,6 +163,12 @@ const openSaveModal = async () => {
   await fileBrowserRef.value?.handleInitialFileSelection();
 };
 
+const runFlow = () => {
+  if (runButton.value) {
+    runButton.value?.runFlow();
+  }
+};
+
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
@@ -194,6 +200,7 @@ defineExpose({
   openCreateDialog: () => (modalVisibleForCreate.value = true),
   openOpenDialog: () => (modalVisibleForOpen.value = true),
   openSaveModal: () => (modalVisibleForSave.value = true),
+  runFlow,
 });
 
 onMounted(async () => {

@@ -16,6 +16,7 @@ import { useNodeStore } from "../../../../stores/column-store";
 import { RunInformation } from "../../baseNode/nodeInterfaces";
 import { ElNotification } from "element-plus";
 import { updateRunStatus } from "../../nodes/nodeLogic";
+import { VueFlowStore } from "@vue-flow/core";
 
 const nodeStore = useNodeStore();
 const pollingInterval = ref<number | null>(null);
@@ -31,6 +32,24 @@ const props = defineProps({
     }),
   },
 });
+
+const freezeFlow = () => {
+  let vueFlowElement: VueFlowStore = nodeStore.vueFlowInstance;
+  if (vueFlowElement) {
+    vueFlowElement.nodesDraggable.value = false;
+    vueFlowElement.nodesConnectable.value = false;
+    vueFlowElement.elementsSelectable.value = false;
+  }
+};
+
+const unFreezeFlow = () => {
+  let vueFlowElement: VueFlowStore = nodeStore.vueFlowInstance;
+  if (vueFlowElement) {
+    vueFlowElement.nodesDraggable.value = true;
+    vueFlowElement.nodesConnectable.value = true;
+    vueFlowElement.elementsSelectable.value = true;
+  }
+};
 
 interface NotificationConfig {
   title: string;
@@ -74,6 +93,7 @@ const checkRunStatus = async () => {
 
     if (response.status === 200) {
       stopPolling();
+      unFreezeFlow();
       nodeStore.isRunning = false;
 
       const notificationConfig = createNotificationConfig(response.data);
@@ -84,15 +104,20 @@ const checkRunStatus = async () => {
       );
     } else if (response.status === 404) {
       stopPolling();
+      unFreezeFlow();
+      nodeStore.isRunning = false;
       nodeStore.runResults = {};
     }
   } catch (error) {
     console.error("Error checking run status:", error);
     stopPolling();
+    unFreezeFlow();
+    nodeStore.isRunning = false;
   }
 };
 
 const runFlow = async () => {
+  freezeFlow();
   nodeStore.resetNodeResult();
   showNotification("Run started", "The flow started flowing");
 
@@ -106,6 +131,8 @@ const runFlow = async () => {
     startPolling(checkRunStatus);
   } catch (error) {
     console.error("Error starting run:", error);
+    unFreezeFlow();
+    nodeStore.isRunning = false;
   }
 };
 
@@ -116,6 +143,7 @@ const cancelFlow = async () => {
       headers: { accept: "application/json" },
     });
     showNotification("Cancelling", "The flow is being cancelled");
+    unFreezeFlow();
     nodeStore.isRunning = false;
     stopPolling();
   } catch (error) {

@@ -151,6 +151,8 @@ class NodeStep:
         self.add_lead_to_in_depend_source()
         _ = self.hash
         self.node_template = node_interface.node_dict.get(self.node_type)
+        if self.node_template is None:
+            raise Exception(f'Node template {self.node_type} not found')
         self.node_default = node_interface.node_defaults.get(self.node_type)
 
     @property
@@ -196,9 +198,11 @@ class NodeStep:
 
     @property
     def is_correct(self):
+        # Check if inputs meet requirements
+        if isinstance(self.setting_input, input_schema.NodePromise):
+            return False
         return (self.node_template.input == len(self.node_inputs.get_all_inputs()) or
-                (self.node_template.multi and len(self.node_inputs.get_all_inputs())> 0)
-                )
+        (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0))
 
     def set_node_information(self):
         logger.info('setting node information')

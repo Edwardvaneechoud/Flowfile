@@ -12,6 +12,8 @@
   <a href="flowfile_worker/README.md">Worker</a>
   -
   <a href="flowfile_frontend/README.md">Frontend</a>
+  -
+  <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
 </p>
 <p>
 Flowfile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
@@ -30,6 +32,8 @@ Flowfile operates as three interconnected services:
 - **Worker** (FastAPI): Handles computation and caching of data operations (`:63579`)
 
 Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations.
+
+For a deeper dive into the technical architecture, check out [this article](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c) on how Flowfile leverages Polars for efficient data processing.
 
 ## 🔥 Example Use Cases
 
@@ -83,12 +87,13 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 
 ### Installation Options
 
-#### 1. Desktop Application (Recommended)
+#### 1. Desktop Application
 The desktop version offers the best experience with a native interface and integrated services. You can either:
 
 **Option A: Download Pre-built Application** 
 - Download the latest release from [GitHub Releases](https://github.com/Edwardvaneechoud/Flowfile/releases)
 - Run the installer for your platform (Windows, macOS, or Linux)
+  - Note: You may see security warnings since the installer isn't signed. On Windows, click "More info" then "Run anyway". On macOS, right-click the app, select "Open", then confirm. These warnings appear because the app isn't signed with a developer certificate.
 
 **Option B: Build from Source:**
 ```bash
@@ -107,7 +112,7 @@ npm run build      # All platforms
 ```
 
 ### 2. Docker Setup
-Perfect for quick testing or deployment scenarios. Runs all services in containers with proper networking and volume management:
+Perfect for quick testing, development or deployment scenarios. Runs all services in containers with proper networking and volume management:
 ```bash
 # Clone and start all services
 git clone https://github.com/edwardvaneechoud/Flowfile.git
@@ -121,6 +126,7 @@ Worker API: http://localhost:63579/docs
 ```
 Just place your files that you want to transform in the directory in shared_data and you're all set!
 
+Docker Compose is also excellent for development, as it automatically sets up all required services and ensures proper communication between them. Code changes in the mounted volumes will be reflected in the running containers.
 
 ### 3. Manual Setup (Development)
 Ideal for development work when you need direct access to all services and hot-reloading:
@@ -148,7 +154,7 @@ npm run dev:web  # Starts web interface on :8080
 - [ ] Add cloud storage support
   - S3 integration
   - Azure Data Lake Storage (ADLS)
-- [ ] Multi-flow execution support
+- [x] Multi-flow execution support
 - [ ] Polars code reverse engineering
   - Generate Polars code from visual flows
   - Import existing Polars scripts
@@ -156,7 +162,7 @@ npm run dev:web  # Starts web interface on :8080
 ### Documentation
 - [ ] Add comprehensive docstrings
 - [x] Create detailed node documentation
-- [ ] Add architectural documentation
+- [x] Add architectural documentation
 - [ ] Improve inline code comments
 - [ ] Create user guides and tutorials
 
