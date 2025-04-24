@@ -577,15 +577,9 @@ def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
 def get_graphic_walker_input(flow_id: int, node_id: int):
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
+    if node.needs_run(False):
+        raise HTTPException(422, 'The data is not refreshed and available for analysis')
     return AnalyticsProcessor.process_graphic_walker_input(node)
-
-
-@router.get('/analysis_data/graphic_walker_input_generic', tags=['analysis'],
-            response_model=input_schema.gs_schemas.GraphicWalkerInput)
-def get_graphic_walker_input_generic(flow_id: int, node_id: int):
-    flow = flow_file_handler.get_flow(flow_id)
-    node = flow.get_node(node_id)
-    return AnalyticsProcessor.create_graphic_walker_input(node)
 
 
 @router.get('/custom_functions/instant_result', tags=[])

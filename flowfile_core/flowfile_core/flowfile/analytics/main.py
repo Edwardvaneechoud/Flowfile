@@ -9,26 +9,6 @@ from flowfile_core.configs import logger
 class AnalyticsProcessor:
 
     @staticmethod
-    def depr_create_graphic_walker_input(node_step: NodeStep) -> NodeExploreData:
-        node_graphic_walker: NodeExploreData = node_step.setting_input
-        if not isinstance(node_graphic_walker, GraphicWalkerInput):
-            logger.warning(f"NodeExploreData is not an instance of GraphicWalkerInput. ")
-        _needs_run = node_step.needs_run(False)
-        if _needs_run:
-            raw_fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
-            data_model = DataModel(data=[], fields=raw_fields)
-            node_graphic_walker.is_setup = False
-        else:
-            data_model = get_initial_gf_data_from_ff(node_step.get_resulting_data())
-            node_graphic_walker.is_setup = True
-        if node_graphic_walker.graphic_walker_input.is_initial:
-            node_graphic_walker.graphic_walker_input = GraphicWalkerInput(is_initial=True, data_model=data_model)
-        else:
-            node_graphic_walker.graphic_walker_input.data_model = data_model
-        node_graphic_walker.is_setup = True
-        return node_graphic_walker
-
-    @staticmethod
     def process_graphic_walker_input(node_step: NodeStep) -> NodeExploreData:
         node_explore_data: NodeExploreData = node_step.setting_input
         if hasattr(node_explore_data, 'graphic_walker_input'):

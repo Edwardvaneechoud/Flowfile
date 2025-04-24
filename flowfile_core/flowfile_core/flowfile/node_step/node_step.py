@@ -23,7 +23,7 @@ class NodeStep:
     parent_uuid: str
     node_type: str
     node_template: node_interface.NodeTemplate
-    node_default: node_interface.node_defaults
+    node_default: schemas.NodeDefault
     node_schema: NodeSchemaInformation
     node_inputs: NodeStepInputs
     node_stats: NodeStepStats
