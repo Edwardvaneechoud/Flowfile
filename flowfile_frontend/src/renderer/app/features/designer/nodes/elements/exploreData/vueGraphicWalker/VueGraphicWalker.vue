@@ -8,7 +8,12 @@ type ILocalVizAppProps = IVizAppProps & ILocalComputationProps;
 const props = defineProps<ILocalVizAppProps>();
 const container = ref<HTMLElement | null>(null);
 
-function waitForMethodToBeAvailable(timeout = 10000) {
+// Create a safe copy of data that can be properly cloned by the worker
+function makeSafeForWorker<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
+
+function waitForMethodToBeAvailable(timeout = 10000): Promise<void> {
   if (props.storeRef?.current) {
     return Promise.resolve();
   }
@@ -37,17 +42,50 @@ function waitForMethodToBeAvailable(timeout = 10000) {
   });
 }
 
-async function renderGW() {
-  embedGraphicWalker(container.value, {
-    ...props,
-    fields: toRaw(props.fields),
-    data: toRaw(props.data),
-  });
-  if (props.storeRef) {
-    await waitForMethodToBeAvailable();
+// Import chart data safely, handling any serialization issues
+function safeImportCode<T>(chart: T): boolean {
+  try {
+    // Make a clone that's safe for the worker
+    const safeChart = makeSafeForWorker(chart);
+    if (props.storeRef?.current) {
+      props.storeRef.current.importCode(safeChart);
+      return true;
+    } else {
+      console.error("Store reference is not available");
+      return false;
+    }
+  } catch (error) {
+    console.error("Error importing chart:", error);
+    return false;
   }
-  if (props.chart && props.storeRef?.current) {
-    props.storeRef.current.importCode(props.chart);
+}
+
+async function renderGW(): Promise<void> {
+  try {
+    if (!container.value) {
+      console.error("Container element is not available");
+      return;
+    }
+    
+    // Create safe copies of the data and fields
+    const safeFields = makeSafeForWorker(toRaw(props.fields || []));
+    const safeData = makeSafeForWorker(toRaw(props.data || []));
+    
+    embedGraphicWalker(container.value, {
+      ...props,
+      fields: safeFields,
+      data: safeData,
+    });
+    
+    if (props.storeRef) {
+      await waitForMethodToBeAvailable();
+    }
+    
+    if (props.chart && props.storeRef?.current) {
+      safeImportCode(props.chart);
+    }
+  } catch (error) {
+    console.error("Error in renderGW:", error);
   }
 }
 
@@ -57,10 +95,11 @@ onMounted(async () => {
 
 defineExpose({
   waitForMethodToBeAvailable,
+  safeImportCode, // Expose the safe import method for external use
 });
 
 onBeforeUpdate(async () => {
-  renderGW();
+  await renderGW();
 });
 </script>
 

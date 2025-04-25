@@ -507,6 +507,7 @@ export const useNodeStore = defineStore('node', {
         const node = this.vueFlowInstance?.findNode(String(this.node_id)) as Node
         inputData.value.pos_x = node.position.x
         inputData.value.pos_y = node.position.y
+        console.log("updating settings")
         const response = await axios.post('/update_settings/', inputData.value, {
           params: {
             node_type: node.data.component.__name,
