@@ -1,179 +1,235 @@
+// exploreData.vue
+
 <script lang="ts" setup>
-import { nextTick, ref, toRaw } from "vue";
+import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import {
-  GraphicWalkerInput,
-  NodeGraphicWalker,
-  IRow,
-  IMutField,
-  IChart,
-} from "./vueGraphicWalker/interfaces";
+import type { IRow, IMutField, IChart } from "@kanaries/graphic-walker/dist/interfaces";
+// Ensure this path points to the VueGraphicWalker component
+// that internally manages the storeRef
 import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
-import {
-  useGraphicWalkerStore,
-  resetGraphicWalkerStore,
-} from "./vueGraphicWalker/GraphicWalkerStore"; // Adjust the path to where your global store is defined
+import type { NodeGraphicWalker, GraphicWalkerInput } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
 import { useNodeStore } from "../../../../../stores/column-store";
-const nodeGraphicWalker = ref<null | NodeGraphicWalker>(null);
-const graphicWalkerInput = ref<null | GraphicWalkerInput>(null);
-const dataLoaded = ref(false);
-const chartList = ref<IChart[]>([]);
+import { Console } from "console";
+
+// --- Component State Refs ---
+const isLoading = ref(false);
+const nodeData = ref<NodeGraphicWalker | null>(null);
+const chartList = ref<IChart[]>([]); // Holds initial spec list
 const data = ref<IRow[]>([]);
 const fields = ref<IMutField[]>([]);
+const errorMessage = ref<string | null>(null);
 const nodeStore = useNodeStore();
-const graphicWalkerStore = useGraphicWalkerStore();
 const globalNodeId = ref(-1);
-const testMode = ref(false);
-const flowHasRun = ref(false);
+const testMode = ref(true); // Button will be visible
 
+const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
-interface GraphicWalkerRef {
-  waitForMethodToBeAvailable: (timeout?: number) => Promise<void>;
-}
+const canDisplayVisualization = computed(() => {
+  return !isLoading.value && !errorMessage.value;
+});
 
-const graphicWalkerRef = ref<GraphicWalkerRef | null>(null);
-
-const loadData = (graphicWalkerData: GraphicWalkerInput) => {
-  fields.value = graphicWalkerData.dataModel.fields;
-  data.value = graphicWalkerData.dataModel.data;
-  chartList.value = graphicWalkerData.specList;
-};
-
+// --- Data Loading Logic ---
 const loadNodeData = async (nodeId: number) => {
-  dataLoaded.value = false;
-  flowHasRun.value = true;
+  isLoading.value = true;
+  errorMessage.value = null;
   globalNodeId.value = nodeId;
-    try {
-      nodeGraphicWalker.value = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
-    } catch (error: any) {
-      console.error("Error loading GraphicWalker data:", error);
+  nodeData.value = null;
+  data.value = [];
+  fields.value = [];
+  chartList.value = [];
 
-      if (error.response && error.response.status === 422) {
-        flowHasRun.value = false;
-        return
+  try {
+    if (!nodeStore.flow_id) {
+      throw new Error("Flow ID is missing in nodeStore.");
     }
-  }
-  if (!nodeGraphicWalker.value) {
-  return
-  }
-  console.log(nodeGraphicWalker.value.graphic_walker_input);
-  flowHasRun.value = true;
-  graphicWalkerInput.value = nodeGraphicWalker.value.graphic_walker_input;
-  loadData(graphicWalkerInput.value);
-  dataLoaded.value = true;
-  await nextTick();
-  await graphicWalkerRef.value?.waitForMethodToBeAvailable();
-  
-  console.log("method available");
-  await nextTick();
-
-  if (graphicWalkerInput.value.specList && graphicWalkerStore.current) {
-    console.log("charlist.value", chartList.value)
-    const rawChartList = toRaw(chartList.value);
-    // const specToImport = JSON.parse(JSON.stringify(rawChartList));
-    // graphicWalkerStore.current.importCode(specToImport);
-    console.log("specList found and imported");
-  } else {
-    console.log("No specList found");
+    const fetchedNodeData = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
+    if (!fetchedNodeData?.graphic_walker_input) {
+      throw new Error("Received invalid data structure from backend.");
+    }
+    nodeData.value = fetchedNodeData;
+    const inputData = fetchedNodeData.graphic_walker_input;
+    fields.value = inputData.dataModel?.fields || [];
+    data.value = inputData.dataModel?.data || [];
+    chartList.value = inputData.specList || [];
+  } catch (error: any) {
+    console.error("Error loading GraphicWalker data:", error);
+    if (error.response && error.response.status === 422) {
+      errorMessage.value = "The analysis flow has not been run yet. Please run the flow.";
+    } else if (error instanceof Error) {
+       errorMessage.value = `Failed to load data: ${error.message}`;
+    } else {
+       errorMessage.value = "An unknown error occurred while loading data.";
+    }
+  } finally {
+    isLoading.value = false;
   }
 };
 
-const action = () => {
-  if (graphicWalkerStore.current) {
-    console.log(graphicWalkerStore.current.exportCode());
+// --- Step 1: Get and Parse Current Spec ---
+const getCurrentSpec = async (): Promise<IChart[] | null> => {
+  if (!vueGraphicWalkerRef.value) {
+    console.error("Cannot get spec: GraphicWalker component reference is missing.");
+    errorMessage.value = "Cannot get spec: Component reference missing.";
+    return null;
+  }
+
+  try {
+    // Call the exportCode method exposed by the child VueGraphicWalker component
+    const exportResult = vueGraphicWalkerRef.value.exportCode();
+    // Log the raw result for debugging
+    console.log('exportResult from child component:', exportResult);
+
+    if (exportResult === null) {
+      console.error("Failed to export chart specification (method returned null).");
+      errorMessage.value = "Failed to retrieve current chart configuration.";
+      return null;
+    }
+
+    // Process the result (could be async generator or array)
+    let exportedCharts: IChart[] = [];
+    if (exportResult && typeof exportResult[Symbol.asyncIterator] === 'function') {
+      console.log("Handling async generator from exportCode...");
+      for await (const chart of exportResult) {
+        if (chart) exportedCharts.push(chart);
+      }
+    } else if (Array.isArray(exportResult)) {
+      console.log("Handling direct array from exportCode...");
+      exportedCharts = exportResult;
+    } else {
+      // Handle potential case where it's neither (though null check above should catch most failures)
+      console.error("Unexpected return type from exportCode:", exportResult);
+      throw new Error(`Unexpected return type from exportCode: ${typeof exportResult}`);
+    }
+
+    if (exportedCharts.length === 0) {
+      console.log("No charts were exported from Graphic Walker.");
+      return []; // Return empty array if nothing was exported
+    }
+
+    // Deep clone and return the parsed specs
+    const parsedSpecs = JSON.parse(JSON.stringify(exportedCharts));
+    console.log("Successfully retrieved and parsed spec:", parsedSpecs); // Log the final result
+    return parsedSpecs;
+
+  } catch (error: any) {
+    console.error("Error getting or parsing GraphicWalker spec:", error);
+    errorMessage.value = `Failed to process configuration: ${error.message || 'Unknown error'}`;
+    return null;
   }
 };
 
+// --- Step 2: Save Spec to Node Store ---
+const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
+  if (!nodeData.value) {
+    console.error("Cannot save: Original node data is missing.");
+    errorMessage.value = "Cannot save: Missing original node data.";
+    return false; // Indicate failure
+  }
+
+  try {
+    const saveData: NodeGraphicWalker = {
+        ...nodeData.value,
+        graphic_walker_input: {
+            ...nodeData.value.graphic_walker_input,
+            specList: specsToSave, // Use the passed specs
+            dataModel: { data: [], fields: [] } // Clear data/fields
+        }
+    };
+    console.log('saveData', saveData)
+    nodeStore.node_id = globalNodeId.value;
+    await nodeStore.updateSettingsDirectly(saveData);
+    console.log("Node settings updated successfully.");
+    return true; // Indicate success
+
+  } catch (error: any) {
+    console.error("Error saving spec to node store:", error);
+    errorMessage.value = `Failed to save configuration: ${error.message || 'Unknown error'}`;
+    return false; // Indicate failure
+  }
+};
+
+// --- Orchestrator Function (Not directly called by button in this version) ---
 const pushNodeData = async () => {
-  console.log("pushNodeData");
-  if (nodeGraphicWalker.value && graphicWalkerStore.current) {
-    const d = toRaw(graphicWalkerStore.current.exportCode()[0]);
-    console.log("pushing data", d);
-    nodeGraphicWalker.value.graphic_walker_input.specList = JSON.parse(JSON.stringify([d]));
-    nodeGraphicWalker.value.graphic_walker_input.dataModel.data = [];
-    nodeGraphicWalker.value.graphic_walker_input.dataModel.fields = [];
-  }
-  nodeStore.node_id = globalNodeId.value;
-  console.log("nodeStore.node_id", nodeStore.node_id);
-  await nodeStore.updateSettings(nodeGraphicWalker);
-  nextTick();
-  resetGraphicWalkerStore();
+    errorMessage.value = null;
+    const currentSpec = await getCurrentSpec(); // Still useful internally or if button changes back
+    console.log(currentSpec)
+    if (currentSpec !== null) {
+        // if (currentSpec.length > 0) {
+            const saveSuccess = await saveSpecToNodeStore(currentSpec);
+            if (saveSuccess) console.log("Save process completed successfully.");
+            else console.log("Save process failed.");
+        // } else { console.log("No spec content exported, skipping save."); }
+    } else {
+         console.log("Spec retrieval failed, skipping save.");
+    }
 };
+
+
+// --- Expose methods for external use ---
 defineExpose({
   loadNodeData,
   pushNodeData,
+  getCurrentSpec,
+  saveSpecToNodeStore
 });
+
 </script>
 
 <template>
-  <button v-if="testMode" @click="action">Export</button>
-  
-    <!-- Data loaded scenario -->
-    <div v-if="dataLoaded">
-    <VueGraphicWalker
-      ref="graphicWalkerRef"
-      appearance="light"
-      :store-ref="graphicWalkerStore"
-      :data="data"
-      :fields="fields"
-    />
-  </div>
+  <div class="explore-data-container">
+    <button v-if="testMode" @click="getCurrentSpec" :disabled="isLoading">Test Get Current Spec</button>
 
-  <!-- No flow run scenario -->
-  <div v-else-if="!flowHasRun" class="flow-not-run">
-    <div class="warning-container">
-      <svg class="warning-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-        <line x1="12" y1="9" x2="12" y2="13"></line>
-        <line x1="12" y1="17" x2="12.01" y2="17"></line>
-      </svg>
-      <div class="warning-message">
-        <h3>Flow has not been run</h3>
-        <p>This node needs to be run before visualization can be displayed.</p>
-      </div>
+    <CodeLoader v-if="isLoading" />
+
+    <div v-else-if="errorMessage" class="error-display">
+       <p>⚠️ Error: {{ errorMessage }}</p>
     </div>
-  </div>
-  
 
-  
-  <!-- Loading scenario -->
-  <CodeLoader v-else />
+    <div v-else-if="canDisplayVisualization" class="graphic-walker-wrapper">
+       <VueGraphicWalker
+          v-if="data.length > 0 && fields.length > 0"
+          ref="vueGraphicWalkerRef"
+          appearance="light"
+          :data="data"
+          :fields="fields"
+          :specList="chartList"
+          />
+       <div v-else class="empty-data-message">
+           Data loaded successfully, but the dataset appears to be empty or lacks fields.
+       </div>
+    </div>
+
+     <div v-else class="fallback-message">
+       Please load data for the node.
+     </div>
+  </div>
 </template>
 
 <style scoped>
-.flow-not-run {
-  display: flex;
-  justify-content: center;
-  align-items: center;
+.explore-data-container {
   height: 100%;
-  padding: 2rem;
-}
-
-.warning-container {
   display: flex;
-  align-items: flex-start;
-  background-color: #FFF9E6;
-  border: 1px solid #FFE58F;
+  flex-direction: column;
+}
+
+.graphic-walker-wrapper {
+    flex-grow: 1;
+    min-height: 300px;
+}
+
+.error-display {
+  padding: 1rem;
+  color: red;
+  border: 1px solid red;
+  background-color: #ffebeb;
+  margin: 1rem;
   border-radius: 4px;
-  padding: 1.5rem;
-  max-width: 500px;
 }
 
-.warning-icon {
-  color: #FAAD14;
-  margin-right: 1rem;
-  flex-shrink: 0;
+.empty-data-message, .fallback-message {
+    padding: 1rem;
+    text-align: center;
+    color: grey;
 }
-
-.warning-message {
-  color: #5F5F5F;
-}
-
-.warning-message h3 {
-  margin-top: 0;
-  margin-bottom: 0.5rem;
-  color: #262626;
-}
-
 </style>

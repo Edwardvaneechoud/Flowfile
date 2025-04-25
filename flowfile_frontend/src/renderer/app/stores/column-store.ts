@@ -502,12 +502,41 @@ export const useNodeStore = defineStore('node', {
       }
     },
 
+    async updateSettingsDirectly(inputData: any): Promise<any> {
+      try {
+        const node = this.vueFlowInstance?.findNode(String(this.node_id)) as Node
+
+        inputData.pos_x = node.position.x
+        inputData.pos_y = node.position.y
+        console.log("updating settings")
+        console.log('node', node)
+        const response = await axios.post('/update_settings/', inputData, {
+          params: {
+            node_type: node.data.component.__name,
+          },
+        }
+        )
+        const downstreamNodeIds = await loadDownstreamNodeIds(this.flow_id, inputData.node_id)
+        downstreamNodeIds.map((nodeId) => {
+          this.validateNode(nodeId)
+        }
+        )
+
+        return response.data;
+      } catch (error: any) {
+        console.error('Error updating settings:', error.response?.data)
+        throw error
+      }
+    },
+
     async updateSettings(inputData: any): Promise<any> {
       try {
         const node = this.vueFlowInstance?.findNode(String(this.node_id)) as Node
+
         inputData.value.pos_x = node.position.x
         inputData.value.pos_y = node.position.y
         console.log("updating settings")
+        console.log('node', node)
         const response = await axios.post('/update_settings/', inputData.value, {
           params: {
             node_type: node.data.component.__name,

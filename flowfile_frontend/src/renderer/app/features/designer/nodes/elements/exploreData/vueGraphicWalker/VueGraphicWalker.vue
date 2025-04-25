@@ -1,110 +1,105 @@
 <script setup lang="ts">
-import { ref, onMounted, defineProps, onBeforeUpdate, watch, toRaw } from "vue";
-import { embedGraphicWalker } from "@kanaries/graphic-walker";
-import type { IVizAppProps, ILocalComputationProps } from "@kanaries/graphic-walker";
+import { ref, onMounted, onUnmounted, defineProps, watch, toRaw } from "vue";
+import React from "react";
+import ReactDOMClient from "react-dom/client";
+import { GraphicWalker, ILocalVizAppProps } from "@kanaries/graphic-walker";
+import type {
+  IRow,
+  IMutField,
+  IChart,
+  IGWProps
+} from "@kanaries/graphic-walker/dist/interfaces";
 
-type ILocalVizAppProps = IVizAppProps & ILocalComputationProps;
+import type {
+  VizSpecStore
+} from "@kanaries/graphic-walker/dist/store/visualSpecStore"
 
-const props = defineProps<ILocalVizAppProps>();
+interface VueGWProps {
+  data?: IRow[];
+  fields?: IMutField[];
+  specList?: IChart[];
+  appearance?: IGWProps['appearance'];
+  themeKey?: IGWProps['themeKey'];
+}
+
+const props = defineProps<VueGWProps>();
+
 const container = ref<HTMLElement | null>(null);
+const reactRoot = ref<ReactDOMClient.Root | null>(null);
+const internalStoreRef = ref<{ current: VizSpecStore | null }>({ current: null });
 
-// Create a safe copy of data that can be properly cloned by the worker
-function makeSafeForWorker<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj)) as T;
-}
+const getReactProps = (): any => {
+  const chartSpecArray = props.specList ? toRaw(props.specList) : [];
 
-function waitForMethodToBeAvailable(timeout = 10000): Promise<void> {
-  if (props.storeRef?.current) {
-    return Promise.resolve();
-  }
-  console.log("Waiting for method to be available.");
-  return new Promise<void>((resolve, reject) => {
-    const unwatch = watch(
-      () => props.storeRef?.current && props.storeRef.current.importCode,
-      (newVal) => {
-        if (typeof newVal === "function") {
-          console.log("Method available.");
-          unwatch();
-          clearTimeout(timeoutId); // Clear the timeout
-          resolve();
-        }
-      },
-      {
-        immediate: true,
-      },
-    );
+  const reactProps: ILocalVizAppProps = {
+    data: props.data ? toRaw(props.data) : undefined,
+    fields: props.fields ? toRaw(props.fields) : undefined,
+    chart: chartSpecArray,
+    appearance: props.appearance || 'light',
+    themeKey: props.themeKey,
+    storeRef: internalStoreRef.value as unknown as React.MutableRefObject<VizSpecStore | null> | undefined,
+  };
 
-    const timeoutId = setTimeout(() => {
-      console.log("Timeout reached without finding importCode method.");
-      unwatch(); // Ensure to clean up even in the timeout case
-      reject(new Error("Timeout waiting for importCode method to be available."));
-    }, timeout);
+  Object.keys(reactProps).forEach(key => {
+    if (reactProps[key as keyof ILocalVizAppProps] === undefined) {
+      delete reactProps[key as keyof ILocalVizAppProps];
+    }
   });
-}
 
-// Import chart data safely, handling any serialization issues
-function safeImportCode<T>(chart: T): boolean {
-  try {
-    // Make a clone that's safe for the worker
-    const safeChart = makeSafeForWorker(chart);
-    if (props.storeRef?.current) {
-      props.storeRef.current.importCode(safeChart);
-      return true;
-    } else {
-      console.error("Store reference is not available");
-      return false;
+  return reactProps;
+};
+
+onMounted(() => {
+  if (container.value) {
+    try {
+      reactRoot.value = ReactDOMClient.createRoot(container.value);
+      reactRoot.value.render(React.createElement(GraphicWalker, getReactProps()));
+    } catch (e) {
+      console.error("[VueGW] Error mounting GraphicWalker:", e);
     }
-  } catch (error) {
-    console.error("Error importing chart:", error);
-    return false;
+  } else {
+    console.error("[VueGW] Container element not found for mounting.");
   }
-}
-
-async function renderGW(): Promise<void> {
-  try {
-    if (!container.value) {
-      console.error("Container element is not available");
-      return;
-    }
-    
-    // Create safe copies of the data and fields
-    const safeFields = makeSafeForWorker(toRaw(props.fields || []));
-    const safeData = makeSafeForWorker(toRaw(props.data || []));
-    
-    embedGraphicWalker(container.value, {
-      ...props,
-      fields: safeFields,
-      data: safeData,
-    });
-    
-    if (props.storeRef) {
-      await waitForMethodToBeAvailable();
-    }
-    
-    if (props.chart && props.storeRef?.current) {
-      safeImportCode(props.chart);
-    }
-  } catch (error) {
-    console.error("Error in renderGW:", error);
-  }
-}
-
-onMounted(async () => {
-  await renderGW();
 });
+
+onUnmounted(() => {
+  if (reactRoot.value) {
+    reactRoot.value.unmount();
+  }
+});
+
+watch(
+  [() => props.data, () => props.fields, () => props.specList, () => props.appearance, () => props.themeKey],
+  (newValues, oldValues) => {
+    if (!reactRoot.value || !container.value) return;
+    if (newValues.some((val, i) => val !== oldValues[i])) {
+      reactRoot.value.render(React.createElement(GraphicWalker, getReactProps()));
+    }
+  }
+);
+
+const exportCode = () => {
+  const storeInstance = internalStoreRef.value?.current;
+ if (storeInstance && typeof storeInstance.exportCode === 'function') {
+    console.log("exporting the code")
+    return storeInstance.exportCode();
+  }
+  else {
+    console.error("[VueGW] exportCode/exportChartList method not available on internal store instance:", storeInstance);
+    return null;
+  }
+}
 
 defineExpose({
-  waitForMethodToBeAvailable,
-  safeImportCode, // Expose the safe import method for external use
+  exportCode
 });
 
-onBeforeUpdate(async () => {
-  await renderGW();
-});
 </script>
 
 <template>
   <div ref="container"></div>
 </template>
 
-<style scoped></style>
+<style scoped>
+/* Add component-specific styles here if needed */
+</style>

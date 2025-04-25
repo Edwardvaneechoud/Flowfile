@@ -1,7 +1,7 @@
 import { reactive, ref } from 'vue'
 import { VizSpecStore } from '@kanaries/graphic-walker'
 
-interface IGlobalStore {
+export interface IGlobalStore {
   current: VizSpecStore | null // Allow for nullable values to prevent TypeScript errors
 }
 
