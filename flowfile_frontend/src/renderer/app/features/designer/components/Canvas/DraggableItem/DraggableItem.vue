@@ -498,6 +498,14 @@ const registerClick = () => {
   itemStore.clickOnItem(props.id);
 };
 
+const setFullScreen = (makeFull: boolean) => {
+  // Only toggle if the state needs changing
+  if (itemState.value.fullScreen !== makeFull) {
+    toggleFullScreen();
+  }
+};
+
+
 onMounted(() => {
   if (!itemStore.items[props.id]) {
     itemStore.setItemState(props.id, {
@@ -559,6 +567,7 @@ defineExpose({
   moveToTop,
   setHeight: (value: number) => (itemState.value.height = value),
   setWitdh: (value: number) => (itemState.value.width = value),
+  setFullScreen,
 });
 </script>
 

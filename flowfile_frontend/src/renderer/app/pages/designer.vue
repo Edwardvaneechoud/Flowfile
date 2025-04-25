@@ -36,7 +36,7 @@
       </el-button>
     </div>
   </div>
-  <CanvasFlow
+  <canvas-flow
     v-else
     ref="canvasFlow"
     class="canvas"

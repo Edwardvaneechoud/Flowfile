@@ -32,13 +32,16 @@ const getReactProps = (): any => {
   const chartSpecArray = props.specList ? toRaw(props.specList) : [];
 
   const reactProps: ILocalVizAppProps = {
+    // Base props that are always included
     data: props.data ? toRaw(props.data) : undefined,
     fields: props.fields ? toRaw(props.fields) : undefined,
-    chart: chartSpecArray,
     appearance: props.appearance || 'light',
     themeKey: props.themeKey,
-    storeRef: internalStoreRef.value as unknown as React.MutableRefObject<VizSpecStore | null> | undefined,
+    storeRef: internalStoreRef.value as unknown as React.RefObject<VizSpecStore | null> | undefined,
+    ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
   };
+
+
 
   Object.keys(reactProps).forEach(key => {
     if (reactProps[key as keyof ILocalVizAppProps] === undefined) {
@@ -50,10 +53,13 @@ const getReactProps = (): any => {
 };
 
 onMounted(() => {
+  console.log('props', props)
   if (container.value) {
     try {
       reactRoot.value = ReactDOMClient.createRoot(container.value);
-      reactRoot.value.render(React.createElement(GraphicWalker, getReactProps()));
+      let  r =  getReactProps()
+      console.log(r)
+      reactRoot.value.render(React.createElement(GraphicWalker, r));
     } catch (e) {
       console.error("[VueGW] Error mounting GraphicWalker:", e);
     }
@@ -78,18 +84,27 @@ watch(
   }
 );
 
-const exportCode = () => {
-  const storeInstance = internalStoreRef.value?.current;
- if (storeInstance && typeof storeInstance.exportCode === 'function') {
-    console.log("exporting the code")
-    return storeInstance.exportCode();
-  }
-  else {
-    console.error("[VueGW] exportCode/exportChartList method not available on internal store instance:", storeInstance);
-    return null;
-  }
-}
+const exportCode = async (): Promise<IChart[] | null> => { // Now returns Promise
+    console.log("[VueGW] exportCode exposed method called.");
+    const storeInstance = internalStoreRef.value?.current;
+    console.log("[VueGW] Accessing internalStoreRef.current:", storeInstance);
 
+    try {
+        if (storeInstance && typeof storeInstance.exportCode === 'function') {
+            console.log("[VueGW] Found exportCode. Calling function...");
+            const result = storeInstance.exportCode() ?? [];
+             console.log("[VueGW] exportCode call finished. Result:", result);
+            return result; 
+
+        } else {
+            console.error("[VueGW] exportCode/exportChartList method not available on internal store instance:", storeInstance);
+            return null; 
+        }
+    } catch (error) {
+         console.error("[VueGW] Error during exportCode execution:", error);
+         return null;
+    }
+}
 defineExpose({
   exportCode
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits } from "vue";
+import { ref, markRaw, onMounted, onUnmounted, defineExpose, nextTick, defineEmits, watch } from "vue";
 import {
   VueFlow,
   NodeTypesObject,
@@ -49,6 +49,8 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
+const draggableItemRefs = ref<Record<string, InstanceType<typeof DraggableItem>>>({});
+
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -113,6 +115,7 @@ const loadFlow = async () => {
 };
 
 const selectNodeExternally = (nodeId: number) => {
+  
   showTablePreview.value = true;
 
   setNodeTableView(nodeId);
@@ -244,6 +247,39 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   }
 };
 
+const setDraggableRef = (el: InstanceType<typeof DraggableItem> | null, id: string) => {
+  if (el) {
+    draggableItemRefs.value[id] = el;
+  } else {
+    if (draggableItemRefs.value[id]) {
+      delete draggableItemRefs.value[id];
+    }
+  }
+};
+
+watch(() => nodeStore.fullScreenRequestTarget, (newTargetId, oldTargetId) => {
+  console.log(`Watcher: fullScreenRequestTarget changed from ${oldTargetId} to ${newTargetId}`);
+  if (newTargetId === 'nodeSettings') {
+    const itemRef = draggableItemRefs.value['nodeSettings'];
+    if (itemRef && typeof itemRef.setFullScreen === 'function') {
+      itemRef.setFullScreen(true);
+    } else {
+       nextTick(() => {
+           const itemRefRetry = draggableItemRefs.value['nodeSettings'];
+            if (itemRefRetry && typeof itemRefRetry.setFullScreen === 'function') {
+                itemRefRetry.setFullScreen(true);
+            } else {
+                 console.warn(`DraggableItem ref for '${newTargetId}' not found on retry.`);
+            }
+       });
+    }
+  }
+});
+
+const minimizeNodeSettings = () => {
+  nodeStore.closeDrawer();
+};
+
 const handleKeyDown = (event: KeyboardEvent) => {
   let eventKeyClicked = event.ctrlKey || event.metaKey;
   if (eventKeyClicked && event.key === "v" && event.target) {
@@ -305,6 +341,7 @@ defineExpose({
 <template>
   <div class="container">
     <main ref="mainContainerRef" @drop="handleDrop" @dragover="onDragOver">
+      {{ nodeStore.isDrawerOpen }}
       <VueFlow
         ref="vueFlow"
         :nodes="nodes"
@@ -379,6 +416,7 @@ defineExpose({
       <data-preview ref="dataPreview"> text </data-preview>
     </draggable-item>
     <draggable-item
+      :ref="(el) => setDraggableRef(el as InstanceType<typeof DraggableItem> | null, 'nodeSettings')"
       v-if="nodeStore.isDrawerOpen"
       id="nodeSettings"
       :show-right="true"
@@ -387,7 +425,7 @@ defineExpose({
       :initial-width="800"
       :initial-height="nodeSettingsHeight"
       title="Node Settings"
-      :on-minize="nodeStore.closeDrawer"
+      :on-minize="minimizeNodeSettings"
       :allow-full-screen="true"
     >
       <div id="nodesettings" class="content"></div>
