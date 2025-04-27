@@ -578,6 +578,7 @@ def test_add_database_input():
     r = client.post("/update_settings/", json=node_database_reader.model_dump(),
                     params={"node_type": "database_reader"})
     assert r.status_code == 200, 'Settings not added'
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = 'Development'
     flow_file_handler.get_flow(flow_id).run_graph()
     assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), 'Node should not need to run'
 
