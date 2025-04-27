@@ -31,15 +31,15 @@ const loadNodeData = async (nodeId: number) => {
 
   try {
     const fetchedNodeData = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
-    if (!fetchedNodeData?.graphic_walker_input) throw new Error("Received invalid data structure from backend.");
+    if (!fetchedNodeData?.graphic_walker_input)
+      throw new Error("Received invalid data structure from backend.");
 
     nodeData.value = fetchedNodeData;
     const inputData = fetchedNodeData.graphic_walker_input;
     fields.value = inputData.dataModel?.fields || [];
     data.value = inputData.dataModel?.data || [];
     chartList.value = inputData.specList || [];
-    console.log('fetchedNodeData', fetchedNodeData)
-
+    console.log("fetchedNodeData", fetchedNodeData);
   } catch (error: any) {
     console.error("Error loading GraphicWalker data:", error);
     // Set user-friendly error message
@@ -77,17 +77,13 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
     }
 
     return exportedCharts;
-
-
-
   } catch (error: any) {
     // Catch errors calling the exposed method or during processing
     console.error("Error calling getCurrentSpec or processing result:", error);
-    errorMessage.value = `Failed to process configuration: ${error.message || 'Unknown error'}`;
+    errorMessage.value = `Failed to process configuration: ${error.message || "Unknown error"}`;
     return null;
   }
 };
-
 
 // --- Save Spec Back to Store ---
 const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
@@ -102,43 +98,42 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
       graphic_walker_input: {
         ...nodeData.value.graphic_walker_input,
         specList: specsToSave,
-        dataModel: { data: [], fields: [] }
-      }
+        dataModel: { data: [], fields: [] },
+      },
     };
 
     nodeStore.node_id = globalNodeId.value;
     await nodeStore.updateSettingsDirectly(saveData);
     console.log("Node settings updated successfully.");
     return true;
-
   } catch (error: any) {
     console.error("Error saving spec to node store:", error);
-    errorMessage.value = `Failed to save configuration: ${error.message || 'Unknown error'}`;
+    errorMessage.value = `Failed to save configuration: ${error.message || "Unknown error"}`;
     return false;
   }
 };
 
 const pushNodeData = async () => {
-    errorMessage.value = null; // Clear previous errors
-    const currentSpec = await getCurrentSpec();
+  errorMessage.value = null; // Clear previous errors
+  const currentSpec = await getCurrentSpec();
 
-    if (currentSpec === null) {
-         console.log("Spec retrieval failed, skipping save.");
-         return;
-    }
+  if (currentSpec === null) {
+    console.log("Spec retrieval failed, skipping save.");
+    return;
+  }
 
-    // Decide whether to save empty specs or not
-    if (currentSpec.length === 0) {
-        console.log("No chart configurations exported, skipping save.");
-        return;
-    }
-    const saveSuccess = await saveSpecToNodeStore(currentSpec);
-    if (saveSuccess) {
-        console.log("Save process completed successfully.");
-    } else {
-        console.log("Save process failed.");
-    }
-    nodeStore.isDrawerOpen = false
+  // Decide whether to save empty specs or not
+  if (currentSpec.length === 0) {
+    console.log("No chart configurations exported, skipping save.");
+    return;
+  }
+  const saveSuccess = await saveSpecToNodeStore(currentSpec);
+  if (saveSuccess) {
+    console.log("Save process completed successfully.");
+  } else {
+    console.log("Save process failed.");
+  }
+  nodeStore.isDrawerOpen = false;
 };
 
 // --- Expose Methods ---
@@ -146,7 +141,6 @@ defineExpose({
   loadNodeData,
   pushNodeData, // Expose the main save action
 });
-
 </script>
 
 <template>
@@ -154,26 +148,24 @@ defineExpose({
     <CodeLoader v-if="isLoading" />
 
     <div v-else-if="errorMessage" class="error-display">
-       <p>⚠️ Error: {{ errorMessage }}</p>
+      <p>⚠️ Error: {{ errorMessage }}</p>
     </div>
 
     <div v-else-if="canDisplayVisualization" class="graphic-walker-wrapper">
-       <VueGraphicWalker
-          v-if="data.length > 0 && fields.length > 0"
-          ref="vueGraphicWalkerRef"
-          appearance="light"
-          :data="data"
-          :fields="fields"
-          :specList="chartList"
-       />
-       <div v-else class="empty-data-message">
-           Data loaded, but the dataset appears to be empty or lacks defined fields.
-       </div>
+      <VueGraphicWalker
+        v-if="data.length > 0 && fields.length > 0"
+        ref="vueGraphicWalkerRef"
+        appearance="light"
+        :data="data"
+        :fields="fields"
+        :spec-list="chartList"
+      />
+      <div v-else class="empty-data-message">
+        Data loaded, but the dataset appears to be empty or lacks defined fields.
+      </div>
     </div>
 
-     <div v-else class="fallback-message">
-       Please load data for the node.
-     </div>
+    <div v-else class="fallback-message">Please load data for the node.</div>
   </div>
 </template>
 
@@ -184,13 +176,13 @@ defineExpose({
   flex-direction: column;
 }
 .graphic-walker-wrapper {
-    flex-grow: 1; /* Allow wrapper to fill space */
-    min-height: 300px; /* Ensure minimum size */
-    overflow: hidden; /* Prevent content spillover if needed */
+  flex-grow: 1; /* Allow wrapper to fill space */
+  min-height: 300px; /* Ensure minimum size */
+  overflow: hidden; /* Prevent content spillover if needed */
 }
 /* Ensure the child fills the wrapper if necessary */
 :deep(.graphic-walker-wrapper > div) {
-    height: 100%;
+  height: 100%;
 }
 .error-display {
   padding: 1rem;
@@ -200,19 +192,20 @@ defineExpose({
   margin: 1rem;
   border-radius: 4px;
 }
-.empty-data-message, .fallback-message {
-    padding: 1rem;
-    text-align: center;
-    color: #777; /* Grey */
+.empty-data-message,
+.fallback-message {
+  padding: 1rem;
+  text-align: center;
+  color: #777; /* Grey */
 }
 /* Add styles for the button if needed */
 button {
-    margin: 0.5rem 1rem;
-    padding: 0.5rem 1rem;
-    cursor: pointer;
+  margin: 0.5rem 1rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
 }
 button:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>
