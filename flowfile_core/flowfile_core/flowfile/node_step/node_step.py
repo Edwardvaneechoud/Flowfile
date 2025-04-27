@@ -284,17 +284,21 @@ class NodeStep:
             if s.column_name == col_name:
                 return s
 
-    def get_predicted_schema(self):
+    def get_predicted_schema(self, force: bool = False):
         """
         Method to get a predicted schema based on the columns that are dropped and added
         :return:
         """
-        if self.node_schema.predicted_schema is not None:
+        if self.node_schema.predicted_schema is not None and not force:
             return self.node_schema.predicted_schema
-        if self.schema_callback is not None and self.node_schema.predicted_schema is None:
+        if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
             self.print('Getting the data from a schema callback')
+            if force:
+                # Force the schema callback to reset, so that it will be executed again
+                self.schema_callback.reset()
             schema = self.schema_callback()
             if schema is not None:
+                self.print('Calculating the schema based on the schema callback')
                 self.node_schema.predicted_schema = schema
                 return self.node_schema.predicted_schema
         predicted_data = self._predicted_data_getter()
@@ -589,6 +593,8 @@ class NodeStep:
             logger.info(f'{self.node_id}: Node needs reset')
             self.node_stats.has_run = False
             self.results.reset()
+            if self.schema_callback:
+                self.schema_callback.reset()
             self.node_schema.result_schema = None
             self.node_schema.predicted_schema = None
             self._hash = None

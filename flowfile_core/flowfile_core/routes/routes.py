@@ -21,8 +21,8 @@ from flowfile_core.fileExplorer.funcs import (
     FileInfo,
     get_files_from_directory
 )
-from flowfile_core.flowfile.FlowfileFlow import add_connection
-from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
+from flowfile_core.flowfile.FlowfileFlow import add_connection, delete_connection
+from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.extensions import get_instant_func_results
 # Flow handling
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import AirbyteConfigTemplate
@@ -243,7 +243,6 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
     -------
 
     """
-    print(f'adding {node_type}')
     flow = flow_file_handler.get_flow(flow_id)
     logger.info(f'Adding a promise for {node_type}')
     if flow.flow_settings.is_running:
@@ -281,29 +280,14 @@ def delete_node(flow_id: Optional[int], node_id: int):
 
 
 @router.post('/editor/delete_connection/', tags=['editor'])
-def delete_connection(flow_id: int,
-                      node_connection: input_schema.NodeConnection = None):
+def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConnection = None):
     flow_id = int(flow_id)
     logger.info(
         f'Deleting connection node {node_connection.output_connection.node_id} to node {node_connection.input_connection.node_id}')
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
-    from_node = flow.get_node(node_connection.output_connection.node_id)
-    to_node = flow.get_node(node_connection.input_connection.node_id)
-    connection_valid = (
-        to_node.node_inputs.validate_if_input_connection_exists(
-            node_input_id=from_node.node_id,
-            connection_name=node_connection.input_connection.get_node_input_connection_type())
-    )
-    if not connection_valid:
-        raise HTTPException(422, 'Connection does not exist on the input node')
-    if from_node is not None:
-        from_node.delete_lead_to_node(node_connection.input_connection.node_id)
-
-    if to_node is not None:
-        to_node.delete_input_node(node_connection.output_connection.node_id,
-                                  connection_type=node_connection.input_connection.connection_class)
+    delete_connection(flow, node_connection)
 
 
 @router.post("/db_connection_lib", tags=['db_connections'])
@@ -535,7 +519,6 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
-    print(flow_file_handler._flows)
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -577,7 +560,8 @@ def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
 def get_graphic_walker_input(flow_id: int, node_id: int):
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
-    if node.needs_run(False):
+    if node.results.analysis_data_generator is None:
+        logger.error('The data is not refreshed and available for analysis')
         raise HTTPException(422, 'The data is not refreshed and available for analysis')
     return AnalyticsProcessor.process_graphic_walker_input(node)
 

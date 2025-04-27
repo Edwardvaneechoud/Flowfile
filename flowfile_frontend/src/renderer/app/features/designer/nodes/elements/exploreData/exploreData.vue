@@ -55,7 +55,6 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-// --- Get Current Spec from Child Component ---
 const getCurrentSpec = async (): Promise<IChart[] | null> => {
   if (!vueGraphicWalkerRef.value) {
     console.error("Cannot get spec: GraphicWalker component reference is missing.");
@@ -64,9 +63,7 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
   }
 
   try {
-    // Call the exposed async exportCode method and await the result
     const exportedCharts: IChart[] | null = await vueGraphicWalkerRef.value.exportCode();
-    console.log('Result from child exportCode:', exportedCharts);
 
     if (exportedCharts === null) {
       console.error("Failed to export chart specification (method returned null or failed).");
@@ -74,10 +71,9 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
       return null;
     }
 
-    // Check if the result is an empty array
     if (exportedCharts.length === 0) {
       console.log("No charts were exported from Graphic Walker.");
-      return []; // Return empty array
+      return [];
     }
 
     return exportedCharts;
@@ -111,7 +107,6 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
     };
 
     nodeStore.node_id = globalNodeId.value;
-    // Assuming updateSettingsDirectly was a typo and it's updateSettings
     await nodeStore.updateSettingsDirectly(saveData);
     console.log("Node settings updated successfully.");
     return true;
@@ -123,7 +118,6 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
   }
 };
 
-// --- Main Save Action (Orchestrator) ---
 const pushNodeData = async () => {
     errorMessage.value = null; // Clear previous errors
     const currentSpec = await getCurrentSpec();

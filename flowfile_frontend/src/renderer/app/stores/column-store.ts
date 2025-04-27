@@ -82,20 +82,10 @@ export const useNodeStore = defineStore('node', {
       isShowingLogViewer : false,
       isStreamingLogs: false,
       displayLogViewer: true,
-      fullScreenRequestTarget: null as string | null,
     }
   },
 
   actions: {
-    requestFullScreen(targetId: string) {
-      console.log(`Store: Requesting fullscreen for target: ${targetId}`);
-      this.fullScreenRequestTarget = targetId;
-    },
-
-    clearFullScreenRequest() {
-      console.log(`Store: Clearing fullscreen request`);
-      this.fullScreenRequestTarget = null;
-    },
 
     initializeResultCache(flowId: number): void {
       if (!this.runNodeResults[flowId]) {
@@ -328,7 +318,6 @@ export const useNodeStore = defineStore('node', {
         this.pushNodeData()
       }
       this.node_id = -1
-      this.clearFullScreenRequest();
     },
     openAnalysisDrawer(close_function?: () => void) {
       console.log('openAnalysisDrawer in column-store.ts')

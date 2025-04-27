@@ -3,7 +3,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
-from flowfile_core.flowfile.analytics.main import AnalyticsProcessor
+from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
                                                                                store_database_connection,)
@@ -11,7 +11,7 @@ from flowfile_core.database.connection import get_db_context
 
 import pytest
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Literal
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
@@ -51,9 +51,9 @@ def create_flowfile_handler():
     return handler
 
 
-def create_graph(flow_id: int = 1):
+def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development') -> EtlGraph:
     handler = create_flowfile_handler()
-    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.'))
+    handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.', execution_mode=execution_mode))
     graph = handler.get_flow(flow_id)
     return graph
 

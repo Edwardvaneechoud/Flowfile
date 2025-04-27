@@ -757,7 +757,7 @@ class FlowfileTable:
                                 node_id=-1)
         logger.info('Caching data in background')
         result = edf.get_result()
-        if result:
+        if isinstance(result, pl.LazyFrame):
             logger.info('Data cached')
             del self._data_frame
             self.data_frame = result

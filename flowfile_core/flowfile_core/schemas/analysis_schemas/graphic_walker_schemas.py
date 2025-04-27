@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional, Literal
+from pydantic import BaseModel, Field, model_validator
 
 
 class GeoRole(BaseModel):
@@ -12,21 +12,35 @@ class Expression(BaseModel):
     expression: str  # Example attribute
 
 
+AnalyticTypeLit = Literal['measure', 'dimension']
+
+
 class IField(BaseModel):
     fid: str
     name: str
-    aggName: Optional[str]
+    basename: Optional[str] = None
     semanticType: str
-    analyticType: str
-    cmp: Optional[str]
+    analyticType: AnalyticTypeLit
+    cmp: Optional[str] = None
     geoRole: Optional[GeoRole] = None
-    computed: Optional[bool] = False
-    expression: Optional[Expression] = ''
-    timeUnit: Optional[str]  # Depending on DATE_TIME_DRILL_LEVELS definition
-    basename: Optional[str]
-    path: Optional[List[str]]
-    offset: Optional[int]
-    aggergated: Optional[bool] = False
+    computed: Optional[bool] = None
+    expression: Optional[str] = None
+    timeUnit: Optional[str] = None
+    path: Optional[List[str]] = None
+    offset: Optional[int] = None
+    aggName: Optional[str] = None
+    aggregated: Optional[bool] = None
+
+    @model_validator(mode='after')
+    def set_default_aggname(self):
+        if self.aggName is None and self.analyticType == 'measure':
+            self.aggName = "sum"
+        return self
+
+    def model_dump_dict(self):
+        d = self.model_dump(exclude_none=True)
+        d['offset'] = None
+        return d
 
 
 class ViewField(IField):
@@ -71,7 +85,7 @@ class MutField(BaseModel):
     basename: Optional[str] = None
     disable: Optional[bool] = False
     semanticType: str
-    analyticType: str
+    analyticType: AnalyticTypeLit
     path: Optional[List[str]] = None
     offset: Optional[int] = None
 
