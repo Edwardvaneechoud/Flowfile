@@ -1,6 +1,6 @@
 {
   "name": "Flowfile",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A tool for designing and executing data flows",
   "main": "main/main.js",
   "scripts": {
