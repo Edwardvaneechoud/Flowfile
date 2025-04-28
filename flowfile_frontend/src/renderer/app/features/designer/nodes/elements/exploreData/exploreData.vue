@@ -39,7 +39,6 @@ const loadNodeData = async (nodeId: number) => {
     fields.value = inputData.dataModel?.fields || [];
     data.value = inputData.dataModel?.data || [];
     chartList.value = inputData.specList || [];
-    console.log("fetchedNodeData", fetchedNodeData);
   } catch (error: any) {
     console.error("Error loading GraphicWalker data:", error);
     // Set user-friendly error message
@@ -78,7 +77,6 @@ const getCurrentSpec = async (): Promise<IChart[] | null> => {
 
     return exportedCharts;
   } catch (error: any) {
-    // Catch errors calling the exposed method or during processing
     console.error("Error calling getCurrentSpec or processing result:", error);
     errorMessage.value = `Failed to process configuration: ${error.message || "Unknown error"}`;
     return null;

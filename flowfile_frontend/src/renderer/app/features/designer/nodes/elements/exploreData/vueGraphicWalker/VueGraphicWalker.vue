@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineProps, watch, toRaw } from "vue";
+import { ref, onMounted, onUnmounted, defineProps, defineExpose, toRaw } from "vue";
 import React from "react";
 import ReactDOMClient from "react-dom/client";
-import { GraphicWalker, ILocalVizAppProps } from "@kanaries/graphic-walker";
-import type { IRow, IMutField, IChart, IGWProps } from "@kanaries/graphic-walker/dist/interfaces";
-
+import {
+  GraphicWalker,
+  ILocalVizAppProps,
+  IRemoteComputationProps,
+  IComputationFunction,
+} from "@kanaries/graphic-walker";
+import type {
+  IRow,
+  IMutField,
+  IChart,
+  IGWProps,
+  IDataQueryPayload,
+} from "@kanaries/graphic-walker/dist/interfaces";
 import type { VizSpecStore } from "@kanaries/graphic-walker/dist/store/visualSpecStore";
 
 interface VueGWProps {
@@ -18,25 +28,39 @@ interface VueGWProps {
 const props = defineProps<VueGWProps>();
 
 const container = ref<HTMLElement | null>(null);
-const reactRoot = ref<ReactDOMClient.Root | null>(null);
+let reactRootInstance: ReactDOMClient.Root | null = null;
 const internalStoreRef = ref<{ current: VizSpecStore | null }>({ current: null });
 
-const getReactProps = (): any => {
+type GraphicWalkerCombinedProps = ILocalVizAppProps & IRemoteComputationProps;
+
+const dummyComputation: IComputationFunction = async (
+  _payload: IDataQueryPayload,
+): Promise<IRow[]> => {
+  console.warn(
+    "Dummy computation function called. This should not happen when providing local data.",
+  );
+  return [];
+};
+
+const getReactProps = (): GraphicWalkerCombinedProps => {
   const chartSpecArray = props.specList ? toRaw(props.specList) : [];
 
-  const reactProps: ILocalVizAppProps = {
-    // Base props that are always included
+  const reactProps: GraphicWalkerCombinedProps = {
+    // Props from ILocalVizAppProps / IVizAppProps
     data: props.data ? toRaw(props.data) : undefined,
     fields: props.fields ? toRaw(props.fields) : undefined,
     appearance: props.appearance || "light",
     themeKey: props.themeKey,
     storeRef: internalStoreRef.value as unknown as React.RefObject<VizSpecStore | null> | undefined,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
+
+    computation: dummyComputation, // We do not have compute 
   };
 
   Object.keys(reactProps).forEach((key) => {
-    if (reactProps[key as keyof ILocalVizAppProps] === undefined) {
-      delete reactProps[key as keyof ILocalVizAppProps];
+    const propKey = key as keyof GraphicWalkerCombinedProps;
+    if (reactProps[propKey] === undefined) {
+      delete reactProps[propKey];
     }
   });
 
@@ -44,67 +68,52 @@ const getReactProps = (): any => {
 };
 
 onMounted(() => {
-  console.log("props", props);
-  if (container.value) {
-    try {
-      reactRoot.value = ReactDOMClient.createRoot(container.value);
-      let r = getReactProps();
-      console.log(r);
-      reactRoot.value.render(React.createElement(GraphicWalker, r));
-    } catch (e) {
-      console.error("[VueGW] Error mounting GraphicWalker:", e);
-    }
-  } else {
+  if (!container.value) {
     console.error("[VueGW] Container element not found for mounting.");
+    return;
+  }
+
+  try {
+    reactRootInstance = ReactDOMClient.createRoot(container.value);
+    const componentProps = getReactProps();
+    reactRootInstance.render(React.createElement(GraphicWalker, componentProps));
+  } catch (e) {
+    console.error("[VueGW] Error mounting GraphicWalker:", e);
   }
 });
 
 onUnmounted(() => {
-  if (reactRoot.value) {
-    reactRoot.value.unmount();
+  if (reactRootInstance) {
+    reactRootInstance.unmount();
+    reactRootInstance = null;
   }
 });
 
-watch(
-  [
-    () => props.data,
-    () => props.fields,
-    () => props.specList,
-    () => props.appearance,
-    () => props.themeKey,
-  ],
-  (newValues, oldValues) => {
-    if (!reactRoot.value || !container.value) return;
-    if (newValues.some((val, i) => val !== oldValues[i])) {
-      reactRoot.value.render(React.createElement(GraphicWalker, getReactProps()));
-    }
-  },
-);
-
 const exportCode = async (): Promise<IChart[] | null> => {
-  // Now returns Promise
-  console.log("[VueGW] exportCode exposed method called.");
   const storeInstance = internalStoreRef.value?.current;
-  console.log("[VueGW] Accessing internalStoreRef.current:", storeInstance);
-
+  if (!storeInstance) {
+    console.error(
+      "[VueGW] Cannot export code: Store instance is not available.",
+      internalStoreRef.value,
+    );
+    return null;
+  }
+  if (typeof storeInstance.exportCode !== "function") {
+    console.error(
+      "[VueGW] Cannot export code: 'exportCode' method not found on store instance.",
+      storeInstance,
+    );
+    return null;
+  }
   try {
-    if (storeInstance && typeof storeInstance.exportCode === "function") {
-      console.log("[VueGW] Found exportCode. Calling function...");
-      const result = storeInstance.exportCode() ?? [];
-      console.log("[VueGW] exportCode call finished. Result:", result);
-      return result;
-    } else {
-      console.error(
-        "[VueGW] exportCode/exportChartList method not available on internal store instance:",
-        storeInstance,
-      );
-      return null;
-    }
+    const result = await storeInstance.exportCode();
+    return result ?? [];
   } catch (error) {
     console.error("[VueGW] Error during exportCode execution:", error);
     return null;
   }
 };
+
 defineExpose({
   exportCode,
 });
@@ -115,5 +124,9 @@ defineExpose({
 </template>
 
 <style scoped>
-/* Add component-specific styles here if needed */
+div {
+  width: 100%;
+  min-height: 500px;
+  height: 100%;
+}
 </style>
