@@ -30,6 +30,7 @@ class SingleExecutionFuture(Generic[T]):
     def start(self) -> None:
         """Start the function execution if not already started."""
         if not self.future:
+            logger.info("single executor function started")
             self.future = self.executor.submit(self.func)
 
     def cleanup(self) -> None:
@@ -57,6 +58,12 @@ class SingleExecutionFuture(Generic[T]):
                 raise e
         finally:
             self.cleanup()
+
+    def reset(self):
+        """Reset the future and result value."""
+        logger.info("Resetting the future and result value")
+        self.result_value = None
+        self.future = None
 
     def __del__(self) -> None:
         """Ensure executor is shut down on deletion."""

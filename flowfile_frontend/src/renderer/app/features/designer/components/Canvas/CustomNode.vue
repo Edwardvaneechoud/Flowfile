@@ -253,8 +253,9 @@ const descriptionTextStyle = computed(() => {
 const handleKeyDown = (event: KeyboardEvent) => {
   if ((event.metaKey || event.ctrlKey) && event.key === "c") {
     const isNodeSelected = nodeStore.node_id === props.data.id;
-
-    if (isNodeSelected) {
+    const target = event.target as HTMLElement;
+    const isTargetNodeButton= target.classList.contains('node-button');
+    if (isNodeSelected && isTargetNodeButton) {
       copyNode();
       event.preventDefault();
     }

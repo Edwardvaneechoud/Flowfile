@@ -247,11 +247,16 @@ const toggleFullScreen = () => {
     itemState.value.prevHeight = itemState.value.height;
     itemState.value.prevLeft = itemState.value.left;
     itemState.value.prevTop = itemState.value.top;
-    itemState.value.width = window.innerWidth - 100;
-    itemState.value.height = window.innerHeight - 100;
-    itemState.value.left = 50;
-    itemState.value.top = 50;
+
+    // Use full window dimensions with no margins
+    itemState.value.width = window.innerWidth;
+    itemState.value.height = window.innerHeight;
+    itemState.value.left = 0;
+    itemState.value.top = 0;
   }
+
+  // Make sure to save position and size
+  savePositionAndSize();
 };
 
 const startResizeRight = (e: MouseEvent) => {
@@ -267,7 +272,7 @@ const onResizeWidth = (e: MouseEvent) => {
   if (isResizing.value) {
     const deltaX = e.clientX - startX.value;
     const newWidth = startWidth.value + deltaX;
-    if (newWidth > 100 && newWidth < window.innerWidth - 100) {
+    if (newWidth > 100 && newWidth < window.innerWidth - 0) {
       itemState.value.width = newWidth;
       savePositionAndSize();
     }
@@ -498,6 +503,13 @@ const registerClick = () => {
   itemStore.clickOnItem(props.id);
 };
 
+const setFullScreen = (makeFull: boolean) => {
+  // Only toggle if the state needs changing
+  if (itemState.value.fullScreen !== makeFull) {
+    toggleFullScreen();
+  }
+};
+
 onMounted(() => {
   if (!itemStore.items[props.id]) {
     itemStore.setItemState(props.id, {
@@ -559,6 +571,7 @@ defineExpose({
   moveToTop,
   setHeight: (value: number) => (itemState.value.height = value),
   setWitdh: (value: number) => (itemState.value.width = value),
+  setFullScreen,
 });
 </script>
 
