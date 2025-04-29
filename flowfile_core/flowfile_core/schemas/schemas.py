@@ -14,7 +14,7 @@ class FlowSettings(BaseModel):
     name: str = ''
     modified_on: Optional[float] = None
     path: str
-    execution_mode: ExecutionModeLiteral = 'Development'
+    execution_mode: ExecutionModeLiteral = 'Performance'
     show_detailed_progress: bool = True
     is_running: bool = False
     is_canceled: bool = False

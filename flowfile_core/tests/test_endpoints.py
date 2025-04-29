@@ -380,12 +380,20 @@ def create_flow_with_graphic_walker_input() -> FlowId:
 
 def test_get_graphic_walker_input():
     flow_id = create_flow_with_graphic_walker_input()
+    flow_file_handler.get_flow(flow_id).run_graph()
+
     response = client.get('/analysis_data/graphic_walker_input', params={'flow_id': flow_id, 'node_id': 2})
     assert response.status_code == 200, 'Graphic walker input not retrieved'
     try:
         input_schema.NodeExploreData(**response.json())
     except Exception as e:
         raise Exception('Invalid response: ' + str(e))
+
+
+def test_error_graphic_walker_input():
+    flow_id = create_flow_with_graphic_walker_input()
+    response = client.get('/analysis_data/graphic_walker_input', params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 422, 'Expected 422 Unprocessable Entity when data is not available'
 
 
 def test_update_flow_with_settings_polars_code():
@@ -442,6 +450,7 @@ def test_instant_function_result_after_run():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
     flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
     flow.run_graph()
     response = client.get("/custom_functions/instant_result",
                           params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
@@ -476,7 +485,9 @@ def test_get_node_data_not_run():
 
 def test_get_node_data_after_run():
     flow_id = create_flow_with_manual_input()
-    flow_file_handler.get_flow(flow_id).run_graph()
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
+    flow.run_graph()
     response = client.get("/node", params={'flow_id': flow_id, 'node_id': 1, 'get_data': True})
     assert response.status_code == 200, 'Node not retrieved'
     assert response.json()['node_id'] == 1, 'Node not retrieved'
@@ -567,6 +578,7 @@ def test_add_database_input():
     r = client.post("/update_settings/", json=node_database_reader.model_dump(),
                     params={"node_type": "database_reader"})
     assert r.status_code == 200, 'Settings not added'
+    flow_file_handler.get_flow(flow_id).flow_settings.execution_mode = 'Development'
     flow_file_handler.get_flow(flow_id).run_graph()
     assert not flow_file_handler.get_flow(flow_id).get_node(1).needs_run(False), 'Node should not need to run'
 

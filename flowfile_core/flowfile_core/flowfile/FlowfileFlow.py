@@ -16,6 +16,7 @@ from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings im
 from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowfileColumn
 from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                      pre_calculate_pivot_schema)
+from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.flowfile_table.read_excel_tables import get_open_xlsx_datatypes, \
     get_calamine_xlsx_data_types
@@ -29,7 +30,9 @@ from flowfile_core.flowfile.util.execution_orderer import determine_execution_or
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
                                                                                                ExternalDatabaseFetcher,
-                                                                                               ExternalDatabaseWriter)
+                                                                                               ExternalDatabaseWriter,
+                                                                                               ExternalSampler,
+                                                                                               ExternalDfFetcher)
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
@@ -144,7 +147,7 @@ class EtlGraph:
             self.add_datasource(input_file=input_flow)
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
-        print('adding node promise')
+
         def placeholder(n: NodeStep = None):
             if n is None:
                 return FlowfileTable()
@@ -194,35 +197,36 @@ class EtlGraph:
             raise # Optional: re-raise the exception
 
     def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
-        sample_size = 10_000 if node_promise.node_type == 'explore_data' else 1000_000
         node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
-
-        def analysis_preparation(flow_file: FlowfileTable):
-            number_of_records = flow_file.get_number_of_records()
-            if number_of_records > sample_size:
-                flow_file = flow_file.get_sample(sample_size, random=True)
-            return flow_file
-
-        def schema_callback():
-            node = self.get_node(node_analysis.node_id)
-            if len(node.all_inputs) == 1:
-                input_node = node.all_inputs[0]
-                return input_node.schema
-            else:
-                return [FlowfileColumn.from_input('col_1', 'na')]
-
-        self.add_node_step(node_id=node_analysis.node_id, node_type=node_promise.node_type,
-                           function=analysis_preparation,
-                           setting_input=node_analysis, schema_callback=schema_callback)
+        self.add_explore_data(node_analysis)
 
     def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
         sample_size: int = 10000
 
-        def analysis_preparation(flow_file: FlowfileTable):
-            number_of_records = flow_file.get_number_of_records()
+        def analysis_preparation(flowfile_table: FlowfileTable):
+
+            if flowfile_table.number_of_records<0:
+
+                number_of_records = ExternalDfFetcher(
+                    lf=flowfile_table.data_frame,
+                    operation_type="calculate_number_of_records",
+                    flow_id=self.flow_id,
+                    node_id=node.node_id,
+                ).result
+            else:
+                number_of_records = flowfile_table.number_of_records
             if number_of_records > sample_size:
-                flow_file = flow_file.get_sample(sample_size, random=True)
-            return flow_file
+                flowfile_table = flowfile_table.get_sample(sample_size, random=True)
+
+            external_sampler = ExternalDfFetcher(
+                lf=flowfile_table.data_frame,
+                file_ref=node.hash,
+                wait_on_completion=True,
+                node_id=node.node_id,
+                flow_id=self.flow_id,
+            )
+            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref, 10000)
+            return flowfile_table
 
         def schema_callback():
             node = self.get_node(node_analysis.node_id)
@@ -235,6 +239,7 @@ class EtlGraph:
         self.add_node_step(node_id=node_analysis.node_id, node_type='explore_data',
                            function=analysis_preparation,
                            setting_input=node_analysis, schema_callback=schema_callback)
+        node = self.get_node(node_analysis.node_id)
 
     @property
     def flow_id(self) -> int:
@@ -1251,7 +1256,7 @@ class EtlGraph:
                         "pos_y": pos_y
                     }
                 except Exception as e:
-                    print(e)
+                    logger.error(e)
             # Add outputs to the node based on `outputs` in your backend data
             if node_info.outputs:
                 outputs = {o: 0 for o in node_info.outputs}
@@ -1298,7 +1303,6 @@ class EtlGraph:
         edges: List[schemas.NodeEdge] = []
         nodes: List[schemas.NodeInput] = []
         for node in self.nodes:
-            print(node)
             nodes.append(node.get_node_input())
             edges.extend(node.get_edge_input())
         return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes)
@@ -1349,3 +1353,23 @@ def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection)
         raise HTTPException(404, 'Not not available')
     else:
         to_node.add_node_connection(from_node, node_connection.input_connection.get_node_input_connection_type())
+
+
+def delete_connection(graph, node_connection: input_schema.NodeConnection):
+    """Delete the connection between two nodes."""
+    from_node = graph.get_node(node_connection.output_connection.node_id)
+    to_node = graph.get_node(node_connection.input_connection.node_id)
+    connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
+        node_input_id=from_node.node_id,
+        connection_name=node_connection.input_connection.get_node_input_connection_type(),
+    )
+    if not connection_valid:
+        raise HTTPException(422, "Connection does not exist on the input node")
+    if from_node is not None:
+        from_node.delete_lead_to_node(node_connection.input_connection.node_id)
+
+    if to_node is not None:
+        to_node.delete_input_node(
+            node_connection.output_connection.node_id,
+            connection_type=node_connection.input_connection.connection_class,
+        )

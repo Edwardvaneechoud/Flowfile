@@ -82,6 +82,7 @@ class NodeResults:
     run_time: int = -1
     errors: Optional[str] = None
     warnings: Optional[str] = None
+    analysis_data_generator: Optional[Callable[[], pa.Table]] = None
 
     def __init__(self):
         self._resulting_data = None
@@ -90,6 +91,7 @@ class NodeResults:
         self.errors = None
         self.warnings = None
         self.example_data_generator = None
+        self.analysis_data_generator = None
 
     def get_example_data(self) -> pa.Table | None:
         if self.example_data_generator:

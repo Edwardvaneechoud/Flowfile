@@ -45,9 +45,9 @@ def create_flowfile_handler():
     return handler
 
 
-def create_graph():
+def create_graph(execution_mode: str = 'Development'):
     handler = create_flowfile_handler()
-    handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.'))
+    handler.register_flow(schemas.FlowSettings(flow_id=1, name='new_flow', path='.', execution_mode=execution_mode))
     graph = handler.get_flow(1)
     return graph
 
@@ -113,7 +113,6 @@ def test_hash_change_data_with_old_data():
     graph = get_dependency_example()
     graph.run_graph()
     data = graph.get_node_data(2, True).main_output.data
-    node = graph.get_node(2)
     assert len(data) > 0, 'Data should be present'
     graph = add_manual_input(
         graph,
@@ -131,3 +130,27 @@ def test_hash_change_data_with_old_data():
     # this should not have impacted the
     data = graph.get_node_data(2, True).main_output.data
     assert len(data) > 0, 'Data should be present, cause we did not run yet'
+
+
+def test_cache_results_in_performance():
+    graph = get_dependency_example()
+    graph.flow_settings.execution_mode = 'Performance'
+    graph.run_graph()
+
+    data = graph.get_node_data(2, True).main_output.data
+    assert len(data) == 0, 'Data should not be present'
+    graph.get_node(2).node_settings.cache_results = True
+    graph.run_graph()
+    data = graph.get_node_data(2, True).main_output.data
+    assert len(data) > 0, 'Data should be present since we cached the results'
+
+
+def test_cache_results_manual_input():
+    graph = create_graph()
+    graph.flow_settings.execution_mode = 'Performance'
+    graph = add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'}], node_id=1)
+    node = graph.get_node(1)
+    node.node_settings.cache_results = True
+    graph.run_graph()
+    data = graph.get_node_data(1, True).main_output.data
+    assert len(data) > 0, 'Data should be present since we cached the results'

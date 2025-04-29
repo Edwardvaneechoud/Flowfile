@@ -49,6 +49,44 @@ export const useItemStore = defineStore('itemStore', () => {
     }
   };
 
+  const toggleFullScreen = (id: string) => {
+    if (!items.value[id]) return;
+    // Use the setFullScreen method with the opposite of current state
+    setFullScreen(id, !items.value[id].fullScreen);
+  };
+  
+  const setFullScreen = (id: string, fullScreen: boolean) => {
+    if (!items.value[id]) return;
+    
+    if (items.value[id].fullScreen !== fullScreen) {
+      if (fullScreen) {
+        // Save current state and go fullscreen
+        items.value[id].fullScreen = true;
+        items.value[id].prevWidth = items.value[id].width;
+        items.value[id].prevHeight = items.value[id].height;
+        items.value[id].prevLeft = items.value[id].left;
+        items.value[id].prevTop = items.value[id].top;
+        
+        // Use full window dimensions with no margins
+        items.value[id].width = window.innerWidth;
+        items.value[id].height = window.innerHeight;
+        items.value[id].left = 0;
+        items.value[id].top = 0;
+      } else {
+        // Return to previous state
+        items.value[id].fullScreen = false;
+        items.value[id].width = items.value[id].prevWidth || 400;
+        items.value[id].height = items.value[id].prevHeight || 300;
+        items.value[id].left = items.value[id].prevLeft || 100;
+        items.value[id].top = items.value[id].prevTop || 100;
+      }
+      
+      saveItemState(id);
+      
+      clickOnItem(id);
+    }
+  };
+
   const inResizing = ref(false); // Global mouseDown state
   const idItemClicked = ref<string | null>(null); // Id of the item clicked
   const idItemVisible = ref<string | null>(null); // Id of the currently visible item
@@ -103,5 +141,7 @@ export const useItemStore = defineStore('itemStore', () => {
     clickOnItem,
     scrollOnItem,
     idItemVisible, // Exposing the visible item
+    toggleFullScreen, // Toggle fullscreen state
+    setFullScreen, // Set fullscreen state with boolean parameter
   };
 });

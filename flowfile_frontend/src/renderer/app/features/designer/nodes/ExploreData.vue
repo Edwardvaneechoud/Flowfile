@@ -1,31 +1,17 @@
-<template>
-  <div ref="el">
-    <NodeButton
-      ref="nodeButton"
-      :node-id="nodeId"
-      image-src="explore_data.png"
-      :title="`${nodeId}: Explore data`"
-      @click="openDrawer"
-    />
-    <teleport v-if="drawer" to="#nodesettings">
-      <NodeTitle title="explore data" intro="Explore data based on Tableau like experience" />
-      <graphicWalker ref="childComp" :node-id="nodeId"> </graphicWalker>
-    </teleport>
-  </div>
-</template>
-
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from "vue";
 import graphicWalker from "./elements/exploreData/exploreData.vue";
 import { useNodeStore } from "../../../stores/column-store";
 import NodeButton from "../baseNode/nodeButton.vue";
 import NodeTitle from "../baseNode/nodeTitle.vue";
-const nodeStore = useNodeStore(); // Use the nodeStore
+import { useItemStore } from "./../components/Canvas/DraggableItem/stateStore";
+
+const nodeStore = useNodeStore();
+const itemStore = useItemStore();
 
 interface ChildComponentRef {
   loadNodeData: (nodeId: number) => void;
   pushNodeData: () => void;
-  // You can add other methods or properties here as needed
 }
 const props = defineProps({
   nodeId: {
@@ -38,30 +24,54 @@ const el: any = ref(null);
 const drawer = ref(false);
 
 const closeOnDrawer = () => {
-  childComp.value?.pushNodeData();
+  if (childComp.value) {
+    childComp.value.pushNodeData();
+  }
   drawer.value = false;
-  nodeStore.isAnalysisOpen = false;
+  itemStore.setFullScreen("nodeSettings", false);
 };
 
 const openDrawer = async () => {
-  if (nodeStore.node_id === props.nodeId) {
+  const isDifferentNode = nodeStore.node_id !== props.nodeId;
+
+  if (nodeStore.isDrawerOpen && isDifferentNode) {
+    nodeStore.closeDrawer();
+    await nextTick();
+  } else if (nodeStore.isDrawerOpen && !isDifferentNode) {
     return;
   }
-  nodeStore.closeDrawer();
+
   drawer.value = true;
-  const drawerOpen = nodeStore.isDrawerOpen;
-  nodeStore.isDrawerOpen = true;
+  nodeStore.openDrawer(closeOnDrawer);
+  nodeStore.node_id = props.nodeId;
+
   await nextTick();
-  if (nodeStore.node_id === props.nodeId && drawerOpen) {
-    return;
-  }
+
   if (childComp.value) {
     childComp.value.loadNodeData(props.nodeId);
-    nodeStore.openDrawer(closeOnDrawer);
   }
+  itemStore.setFullScreen("nodeSettings", true);
 };
-
-onMounted(async () => {
-  await nextTick();
-});
 </script>
+
+<template>
+  <div ref="el">
+    <NodeButton
+      ref="nodeButton"
+      :node-id="nodeId"
+      image-src="explore_data.png"
+      :title="`${nodeId}: Explore data`"
+      @click="openDrawer"
+    />
+    <teleport v-if="drawer" to="#nodesettings">
+      <div style="display: flex; flex-direction: column; height: 100%">
+        <NodeTitle
+          title="explore data"
+          intro="Explore data and creating interactig graphs. The flow must have run for the data to be populated"
+        />
+        <graphicWalker ref="childComp" :node-id="nodeId" style="flex-grow: 1; overflow: auto">
+        </graphicWalker>
+      </div>
+    </teleport>
+  </div>
+</template>
