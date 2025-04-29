@@ -34,6 +34,7 @@ from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
+from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -151,6 +152,46 @@ class EtlGraph:
 
         self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
                            setting_input=node_promise)
+
+    def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
+        """
+        Calculates and applies a layered layout to all nodes in the graph.
+        Updates the pos_x and pos_y attributes of the node setting inputs.
+        """
+        self.flow_logger.info("Applying layered layout...")
+        start_time = time()
+        try:
+            # Calculate new positions for all nodes
+            new_positions = calculate_layered_layout(
+                self, y_spacing=y_spacing, x_spacing=x_spacing, initial_y=initial_y
+            )
+
+            if not new_positions:
+                self.flow_logger.warning("Layout calculation returned no positions.")
+                return
+
+            # Apply the new positions to the setting_input of each node
+            updated_count = 0
+            for node_id, (pos_x, pos_y) in new_positions.items():
+                node = self.get_node(node_id)
+                if node and hasattr(node, 'setting_input'):
+                    setting = node.setting_input
+                    if hasattr(setting, 'pos_x') and hasattr(setting, 'pos_y'):
+                        setting.pos_x = pos_x
+                        setting.pos_y = pos_y
+                        updated_count += 1
+                    else:
+                        self.flow_logger.warning(f"Node {node_id} setting_input ({type(setting)}) lacks pos_x/pos_y attributes.")
+                elif node:
+                     self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
+                # else: Node not found, already warned by calculate_layered_layout
+
+            end_time = time()
+            self.flow_logger.info(f"Layout applied to {updated_count}/{len(self.nodes)} nodes in {end_time - start_time:.2f} seconds.")
+
+        except Exception as e:
+            self.flow_logger.error(f"Error applying layout: {e}")
+            raise # Optional: re-raise the exception
 
     def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
         sample_size = 10_000 if node_promise.node_type == 'explore_data' else 1000_000
@@ -278,7 +319,8 @@ class EtlGraph:
         self.add_node_step(node_id=group_by_settings.node_id,
                            function=_func,
                            node_type=f'group_by',
-                           setting_input=group_by_settings)
+                           setting_input=group_by_settings,
+                           input_node_ids=[group_by_settings.depending_on_id])
 
         node = self.get_node(group_by_settings.node_id)
 
@@ -339,6 +381,7 @@ class EtlGraph:
                            node_type='filter',
                            renew_schema=False,
                            setting_input=filter_settings,
+                           input_node_ids=[filter_settings.depending_on_id]
                            )
 
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
@@ -357,7 +400,8 @@ class EtlGraph:
         self.add_node_step(node_id=node_polars_code.node_id,
                            function=_func,
                            node_type='polars_code',
-                           setting_input=node_polars_code)
+                           setting_input=node_polars_code,
+                           input_node_ids=[node_polars_code.depending_on_id])
 
         try:
             polars_code_parser.validate_code(node_polars_code.polars_code_input.polars_code)
@@ -407,6 +451,7 @@ class EtlGraph:
                            node_type='formula',
                            renew_schema=False,
                            setting_input=function_settings,
+                           input_node_ids=[function_settings.depending_on_id]
                            )
         if error != "":
             node = self.get_node(function_settings.node_id)
@@ -495,7 +540,8 @@ class EtlGraph:
         self.add_node_step(node_id=sort_settings.node_id,
                            function=_func,
                            node_type='sort',
-                           setting_input=sort_settings)
+                           setting_input=sort_settings,
+                           input_node_ids=[sort_settings.depending_on_id])
         return self
 
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "EtlGraph":
@@ -505,7 +551,8 @@ class EtlGraph:
         self.add_node_step(node_id=sample_settings.node_id,
                            function=_func,
                            node_type='sample',
-                           setting_input=sample_settings
+                           setting_input=sample_settings,
+                           input_node_ids=[sample_settings.depending_on_id]
                            )
         return self
 
@@ -542,14 +589,13 @@ class EtlGraph:
             return table.do_select(select_inputs=transform_schema.SelectInputs(select_cols),
                                    keep_missing=select_settings.keep_missing)
 
-        setting_input = select_settings
-
         self.add_node_step(node_id=select_settings.node_id,
                            function=_func,
                            input_columns=[],
                            node_type='select',
                            drop_columns=list(drop_cols),
-                           setting_input=setting_input)
+                           setting_input=select_settings,
+                           input_node_ids=[select_settings.depending_on_id])
         return self
 
     @property
@@ -601,7 +647,8 @@ class EtlGraph:
                       renew_schema: bool = True,
                       setting_input: Any = None,
                       cache_results: bool = None,
-                      schema_callback: Callable = None):
+                      schema_callback: Callable = None,
+                      input_node_ids: List[int] = None):
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:
@@ -609,6 +656,8 @@ class EtlGraph:
                 existing_node = None
         if existing_node:
             input_nodes = existing_node.all_inputs
+        elif input_node_ids is not None:
+            input_nodes = [self.get_node(node_id) for node_id in input_node_ids]
         else:
             input_nodes = None
         if cache_results is None:

@@ -507,6 +507,7 @@ class TextToRowsInput:
     split_fixed_value: Optional[str] = ','
     split_by_column: Optional[str] = None
 
+
 @dataclass
 class UnpivotInput:
     index_columns: Optional[List[str]] = field(default_factory=list)

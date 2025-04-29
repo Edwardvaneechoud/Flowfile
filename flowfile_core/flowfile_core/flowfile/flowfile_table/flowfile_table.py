@@ -180,12 +180,16 @@ class FlowfileTable:
 
     def _handle_dict_input(self, data: Dict):
         """Handle dictionary input."""
-        number_of_records = 1 if len(data) > 0 else 0
-        if number_of_records > 0:
-            self.number_of_records = number_of_records
-            self.data_frame = pl.DataFrame([data])
-        else:
+        if len(data) == 0:
             self.initialize_empty_fl()
+        lengths = [len(v) if isinstance(v, (list, tuple)) else 1 for v in data.values()]
+
+        if len(set(lengths)) == 1 and lengths[0]>1:
+            self.number_of_records = lengths[0]
+            self.data_frame = pl.DataFrame(data)
+        else:
+            self.number_of_records = 1
+            self.data_frame = pl.DataFrame([data])
 
     def _handle_list_input(self, data: List):
         """Handle list input."""
