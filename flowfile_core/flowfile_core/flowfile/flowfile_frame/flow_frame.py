@@ -1,3 +1,4 @@
+import os
 import uuid
 from polars.datatypes import *
 from typing import Any, Iterable, List
@@ -446,6 +447,74 @@ class FlowFrame:
             parent_node_id=self.node_id
         )
 
+    def sink_csv(self,
+                 file: str,
+                 *args,
+                 separator: str = ",",
+                 encoding: str = "utf-8",
+                 description: str = None):
+        """
+        Write the data to a CSV file.
+
+        Args:
+            path: Path or filename for the CSV file
+            separator: Field delimiter to use, defaults to ','
+            encoding: File encoding, defaults to 'utf-8'
+            description: Description of this operation for the ETL graph
+
+        Returns:
+            Self for method chaining
+        """
+        return self.write_csv(file, *args, separator=separator, encoding=encoding, description=description)
+
+    def write_csv(
+        self,
+        file: str,
+        *args,
+        separator: str = ",",
+        encoding: str = "utf-8",
+        description: str = None,
+    ) -> "FlowFrame":
+        """
+        Write the data to a CSV file.
+
+        Args:
+            path: Path or filename for the CSV file
+            separator: Field delimiter to use, defaults to ','
+            encoding: File encoding, defaults to 'utf-8'
+            description: Description of this operation for the ETL graph
+
+        Returns:
+            Self for method chaining
+        """
+        # Create output settings
+        new_node_id = generate_node_id()
+        output_csv_table = input_schema.OutputCsvTable(
+            file_type="csv", delimiter=separator, encoding=encoding
+        )
+        file_name = file.split(os.sep)[-1]
+        output_settings = input_schema.OutputSettings(file_type='csv',
+                                                      name=file_name,
+                                                      directory=file,
+                                                      output_csv_table=output_csv_table,
+                                                      output_excel_table=input_schema.OutputExcelTable(),
+                                                      output_parquet_table=input_schema.OutputParquetTable())
+        node_output = input_schema.NodeOutput(flow_id=self.flow_graph.flow_id,
+                                              node_id=new_node_id,
+                                              output_settings=output_settings,
+                                              depending_on_id=self.node_id,
+                                              description=description)
+        self.flow_graph.add_output(node_output)
+        connection = input_schema.NodeConnection.create_from_simple_input(
+            from_id=self.node_id, to_id=new_node_id
+        )
+        add_connection(self.flow_graph, connection)
+        return FlowFrame(
+            self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+        )
+
     def group_by(self, *by, maintain_order=False, **named_by):
         """
         Start a group by operation.
@@ -583,6 +652,7 @@ class FlowFrame:
 
     def get_node_settings(self) -> NodeStep:
         return self.flow_graph.get_node(self.node_id)
+
 
 def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options):
     """
