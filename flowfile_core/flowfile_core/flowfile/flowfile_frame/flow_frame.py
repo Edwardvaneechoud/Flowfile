@@ -8,6 +8,7 @@ import polars as pl
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
 from flowfile_core.flowfile.flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
@@ -575,6 +576,13 @@ class FlowFrame:
     def limit(self, n: int, description: str = None):
         return self.head(n, description)
 
+    def cache(self) -> "FlowFrame":
+        setting_input = self.get_node_settings().setting_input
+        setting_input.cache_results = True
+        return self
+
+    def get_node_settings(self) -> NodeStep:
+        return self.flow_graph.get_node(self.node_id)
 
 def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options):
     """
@@ -637,7 +645,8 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None,
     )
 
 
-def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options) -> FlowFrame:
+def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = None,
+                 convert_to_absolute_path: bool = True, **options) -> FlowFrame:
     """
     Read a Parquet file into a FlowFrame.
 
@@ -645,6 +654,7 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
         file_path: Path to Parquet file
         flow_graph: if you want to add it to an existing graph
         description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
         **options: Options for polars.read_parquet
 
     Returns:
@@ -670,6 +680,8 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
         path=file_path,
         name=file_path.split('/')[-1]
     )
+    if convert_to_absolute_path:
+        received_table.path = received_table.abs_file_path
 
     # Create read node
     read_node = input_schema.NodeRead(
