@@ -12,7 +12,3 @@ export function getFromCacheOrFetch<T>(url: string): Promise<T> {
       return data
     })
 }
-
-export async function useFetch<T>(url: string): Promise<T> {
-  return await getFromCacheOrFetch<T>(url)
-}

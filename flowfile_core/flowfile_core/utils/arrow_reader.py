@@ -243,5 +243,5 @@ def get_read_top_n(file_path: str, n: int = 1000, strict: bool = False) -> Calla
         >>> # Later, use the function to read the data
         >>> table = reader_func()
     """
-    logger.debug(f"Creating reader function for {file_path} with n={n}, strict={strict}")
+    logger.info(f"Creating reader function for {file_path} with n={n}, strict={strict}")
     return lambda: read_top_n(file_path, n, strict)

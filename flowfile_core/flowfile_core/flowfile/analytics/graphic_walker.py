@@ -15,7 +15,7 @@ def get_semantic_type(data_type: str) -> str:
         return 'nominal'  # Default case; adjust as necessary
 
 
-def get_analytic_type(semantic_type: str) -> str:
+def get_analytic_type(semantic_type: str) -> gw_schema.AnalyticTypeLit:
     """Determine the analyticType based on the semanticType."""
     return 'measure' if semantic_type == 'quantitative' else 'dimension'
 
@@ -51,12 +51,8 @@ def convert_ff_columns_to_gw_fields(ff_columns: List[FlowfileColumn]) -> [gw_sch
 
 
 def get_initial_gf_data_from_ff(flow_file: FlowfileTable) -> gw_schema.DataModel:
-    number_of_records = flow_file.get_number_of_records()
-    if number_of_records > 100_000:
-        flow_file = flow_file.get_sample(100_000, random=True)
-    data = flow_file.to_pylist()
     fields = [convert_ff_column_to_gw_field(ff_column) for ff_column in flow_file.schema]
-    return gw_schema.DataModel(fields=fields, data=data)
+    return gw_schema.DataModel(fields=fields, data=[])
 
 
 def get_gf_data_from_ff(flow_file: FlowfileTable, fields: List[gw_schema.MutField]) -> gw_schema.DataModel:
