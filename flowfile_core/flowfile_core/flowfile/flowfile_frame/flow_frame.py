@@ -553,6 +553,27 @@ class FlowFrame:
                          node_id=new_node_id, parent_node_id=self.node_id,
                          flow_graph=self.flow_graph)
 
+    def head(self, n: int, description: str = None):
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeSample(flow_id=self.flow_graph.flow_id,
+                                           node_id=new_node_id,
+                                           depending_on_id=self.node_id,
+                                           sample_size=n,
+                                           description=description
+                                           )
+        self.flow_graph.add_sample(settings)
+        connection = input_schema.NodeConnection.create_from_simple_input(
+            from_id=self.node_id,
+            to_id=new_node_id
+        )
+        add_connection(self.flow_graph, connection)
+        return FlowFrame(self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+                         node_id=new_node_id, parent_node_id=self.node_id,
+                         flow_graph=self.flow_graph)
+
+    def limit(self, n: int, description: str = None):
+        return self.head(n, description)
+
 
 def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options):
     """

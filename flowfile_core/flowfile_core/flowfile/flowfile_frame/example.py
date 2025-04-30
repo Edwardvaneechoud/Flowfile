@@ -41,5 +41,13 @@ filtered_df2 = filtered_df.filter(pl.col("Email").str.contains('@'), description
 data_with_formula = filtered_df2.with_columns([pl.lit("new_value").alias('output_column'), 'test'], description='this is native polars')
 
 data_with_formula_2 = filtered_df2.with_columns(flowfile_formulas=['now()'], output_column_names=['today'], description='this is ff formula for the frontend')
+sample_data = data_with_formula_2.limit(10, description='take sample of 10 records')
 
-data_with_formula_2.save_graph('new.flowfile')
+
+
+graph = sample_data.to_graph()
+graph.flow_settings.execution_mode = 'Performance'
+
+sample_data.save_graph('new.flowfile')
+
+
