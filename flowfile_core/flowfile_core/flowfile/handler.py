@@ -121,11 +121,3 @@ class FlowfileHandler:
         if not node:
             raise Exception(f'Node {node_id} not found in flow {flow_id}')
         return node
-
-
-f = FlowfileHandler()
-r = f.import_flow('ff2.flowfile')
-
-flow = f.get_flow(r)
-
-flow.get_node(9).setting_input

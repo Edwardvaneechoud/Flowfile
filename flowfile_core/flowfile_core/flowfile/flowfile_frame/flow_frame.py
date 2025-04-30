@@ -209,7 +209,7 @@ class FlowFrame:
 
     def sort(self, by: List[Expr | str] | Expr | str,
              *more_by, descending: bool|List[bool] = False, nulls_last: bool = False,
-             multithreaded: bool = True, maintain_order: bool = False):
+             multithreaded: bool = True, maintain_order: bool = False, description: str = None):
         by = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
         sort_expressions = by
@@ -267,6 +267,7 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_id=self.node_id,
+            description=description
         )
         self.flow_graph.add_sort(sort_settings)
         connection = input_schema.NodeConnection.create_from_simple_input(

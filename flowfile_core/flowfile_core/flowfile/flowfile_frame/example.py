@@ -31,7 +31,7 @@ input_df = (pl.read_parquet('flowfile_core/tests/support_files/data/fake_data.pa
 #
 output_df = (input_df.select(pl.col('sales_data').cast(pl.Int64), *[c for c in input_df.columns if c != 'sales_data'])
              .group_by('City').agg([col('sales_data').sum().alias('sum_sales_data'), col('sales_data').min()])
-             .sort(['sales_data']))
+             .sort(['sales_data'], description='output data for'))
 sorted_df = input_df.sort(by=pl.col('sales_data'), descending=True)
 
 
@@ -41,13 +41,19 @@ filtered_df2 = filtered_df.filter(pl.col("Email").str.contains('@'), description
 data_with_formula = filtered_df2.with_columns([pl.lit("new_value").alias('output_column'), 'test'], description='this is native polars')
 
 data_with_formula_2 = filtered_df2.with_columns(flowfile_formulas=['now()'], output_column_names=['today'], description='this is ff formula for the frontend')
-sample_data = data_with_formula_2.limit(10, description='take sample of 10 records')
 
 
+def create_sample_sets(df_: pl.FlowFrame) -> pl.FlowFrame:
+    for i in range(10):
+        df_.limit(i, description=f"take sample of {i} records")
+    return df_
 
-graph = sample_data.to_graph()
+
+output_df = create_sample_sets(data_with_formula_2)
+
+graph = output_df.to_graph()  # Obtain the graph that is linked to the latest out
 graph.flow_settings.execution_mode = 'Performance'
 
-sample_data.save_graph('new.flowfile')
+graph.save_graph('new.flowfile')
 
 
