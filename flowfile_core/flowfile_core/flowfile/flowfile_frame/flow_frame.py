@@ -10,9 +10,6 @@ from flowfile_core.flowfile.flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 
-
-# --- Helper Functions ---
-
 node_id_counter = 0
 
 
@@ -33,7 +30,7 @@ def _is_iterable(obj: Any) -> bool:
 
 
 def _parse_inputs_as_iterable(
-    inputs: tuple[Any, ...] | tuple[Iterable[Any]],
+        inputs: tuple[Any, ...] | tuple[Iterable[Any]],
 ) -> Iterable[Any]:
     if not inputs:
         return []
@@ -172,7 +169,7 @@ class FlowFrame:
                  data: pl.LazyFrame,
                  flow_graph=None,
                  node_id=None,
-                 parent_node_id=None,):
+                 parent_node_id=None, ):
         """Initialize with data and graph references."""
         if not isinstance(data, pl.LazyFrame):
             raise ValueError('Data should be of type polars lazy frame')
@@ -205,10 +202,10 @@ class FlowFrame:
 
     @property
     def columns(self):
-        return self.data.columns
+        return self.data.collect_schema().names()
 
     def sort(self, by: List[Expr | str] | Expr | str,
-             *more_by, descending: bool|List[bool] = False, nulls_last: bool = False,
+             *more_by, descending: bool | List[bool] = False, nulls_last: bool = False,
              multithreaded: bool = True, maintain_order: bool = False):
         by = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
@@ -293,8 +290,7 @@ class FlowFrame:
         )
         self.flow_graph.add_polars_code(polars_code_settings)
 
-
-    def select(self,  *columns, description: str = None):
+    def select(self, *columns, description: str = None):
         """
         Select columns from the frame.
 
@@ -317,7 +313,8 @@ class FlowFrame:
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
                 for col_ in columns
             ]
-            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if c not in [s.old_name for s in select_inputs]]
+            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if
+                               c not in [s.old_name for s in select_inputs]]
             select_inputs.extend(dropped_columns)
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
@@ -372,7 +369,7 @@ class FlowFrame:
             else:
                 raise ValueError('Not supported')
 
-            self._add_polars_code(new_node_id, code,description)
+            self._add_polars_code(new_node_id, code, description)
             # Add to graph
 
             # Create connection
@@ -553,6 +550,11 @@ class FlowFrame:
                          node_id=new_node_id, parent_node_id=self.node_id,
                          flow_graph=self.flow_graph)
 
+    @property
+    def schema(self):
+        return self.data.collect_schema()
+
+
 
 def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options):
     """
@@ -723,11 +725,13 @@ def sum(expr):
         expr = col(expr)
     return expr.sum()
 
+
 def mean(expr):
     """Mean aggregation function."""
     if isinstance(expr, str):
         expr = col(expr)
     return expr.mean()
+
 
 def min(expr):
     """Min aggregation function."""
@@ -735,11 +739,13 @@ def min(expr):
         expr = col(expr)
     return expr.min()
 
+
 def max(expr):
     """Max aggregation function."""
     if isinstance(expr, str):
         expr = col(expr)
     return expr.max()
+
 
 def count(expr):
     """Count aggregation function."""
