@@ -506,7 +506,7 @@ class FlowfileTable:
             raise Exception(f'Cannot create from {received_table.file_type}')
 
         flow_file = cls(handler(received_table))
-        flow_file._org_path = received_table.file_path
+        flow_file._org_path = received_table.abs_file_path
         return flow_file
 
     @classmethod

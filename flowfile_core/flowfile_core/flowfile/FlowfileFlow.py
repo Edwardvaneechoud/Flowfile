@@ -724,7 +724,8 @@ class EtlGraph:
                            input_columns=[],
                            node_type='output',
                            setting_input=output_file,
-                           schema_callback=schema_callback)
+                           schema_callback=schema_callback,
+                           input_node_ids=[output_file.depending_on_id])
 
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
         logger.info("Adding database reader")

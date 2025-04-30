@@ -8,7 +8,11 @@ import polars as pl
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
 from flowfile_core.flowfile.flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+
+
+# --- Helper Functions ---
 
 node_id_counter = 0
 
@@ -169,7 +173,7 @@ class FlowFrame:
                  data: pl.LazyFrame,
                  flow_graph=None,
                  node_id=None,
-                 parent_node_id=None, ):
+                 parent_node_id=None,):
         """Initialize with data and graph references."""
         if not isinstance(data, pl.LazyFrame):
             raise ValueError('Data should be of type polars lazy frame')
@@ -202,10 +206,10 @@ class FlowFrame:
 
     @property
     def columns(self):
-        return self.data.collect_schema().names()
+        return self.data.columns
 
     def sort(self, by: List[Expr | str] | Expr | str,
-             *more_by, descending: bool | List[bool] = False, nulls_last: bool = False,
+             *more_by, descending: bool|List[bool] = False, nulls_last: bool = False,
              multithreaded: bool = True, maintain_order: bool = False):
         by = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
@@ -290,7 +294,8 @@ class FlowFrame:
         )
         self.flow_graph.add_polars_code(polars_code_settings)
 
-    def select(self, *columns, description: str = None):
+
+    def select(self,  *columns, description: str = None):
         """
         Select columns from the frame.
 
@@ -313,8 +318,7 @@ class FlowFrame:
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
                 for col_ in columns
             ]
-            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if
-                               c not in [s.old_name for s in select_inputs]]
+            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if c not in [s.old_name for s in select_inputs]]
             select_inputs.extend(dropped_columns)
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
@@ -369,7 +373,7 @@ class FlowFrame:
             else:
                 raise ValueError('Not supported')
 
-            self._add_polars_code(new_node_id, code, description)
+            self._add_polars_code(new_node_id, code,description)
             # Add to graph
 
             # Create connection
@@ -439,6 +443,74 @@ class FlowFrame:
             flow_graph=self.flow_graph,
             node_id=new_node_id,
             parent_node_id=self.node_id
+        )
+
+    def sink_csv(self,
+                 file: str,
+                 *args,
+                 separator: str = ",",
+                 encoding: str = "utf-8",
+                 description: str = None):
+        """
+        Write the data to a CSV file.
+
+        Args:
+            path: Path or filename for the CSV file
+            separator: Field delimiter to use, defaults to ','
+            encoding: File encoding, defaults to 'utf-8'
+            description: Description of this operation for the ETL graph
+
+        Returns:
+            Self for method chaining
+        """
+        return self.write_csv(file, *args, separator=separator, encoding=encoding, description=description)
+
+    def write_csv(
+        self,
+        file: str,
+        *args,
+        separator: str = ",",
+        encoding: str = "utf-8",
+        description: str = None,
+    ) -> "FlowFrame":
+        """
+        Write the data to a CSV file.
+
+        Args:
+            path: Path or filename for the CSV file
+            separator: Field delimiter to use, defaults to ','
+            encoding: File encoding, defaults to 'utf-8'
+            description: Description of this operation for the ETL graph
+
+        Returns:
+            Self for method chaining
+        """
+        # Create output settings
+        new_node_id = generate_node_id()
+        output_csv_table = input_schema.OutputCsvTable(
+            file_type="csv", delimiter=separator, encoding=encoding
+        )
+        file_name = file.split(os.sep)[-1]
+        output_settings = input_schema.OutputSettings(file_type='csv',
+                                                      name=file_name,
+                                                      directory=file,
+                                                      output_csv_table=output_csv_table,
+                                                      output_excel_table=input_schema.OutputExcelTable(),
+                                                      output_parquet_table=input_schema.OutputParquetTable())
+        node_output = input_schema.NodeOutput(flow_id=self.flow_graph.flow_id,
+                                              node_id=new_node_id,
+                                              output_settings=output_settings,
+                                              depending_on_id=self.node_id,
+                                              description=description)
+        self.flow_graph.add_output(node_output)
+        connection = input_schema.NodeConnection.create_from_simple_input(
+            from_id=self.node_id, to_id=new_node_id
+        )
+        add_connection(self.flow_graph, connection)
+        return FlowFrame(
+            self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
         )
 
     def group_by(self, *by, maintain_order=False, **named_by):
@@ -555,6 +627,35 @@ class FlowFrame:
         return self.data.collect_schema()
 
 
+    def head(self, n: int, description: str = None):
+        new_node_id = generate_node_id()
+        settings = input_schema.NodeSample(flow_id=self.flow_graph.flow_id,
+                                           node_id=new_node_id,
+                                           depending_on_id=self.node_id,
+                                           sample_size=n,
+                                           description=description
+                                           )
+        self.flow_graph.add_sample(settings)
+        connection = input_schema.NodeConnection.create_from_simple_input(
+            from_id=self.node_id,
+            to_id=new_node_id
+        )
+        add_connection(self.flow_graph, connection)
+        return FlowFrame(self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+                         node_id=new_node_id, parent_node_id=self.node_id,
+                         flow_graph=self.flow_graph)
+
+    def limit(self, n: int, description: str = None):
+        return self.head(n, description)
+
+    def cache(self) -> "FlowFrame":
+        setting_input = self.get_node_settings().setting_input
+        setting_input.cache_results = True
+        return self
+
+    def get_node_settings(self) -> NodeStep:
+        return self.flow_graph.get_node(self.node_id)
+
 
 def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options):
     """
@@ -617,7 +718,8 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None,
     )
 
 
-def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options) -> FlowFrame:
+def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = None,
+                 convert_to_absolute_path: bool = True, **options) -> FlowFrame:
     """
     Read a Parquet file into a FlowFrame.
 
@@ -625,6 +727,7 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
         file_path: Path to Parquet file
         flow_graph: if you want to add it to an existing graph
         description: if you want to add a readable name in the frontend (advised)
+        convert_to_absolute_path: If the path needs to be set to a fixed location
         **options: Options for polars.read_parquet
 
     Returns:
@@ -650,6 +753,8 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
         path=file_path,
         name=file_path.split('/')[-1]
     )
+    if convert_to_absolute_path:
+        received_table.path = received_table.abs_file_path
 
     # Create read node
     read_node = input_schema.NodeRead(

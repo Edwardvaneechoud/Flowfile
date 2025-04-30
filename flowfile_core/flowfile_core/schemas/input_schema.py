@@ -419,7 +419,7 @@ class NodeUnion(NodeMultiInput):
     union_input: transform_schema.UnionInput = Field(default_factory=transform_schema.UnionInput)
 
 
-class NodeOutput(NodeBase):
+class NodeOutput(NodeSingleInput):
     output_settings: OutputSettings
 
 
