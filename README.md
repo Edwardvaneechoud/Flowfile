@@ -111,7 +111,7 @@ npm install
 npm run build      # All platforms
 ```
 
-### 2. Docker Setup
+#### 2. Docker Setup
 Perfect for quick testing, development or deployment scenarios. Runs all services in containers with proper networking and volume management:
 ```bash
 # Clone and start all services
