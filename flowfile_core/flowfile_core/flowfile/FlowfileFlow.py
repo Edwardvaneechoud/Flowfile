@@ -291,9 +291,7 @@ class EtlGraph:
             input_data = node.singular_main_input.get_resulting_data()  # get from the previous step the data
             input_data.lazy = True  # ensure the dataset is lazy
             input_lf = input_data.data_frame  # get the lazy frame
-            node_input_schema = input_data.schema  # TODO REMOVE
             return pre_calculate_pivot_schema(input_data.schema, pivot_settings.pivot_input, input_lf=input_lf)
-
         node.schema_callback = schema_callback
 
     def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):

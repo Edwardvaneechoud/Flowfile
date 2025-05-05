@@ -1,4 +1,5 @@
 import uuid
+import os
 from polars.datatypes import *
 from typing import Any, Iterable, List
 
@@ -7,10 +8,12 @@ import polars as pl
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
 from flowfile_core.flowfile.flowfile_frame.expr import Expr, Column, lit, col
+from flowfile_core.flowfile.flowfile_frame.selectors import Selector
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-
+from flowfile_core.flowfile.flowfile_frame.utils import _parse_inputs_as_iterable
+from flowfile_core.flowfile.flowfile_frame.group_frame import GroupByFrame
 
 # --- Helper Functions ---
 
@@ -28,142 +31,6 @@ def generate_node_id() -> int:
     return node_id_counter
 
 
-def _is_iterable(obj: Any) -> bool:
-    # Avoid treating strings as iterables in this context
-    return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))
-
-
-def _parse_inputs_as_iterable(
-        inputs: tuple[Any, ...] | tuple[Iterable[Any]],
-) -> Iterable[Any]:
-    if not inputs:
-        return []
-
-    # Treat elements of a single iterable as separate inputs
-    if len(inputs) == 1 and _is_iterable(inputs[0]):
-        return inputs[0]
-
-    return inputs
-
-
-class GroupByFrame:
-    """Represents a grouped DataFrame for aggregation operations."""
-
-    def __init__(self, parent_frame, by_cols, maintain_order=False):
-        self.parent = parent_frame
-        self.by_cols = by_cols
-        self.maintain_order = maintain_order
-
-    def agg(self, *agg_exprs, **named_agg_exprs):
-        """
-        Apply aggregations to grouped data.
-
-        Args:
-            *agg_exprs: Expressions to aggregate
-            **named_agg_exprs: Named expressions to aggregate
-
-        Returns:
-            A FlowFrame with the aggregated data
-        """
-        # Create a new node ID
-        new_node_id = generate_node_id()
-        agg_expressions = _parse_inputs_as_iterable(agg_exprs)
-        # Prepare the agg_cols list
-        agg_cols = []
-
-        # Add groupby columns
-        for col_expr in self.by_cols:
-            if isinstance(col_expr, str):
-                # Simple column name
-                agg_cols.append(
-                    transform_schema.AggColl(old_name=col_expr, agg="groupby")
-                )
-            elif isinstance(col_expr, Expr):
-                # Expression with possible alias
-                col_name = col_expr.name
-                agg_cols.append(
-                    transform_schema.AggColl(old_name=col_name, agg="groupby")
-                )
-
-        # Process positional aggregation expressions
-        for expr in agg_expressions:
-            if isinstance(expr, Expr):
-                # Check if the expression has an aggregation function
-                if hasattr(expr, "agg_func") and expr.agg_func:
-                    agg_cols.append(
-                        transform_schema.AggColl(
-                            old_name=expr._initial_column_name or expr.name,
-                            agg=expr.agg_func,
-                            new_name=f"{expr.name}"
-                            if expr.name
-                            else None,
-                        )
-                    )
-                else:
-                    agg_cols.append(
-                        transform_schema.AggColl(old_name=expr.name, agg="first")
-                    )
-            elif isinstance(expr, str):
-                # String column name - assume we want to collect all values
-                agg_cols.append(transform_schema.AggColl(old_name=expr, agg="first"))
-
-        # Process named aggregation expressions
-        for name, expr in named_agg_exprs.items():
-            if isinstance(expr, Expr):
-                agg_cols.append(
-                    transform_schema.AggColl(
-                        old_name=expr.name,
-                        agg=expr.agg_func
-                        if hasattr(expr, "agg_func") and expr.agg_func
-                        else "first",
-                        new_name=name,
-                    )
-                )
-            elif isinstance(expr, str):
-                agg_cols.append(
-                    transform_schema.AggColl(old_name=expr, agg="first", new_name=name)
-                )
-            elif isinstance(expr, tuple) and len(expr) == 2:
-                # (column, agg_func) format
-                col_name = expr[0].name if isinstance(expr[0], Expr) else expr[0]
-                agg_func = expr[1]
-                agg_cols.append(
-                    transform_schema.AggColl(
-                        old_name=col_name, agg=agg_func, new_name=name
-                    )
-                )
-
-        # Create node settings
-        group_by_settings = input_schema.NodeGroupBy(
-            flow_id=self.parent.flow_graph.flow_id,
-            node_id=new_node_id,
-            groupby_input=transform_schema.GroupByInput(agg_cols=agg_cols),
-            pos_x=200,
-            pos_y=200,
-            is_setup=True,
-            depending_on_id=self.parent.node_id,
-        )
-
-        # Add to graph
-        self.parent.flow_graph.add_group_by(group_by_settings)
-
-        # Create connection
-        connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=self.parent.node_id, to_id=new_node_id
-        )
-        add_connection(self.parent.flow_graph, connection)
-
-        # Return new frame
-        return FlowFrame(
-            data=self.parent.flow_graph.get_node(new_node_id)
-            .get_resulting_data()
-            .data_frame,
-            flow_graph=self.parent.flow_graph,
-            node_id=new_node_id,
-            parent_node_id=self.parent.node_id,
-        )
-
-
 class FlowFrame:
     """Main class that wraps FlowfileTable and maintains the ETL graph."""
     flow_graph: EtlGraph
@@ -173,7 +40,7 @@ class FlowFrame:
                  data: pl.LazyFrame,
                  flow_graph=None,
                  node_id=None,
-                 parent_node_id=None,):
+                 parent_node_id=None, ):
         """Initialize with data and graph references."""
         if not isinstance(data, pl.LazyFrame):
             raise ValueError('Data should be of type polars lazy frame')
@@ -208,9 +75,27 @@ class FlowFrame:
     def columns(self):
         return self.data.columns
 
+    def _add_connection(self, from_id, to_id):
+        """Helper method to add a connection between nodes"""
+        connection = input_schema.NodeConnection.create_from_simple_input(
+            from_id=from_id, to_id=to_id
+        )
+        add_connection(self.flow_graph, connection)
+
+    def _create_child_frame(self, new_node_id):
+        """Helper method to create a new FlowFrame that's a child of this one"""
+        self._add_connection(self.node_id, new_node_id)
+        return FlowFrame(
+            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+        )
+
     def sort(self, by: List[Expr | str] | Expr | str,
-             *more_by, descending: bool|List[bool] = False, nulls_last: bool = False,
-             multithreaded: bool = True, maintain_order: bool = False):
+             *more_by, descending: bool | List[bool] = False, nulls_last: bool = False,
+             multithreaded: bool = True, maintain_order: bool = False,
+             description: str = None):
         by = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
         sort_expressions = by
@@ -268,20 +153,10 @@ class FlowFrame:
             pos_y=150,
             is_setup=True,
             depending_on_id=self.node_id,
+            description=description
         )
         self.flow_graph.add_sort(sort_settings)
-        connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=self.node_id, to_id=new_node_id
-        )
-        add_connection(self.flow_graph, connection)
-
-        # Return new frame
-        return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-            flow_graph=self.flow_graph,
-            node_id=new_node_id,
-            parent_node_id=self.node_id,
-        )
+        return self._create_child_frame(new_node_id)
 
     def _add_polars_code(self, new_node_id: int, code: str, description: str = None):
         polars_code_settings = input_schema.NodePolarsCode(
@@ -294,8 +169,7 @@ class FlowFrame:
         )
         self.flow_graph.add_polars_code(polars_code_settings)
 
-
-    def select(self,  *columns, description: str = None):
+    def select(self, *columns, description: str = None):
         """
         Select columns from the frame.
 
@@ -318,7 +192,8 @@ class FlowFrame:
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
                 for col_ in columns
             ]
-            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if c not in [s.old_name for s in select_inputs]]
+            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if
+                               c not in [s.old_name for s in select_inputs]]
             select_inputs.extend(dropped_columns)
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
@@ -334,34 +209,19 @@ class FlowFrame:
 
             # Add to graph
             self.flow_graph.add_select(select_settings)
-
-            # Create connection
-            connection = input_schema.NodeConnection.create_from_simple_input(
-                from_id=self.node_id,
-                to_id=new_node_id
-            )
-            add_connection(self.flow_graph, connection)
-
-            # Return new frame
-            return FlowFrame(
-                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                flow_graph=self.flow_graph,
-                node_id=new_node_id,
-                parent_node_id=self.node_id
-            )
+            return self._create_child_frame(new_node_id)
 
         else:
-            # Handle expressions by creating a formula node
-            # Convert to polars expressions
             readable_exprs = []
             is_readable: bool = True
             for col_ in columns:
                 if isinstance(col_, Expr):
                     readable_exprs.append(col_)
+                elif isinstance(col_, Selector):
+                    readable_exprs.append(col_)
                 elif isinstance(col_, pl.expr.Expr):
                     print('warning this cannot be converted to flowfile frontend. Make sure you use the flowfile expr')
                     is_readable = False
-
                 elif isinstance(col_, str) and col_ in self.columns:
                     col_expr = Column(col_)
                     readable_exprs.append(col_expr)
@@ -373,23 +233,8 @@ class FlowFrame:
             else:
                 raise ValueError('Not supported')
 
-            self._add_polars_code(new_node_id, code,description)
-            # Add to graph
-
-            # Create connection
-            connection = input_schema.NodeConnection.create_from_simple_input(
-                from_id=self.node_id,
-                to_id=new_node_id
-            )
-            add_connection(self.flow_graph, connection)
-
-            # Return new frame
-            return FlowFrame(
-                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                flow_graph=self.flow_graph,
-                node_id=new_node_id,
-                parent_node_id=self.node_id
-            )
+            self._add_polars_code(new_node_id, code, description)
+            return self._create_child_frame(new_node_id)
 
     def filter(self, predicate: Expr | Any = None, *, flowfile_formula: str = None, description: str = None):
         """
@@ -431,19 +276,7 @@ class FlowFrame:
 
             self.flow_graph.add_filter(filter_settings)
 
-        connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=self.node_id,
-            to_id=new_node_id
-        )
-        add_connection(self.flow_graph, connection)
-
-        # Return new frame
-        return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-            flow_graph=self.flow_graph,
-            node_id=new_node_id,
-            parent_node_id=self.node_id
-        )
+        return self._create_child_frame(new_node_id)
 
     def sink_csv(self,
                  file: str,
@@ -465,60 +298,185 @@ class FlowFrame:
         """
         return self.write_csv(file, *args, separator=separator, encoding=encoding, description=description)
 
-    def write_csv(
-        self,
-        file: str,
-        *args,
-        separator: str = ",",
-        encoding: str = "utf-8",
-        description: str = None,
+    def write_parquet(
+            self,
+            path: str|os.PathLike,
+            *,
+            description: str = None,
+            convert_to_absolute_path: bool = True,
+            **kwargs: Any,
     ) -> "FlowFrame":
         """
-        Write the data to a CSV file.
+        Write the data to a Parquet file. Creates a standard Output node if only
+        'path' and standard options are provided. Falls back to a Polars Code node
+        if other keyword arguments are used.
 
         Args:
-            path: Path or filename for the CSV file
-            separator: Field delimiter to use, defaults to ','
-            encoding: File encoding, defaults to 'utf-8'
-            description: Description of this operation for the ETL graph
+            path: Path (string or pathlib.Path) or filename for the Parquet file.
+                  Note: Writable file-like objects are not supported when using advanced options
+                  that trigger the Polars Code node fallback.
+            description: Description of this operation for the ETL graph.
+            convert_to_absolute_path: If the path needs to be set to a fixed location.
+            **kwargs: Additional keyword arguments for polars.DataFrame.sink_parquet/write_parquet.
+                      If any kwargs other than 'description' or 'convert_to_absolute_path' are provided,
+                      a Polars Code node will be created instead of a standard Output node.
+                      Complex objects like IO streams or credential provider functions are NOT
+                      supported via this method's Polars Code fallback.
 
         Returns:
-            Self for method chaining
+            Self for method chaining (new FlowFrame pointing to the output node).
         """
-        # Create output settings
         new_node_id = generate_node_id()
-        output_csv_table = input_schema.OutputCsvTable(
-            file_type="csv", delimiter=separator, encoding=encoding
+
+        is_path_input = isinstance(path, (str, os.PathLike))
+        if isinstance(path, os.PathLike):
+            file_str = str(path)
+        elif isinstance(path, str):
+            file_str = path
+        else:
+            file_str = path
+            is_path_input = False
+
+        file_name = file_str.split(os.sep)[-1]
+        use_polars_code = bool(kwargs.items()) or not is_path_input
+
+        output_parquet_table = input_schema.OutputParquetTable(
+            file_type="parquet"
         )
-        file_name = file.split(os.sep)[-1]
-        output_settings = input_schema.OutputSettings(file_type='csv',
-                                                      name=file_name,
-                                                      directory=file,
-                                                      output_csv_table=output_csv_table,
-                                                      output_excel_table=input_schema.OutputExcelTable(),
-                                                      output_parquet_table=input_schema.OutputParquetTable())
-        node_output = input_schema.NodeOutput(flow_id=self.flow_graph.flow_id,
-                                              node_id=new_node_id,
-                                              output_settings=output_settings,
-                                              depending_on_id=self.node_id,
-                                              description=description)
-        self.flow_graph.add_output(node_output)
-        connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=self.node_id, to_id=new_node_id
-        )
-        add_connection(self.flow_graph, connection)
-        return FlowFrame(
-            self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-            node_id=new_node_id,
-            parent_node_id=self.node_id,
+        output_settings = input_schema.OutputSettings(
+            file_type='parquet',
+            name=file_name,
+            directory=file_str if is_path_input else str(file_str),
+            output_parquet_table=output_parquet_table,
+            output_csv_table=input_schema.OutputCsvTable(),
+            output_excel_table=input_schema.OutputExcelTable()
         )
 
-    def group_by(self, *by, maintain_order=False, **named_by):
+        if is_path_input:
+            try:
+                output_settings.set_absolute_filepath()
+                if convert_to_absolute_path:
+                    output_settings.directory = output_settings.abs_file_path
+            except Exception as e:
+                print(f"Warning: Could not determine absolute path for {file_str}: {e}")
+
+        if not use_polars_code:
+            node_output = input_schema.NodeOutput(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                output_settings=output_settings,
+                depending_on_id=self.node_id,
+                description=description
+            )
+            self.flow_graph.add_output(node_output)
+        else:
+            if not is_path_input:
+                raise TypeError(
+                    f"Input 'path' must be a string or Path-like object when using advanced "
+                    f"write_parquet options (kwargs={kwargs.items()}), got {type(path)}."
+                    " File-like objects are not supported with the Polars Code fallback."
+                )
+
+            # Use the potentially converted absolute path string
+            path_arg_repr = repr(output_settings.directory)
+            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in kwargs.items())
+            args_str = f"path={path_arg_repr}"
+            if kwargs_repr:
+                args_str += f", {kwargs_repr}"
+
+            # Use sink_parquet for LazyFrames
+            code = f"input_df.sink_parquet({args_str})"
+            print(f"Generated Polars Code: {code}")
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
+    def write_csv(
+            self,
+            file: str | os.PathLike,
+            *,
+            separator: str = ",",
+            encoding: str = "utf-8",
+            description: str = None,
+            convert_to_absolute_path: bool = True,
+            **kwargs: Any,
+    ) -> "FlowFrame":
+        new_node_id = generate_node_id()
+
+        is_path_input = isinstance(file, (str, os.PathLike))
+        if isinstance(file, os.PathLike):
+            file_str = str(file)
+        elif isinstance(file, str):
+            file_str = file
+        else:
+            file_str = file
+            is_path_input = False
+
+        file_name = file_str.split(os.sep)[-1] if is_path_input else "output.csv"
+
+        use_polars_code = bool(kwargs) or not is_path_input
+
+        output_settings = input_schema.OutputSettings(
+            file_type='csv',
+            name=file_name,
+            directory=file_str if is_path_input else str(file_str),
+            output_csv_table=input_schema.OutputCsvTable(
+                file_type="csv", delimiter=separator, encoding=encoding),
+            output_excel_table=input_schema.OutputExcelTable(),
+            output_parquet_table=input_schema.OutputParquetTable()
+        )
+
+        if is_path_input:
+            try:
+                output_settings.set_absolute_filepath()
+                if convert_to_absolute_path:
+                    output_settings.directory = output_settings.abs_file_path
+            except Exception as e:
+                print(f"Warning: Could not determine absolute path for {file_str}: {e}")
+
+        if not use_polars_code:
+            node_output = input_schema.NodeOutput(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                output_settings=output_settings,
+                depending_on_id=self.node_id,
+                description=description
+            )
+            self.flow_graph.add_output(node_output)
+        else:
+            if not is_path_input:
+                raise TypeError(
+                    f"Input 'file' must be a string or Path-like object when using advanced "
+                    f"write_csv options (kwargs={kwargs}), got {type(file)}."
+                    " File-like objects are not supported with the Polars Code fallback."
+                )
+
+            path_arg_repr = repr(output_settings.directory)
+
+            all_kwargs_for_code = {
+                'separator': separator,
+                'encoding': encoding,
+                **kwargs  # Add the extra kwargs
+            }
+            kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in all_kwargs_for_code.items())
+
+            args_str = f"file={path_arg_repr}"
+            if kwargs_repr:
+                args_str += f", {kwargs_repr}"
+
+            code = f"input_df.collect().write_csv({args_str})"
+            print(f"Generated Polars Code: {code}")
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
+    def group_by(self, *by, description: str = None, maintain_order=False, **named_by) -> GroupByFrame:
         """
         Start a group by operation.
 
         Parameters:
             *by: Column names or expressions to group by
+            description: add optional description to this step for the frontend
             maintain_order: Keep groups in the order they appear in the data
             **named_by: Additional columns to group by with custom names
 
@@ -526,27 +484,28 @@ class FlowFrame:
             GroupByFrame object for aggregations
         """
         # Process positional arguments
+        new_node_id = generate_node_id()
         by_cols = []
         for col_expr in by:
             if isinstance(col_expr, str):
                 by_cols.append(col_expr)
             elif isinstance(col_expr, Expr):
                 by_cols.append(col_expr)
+            elif isinstance(col_expr, Selector):
+                by_cols.append(col_expr)
             elif isinstance(col_expr, (list, tuple)):
                 by_cols.extend(col_expr)
 
-        # Process named arguments (column renames)
         for new_name, col_expr in named_by.items():
             if isinstance(col_expr, str):
-                # For a string, create an expression with an alias
                 by_cols.append(col(col_expr).alias(new_name))
             elif isinstance(col_expr, Expr):
-                # For an expression, add an alias
                 by_cols.append(col_expr.alias(new_name))
 
         # Create a GroupByFrame
         return GroupByFrame(
-            parent_frame=self, by_cols=by_cols, maintain_order=maintain_order
+            node_id=new_node_id,
+            parent_frame=self, by_cols=by_cols, maintain_order=maintain_order, description=description
         )
 
     def to_graph(self):
@@ -580,29 +539,20 @@ class FlowFrame:
                     all_expressions.append(expression)
             code = f"input_df.with_columns({','.join(str(e) for e in all_expressions)})"
             self._add_polars_code(new_node_id, code, description)
-            connection = input_schema.NodeConnection.create_from_simple_input(
-                from_id=self.node_id,
-                to_id=new_node_id
-            )
-            add_connection(self.flow_graph, connection)
-            return FlowFrame(
-                self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                node_id=new_node_id,
-                parent_node_id=self.node_id,
-            )
+            return self._create_child_frame(new_node_id)
 
         elif flowfile_formulas is not None and output_column_names:
             if not len(output_column_names) == len(flowfile_formulas):
-                raise ValueError("Lenght of both the formulas and the output columns names must be identical")
+                raise ValueError("Length of both the formulas and the output columns names must be identical")
 
             if len(flowfile_formulas) == 1:
                 return self._with_flowfile_formula(flowfile_formulas[0], output_column_names[0], description)
             ff = self
-            for i, flowfile_formula, output_column_name in enumerate(zip(flowfile_formulas, output_column_names)):
-                ff = ff._with_flowfile_formula(flowfile_formula, output_column_name, f"{i}: description")
+            for i, (flowfile_formula, output_column_name) in enumerate(zip(flowfile_formulas, output_column_names)):
+                ff = ff._with_flowfile_formula(flowfile_formula, output_column_name, f"{i}: {description}")
             return ff
         else:
-            raise
+            raise ValueError("Either exprs or flowfile_formulas with output_column_names must be provided")
 
     def _with_flowfile_formula(self, flowfile_formula: str, output_column_name, description: str = None) -> "FlowFrame":
         new_node_id = generate_node_id()
@@ -613,19 +563,11 @@ class FlowFrame:
                                          field=transform_schema.FieldInput(name=output_column_name)),
                                      description=description))
         self.flow_graph.add_formula(function_settings)
-        connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=self.node_id,
-            to_id=new_node_id
-        )
-        add_connection(self.flow_graph, connection)
-        return FlowFrame(self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                         node_id=new_node_id, parent_node_id=self.node_id,
-                         flow_graph=self.flow_graph)
+        return self._create_child_frame(new_node_id)
 
     @property
     def schema(self):
         return self.data.collect_schema()
-
 
     def head(self, n: int, description: str = None):
         new_node_id = generate_node_id()
@@ -636,14 +578,7 @@ class FlowFrame:
                                            description=description
                                            )
         self.flow_graph.add_sample(settings)
-        connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=self.node_id,
-            to_id=new_node_id
-        )
-        add_connection(self.flow_graph, connection)
-        return FlowFrame(self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                         node_id=new_node_id, parent_node_id=self.node_id,
-                         flow_graph=self.flow_graph)
+        return self._create_child_frame(new_node_id)
 
     def limit(self, n: int, description: str = None):
         return self.head(n, description)
@@ -657,13 +592,52 @@ class FlowFrame:
         return self.flow_graph.get_node(self.node_id)
 
 
-def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None, **options):
+def sum(expr):
+    """Sum aggregation function."""
+    if isinstance(expr, str):
+        expr = col(expr)
+    return expr.sum()
+
+
+def mean(expr):
+    """Mean aggregation function."""
+    if isinstance(expr, str):
+        expr = col(expr)
+    return expr.mean()
+
+
+def min(expr):
+    """Min aggregation function."""
+    if isinstance(expr, str):
+        expr = col(expr)
+    return expr.min()
+
+
+def max(expr):
+    """Max aggregation function."""
+    if isinstance(expr, str):
+        expr = col(expr)
+    return expr.max()
+
+
+def count(expr):
+    """Count aggregation function."""
+    if isinstance(expr, str):
+        expr = col(expr)
+    return expr.count()
+
+
+def read_csv(file_path, *, flow_graph: EtlGraph = None, separator: str = ';',
+             convert_to_absolute_path: bool = True,
+             description: str = None, **options):
     """
     Read a CSV file into a FlowFrame.
 
     Args:
         file_path: Path to CSV file
         flow_graph: if you want to add it to an existing graph
+        separator: Single byte character to use as separator in the file.
+        convert_to_absolute_path: If the path needs to be set to a fixed location
         description: if you want to add a readable name in the frontend (advised)
         **options: Options for polars.read_csv
 
@@ -682,22 +656,21 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None,
         flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
     else:
         flow_id = flow_graph.flow_id
-    # Extract options
-    delimiter = options.get('separator', ',')
     has_headers = options.get('has_header', True)
     encoding = options.get('encoding', 'utf-8')
 
-    # Create received table
     received_table = input_schema.ReceivedTable(
         file_type='csv',
         path=file_path,
         name=file_path.split('/')[-1],
-        delimiter=delimiter,
+        delimiter=separator,
         has_headers=has_headers,
         encoding=encoding
     )
 
-    # Create read node
+    if convert_to_absolute_path:
+        received_table.path = received_table.abs_file_path
+
     read_node = input_schema.NodeRead(
         flow_id=flow_id,
         node_id=node_id,
@@ -707,10 +680,8 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, description: str = None,
         is_setup=True
     )
 
-    # Add to graph
     flow_graph.add_read(read_node)
 
-    # Return new frame
     return FlowFrame(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
         flow_graph=flow_graph,
@@ -733,7 +704,6 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     Returns:
         A FlowFrame with the Parquet data
     """
-    # Create new node ID
     node_id = generate_node_id()
 
     if flow_graph is None:
@@ -747,7 +717,6 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     else:
         flow_id = flow_graph.flow_id
 
-    # Create received table
     received_table = input_schema.ReceivedTable(
         file_type='parquet',
         path=file_path,
@@ -756,7 +725,6 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path
 
-    # Create read node
     read_node = input_schema.NodeRead(
         flow_id=flow_id,
         node_id=node_id,
@@ -767,7 +735,6 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
         description=description
     )
 
-    # Add to graph
     flow_graph.add_read(read_node)
 
     return FlowFrame(
@@ -784,7 +751,7 @@ def from_dict(data, *, flow_graph: EtlGraph = None, description: str = None) -> 
     Args:
         data: Dictionary of lists or list of dictionaries
         flow_graph: if you want to add it to an existing graph
-        description: if you want to add a readable name in the frontend (adviced)
+        description: if you want to add a readable name in the frontend (advised)
     Returns:
         A FlowFrame with the data
     """
@@ -821,39 +788,3 @@ def from_dict(data, *, flow_graph: EtlGraph = None, description: str = None) -> 
         flow_graph=flow_graph,
         node_id=node_id
     )
-
-
-# Aggregation functions
-def sum(expr):
-    """Sum aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.sum()
-
-
-def mean(expr):
-    """Mean aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.mean()
-
-
-def min(expr):
-    """Min aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.min()
-
-
-def max(expr):
-    """Max aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.max()
-
-
-def count(expr):
-    """Count aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.count()

@@ -1,4 +1,6 @@
 from flowfile_core.flowfile.flowfile_frame import flow_frame as pl
+from flowfile_core.flowfile.flowfile_frame import selectors as scf
+from polars import selectors as sc
 from flowfile_core.flowfile.flowfile_frame.expr import col
 
 
@@ -14,6 +16,7 @@ data = {
 
 df = pl.from_dict(data, description='Some random input data')
 
+other_selection = df.select(scf.numeric(), description='this is with a selector')
 columns = pl.col("city").alias("new_city").str.contains('Houston', literal=True), "age", "id"
 sales_df = df.select(columns, description='sales_df')
 
@@ -32,6 +35,7 @@ input_df = (pl.read_parquet('flowfile_core/tests/support_files/data/fake_data.pa
 output_df = (input_df.select(pl.col('sales_data').cast(pl.Int64), *[c for c in input_df.columns if c != 'sales_data'])
              .group_by('City').agg([col('sales_data').sum().alias('sum_sales_data'), col('sales_data').min()])
              .sort(['sales_data'], description='output data for')).cache()
+
 sorted_df = input_df.sort(by=pl.col('sales_data'), descending=True, description='cached_df').cache()
 
 
@@ -54,6 +58,13 @@ output_df = create_sample_sets(data_with_formula_2)
 graph = output_df.to_graph()  # Obtain the graph that is linked to the latest out
 graph.flow_settings.execution_mode = 'Performance'
 
-output_df.save_graph('new.flowfile')
+
+final_output_frame = output_df.write_parquet(
+    'output_advanced.parquet',
+    description='Write final data to Parquet with snappy compression and stats'
+)
 
 
+
+output_df.write_csv('output_csv.csv', separator=';', description='output_csv')
+output_df.save_graph('flowfile_core/tests/support_files/flows/flow_from_df_operations.flowfile')

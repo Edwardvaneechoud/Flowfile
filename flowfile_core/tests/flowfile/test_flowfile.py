@@ -8,6 +8,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
                                                                                store_database_connection,)
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.flowfile_frame import flow_frame as ff
 
 import pytest
 from pathlib import Path
@@ -325,6 +326,24 @@ def test_add_read_excel():
     graph = create_graph()
     add_node_promise_on_type(graph, node_type='read', node_id=1)
     graph.add_read(input_file=input_schema.NodeRead(**settings))
+
+
+def ensure_excel_is_read_from_arrow_object():
+    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
+                'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
+                'received_file': {'id': None, 'name': 'fake_data.xlsx',
+                                  'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
+                                  'directory': None, 'analysis_file_available': False, 'status': None,
+                                  'file_type': 'excel', 'fields': [], 'reference': '', 'starting_from_line': 0,
+                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
+                                  'row_delimiter': '\n', 'quote_char': '"', 'infer_schema_length': 1000,
+                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': 'Sheet1',
+                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
+                                  'type_inference': False}}
+    graph = create_graph()
+    add_node_promise_on_type(graph, node_type='read', node_id=1)
+    graph.add_read(input_file=input_schema.NodeRead(**settings))
+    graph.get_node(1).get_resulting_data()
 
 
 def test_add_record_id():
@@ -967,3 +986,32 @@ def test_empty_manual_input_should_run():
         assert r.success, 'Should be able to run even with empty manual input'
     except:
         raise ValueError('Should be able to run empty manual input')
+
+
+def create_flow_frame_with_parquet_read() -> ff.FlowFrame:
+    input_df = (ff.read_parquet(file_path='flowfile_core/tests/support_files/data/fake_data.parquet',
+                                description='fake_data_df'))
+
+    sorted_df = input_df.sort(by=ff.col('sales_data'), descending=True, description='cached_df').cache()
+    filtered_df = sorted_df.filter(flowfile_formula='contains([Email],"@")', description='filter with flowfile formula')
+    filtered_df2 = filtered_df.filter(ff.col("Email").str.contains('@'), description='Filter with polars code')
+
+    data_with_formula_2 = filtered_df2.with_columns(flowfile_formulas=['now()'], output_column_names=['today'],
+                                                    description='this is ff formula for the frontend')
+    data_with_formula_2.write_csv('output_csv.csv', separator=';', description='output_csv')
+    return data_with_formula_2
+
+
+def test_read_from_parquet_in_performance():
+    # ensure there is a good flowframe:
+    flow_frame = create_flow_frame_with_parquet_read()
+    graph = flow_frame.flow_graph
+    graph.flow_settings.execution_mode = 'Performance'
+    output_node = graph.nodes[-1]  # get the output node
+    execution_plan_before_run = output_node.get_resulting_data().data_frame.explain(format="plain")  # get the execution plan
+    assert "tests/support_files/data/fake_data.parquet" in execution_plan_before_run, 'The execution plan should contain the parquet file path'
+    graph.run_graph()
+    execution_plan_after_run = output_node.get_resulting_data().data_frame.explain(format="plain")  # get the execution plan
+    assert "tests/support_files/data/fake_data.parquet" in execution_plan_after_run, 'The execution plan should contain the parquet file path'
+
+

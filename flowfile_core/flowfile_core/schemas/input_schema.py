@@ -251,7 +251,6 @@ class NodeManualInput(NodeBase):
 
 
 class NodeRead(NodeBase):
-    cache_results: bool = True
     received_file: ReceivedTable
 
 
