@@ -1,6 +1,5 @@
 from flowfile_core.flowfile.flowfile_frame import flow_frame as pl
-from flowfile_core.flowfile.flowfile_frame import selectors as scf
-from polars import selectors as sc
+from flowfile_core.flowfile.flowfile_frame import selectors as sc
 from flowfile_core.flowfile.flowfile_frame.expr import col
 
 
@@ -15,6 +14,9 @@ data = {
 
 
 df = pl.from_dict(data, description='Some random input data')
+
+df.select(sc.integer()).collect()
+
 
 # Create test data in long format for pivoting
 long_data = {
@@ -54,7 +56,7 @@ print(long_df.collect())
 # Let's try a more specific unpivot that only includes salary columns
 # and uses custom names for the variable and value columns
 salary_df = wide_df.unpivot(
-    on=[scf.integer()],
+    on=[sc.integer()],
     index=["id", "name"],
     variable_name="year",
     value_name="salary",
@@ -97,7 +99,7 @@ pivot_by_metric = df_long.pivot(
 )
 
 
-other_selection = df.select(scf.numeric(), description='this is with a selector')
+other_selection = df.select(sc.numeric(), description='this is with a selector')
 columns = pl.col("city").alias("new_city").str.contains('Houston', literal=True), "age", "id"
 sales_df = df.select(columns, description='sales_df')
 
@@ -112,10 +114,13 @@ another_option = df.select(pl.col('name'), description='another_option')
 
 input_df = (pl.read_parquet('flowfile_core/tests/support_files/data/fake_data.parquet',
             flow_graph=another_option.flow_graph, description='fake_data_df'))
+input_df.group_by(['City']).agg(pl.col("sales_data").sum())
 
-output_df = (input_df.select(pl.col('sales_data').cast(pl.Int64), *[c for c in input_df.columns if c != 'sales_data'])
+output_df: pl.FlowFrame = (input_df.select(pl.col('sales_data').cast(pl.Int64), *[c for c in input_df.columns if c != 'sales_data'])
              .group_by('City').agg([col('sales_data').sum().alias('sum_sales_data'), col('sales_data').min()])
              .sort(['sales_data'], description='output data for')).cache()
+
+
 
 sorted_df = input_df.sort(by=pl.col('sales_data'), descending=True, description='cached_df').cache()
 
@@ -145,7 +150,6 @@ final_output_frame = output_df.write_parquet(
     description='Write final data to Parquet with snappy compression and stats'
 )
 
-
-
 output_df.write_csv('output_csv.csv', separator=';', description='output_csv')
+output_df.write_parquet('more_advanced.parquet', compression = 'zstd')
 output_df.save_graph('flowfile_core/tests/support_files/flows/flow_from_df_operations.flowfile')

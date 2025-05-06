@@ -53,6 +53,7 @@ from flowfile_core.flowfile.flowfile_table.threaded_processes import (
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 
 
+
 @dataclass
 class FlowfileTable:
     """
@@ -1309,20 +1310,6 @@ class FlowfileTable:
         schema = sorted(self.schema, key=lambda x: column_order.index(x.column_name))
         return FlowfileTable(df, schema=schema, number_of_records=self.number_of_records)
 
-    # Formula and Expression Methods
-    def execute_polars_code(self, code: str) -> "FlowfileTable":
-        """
-        Execute arbitrary Polars code.
-
-        Args:
-            code: Polars code to execute
-
-        Returns:
-            FlowfileTable: Result of code execution
-        """
-        polars_executable = polars_code_parser.get_executable(code)
-        return FlowfileTable(polars_executable(self.data_frame))
-
     def apply_flowfile_formula(self, func: str, col_name: str,
                                output_data_type: pl.DataType = None) -> "FlowfileTable":
         """
@@ -1497,3 +1484,25 @@ class FlowfileTable:
         external_fetcher = ExternalCreateFetcher(received_table=received_table,
                                                  file_type=received_table.file_type, flow_id=flow_id, node_id=node_id)
         return cls(external_fetcher.get_result())
+
+
+# Formula and Expression Methods
+def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "FlowfileTable":
+    """
+    Execute arbitrary Polars code.
+
+    Args:
+        code: Polars code to execute
+
+    Returns:
+        FlowfileTable: Result of code execution
+    """
+    polars_executable = polars_code_parser.get_executable(code)
+    if len(flowfile_tables) == 0:
+        kwargs = {}
+    elif len(flowfile_tables) == 1:
+        kwargs = {'input_df': flowfile_tables[0].data_frame}
+    else:
+        kwargs = {f'input_df_{i}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
+    return FlowfileTable(polars_executable(**kwargs))
+

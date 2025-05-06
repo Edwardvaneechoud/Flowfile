@@ -31,9 +31,9 @@ class GroupByFrame:
             if isinstance(c, Expr):
                 parts.append(str(c))
             elif isinstance(c, str):
-                parts.append(c)
+                parts.append(f'''"{c}"''')
             else:
-                parts.append(str(c))
+                parts.append(f'''"{str(c)}"''')
         return ", ".join(parts)
 
     def len(self):
@@ -66,9 +66,7 @@ class GroupByFrame:
 
         # Pass description from groupby or generate a default for agg node
         node_desc = self.description or f"Aggregate after grouping by {self.readable_group()}"
-        # Ensure the node ID from __init__ is used for the new node
         return self._create_agg_node(self.node_id, can_be_converted, agg_cols, agg_expressions, named_agg_exprs, node_desc)
-
 
     def _process_group_columns(self, agg_cols: list[transform_schema.AggColl]) -> bool:
         # (Implementation unchanged from user input)
@@ -148,12 +146,8 @@ class GroupByFrame:
         Always uses the Polars code path.
         """
         readable_group_str = self.readable_group()
-        # Correctly generate code like: input_df.group_by(...).sum()
-        # Assuming input dataframe name 'input_df' in the execution context
         code = f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}()"
-        # Use provided description or generate a simple one
         node_description = self.description or f"{method_name.capitalize()} after grouping by {readable_group_str}"
-        # Use self.node_id provided during __init__ for the new node
         self.parent._add_polars_code(new_node_id=self.node_id, code=code, description=node_description)
         return self.parent._create_child_frame(self.node_id)
 

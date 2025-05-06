@@ -36,6 +36,11 @@ def ensure_description(node: input_schema.NodeBase):
         setattr(node, 'description', '')
 
 
+def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
+    if hasattr(node_polars, 'depending_on_id'):
+        setattr(node_polars, 'depending_on_ids', [getattr(node_polars, 'depending_on_id')])
+
+
 def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: str):
     if not hasattr(flow_storage_obj, 'flow_settings'):
         flow_settings = schemas.FlowSettings(flow_id=flow_storage_obj.flow_id, path=flow_path,
@@ -58,4 +63,6 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_output(node_information.setting_input)
         elif node_information.setting_input.__class__.__name__ in ('NodeJoin', 'NodeFuzzyMatch'):
             ensure_compatibility_node_joins(node_information.setting_input)
+        elif node_information.setting_input.__class__.__name__ == 'NodePolarsCode':
+            ensure_compatibility_node_polars(node_information.setting_input)
         ensure_description(node_information.setting_input)

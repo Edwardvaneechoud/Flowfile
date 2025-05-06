@@ -4,6 +4,7 @@ from polars.datatypes import *
 from typing import Any, Iterable, List
 
 import polars as pl
+from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orientation
 
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
@@ -14,6 +15,8 @@ from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.flowfile.flowfile_frame.utils import _parse_inputs_as_iterable
 from flowfile_core.flowfile.flowfile_frame.group_frame import GroupByFrame
+from flowfile_core.flowfile.flowfile_frame.join import (_normalize_columns_to_list,
+                                                        _extract_column_name, _create_join_mappings)
 
 # --- Helper Functions ---
 
@@ -36,14 +39,160 @@ class FlowFrame:
     flow_graph: EtlGraph
     data: pl.LazyFrame
 
-    def __init__(self,
-                 data: pl.LazyFrame,
-                 flow_graph=None,
-                 node_id=None,
-                 parent_node_id=None, ):
-        """Initialize with data and graph references."""
+    @staticmethod
+    def create_from_any_type(
+        data: FrameInitTypes = None,
+        schema: SchemaDefinition | None = None,
+        *,
+        schema_overrides: SchemaDict | None = None,
+        strict: bool = True,
+        orient: Orientation | None = None,
+        infer_schema_length: int | None = 100,
+        nan_to_null: bool = False,
+        flow_graph=None,
+        node_id=None,
+        parent_node_id=None,
+    ):
+        """
+        Simple naive implementation of creating the frame from any type. It converts the data to a polars frame,
+        next it implements it from a manual_input
+
+        Parameters
+        ----------
+        data : FrameInitTypes
+            Data to initialize the frame with
+        schema : SchemaDefinition, optional
+            Schema definition for the data
+        schema_overrides : pl.SchemaDict, optional
+            Schema overrides for specific columns
+        strict : bool, default True
+            Whether to enforce the schema strictly
+        orient : pl.Orientation, optional
+            Orientation of the data
+        infer_schema_length : int, default 100
+            Number of rows to use for schema inference
+        nan_to_null : bool, default False
+            Whether to convert NaN values to null
+        flow_graph : EtlGraph, optional
+            Existing ETL graph to add nodes to
+        node_id : int, optional
+            ID for the new node
+        parent_node_id : int, optional
+            ID of the parent node
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with the data loaded as a manual input node
+        """
+        # Extract flow-specific parameters
+        node_id = node_id or generate_node_id()
+        description = "Data imported from Python object"
+
+        # Create a new flow graph if none is provided
+        if flow_graph is None:
+            flow_id = _generate_id()
+            flow_settings = schemas.FlowSettings(
+                flow_id=flow_id, name=f"Flow_{flow_id}", path=f"flow_{flow_id}"
+            )
+            flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
+        else:
+            flow_id = flow_graph.flow_id
+
+        # Convert data to a polars DataFrame/LazyFrame
+        try:
+            # Use polars to convert from various types
+            pl_df = pl.DataFrame(
+                data,
+                schema=schema,
+                schema_overrides=schema_overrides,
+                strict=strict,
+                orient=orient,
+                infer_schema_length=infer_schema_length,
+                nan_to_null=nan_to_null,
+            )
+            pl_data = pl_df.lazy()
+        except Exception as e:
+            raise ValueError(f"Could not convert data to a polars DataFrame: {e}")
+
+        # Create a FlowfileTable to get data in the right format for manual input
+        flow_table = FlowfileTable(raw_data=pl_data)
+
+        # Create a manual input node
+        input_node = input_schema.NodeManualInput(
+            flow_id=flow_id,
+            node_id=node_id,
+            raw_data=flow_table.to_pylist(),  # Convert to list of dicts
+            pos_x=100,
+            pos_y=100,
+            is_setup=True,
+            description=description,
+        )
+
+        # Add to graph
+        flow_graph.add_manual_input(input_node)
+
+        # Return new frame
+        return FlowFrame(
+            data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+            flow_graph=flow_graph,
+            node_id=node_id,
+            parent_node_id=parent_node_id,
+        )
+
+    def __new__(
+        cls,
+        data: pl.LazyFrame | FrameInitTypes = None,
+        schema: SchemaDefinition | None = None,
+        *,
+        schema_overrides: SchemaDict | None = None,
+        strict: bool = True,
+        orient: Orientation | None = None,
+        infer_schema_length: int | None = 100,
+        nan_to_null: bool = False,
+        flow_graph=None,
+        node_id=None,
+        parent_node_id=None,
+    ):
+        """Create a new FlowFrame instance."""
+
+        # If data is not a LazyFrame, use the factory method
+        if data is not None and not isinstance(data, pl.LazyFrame):
+            return cls.create_from_any_type(
+                data=data,
+                schema=schema,
+                schema_overrides=schema_overrides,
+                strict=strict,
+                orient=orient,
+                infer_schema_length=infer_schema_length,
+                nan_to_null=nan_to_null,
+                flow_graph=flow_graph,
+                node_id=node_id,
+                parent_node_id=parent_node_id,
+            )
+
+        # Otherwise create the instance normally
+        instance = super().__new__(cls)
+        return instance
+
+    def __init__(
+        self,
+        data: pl.LazyFrame | FrameInitTypes = None,
+        schema: SchemaDefinition | None = None,
+        *,
+        schema_overrides: SchemaDict | None = None,
+        strict: bool = True,
+        orient: Orientation | None = None,
+        infer_schema_length: int | None = 100,
+        nan_to_null: bool = False,
+        flow_graph=None,
+        node_id=None,
+        parent_node_id=None,
+    ):
+        """Initialize the FlowFrame with data and graph references."""
         if not isinstance(data, pl.LazyFrame):
-            raise ValueError('Data should be of type polars lazy frame')
+            return
+
         self.node_id = node_id or generate_node_id()
         self.parent_node_id = parent_node_id
 
@@ -51,9 +200,7 @@ class FlowFrame:
         if flow_graph is None:
             flow_id = _generate_id()
             flow_settings = schemas.FlowSettings(
-                flow_id=flow_id,
-                name=f"Flow_{flow_id}",
-                path=f"flow_{flow_id}"
+                flow_id=flow_id, name=f"Flow_{flow_id}", path=f"flow_{flow_id}"
             )
             self.flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
         else:
@@ -62,11 +209,8 @@ class FlowFrame:
         # Set up data
         if isinstance(data, FlowfileTable):
             self.data = data.data_frame
-        elif isinstance(data, (pl.DataFrame, pl.LazyFrame)):
-            self.data = FlowfileTable(raw_data=data).data_frame
         else:
-            # Assume list of dicts
-            self.data = FlowfileTable(raw_data=data).data_frame
+            self.data = data
 
     def __repr__(self):
         return str(self.data)
@@ -75,10 +219,10 @@ class FlowFrame:
     def columns(self):
         return self.data.columns
 
-    def _add_connection(self, from_id, to_id):
+    def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = "main"):
         """Helper method to add a connection between nodes"""
         connection = input_schema.NodeConnection.create_from_simple_input(
-            from_id=from_id, to_id=to_id
+            from_id=from_id, to_id=to_id, input_type=input_type
         )
         add_connection(self.flow_graph, connection)
 
@@ -168,6 +312,118 @@ class FlowFrame:
             description=description,
         )
         self.flow_graph.add_polars_code(polars_code_settings)
+
+    def join(
+        self,
+        other,
+        on: List[str | Column] | str | Column = None,
+        how: str = "inner",
+        left_on: List[str | Column] | str | Column = None,
+        right_on: List[str | Column] | str | Column = None,
+        suffix: str = "_right",
+        validate: str = None,
+        description: str = None,
+    ):
+        """
+        Add a join operation to the Logical Plan.
+
+        Parameters
+        ----------
+        other : FlowFrame
+            Other DataFrame.
+        on : str or list of str, optional
+            Name(s) of the join columns in both DataFrames.
+        how : {'inner', 'left', 'outer', 'semi', 'anti', 'cross'}, default 'inner'
+            Join strategy.
+        left_on : str or list of str, optional
+            Name(s) of the left join column(s).
+        right_on : str or list of str, optional
+            Name(s) of the right join column(s).
+        suffix : str, default "_right"
+            Suffix to add to columns with a duplicate name.
+        validate : {"1:1", "1:m", "m:1", "m:m"}, optional
+            Validate join relationship.
+        description : str, optional
+            Description of the join operation for the ETL graph.
+
+        Returns
+        -------
+        FlowFrame
+            New FlowFrame with join operation applied.
+        """
+        new_node_id = generate_node_id()
+
+        if on is not None:
+            left_columns = right_columns = _normalize_columns_to_list(on)
+        elif left_on is not None and right_on is not None:
+            left_columns = _normalize_columns_to_list(left_on)
+            right_columns = _normalize_columns_to_list(right_on)
+        else:
+            raise ValueError(
+                "Must specify either 'on' or both 'left_on' and 'right_on'"
+            )
+
+        # Ensure left and right column lists have same length
+        if len(left_columns) != len(right_columns):
+            raise ValueError(
+                f"Length mismatch: left columns ({len(left_columns)}) != right columns ({len(right_columns)})"
+            )
+
+        join_mappings, use_polars_code = _create_join_mappings(
+            left_columns, right_columns
+        )
+
+        if use_polars_code or suffix != '_right':
+            # TODO: Implement polars code generation for complex joins
+
+            code = f"input_df.join(df_{other.node_id}, how='{how}')"
+            self._add_polars_code(new_node_id, code, description)
+            # Rest of polars code implementation
+            pass
+        else:
+            # Create select inputs for left and right
+            left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
+            right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
+
+            # Create join input
+            join_input = transform_schema.JoinInput(
+                join_mapping=join_mappings,
+                left_select=left_select.renames,
+                right_select=right_select.renames,
+                how=how,
+            )
+            join_input.auto_rename()
+
+            # Create node settings
+            join_settings = input_schema.NodeJoin(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                join_input=join_input,
+                auto_generate_selection=True,
+                verify_integrity=True,
+                pos_x=200,
+                pos_y=150,
+                is_setup=True,
+                depending_on_ids=[self.node_id, other.node_id],
+                description=description or f"Join with {how} strategy",
+            )
+
+            # Add to graph
+            self.flow_graph.add_join(join_settings)
+
+
+        # Add connections
+        self._add_connection(self.node_id, new_node_id, "main")
+        other._add_connection(other.node_id, new_node_id, "right")
+        # Create child frame
+        result_frame = FlowFrame(
+            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+        )
+
+        return result_frame
 
     def select(self, *columns, description: str = None):
         """

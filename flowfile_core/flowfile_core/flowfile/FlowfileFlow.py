@@ -17,7 +17,7 @@ from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_
 from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                      pre_calculate_pivot_schema)
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable, execute_polars_code
 from flowfile_core.flowfile.flowfile_table.read_excel_tables import get_open_xlsx_datatypes, \
     get_calamine_xlsx_data_types
 from flowfile_core.flowfile.sources import external_sources
@@ -31,7 +31,6 @@ from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code
 from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
                                                                                                ExternalDatabaseFetcher,
                                                                                                ExternalDatabaseWriter,
-                                                                                               ExternalSampler,
                                                                                                ExternalDfFetcher)
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
@@ -399,14 +398,14 @@ class EtlGraph:
                            setting_input=node_number_of_records)
 
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
-        def _func(fl: FlowfileTable) -> FlowfileTable:
-            return fl.execute_polars_code(node_polars_code.polars_code_input.polars_code)
+        def _func(*flowfile_tables: FlowfileTable) -> FlowfileTable:
+            return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
 
         self.add_node_step(node_id=node_polars_code.node_id,
                            function=_func,
                            node_type='polars_code',
                            setting_input=node_polars_code,
-                           input_node_ids=[node_polars_code.depending_on_id])
+                           input_node_ids=node_polars_code.depending_on_ids)
 
         try:
             polars_code_parser.validate_code(node_polars_code.polars_code_input.polars_code)
@@ -501,7 +500,8 @@ class EtlGraph:
                            function=_func,
                            input_columns=[],
                            node_type='join',
-                           setting_input=join_settings)
+                           setting_input=join_settings,
+                           input_node_ids=join_settings.depending_on_ids)
         return self
 
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "EtlGraph":
