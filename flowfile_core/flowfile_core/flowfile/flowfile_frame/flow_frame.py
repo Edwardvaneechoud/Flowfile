@@ -591,6 +591,236 @@ class FlowFrame:
     def get_node_settings(self) -> NodeStep:
         return self.flow_graph.get_node(self.node_id)
 
+    def pivot(self,
+              on: str | list[str],
+              *,
+              index: str | list[str] | None = None,
+              values: str | list[str] | None = None,
+              aggregate_function: str | None = "first",
+              maintain_order: bool = True,
+              sort_columns: bool = False,
+              separator: str = '_',
+              description: str = None) -> "FlowFrame":
+        """
+        Pivot a DataFrame from long to wide format.
+
+        Parameters
+        ----------
+        on: str | list[str]
+            Column values to use as column names in the pivoted DataFrame
+        index: str | list[str] | None
+            Column(s) to use as index/row identifiers in the pivoted DataFrame
+        values: str | list[str] | None
+            Column(s) that contain the values of the pivoted DataFrame
+        aggregate_function: str | None
+            Function to aggregate values if there are duplicate entries.
+            Options: 'first', 'last', 'min', 'max', 'sum', 'mean', 'median', 'count'
+        maintain_order: bool
+            Whether to maintain the order of the columns/rows as they appear in the source
+        sort_columns: bool
+            Whether to sort the output columns
+        separator: str
+            Separator to use when joining column levels in the pivoted DataFrame
+        description: str
+            Description of this operation for the ETL graph
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with pivoted data
+        """
+        new_node_id = generate_node_id()
+
+        # Handle input standardization
+        on_value = on[0] if isinstance(on, list) and len(on) == 1 else on
+
+        # Create index_columns list
+        if index is None:
+            index_columns = []
+        elif isinstance(index, str):
+            index_columns = [index]
+        else:
+            index_columns = list(index)
+
+        # Set values column
+        if values is None:
+            raise ValueError("Values parameter must be specified for pivot operation")
+
+        value_col = values if isinstance(values, str) else values[0]
+
+        # Set valid aggregations
+        valid_aggs = ['first', 'last', 'min', 'max', 'sum', 'mean', 'median', 'count']
+        if aggregate_function not in valid_aggs:
+            raise ValueError(f"Invalid aggregate_function: {aggregate_function}. "
+                             f"Must be one of: {', '.join(valid_aggs)}")
+
+        # Check if we can use the native implementation
+        can_use_native = (
+                isinstance(on_value, str) and
+                isinstance(value_col, str) and
+                aggregate_function in valid_aggs
+        )
+
+        if can_use_native:
+            # Create pivot input for native implementation
+            pivot_input = transform_schema.PivotInput(
+                index_columns=index_columns,
+                pivot_column=on_value,
+                value_col=value_col,
+                aggregations=[aggregate_function]
+            )
+
+            # Create node settings
+            pivot_settings = input_schema.NodePivot(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                pivot_input=pivot_input,
+                pos_x=200,
+                pos_y=150,
+                is_setup=True,
+                depending_on_id=self.node_id,
+                description=description or f"Pivot {value_col} by {on_value}"
+            )
+
+            # Add to graph using native implementation
+            self.flow_graph.add_pivot(pivot_settings)
+        else:
+            # Fall back to polars code for complex cases
+            # Generate proper polars code
+            on_repr = repr(on)
+            index_repr = repr(index)
+            values_repr = repr(values)
+
+            code = f"""
+    # Perform pivot operation
+    result = input_df.pivot(
+        on={on_repr}, 
+        index={index_repr},
+        values={values_repr},
+        aggregate_function='{aggregate_function}',
+        maintain_order={maintain_order},
+        sort_columns={sort_columns},
+        separator="{separator}"
+    )
+    result
+    """
+            # Generate description if not provided
+            if description is None:
+                on_str = on if isinstance(on, str) else ", ".join(on if isinstance(on, list) else [on])
+                values_str = values if isinstance(values, str) else ", ".join(
+                    values if isinstance(values, list) else [values])
+                description = f"Pivot {values_str} by {on_str}"
+
+            # Add polars code node
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
+    def unpivot(self,
+                on: list[str | Selector] | str | None | Selector = None,
+                *,
+                index: list[str] | str | None = None,
+                variable_name: str = "variable",
+                value_name: str = "value",
+                description: str = None) -> "FlowFrame":
+        """
+        Unpivot a DataFrame from wide to long format.
+
+        Parameters
+        ----------
+        on : list[str | Selector] | str | None | Selector
+            Column(s) to unpivot (become values in the value column)
+            If None, all columns not in index will be used
+        index : list[str] | str | None
+            Column(s) to use as identifier variables (stay as columns)
+        variable_name : str, optional
+            Name to give to the variable column, by default "variable"
+        value_name : str, optional
+            Name to give to the value column, by default "value"
+        description : str, optional
+            Description of this operation for the ETL graph
+
+        Returns
+        -------
+        FlowFrame
+            A new FlowFrame with unpivoted data
+        """
+        new_node_id = generate_node_id()
+
+        # Standardize inputs
+        if index is None:
+            index_columns = []
+        elif isinstance(index, str):
+            index_columns = [index]
+        else:
+            index_columns = list(index)
+        can_use_native = True
+        if on is None:
+            value_columns = []
+        elif isinstance(on, (str, Selector)):
+            if isinstance(on, Selector):
+                can_use_native = False
+            value_columns = [on]
+        elif isinstance(on, Iterable):
+            value_columns = list(on)
+            if isinstance(value_columns[0], Iterable):
+                can_use_native = False
+        else:
+            value_columns = [on]
+
+        if can_use_native:
+            can_use_native = (variable_name == "variable" and value_name == "value")
+        if can_use_native:
+            unpivot_input = transform_schema.UnpivotInput(
+                index_columns=index_columns,
+                value_columns=value_columns,
+                data_type_selector=None,
+                data_type_selector_mode='column'
+            )
+
+            # Create node settings
+            unpivot_settings = input_schema.NodeUnpivot(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                unpivot_input=unpivot_input,
+                pos_x=200,
+                pos_y=150,
+                is_setup=True,
+                depending_on_id=self.node_id,
+                description=description or "Unpivot data from wide to long format"
+            )
+
+            # Add to graph using native implementation
+            self.flow_graph.add_unpivot(unpivot_settings)
+        else:
+            # Fall back to polars code for complex cases
+
+            # Generate proper polars code
+            on_repr = repr(on)
+            index_repr = repr(index)
+
+            # Using unpivot() method to match polars API
+            code = f"""
+    # Perform unpivot operation
+    output_df = input_df.unpivot(
+        on={on_repr}, 
+        index={index_repr},
+        variable_name="{variable_name}",
+        value_name="{value_name}"
+    )
+    output_df
+    """
+            # Generate description if not provided
+            if description is None:
+                index_str = ", ".join(index_columns) if index_columns else "none"
+                value_str = ", ".join(value_columns) if value_columns else "all non-index columns"
+                description = f"Unpivot data with index: {index_str} and value cols: {value_str}"
+
+            # Add polars code node
+            self._add_polars_code(new_node_id, code, description)
+
+        return self._create_child_frame(new_node_id)
+
 
 def sum(expr):
     """Sum aggregation function."""
@@ -788,3 +1018,4 @@ def from_dict(data, *, flow_graph: EtlGraph = None, description: str = None) -> 
         flow_graph=flow_graph,
         node_id=node_id
     )
+

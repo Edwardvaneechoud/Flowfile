@@ -283,7 +283,8 @@ class EtlGraph:
         self.add_node_step(node_id=pivot_settings.node_id,
                            function=_func,
                            node_type='pivot',
-                           setting_input=pivot_settings)
+                           setting_input=pivot_settings,
+                           input_node_ids=[pivot_settings.depending_on_id])
 
         node = self.get_node(pivot_settings.node_id)
 
@@ -302,7 +303,8 @@ class EtlGraph:
         self.add_node_step(node_id=unpivot_settings.node_id,
                            function=_func,
                            node_type='unpivot',
-                           setting_input=unpivot_settings)
+                           setting_input=unpivot_settings,
+                           input_node_ids=[unpivot_settings.depending_on_id])
 
     def add_union(self, union_settings: input_schema.NodeUnion):
         def _func(*flowfile_tables: FlowfileTable):

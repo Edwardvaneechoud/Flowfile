@@ -16,6 +16,26 @@ data = {
 
 df = pl.from_dict(data, description='Some random input data')
 
+# Create test data in long format for pivoting
+long_data = {
+    "id": [1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
+    "name": ["Alice", "Alice", "Bob", "Bob", "Charlie", "Charlie", "David", "David", "Eve", "Eve"],
+    "metric": ["salary", "bonus", "salary", "bonus", "salary", "bonus", "salary", "bonus", "salary", "bonus"],
+    "value": [50000, 10000, 60000, 12000, 70000, 14000, 80000, 16000, 90000, 18000],
+    "department": ["Sales", "Sales", "Marketing", "Marketing", "Engineering", "Engineering",
+                  "Customer Service", "Customer Service", "Management", "Management"]
+}
+
+# Create a FlowFrame for the long data
+df_long = pl.from_dict(long_data, description='Employee metrics in long format', flow_graph=df.flow_graph)
+pivot_by_metric = df_long.pivot(
+    on="metric",
+    index=["id", "name", "department"],
+    values="value",
+    description="Employee compensation by metric"
+)
+
+
 other_selection = df.select(scf.numeric(), description='this is with a selector')
 columns = pl.col("city").alias("new_city").str.contains('Houston', literal=True), "age", "id"
 sales_df = df.select(columns, description='sales_df')
