@@ -8,7 +8,6 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
                                                                                store_database_connection,)
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flowfile_frame import flow_frame as ff
 
 import pytest
 from pathlib import Path
