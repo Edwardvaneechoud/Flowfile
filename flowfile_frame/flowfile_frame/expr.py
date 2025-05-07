@@ -5,10 +5,12 @@ from polars.expr.string import ExprStringNameSpace
 
 from flowfile_core.schemas import transform_schema
 
+from builtins import len as built_in_len
+
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
     # Import Selector only for type hints
-    from flowfile_core.flowfile.flowfile_frame.selectors import Selector
+    from flowfile_frame.selectors import Selector
 
 
 # --- Helper Functions ---
@@ -260,7 +262,9 @@ class Expr:
                                  agg_func=self.agg_func) # Inherit agg_func
         return new_expr_instance
 
-    def _create_binary_op_expr(self, op_symbol: str, other: Any, result_expr: Optional[pl.Expr]) -> 'Expr':
+    def _create_binary_op_expr(
+        self, op_symbol: str, other: Any, result_expr: Optional[pl.Expr]
+    ) -> "Expr":
         """Creates a new Expr for binary operations."""
         if self.expr is None:
             raise ValueError(
@@ -269,19 +273,25 @@ class Expr:
 
         other_expr, other_repr = _get_expr_and_repr(other)
 
-        if other_expr is None and not isinstance(other, (int, float, str, bool, type(None))):
-             raise ValueError(
-                 f"Cannot perform binary operation '{op_symbol}' with operand without underlying polars expression or literal value: {other_repr}"
-             )
+        if other_expr is None and not isinstance(
+            other, (int, float, str, bool, type(None))
+        ):
+            raise ValueError(
+                f"Cannot perform binary operation '{op_symbol}' with operand without underlying polars expression or literal value: {other_repr}"
+            )
 
-        left_repr = f"({self._repr_str})" if ' ' in self._repr_str else self._repr_str
-        right_repr = f"({other_repr})" if (' ' in other_repr or '(' in other_repr) else other_repr
-        new_repr = f"{left_repr} {op_symbol} {right_repr}"
+        # For binary operations, just construct the expression without extra parentheses
+        new_repr = f"{self._repr_str} {op_symbol} {other_repr}"
 
         # Binary ops clear the aggregation state and selector link
-        return Expr(result_expr, None, repr_str=new_repr,
-                    initial_column_name=self._initial_column_name,
-                    selector=None, agg_func=None) # Reset agg_func
+        return Expr(
+            result_expr,
+            None,
+            repr_str=f"({new_repr})",  # Add parentheses around the ENTIRE expression
+            initial_column_name=self._initial_column_name,
+            selector=None,
+            agg_func=None,
+        )  # Reset agg_func
 
     @property
     def str(self) -> StringMethods:
@@ -638,8 +648,7 @@ class Expr:
         # --- Build string representation for .over() arguments ---
         over_arg_strings_for_repr = []
 
-        # Handle partition_by representation
-        if len(processed_partition_cols) == 1:
+        if built_in_len(processed_partition_cols) == 1:
             over_arg_strings_for_repr.append(self._get_expr_repr(processed_partition_cols[0]))
         else:
             col_reprs = [self._get_expr_repr(p) for p in processed_partition_cols]
@@ -885,6 +894,30 @@ def lit(value: Any) -> Expr:
     return Expr(pl.lit(value), repr_str=f"pl.lit({repr(value)})", agg_func=None)
 
 
+def len() -> Expr:
+    return Expr(pl.len()).alias('number_of_records')
+
+
+def max(*names) -> Expr:
+    return Expr(pl.max(*names))
+
+
+def min(*names) -> Expr:
+    return Expr(pl.min(*names))
+
+
+def mean(*names) -> Expr:
+    return Expr(pl.mean(*names))
+
+
+def count(*names) -> Expr:
+    return Expr(pl.count(*names))
+
+
+def sum(*names) -> Expr:
+    return Expr(pl.sum(*names))
+
+
 def cum_count(expr, reverse: bool = False) -> Expr:
     """
     Return the cumulative count of the non-null values in the column.
@@ -904,3 +937,4 @@ def cum_count(expr, reverse: bool = False) -> Expr:
     if isinstance(expr, str):
         expr = col(expr)
     return expr.cum_count(reverse=reverse)
+

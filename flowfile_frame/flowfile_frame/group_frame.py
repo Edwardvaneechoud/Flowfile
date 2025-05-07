@@ -1,17 +1,13 @@
-import sys
-# Assume Google Search is available
-# Assume current time is Monday, May 5, 2025 at 5:48:41 PM CEST
-# Assume current location is 's-Hertogenbosch, North Brabant, Netherlands
 
-from flowfile_core.flowfile.flowfile_frame.expr import col, Expr
-from flowfile_core.flowfile.flowfile_frame.selectors import Selector
-from flowfile_core.flowfile.flowfile_frame.utils import _parse_inputs_as_iterable
+from flowfile_frame.expr import col, Expr
+from flowfile_frame.selectors import Selector
+from flowfile_frame.utils import _parse_inputs_as_iterable
 from flowfile_core.schemas import transform_schema, input_schema
 from typing import TYPE_CHECKING
 
 # Corrected TYPE_CHECKING block as provided by user
 if TYPE_CHECKING:
-    from flowfile_core.flowfile.flowfile_frame.flow_frame import FlowFrame
+    from flowfile_frame.flow_frame import FlowFrame
 else:
     FlowFrame = None
 

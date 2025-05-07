@@ -11,6 +11,9 @@ df = pl.FlowFrame({
     "timestamp": ["2023-01-01", "2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05"]
 })
 
+
+df.sort(by='id', multithreaded=False)
+
 # Convert timestamp to proper datetime
 df = df.with_columns(
     col("timestamp").str.to_datetime().alias("timestamp")
@@ -21,3 +24,7 @@ condition_df = df.filter(col("category") == "A")
 result1 = df.with_columns(
     cum_count("value").over(pl.col('category')).alias("value_count")
 )
+
+import polars as pl
+
+str(pl.max('abc','d'))

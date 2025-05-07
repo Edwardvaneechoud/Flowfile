@@ -7,6 +7,7 @@ packages = [
     { include = "flowfile_core", from = "flowfile_core" },
     { include = "flowfile_worker", from = "flowfile_worker" },
     { include = "build_backends", from = "build_backends" },
+    { include = "flowfile_frame", from = "flowfile_frame" },
     { include = "test_utils" },
 
 ]
@@ -53,6 +54,7 @@ build_backends = "build_backends.main:main"
 build_backends_prd = "build_backends.main_prd:main"
 start_postgres = "test_utils.postgres.commands:start_postgres"
 stop_postgres = "test_utils.postgres.commands:stop_postgres"
+flowframe = "flowframe.__main__:main"  # Add this line
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"

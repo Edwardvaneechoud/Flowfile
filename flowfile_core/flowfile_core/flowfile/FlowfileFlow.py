@@ -396,7 +396,8 @@ class EtlGraph:
         self.add_node_step(node_id=node_number_of_records.node_id,
                            function=_func,
                            node_type='record_count',
-                           setting_input=node_number_of_records)
+                           setting_input=node_number_of_records,
+                           input_node_ids=[node_number_of_records.depending_on_id])
 
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         def _func(*flowfile_tables: FlowfileTable) -> FlowfileTable:
@@ -423,7 +424,8 @@ class EtlGraph:
                            function=_func,
                            input_columns=[],
                            node_type='unique',
-                           setting_input=unique_settings)
+                           setting_input=unique_settings,
+                           input_node_ids=[unique_settings.node_id])
 
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
         def _func(fl: FlowfileTable) -> FlowfileTable:
@@ -1385,3 +1387,5 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
             node_connection.output_connection.node_id,
             connection_type=node_connection.input_connection.connection_class,
         )
+
+

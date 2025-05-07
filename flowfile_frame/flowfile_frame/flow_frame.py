@@ -1,7 +1,6 @@
 import uuid
 import os
-from polars.datatypes import *
-from typing import Any, Iterable, List, Literal, Optional, Tuple
+from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
 
 import re
 import polars as pl
@@ -9,17 +8,15 @@ from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orienta
 
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
-from flowfile_core.flowfile.flowfile_frame.expr import Expr, Column, lit, col
-from flowfile_core.flowfile.flowfile_frame.selectors import Selector
 from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
 from flowfile_core.flowfile.node_step.node_step import NodeStep
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.flowfile.flowfile_frame.utils import _parse_inputs_as_iterable
-from flowfile_core.flowfile.flowfile_frame.group_frame import GroupByFrame
-from flowfile_core.flowfile.flowfile_frame.join import (_normalize_columns_to_list,
-                                                        _create_join_mappings)
 
-# --- Helper Functions ---
+from flowfile_frame.expr import Expr, Column, lit, col
+from flowfile_frame.selectors import Selector
+from flowfile_frame.group_frame import GroupByFrame
+from flowfile_frame.utils import _parse_inputs_as_iterable
+from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 
 node_id_counter = 0
 
@@ -198,6 +195,9 @@ class FlowFrame:
         parent_node_id=None,
     ):
         """Initialize the FlowFrame with data and graph references."""
+
+        if data is None:
+            data = pl.LazyFrame()
         if not isinstance(data, pl.LazyFrame):
             return
 
@@ -225,7 +225,7 @@ class FlowFrame:
 
     @property
     def columns(self):
-        return self.data.columns
+        return self.data.collect_schema().names()
 
     def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = "main"):
         """Helper method to add a connection between nodes"""
@@ -244,17 +244,63 @@ class FlowFrame:
             parent_node_id=self.node_id,
         )
 
-    def sort(self, by: List[Expr | str] | Expr | str,
-             *more_by, descending: bool | List[bool] = False, nulls_last: bool = False,
-             multithreaded: bool = True, maintain_order: bool = False,
-             description: str = None):
+    def sort(
+        self,
+        by: List[Expr | str] | Expr | str,
+        *more_by,
+        descending: bool | List[bool] = False,
+        nulls_last: bool = False,
+        multithreaded: bool = True,
+        maintain_order: bool = False,
+        description: str = None,
+    ):
+        """
+        Sort the dataframe by the given columns.
+
+        Parameters:
+        -----------
+        by : Expr, str, or list of Expr/str
+            Column(s) to sort by. Accepts expression input. Strings are parsed as column names.
+        *more_by : Expr or str
+            Additional columns to sort by, specified as positional arguments.
+        descending : bool or list of bool, default False
+            Sort in descending order. When sorting by multiple columns, can be specified per column.
+        nulls_last : bool or list of bool, default False
+            Place null values last; can specify a single boolean or a sequence for per-column control.
+        multithreaded : bool, default True
+            Sort using multiple threads.
+        maintain_order : bool, default False
+            Whether the order should be maintained if elements are equal.
+        description : str, optional
+            Description of this operation for the ETL graph.
+
+        Returns:
+        --------
+        FlowFrame
+            A new FlowFrame with sorted data.
+        """
         by = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
         sort_expressions = by
         if more_by:
             sort_expressions.extend(more_by)
 
-        # Check if descending is a list/sequence
+        # Determine if we need to use polars code fallback
+        needs_polars_code = False
+
+        # Check for any expressions that are not simple columns
+        for expr in sort_expressions:
+            if not isinstance(expr, (str, Column)) or (
+                isinstance(expr, Column) and expr._select_input.is_altered
+            ):
+                needs_polars_code = True
+                break
+
+        # Also need polars code if we're using maintain_order or multithreaded params
+        if maintain_order or not multithreaded:
+            needs_polars_code = True
+
+        # Standardize descending parameter
         if isinstance(descending, (list, tuple)):
             # Ensure descending list has the same length as sort_expressions
             if len(descending) != len(sort_expressions):
@@ -263,52 +309,126 @@ class FlowFrame:
                 )
             descending_values = descending
         else:
-            # If it's a single boolean, repeat it for all expressions
             descending_values = [descending] * len(sort_expressions)
 
-        # Process nulls_last in the same way
+        # Standardize nulls_last parameter
         if isinstance(nulls_last, (list, tuple)):
             if len(nulls_last) != len(sort_expressions):
                 raise ValueError(
                     f"Length of nulls_last ({len(nulls_last)}) must match number of sort columns ({len(sort_expressions)})"
                 )
             nulls_last_values = nulls_last
+            # Any non-default nulls_last needs polars code
+            if any(val is not False for val in nulls_last_values):
+                needs_polars_code = True
         else:
             nulls_last_values = [nulls_last] * len(sort_expressions)
+            # Non-default nulls_last needs polars code
+            if nulls_last:
+                needs_polars_code = True
 
-        # Create SortByInput objects
-        sort_inputs = []
-        for i, expr in enumerate(sort_expressions):
-            # Convert expr to column name
-            if isinstance(expr, (Column, Expr)):
-                column_name = expr.name
-            elif isinstance(expr, str):
-                column_name = expr
-            else:
-                column_name = str(expr)
-
-            # Create SortByInput with appropriate settings
-            sort_inputs.append(
-                transform_schema.SortByInput(
-                    column=column_name,
-                    how="desc" if descending_values[i] else "asc",
-                    # Note: nulls_last is not currently passed to SortByInput
-                    # This would need to be added to your SortByInput schema
-                )
+        if needs_polars_code:
+            # Generate polars code for complex cases
+            code = self._generate_sort_polars_code(
+                sort_expressions,
+                descending_values,
+                nulls_last_values,
+                multithreaded,
+                maintain_order,
             )
+            self._add_polars_code(new_node_id, code, description)
+        else:
+            # Use native implementation for simple cases
+            sort_inputs = []
+            for i, expr in enumerate(sort_expressions):
+                # Convert expr to column name
+                if isinstance(expr, Column):
+                    column_name = expr.name
+                elif isinstance(expr, str):
+                    column_name = expr
+                else:
+                    column_name = str(expr)
 
-        sort_settings = input_schema.NodeSort(
-            flow_id=self.flow_graph.flow_id,
-            node_id=new_node_id,
-            sort_input=sort_inputs,
-            pos_x=200,
-            pos_y=150,
-            is_setup=True,
-            depending_on_id=self.node_id,
-            description=description
-        )
-        self.flow_graph.add_sort(sort_settings)
+                # Create SortByInput with appropriate settings
+                sort_inputs.append(
+                    transform_schema.SortByInput(
+                        column=column_name,
+                        how="desc" if descending_values[i] else "asc",
+                    )
+                )
+
+            sort_settings = input_schema.NodeSort(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                sort_input=sort_inputs,
+                pos_x=200,
+                pos_y=150,
+                is_setup=True,
+                depending_on_id=self.node_id,
+                description=description
+                or f"Sort by {', '.join(str(e) for e in sort_expressions)}",
+            )
+            self.flow_graph.add_sort(sort_settings)
+
         return self._create_child_frame(new_node_id)
+
+    def _generate_sort_polars_code(
+        self,
+        sort_expressions: list,
+        descending_values: list,
+        nulls_last_values: list,
+        multithreaded: bool,
+        maintain_order: bool,
+    ) -> str:
+        """Generate Polars code for sort operations that need fallback."""
+        # Format expressions for code
+        expr_strs = []
+        for expr in sort_expressions:
+            if isinstance(expr, (Expr, Column)):
+                expr_strs.append(str(expr))
+            elif isinstance(expr, str):
+                expr_strs.append(f"'{expr}'")
+            else:
+                expr_strs.append(str(expr))
+
+        # Format parameters
+        if len(sort_expressions) == 1:
+            by_arg = expr_strs[0]
+        else:
+            by_arg = f"[{', '.join(expr_strs)}]"
+
+        # Build kwargs
+        kwargs = {}
+
+        # Only add descending if it's non-default
+        if any(d for d in descending_values):
+            if len(descending_values) == 1:
+                kwargs["descending"] = descending_values[0]
+            else:
+                kwargs["descending"] = descending_values
+
+        # Only add nulls_last if it's non-default
+        if any(nl for nl in nulls_last_values):
+            if len(nulls_last_values) == 1:
+                kwargs["nulls_last"] = nulls_last_values[0]
+            else:
+                kwargs["nulls_last"] = nulls_last_values
+
+        # Add other parameters if they're non-default
+        if not multithreaded:
+            kwargs["multithreaded"] = multithreaded
+
+        if maintain_order:
+            kwargs["maintain_order"] = maintain_order
+
+        # Build kwargs string
+        kwargs_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+
+        # Build final code
+        if kwargs_str:
+            return f"input_df.sort({by_arg}, {kwargs_str})"
+        else:
+            return f"input_df.sort({by_arg})"
 
     def _add_polars_code(self, new_node_id: int, code: str, description: str = None,
                          depending_on_ids: List[str] | None = None):
@@ -464,6 +584,19 @@ class FlowFrame:
 
         return result_frame
 
+    def _add_number_of_records(self, new_node_id: int, description: str = None) -> "FlowFrame":
+        node_number_of_records = input_schema.NodeRecordCount(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            pos_x=200,
+            pos_y=100,
+            is_setup=True,
+            depending_on_id=self.node_id,
+            description=description
+        )
+        self.flow_graph.add_record_count(node_number_of_records)
+        return self._create_child_frame(new_node_id)
+
     def select(self, *columns, description: str = None):
         """
         Select columns from the frame.
@@ -479,6 +612,10 @@ class FlowFrame:
         columns = _parse_inputs_as_iterable(columns)
         new_node_id = generate_node_id()
         existing_columns = self.columns
+
+        if (len(columns) == 1 and isinstance(columns[0], Expr)
+                and str(columns[0]) == "pl.Expr(len()).alias('number_of_records')"):
+            return self._add_number_of_records(new_node_id, description)
 
         # Handle simple column names
         if all(isinstance(col_, (str, Column)) for col_ in columns):
@@ -1350,8 +1487,7 @@ class FlowFrame:
                 )
                 if detected:
                     return result
-
-            all_expressions: List[Expr | Column] = []
+            all_expressions = []
             for expression in exprs_iterable:
                 if not isinstance(expression, (Expr, Column)):
                     all_expressions.append(lit(expression))
@@ -1557,6 +1693,127 @@ class FlowFrame:
 
         # Add to graph
         self.flow_graph.add_text_to_rows(text_to_rows_settings)
+
+        return self._create_child_frame(new_node_id)
+
+    def unique(
+        self,
+        subset: Union[str, "Expr", List[ Union[ str,  "Expr"]]] = None,
+        *,
+        keep: Literal["first", "last", "any", "none"] = "any",
+        maintain_order: bool = False,
+        description: str = None,
+    ) -> "FlowFrame":
+        """
+        Drop duplicate rows from this dataframe.
+
+        Parameters
+        ----------
+        subset : str, Expr, list of str or Expr, optional
+            Column name(s) or selector(s), to consider when identifying duplicate rows.
+            If set to None (default), use all columns.
+        keep : {'first', 'last', 'any', 'none'}, default 'any'
+            Which of the duplicate rows to keep.
+            * 'any': Does not give any guarantee of which row is kept.
+              This allows more optimizations.
+            * 'none': Don't keep duplicate rows.
+            * 'first': Keep first unique row.
+            * 'last': Keep last unique row.
+        maintain_order : bool, default False
+            Keep the same order as the original DataFrame. This is more expensive
+            to compute. Settings this to True blocks the possibility to run on
+            the streaming engine.
+        description : str, optional
+            Description of this operation for the ETL graph.
+
+        Returns
+        -------
+        FlowFrame
+            DataFrame with unique rows.
+        """
+        new_node_id = generate_node_id()
+
+        processed_subset = None
+        can_use_native = True
+        if subset is not None:
+            # Convert to list if single item
+            if not isinstance(subset, (list, tuple)):
+                subset = [subset]
+
+            # Extract column names
+            processed_subset = []
+            for col_expr in subset:
+                if isinstance(col_expr, str):
+                    processed_subset.append(col_expr)
+                elif isinstance(col_expr, Column):
+                    if col_expr._select_input.is_altered:
+                        can_use_native = False
+                        break
+                    processed_subset.append(col_expr.name)
+                else:
+                    can_use_native = False
+                    break
+
+        # Determine if we can use the native implementation
+        can_use_native = (
+            can_use_native
+            and keep in ["any", "first", "last", "none"]
+            and not maintain_order
+        )
+
+        if can_use_native:
+            # Use the native NodeUnique implementation
+            unique_input = transform_schema.UniqueInput(
+                columns=processed_subset, strategy=keep
+            )
+
+            # Create node settings
+            unique_settings = input_schema.NodeUnique(
+                flow_id=self.flow_graph.flow_id,
+                node_id=new_node_id,
+                unique_input=unique_input,
+                pos_x=200,
+                pos_y=150,
+                is_setup=True,
+                depending_on_id=self.node_id,
+                description=description or f"Get unique rows (strategy: {keep})",
+            )
+
+            # Add to graph using native implementation
+            self.flow_graph.add_unique(unique_settings)
+        else:
+            # Generate polars code for more complex cases
+            if subset is None:
+                subset_str = "None"
+            elif isinstance(subset, (list, tuple)):
+                # Format each item in the subset list
+                items = []
+                for item in subset:
+                    if isinstance(item, str):
+                        items.append(f'"{item}"')
+                    else:
+                        # For expressions, use their string representation
+                        items.append(str(item))
+                subset_str = f"[{', '.join(items)}]"
+            else:
+                # Single item that's not a string
+                subset_str = str(subset)
+
+            code = f"""
+            # Remove duplicate rows
+            output_df = input_df.unique(
+                subset={subset_str},
+                keep='{keep}',
+                maintain_order={maintain_order}
+            )
+            """
+
+            # Create descriptive text based on parameters
+            subset_desc = "all columns" if subset is None else f"columns: {subset_str}"
+            desc = description or f"Get unique rows using {subset_desc}, keeping {keep}"
+
+            # Add polars code node
+            self._add_polars_code(new_node_id, code, desc)
 
         return self._create_child_frame(new_node_id)
 
@@ -1798,3 +2055,14 @@ def concat(frames: List['FlowFrame'],
     return first_frame.concat(remaining_frames, how=how,
                               rechunk=rechunk, parallel=parallel,
                               description=description)
+
+
+class Test():
+    a: int = 0
+
+class Test2(Test):
+    ...
+
+t : List[Test2|Test] = []
+
+

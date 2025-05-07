@@ -5,7 +5,7 @@ import polars as pl
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
     # Import Expr only for type hints
-    from flowfile_core.flowfile.flowfile_frame.expr import Expr
+    from flowfile_frame.expr import Expr
 
 
 # --- Selector Base Classes (Compound, Complement) ---

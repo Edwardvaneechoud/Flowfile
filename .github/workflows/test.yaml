@@ -124,6 +124,9 @@ jobs:
       - name: Run pytest for flowfile_core
         run: poetry run pytest flowfile_core/tests --disable-warnings
 
+      - name: Run pytest for flowfile_flow
+        run: poetry run pytest flowfile_flow/tests --disable-warnings
+
       - name: Run pytest for flowfile_worker
         run: poetry run pytest flowfile_worker/tests --disable-warnings
 
@@ -182,6 +185,10 @@ jobs:
       - name: Run pytest for flowfile_core
         shell: pwsh
         run: poetry run pytest flowfile_core/tests --disable-warnings
+
+      - name: Run pytest for flowfile_flow
+        shell: pwsh
+        run: poetry run pytest flowfile_flow/tests --disable-warnings
 
       - name: Run pytest for flowfile_worker
         shell: pwsh

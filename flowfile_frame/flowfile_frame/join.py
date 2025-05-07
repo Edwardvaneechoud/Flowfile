@@ -1,5 +1,5 @@
 # Assume these imports are correct from your original context
-from flowfile_core.flowfile.flowfile_frame.expr import Column
+from flowfile_frame.expr import Column
 from flowfile_core.schemas import transform_schema
 
 
