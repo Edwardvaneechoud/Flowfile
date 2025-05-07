@@ -1,4 +1,4 @@
-from typing import Iterable, Any
+from typing import Iterable, Any, List
 
 
 def _is_iterable(obj: Any) -> bool:
@@ -8,12 +8,12 @@ def _is_iterable(obj: Any) -> bool:
 
 def _parse_inputs_as_iterable(
         inputs: tuple[Any, ...] | tuple[Iterable[Any]],
-) -> Iterable[Any]:
+) -> List[Any]:
     if not inputs:
         return []
 
     # Treat elements of a single iterable as separate inputs
     if len(inputs) == 1 and _is_iterable(inputs[0]):
-        return inputs[0]
+        return list(inputs[0])
 
-    return inputs
+    return list(inputs)

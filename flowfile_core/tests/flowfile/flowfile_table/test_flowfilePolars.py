@@ -1,7 +1,8 @@
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable, execute_polars_code
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
 import polars as pl
+import pytest
 
 
 def create_sample_data():
@@ -282,6 +283,122 @@ def test_join_anti():
     expected_df = FlowfileTable([{"name": "eduward"},
                                  {"name": "courtney"}])
     result_df.assert_equal(expected_df)
+
+
+def test_execute_polars_code_no_frame():
+    result = execute_polars_code(code="output_df = pl.LazyFrame({'r':[1,2,3]})")
+    assert len(result) == 3, 'Expecting three records'
+    assert result.columns == ['r'], 'Columns should be r'
+    result.assert_equal(FlowfileTable({'r': [1, 2, 3]}))
+
+
+def test_polars_code_one_frame():
+    test_df = FlowfileTable([{"name": "eduward"},
+                             {"name": "edward"},
+                             {"name": "courtney"}])
+    result = execute_polars_code(test_df, code='input_df.with_columns([pl.col("name").alias("other_name")])')
+    expected_result = FlowfileTable([{'name': 'eduward', 'other_name': 'eduward'},
+                                     {'name': 'edward', 'other_name': 'edward'},
+                                     {'name': 'courtney', 'other_name': 'courtney'}])
+    result.assert_equal(expected_result)
+
+
+def test_execute_polars_code_function():
+    test_df = FlowfileTable([{"name": "eduward"},
+                             {"name": "edward"},
+                             {"name": "courtney"}])
+    code = """def do_something(df):
+    return df.with_columns([pl.col("name").alias("other_name")])
+output_df = do_something(input_df)"""
+    result = execute_polars_code(test_df, code=code)
+    expected_result = FlowfileTable([{'name': 'eduward', 'other_name': 'eduward'},
+                                     {'name': 'edward', 'other_name': 'edward'},
+                                     {'name': 'courtney', 'other_name': 'courtney'}])
+    result.assert_equal(expected_result)
+
+
+def test_execute_multi_line():
+    test_df = FlowfileTable([{"name": "eduward"},
+                             {"name": "edward"},
+                             {"name": "courtney"}])
+    code = """temp_df = input_df.with_columns([pl.col("name").alias("other_name")])
+output_df = temp_df.select("other_name")"""
+    result = execute_polars_code(test_df, code=code)
+    expected_result = FlowfileTable([{'other_name': 'eduward'}, {'other_name': 'edward'}, {'other_name': 'courtney'}])
+    result.assert_equal(expected_result)
+
+
+def test_error_no_output_df():
+    test_df = FlowfileTable(
+        [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+    )
+    code = """temp_df = input_df.with_columns([pl.col("name").alias("other_name")])
+something_else_df = temp_df.select("other_name")"""
+
+    # Using pytest to check for the expected exception
+    with pytest.raises(NameError) as excinfo:
+        execute_polars_code(test_df, code=code)
+
+    # Verify the error message
+    assert "name 'output_df' is not defined" in str(
+        excinfo.value
+    ), "Expected error about output_df not being defined"
+
+
+def test_execute_polars_code_multiple_frames():
+    # Create two test dataframes
+    test_df1 = FlowfileTable(
+        [
+            {"id": 1, "name": "eduward"},
+            {"id": 2, "name": "edward"},
+            {"id": 3, "name": "courtney"},
+        ]
+    )
+
+    test_df2 = FlowfileTable(
+        [
+            {"id": 1, "department": "Engineering"},
+            {"id": 2, "department": "Marketing"},
+            {"id": 4, "department": "Sales"},
+        ]
+    )
+
+    # Code that joins the two dataframes
+    code = """
+# Join the two dataframes on id
+joined_df = input_df_1.join(input_df_2, on="id", how="inner")
+output_df = joined_df.select(["id", "name", "department"])
+"""
+
+    result = execute_polars_code(test_df1, test_df2, code=code)
+
+    expected_result = FlowfileTable(
+        [
+            {"id": 1, "name": "eduward", "department": "Engineering"},
+            {"id": 2, "name": "edward", "department": "Marketing"},
+        ]
+    )
+
+    result.assert_equal(expected_result)
+
+
+def test_execute_polars_code_with_syntax_error():
+    """Test handling of code with syntax errors"""
+    test_df = FlowfileTable(
+        [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+    )
+
+    # Code with a syntax error (missing closing parenthesis)
+    code = """
+output_df = input_df.filter(pl.col("name").str.contains("e"
+"""
+
+    # Check that appropriate error is raised
+    with pytest.raises(ValueError) as excinfo:
+        execute_polars_code(test_df, code=code)
+
+    # Verify the error message mentions syntax
+    assert "syntax" in str(excinfo.value).lower(), "Expected error about syntax"
 
 
 def test_remove_comments_and_docstrings():

@@ -313,7 +313,8 @@ class EtlGraph:
         self.add_node_step(node_id=union_settings.node_id,
                            function=_func,
                            node_type=f'union',
-                           setting_input=union_settings)
+                           setting_input=union_settings,
+                           input_node_ids=union_settings.depending_on_ids)
 
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
 
@@ -535,7 +536,8 @@ class EtlGraph:
         self.add_node_step(node_id=node_text_to_rows.node_id,
                            function=_func,
                            node_type='text_to_rows',
-                           setting_input=node_text_to_rows)
+                           setting_input=node_text_to_rows,
+                           input_node_ids=[node_text_to_rows.depending_on_id])
         return self
 
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "EtlGraph":
@@ -569,7 +571,8 @@ class EtlGraph:
         self.add_node_step(node_id=record_id_settings.node_id,
                            function=_func,
                            node_type='record_id',
-                           setting_input=record_id_settings
+                           setting_input=record_id_settings,
+                           input_node_ids=[record_id_settings.depending_on_id]
                            )
         return self
 
@@ -1082,6 +1085,15 @@ class EtlGraph:
     def execution_mode(self) -> str:
         return self.flow_settings.execution_mode
 
+    def get_implicit_starter_nodes(self) -> List[NodeStep]:
+        """Ensures that nodes that can be a start (e.g. polars code), will be a starting node"""
+        starting_node_ids = [node.node_id for node in self._flow_starts]
+        implicit_starting_nodes = []
+        for node in self.nodes:
+            if node.node_template.can_be_start and not node.has_input and node.node_id not in starting_node_ids:
+                implicit_starting_nodes.append(node)
+        return implicit_starting_nodes
+
     @execution_mode.setter
     def execution_mode(self, mode: str):
         self.flow_settings.execution_mode = mode
@@ -1098,13 +1110,12 @@ class EtlGraph:
             self.start_datetime = datetime.datetime.now()
             self.end_datetime = None
             self.latest_run_info = None
-            # all_node_ids = set(self._node_db.keys())
             self.flow_logger.info('Starting to run flowfile flow...')
             skip_nodes = [node for node in self.nodes if not node.is_correct]
             skip_nodes.extend([lead_to_node for node in skip_nodes for lead_to_node in node.leads_to_nodes])
             execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
                                                                    node not in skip_nodes],
-                                                        flow_starts=self._flow_starts)
+                                                        flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)

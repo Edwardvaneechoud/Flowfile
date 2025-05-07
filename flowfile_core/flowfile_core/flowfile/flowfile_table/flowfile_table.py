@@ -1486,7 +1486,6 @@ class FlowfileTable:
         return cls(external_fetcher.get_result())
 
 
-# Formula and Expression Methods
 def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "FlowfileTable":
     """
     Execute arbitrary Polars code.
@@ -1497,12 +1496,11 @@ def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "Flowfi
     Returns:
         FlowfileTable: Result of code execution
     """
-    polars_executable = polars_code_parser.get_executable(code)
+    polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
     if len(flowfile_tables) == 0:
         kwargs = {}
     elif len(flowfile_tables) == 1:
         kwargs = {'input_df': flowfile_tables[0].data_frame}
     else:
-        kwargs = {f'input_df_{i}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
+        kwargs = {f'input_df_{i+1}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
     return FlowfileTable(polars_executable(**kwargs))
-

@@ -1,5 +1,4 @@
-import uuid
-from typing import Any, Optional, Union, Iterable, TYPE_CHECKING
+from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal
 
 import polars as pl
 from polars.expr.string import ExprStringNameSpace
@@ -358,6 +357,27 @@ class Expr:
         result.agg_func = "std" # Explicitly set agg_func
         return result
 
+    def cum_count(self, reverse: bool = False) -> "Expr":
+        """
+        Return the cumulative count of the non-null values in the column.
+
+        Parameters
+        ----------
+        reverse : bool, default False
+            Reverse the operation
+
+        Returns
+        -------
+        Expr
+            A new expression with the cumulative count
+        """
+        res_expr = (
+            self.expr.cum_count(reverse=reverse) if self.expr is not None else None
+        )
+        result = self._create_next_expr("cum_count", res_expr, reverse=reverse)
+        result.agg_func = None
+        return result
+
     def var(self, ddof=1):
         res_expr = self.expr.var(ddof=ddof) if self.expr is not None else None
         result = self._create_next_expr("var", res_expr, ddof=ddof)
@@ -551,19 +571,159 @@ class Expr:
         result.agg_func = None
         return result
 
+    def _get_expr_repr(self, expr):
+        """Helper to get appropriate string representation for an expression"""
+        # Ensure this helper is robust or defined if it's used as self._get_expr_repr
+        if isinstance(expr, (Expr, Column)): # Assuming Column is a subclass of Expr or similar
+            return expr._repr_str
+        elif isinstance(expr, str): # Should ideally be pl.col() or lit() for consistency
+            return f"pl.col('{expr}')" # Or handle more generically
+        elif isinstance(expr, pl.Expr):
+             base_str = str(expr)
+             if base_str.startswith("col("):
+                 return f"pl.{base_str}"
+             if base_str.startswith("lit("):
+                 return f"pl.{base_str}"
+             return f"pl.Expr({base_str})"
+        else:
+            return repr(expr)
 
-    def over(self, partition_by):
-        partition_repr = repr(partition_by)
-        if isinstance(partition_by, Expr):
-            partition_repr = partition_by._repr_str
-        elif isinstance(partition_by, list):
-            partition_repr = f"[{', '.join(map(repr, partition_by))}]"
 
-        res_expr = self.expr.over(partition_by) if self.expr is not None else None
+    def over(
+        self,
+        partition_by: Union["Expr", str, List[Union["Expr", str]]],
+        *more_exprs: Union["Expr", str],
+        order_by: Optional[Union["Expr", str, List[Union["Expr", str]]]] = None,
+        descending: bool = False,
+        nulls_last: bool = False,
+        mapping_strategy: Literal["group_to_rows", "join", "explode"] = "group_to_rows",
+    ) -> "Expr":
+        """
+        Compute expressions over the given groups.
+        String representation will show 'descending' and 'nulls_last' if they are True,
+        regardless of 'order_by' presence.
+        """
+        # Process all partition columns (partition_by + more_exprs)
+        all_partition_cols = [partition_by]
+        if more_exprs:
+            all_partition_cols.extend(more_exprs)
+
+        processed_partition_cols = []
+        for col_expr in all_partition_cols:
+            if isinstance(col_expr, str):
+                processed_partition_cols.append(col(col_expr)) # Use your col() factory
+            elif isinstance(col_expr, list):
+                processed_list = []
+                for item in col_expr:
+                    if isinstance(item, str):
+                        processed_list.append(col(item)) # Use your col() factory
+                    else:
+                        processed_list.append(item)
+                processed_partition_cols.extend(processed_list)
+            else:
+                processed_partition_cols.append(col_expr) # Assumes it's already an Expr-like object
+
+        processed_order_by = None
+        if order_by is not None:
+            if isinstance(order_by, str):
+                processed_order_by = col(order_by) # Use your col() factory
+            elif isinstance(order_by, list):
+                processed_order_by = [
+                    col(o) if isinstance(o, str) else o for o in order_by
+                ]
+            else:
+                processed_order_by = order_by # Assumes it's already an Expr-like object
+
+
+        # --- Build string representation for .over() arguments ---
+        over_arg_strings_for_repr = []
+
+        # Handle partition_by representation
+        if len(processed_partition_cols) == 1:
+            over_arg_strings_for_repr.append(self._get_expr_repr(processed_partition_cols[0]))
+        else:
+            col_reprs = [self._get_expr_repr(p) for p in processed_partition_cols]
+            over_arg_strings_for_repr.append(f"[{', '.join(col_reprs)}]")
+
+        # Handle keyword-like arguments for string representation
+        # order_by
+        if processed_order_by is not None:
+            if isinstance(processed_order_by, list):
+                order_by_repr_val = f"[{', '.join([self._get_expr_repr(o) for o in processed_order_by])}]"
+            else:
+                order_by_repr_val = self._get_expr_repr(processed_order_by)
+            over_arg_strings_for_repr.append(f"order_by={order_by_repr_val}")
+
+        # descending (show in string if True, regardless of order_by)
+        if descending: # `descending` is the boolean method parameter
+            over_arg_strings_for_repr.append(f"descending={repr(descending)}") # repr(True) -> "True"
+
+        # nulls_last (show in string if True, regardless of order_by)
+        if nulls_last: # `nulls_last` is the boolean method parameter
+            over_arg_strings_for_repr.append(f"nulls_last={repr(nulls_last)}")
+
+        # mapping_strategy (show if not default)
+        if mapping_strategy != "group_to_rows":
+            over_arg_strings_for_repr.append(f"mapping_strategy='{mapping_strategy}'")
+
+        args_str_for_repr = ", ".join(over_arg_strings_for_repr)
+
+        # --- Create the actual polars expression (THIS LOGIC REMAINS UNCHANGED) ---
+        res_expr = None
+        if self.expr is not None:
+            try:
+                # Convert partition_by to Polars expressions
+                if len(processed_partition_cols) == 1:
+                    partition_arg = (
+                        processed_partition_cols[0].expr
+                        if hasattr(processed_partition_cols[0], "expr")
+                        else processed_partition_cols[0] # Fallback if not your Expr type
+                    )
+                else:
+                    partition_arg = [
+                        p.expr if hasattr(p, "expr") else p
+                        for p in processed_partition_cols
+                    ]
+
+                # Build kwargs for the actual polars over() call
+                polars_call_kwargs = {"mapping_strategy": mapping_strategy}
+
+                if processed_order_by is not None:
+                    # Convert order_by to Polars expressions
+                    if isinstance(processed_order_by, list):
+                        polars_order_by_arg = [
+                            o.expr if hasattr(o, "expr") else o
+                            for o in processed_order_by
+                        ]
+                    else:
+                        polars_order_by_arg = (
+                            processed_order_by.expr
+                            if hasattr(processed_order_by, "expr")
+                            else processed_order_by
+                        )
+                    polars_call_kwargs["order_by"] = polars_order_by_arg
+                    # These are tied to order_by for the actual Polars call
+                    polars_call_kwargs["descending"] = descending
+                    polars_call_kwargs["nulls_last"] = nulls_last
+
+                res_expr = self.expr.over(partition_by=partition_arg, **polars_call_kwargs)
+
+            except Exception as e:
+                # It's good practice to either log this or allow it to propagate
+                # if it's unexpected, rather than just printing.
+                # For now, keeping your print statement.
+                print(f"Warning: Could not create polars expression for over(): {e}")
+                pass # res_expr will remain None
+
         # Window functions (over) clear the simple aggregation state
-        return Expr(res_expr, self.name, repr_str=f"{self._repr_str}.over({partition_repr})",
-                    initial_column_name=self._initial_column_name, agg_func=None)
-
+        return Expr(
+            res_expr,
+            self.name,
+            repr_str=f"{self._repr_str}.over({args_str_for_repr})", # Use the modified string
+            initial_column_name=self._initial_column_name,
+            selector=None, # .over() typically removes selector link
+            agg_func=None, # Window functions reset agg_func
+        )
     def sort(self, *, descending=False, nulls_last=False):
         res_expr = self.expr.sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
         # Sort is not an aggregation, resets agg_func
@@ -723,3 +883,24 @@ def lit(value: Any) -> Expr:
     """Creates a Literal expression."""
     # Literals don't have an agg_func
     return Expr(pl.lit(value), repr_str=f"pl.lit({repr(value)})", agg_func=None)
+
+
+def cum_count(expr, reverse: bool = False) -> Expr:
+    """
+    Return the cumulative count of the non-null values in the column.
+
+    Parameters
+    ----------
+    expr : str or Expr
+        Expression to compute cumulative count on
+    reverse : bool, default False
+        Reverse the operation
+
+    Returns
+    -------
+    Expr
+        A new expression with the cumulative count
+    """
+    if isinstance(expr, str):
+        expr = col(expr)
+    return expr.cum_count(reverse=reverse)

@@ -36,6 +36,7 @@ class NodeTemplate(BaseModel):
     multi: bool = False
     node_group: str
     prod_ready: bool = True
+    can_be_start: bool = False
 
 
 class NodeInformation(BaseModel):
