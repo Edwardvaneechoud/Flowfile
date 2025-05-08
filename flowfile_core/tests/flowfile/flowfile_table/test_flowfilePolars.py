@@ -190,7 +190,7 @@ def test_execute_polars_code():
         return df.group_by('value3').len()
     output_df = abc(input_df)
     """
-    result_data = fl_table.execute_polars_code(code)
+    result_data = execute_polars_code(fl_table, code=code)
     expected_data = FlowfileTable([[30, 20, 5, 25, 10, 15], [1, 1, 1, 1, 2, 1]], schema=['value3', 'len'])
     result_data.assert_equal(expected_data)
 

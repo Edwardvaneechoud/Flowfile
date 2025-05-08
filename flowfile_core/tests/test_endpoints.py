@@ -358,14 +358,15 @@ def test_get_flow_data_v2():
     client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
     response = client.get('/flow_data/v2', params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow data not retrieved'
+
     expected_data = {'node_edges': [
         {'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}],
         'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
                          'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
-                         'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
+                         'prod_ready': True, 'can_be_start': False, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
                         {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
                          'image': 'select.png', 'multi': False, 'node_group': 'transform',
-                         'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
+                         'prod_ready': True, 'can_be_start': False, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
     assert response.json() == expected_data, 'Flow data not correct'
 
 
