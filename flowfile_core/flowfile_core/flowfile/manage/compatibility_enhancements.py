@@ -47,6 +47,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
                                              name=flow_storage_obj.flow_name)
         setattr(flow_storage_obj, 'flow_settings', flow_settings)
         flow_storage_obj = schemas.FlowInformation.model_validate(flow_storage_obj)
+    elif not hasattr(getattr(flow_storage_obj, 'flow_settings'), 'execution_location'):
+        setattr(getattr(flow_storage_obj, 'flow_settings'), 'execution_location', 'auto')
     elif not hasattr(flow_storage_obj.flow_settings, 'is_running'):
         setattr(flow_storage_obj.flow_settings, 'is_running', False)
         setattr(flow_storage_obj.flow_settings, 'is_canceled', False)

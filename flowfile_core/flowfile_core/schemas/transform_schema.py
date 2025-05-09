@@ -370,6 +370,10 @@ class FuzzyMatchInput(JoinInput):
         self.aggregate_output = aggregate_output
 
     @property
+    def overlapping_records(self):
+        return self.left_select.new_cols & self.right_select.new_cols
+
+    @property
     def fuzzy_maps(self) -> List[FuzzyMap]:
         new_mappings = []
         left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table

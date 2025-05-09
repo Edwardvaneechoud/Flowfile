@@ -23,11 +23,11 @@ def test_fuzzy_match():
     fuzzy_match_result = left_flowfile_table.do_fuzzy_join(fuzzy_match_input, right_flowfile_table, 'test')
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
-    expected_data = FlowfileTable([{'name': 'court', 'fuzzy_score_0': 1.0, 'right_name': 'court'},
-     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'right_name': 'eduward'},
-     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'eduward'},
-     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
-     {'name': 'edward', 'fuzzy_score_0': 1.0, 'right_name': 'edward'}])
+    expected_data = FlowfileTable([{'name': 'court', 'fuzzy_score_0': 1.0, 'name_right': 'court'},
+     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+     {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
 
 
@@ -43,7 +43,7 @@ def test_cross_join():
                                                           other=right_flowfile_table,
                                                           auto_generate_selection=True,
                                                           verify_integrity=True)
-    right_columns = ['right_' + c for c in right_flowfile_table.columns]
+    right_columns = [c + "_right" for c in right_flowfile_table.columns]
     assert cross_join_result is not None, 'Cross join failed'
     assert cross_join_result.get_number_of_records() == 100 * 100, 'Number of records is not correct'
     assert cross_join_result.columns == left_flowfile_table.columns + right_columns, 'Columns are not correct'
@@ -130,9 +130,9 @@ def test_pivot_numeric():
     pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
                                               aggregations=['sum'])
     output = fl_table.do_pivot(pivot_input)
-    expected_output = FlowfileTable([{'category': 'C', '1_sum': 5, '2_sum': 30},
-                                     {'category': 'B', '1_sum': None, '2_sum': 40},
-                                     {'category': 'A', '1_sum': 40, '2_sum': None}])
+    expected_output = FlowfileTable([{'category': 'C', '1': 5, '2': 30},
+                                     {'category': 'B', '1': None, '2': 40},
+                                     {'category': 'A', '1': 40, '2': None}])
     output.assert_equal(expected_output)
 
 
@@ -145,9 +145,9 @@ def test_pivot_string_concat():
     pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
                                               aggregations=['concat'])
     output = fl_table.do_pivot(pivot_input)
-    expected_output = FlowfileTable([{'category': 'A', '1_concat': '10,20,10', '2_concat': None},
-                                     {'category': 'B', '1_concat': None, '2_concat': '15,25'},
-                                     {'category': 'C', '1_concat': '5', '2_concat': '30'}])
+    expected_output = FlowfileTable([{'category': 'A', '1': '10,20,10', '2': None},
+                                     {'category': 'B', '1': None, '2': '15,25'},
+                                     {'category': 'C', '1': '5', '2': '30'}])
     output.assert_equal(expected_output)
 
 

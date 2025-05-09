@@ -1815,7 +1815,6 @@ class FlowFrame:
         return self.data.width
 
 
-
 def _add_delegated_methods():
     """Add delegated methods from polars LazyFrame."""
     delegate_methods = [
@@ -1836,6 +1835,7 @@ def _add_delegated_methods():
         "chunk_lengths",
         "optimization_toggle",
         "set_polars_options",
+        "collect_schema"
     ]
 
     already_implemented = set(dir(FlowFrame))
@@ -1858,6 +1858,9 @@ def _add_delegated_methods():
 
             # Add the method to the class
             setattr(FlowFrame, method_name, make_delegate(method_name))
+
+
+_add_delegated_methods()
 
 
 def sum(expr):
@@ -1921,6 +1924,9 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, separator: str = ';',
 
     has_headers = options.get('has_header', True)
     encoding = options.get('encoding', 'utf-8')
+
+    if '~' in file_path:
+        file_path = os.path.expanduser(file_path)
 
     received_table = input_schema.ReceivedTable(
         file_type='csv',

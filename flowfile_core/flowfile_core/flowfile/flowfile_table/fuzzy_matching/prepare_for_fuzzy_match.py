@@ -26,8 +26,8 @@ def prepare_for_fuzzy_match(left: "FlowfileTable", right: "FlowfileTable",
     verify_join_select_integrity(fuzzy_match_input, left_columns=left.columns, right_columns=right.columns)
     if not verify_join_map_integrity(fuzzy_match_input, left_columns=left.schema, right_columns=right.schema):
         raise Exception('Join is not valid by the data fields')
+    fuzzy_match_input = fuzzy_match_input
     fuzzy_match_input.auto_rename()
-
     right_select = [v.old_name for v in fuzzy_match_input.right_select.renames if
                     (v.keep or v.join_key) and v.is_available]
     left_select = [v.old_name for v in fuzzy_match_input.left_select.renames if

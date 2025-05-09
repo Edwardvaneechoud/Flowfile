@@ -283,11 +283,11 @@ def test_add_fuzzy_match():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowfileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'right_name': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'right_name': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'right_name': 'courtney'}]
+    expected_data = FlowfileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
+                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
                                   )
     output_data.assert_equal(expected_data)
 
