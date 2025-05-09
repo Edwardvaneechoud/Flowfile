@@ -18,6 +18,7 @@ class FlowSettings(BaseModel):
     show_detailed_progress: bool = True
     is_running: bool = False
     is_canceled: bool = False
+    execution_location: ExecutionLocationsLiteral = "auto"
 
 
 class RawLogInput(BaseModel):

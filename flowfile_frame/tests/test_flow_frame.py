@@ -1,10 +1,11 @@
 import os
 import pytest
 import polars as pl
-
-from flowfile_frame.flow_frame import FlowFrame, read_csv, read_parquet, from_dict, concat
+from polars.testing import assert_frame_equal
+from flowfile_frame.flow_frame import FlowFrame, read_parquet, from_dict, concat
 from flowfile_frame.expr import col, lit, cum_count
 from flowfile_frame import selectors as sc
+from flowfile_frame.utils import open_graph_in_editor
 
 
 def test_create_empty_flow_frame():
@@ -68,6 +69,7 @@ def test_select_columns():
 
     # Select specific columns
     result = df.select("id", "name")
+    open_graph_in_editor(result.flow_graph)
     assert result.columns == ["id", "name"]
 
     # Select with expressions
@@ -186,7 +188,7 @@ def group_by():
 
     # Group by category and get count
     result = df.group_by("category").count().collect()
-    assert len(result) == 2
+    assert len(result.collect()) == 2
     assert set(result["category"].to_list()) == {"A", "B"}
     assert result["count"].to_list() == [3, 2] if result["category"][0] == "A" else [2, 3]
 
@@ -295,11 +297,8 @@ def test_pivot():
         values="value"
     ).collect()
 
-    assert len(result) == 2  # Two unique IDs
-    assert "sales_first" in result.columns
-    assert "profit_first" in result.columns
-    assert result["sales_first"].to_list() == [100, 150]
-    assert result["profit_first"].to_list() == [20, 30]
+    expected_data = pl.DataFrame({'id': [2, 1], 'profit': [30, 20], 'sales': [150, 100]})
+    assert_frame_equal(expected_data, result, check_row_order=False, check_exact=False)
 
 
 def test_unpivot():
@@ -317,11 +316,10 @@ def test_unpivot():
         on=["sales_2021", "sales_2022"],
         index="id"
     ).collect()
-
-    assert len(result) == 4  # 2 ids × 2 metrics
-    assert "variable" in result.columns
-    assert "value" in result.columns
-    assert set(result["variable"].to_list()) == {"sales_2021", "sales_2022"}
+    expected_data = pl.DataFrame({'id': [1, 2, 1, 2],
+                                  'variable': ['sales_2021', 'sales_2021', 'sales_2022', 'sales_2022'],
+                                  'value': [100, 150, 120, 170]})
+    assert_frame_equal(expected_data, result, check_row_order=False, check_exact=False)
 
 
 def test_concat():
@@ -434,16 +432,23 @@ def test_complex_workflow():
               .with_columns((col("salary") * 1.1).alias("new_salary"))  # Add 10% salary
               .group_by("department")  # Group by department
               .agg([
-        col("new_salary").mean().alias("avg_salary"),
-        col("age").mean().alias("avg_age")
-    ])  # Calculate averages
+                    col("new_salary").mean().alias("avg_salary"),
+                    col("age").mean().alias("avg_age")
+                    ])  # Calculate averages
               .sort("avg_salary", descending=True)  # Sort by average salary
-              .collect())
+              )
 
-    # Check results
-    assert len(result) == 3  # IT and HR departments (Sales employee was filtered out)
-    assert "avg_salary" in result.columns
-    assert "avg_age" in result.columns
+    #  Just use the actual implementation of polars
+    expected_result = (df.data.filter(pl.col("age") > 30)  # Keep employees older than 30
+                       .with_columns((pl.col("salary") * 1.1).alias("new_salary"))  # Add 10% salary
+                       .group_by("department")  # Group by department
+                       .agg([
+                            pl.col("new_salary").mean().alias("avg_salary"),
+                            pl.col("age").mean().alias("avg_age")
+                            ])  # Calculate averages
+                       .sort("avg_salary", descending=True)  # Sort by average salary
+                       .collect())
+    assert_frame_equal(result.collect(), expected_result, check_row_order=False)
 
 
 def test_cache():
@@ -484,12 +489,8 @@ def test_cum_count():
         cum_count("category").over("category").alias("group_count")
     ).collect()
     assert "group_count" in result.columns
-
-    # Check counts by category
-    a_rows = result.filter(pl.col("category") == "A")
-    b_rows = result.filter(pl.col("category") == "B")
-    assert a_rows["group_count"].to_list() == [1, 2, 3]
-    assert b_rows["group_count"].to_list() == [1, 2]
+    expected_result = pl.DataFrame({'group_count': [1, 1, 2, 2, 3], 'id': [1, 2, 3, 4, 5], 'category': ['A', 'B', 'A', 'B', 'A']})
+    assert_frame_equal(expected_result, result, check_row_order=True, check_dtypes=False)
 
 
 def test_schema():

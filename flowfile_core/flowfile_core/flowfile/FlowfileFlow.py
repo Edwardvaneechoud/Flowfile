@@ -256,7 +256,8 @@ class EtlGraph:
         """
         Official string representation of the EtlGraph class.
         """
-        return (f"EtlGraph(\nNodes: {self._node_db}")
+        settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
+        return f"EtlGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
     def get_nodes_overview(self):
         output = []
@@ -716,7 +717,9 @@ class EtlGraph:
 
     def add_output(self, output_file: input_schema.NodeOutput):
         def _func(df: FlowfileTable):
-            df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id)
+            execute_remote = self.execution_location != 'local'
+            df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id,
+                      execute_remote=execute_remote)
             return df
 
         def schema_callback():
@@ -1100,7 +1103,15 @@ class EtlGraph:
     def execution_mode(self, mode: str):
         self.flow_settings.execution_mode = mode
 
-    def run_graph(self) -> RunInformation:
+    @property
+    def execution_location(self) -> schemas.ExecutionLocationsLiteral:
+        return self.flow_settings.execution_location
+
+    @execution_location.setter
+    def execution_location(self, execution_location: schemas.ExecutionLocationsLiteral):
+        self.flow_settings.execution_location = execution_location
+
+    def run_graph(self):
         if self.flow_settings.is_running:
             raise Exception('Flow is already running')
         try:
@@ -1133,7 +1144,8 @@ class EtlGraph:
                 node_result = NodeResult(node_id=node.node_id, node_name=node.name)
                 self.node_results.append(node_result)
                 logger.info(f'Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}')
-                node.execute_node(run_location='auto', performance_mode=performance_mode,
+                node.execute_node(run_location=self.flow_settings.execution_location,
+                                  performance_mode=performance_mode,
                                   node_logger=node_logger)
                 try:
                     node_result.error = str(node.results.errors)

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 else:
     FlowFrame = None
 
+
 class GroupByFrame:
     """Represents a grouped DataFrame for aggregation operations."""
 
@@ -32,21 +33,21 @@ class GroupByFrame:
                 parts.append(f'''"{str(c)}"''')
         return ", ".join(parts)
 
-    def len(self):
+    def len(self) -> 'FlowFrame':
         """
         Count number of rows per group. Output column is named 'len'.
         """
         # Uses direct code generation as per user's example
         return self._generate_direct_polars_code("len")
 
-    def count(self):
+    def count(self) -> 'FlowFrame':
         """
         Count number of rows per group. Output column is named 'count'.
         """
         # Uses direct code generation as per user's example
         return self._generate_direct_polars_code("count")
 
-    def agg(self, *agg_exprs, **named_agg_exprs) -> 'FlowFrame':
+    def agg(self, *agg_exprs, **named_agg_exprs) -> FlowFrame:
         """
         Apply EXPLICIT aggregations to grouped data using expressions.
         """
@@ -59,8 +60,6 @@ class GroupByFrame:
             can_be_converted = self._process_agg_expressions(agg_cols, agg_expressions)
         if can_be_converted:
             can_be_converted = self._process_named_agg_expressions(agg_cols, named_agg_exprs)
-
-        # Pass description from groupby or generate a default for agg node
         node_desc = self.description or f"Aggregate after grouping by {self.readable_group()}"
         return self._create_agg_node(self.node_id, can_be_converted, agg_cols, agg_expressions, named_agg_exprs, node_desc)
 
@@ -77,7 +76,8 @@ class GroupByFrame:
                  return False
         return True
 
-    def _process_agg_expressions(self, agg_cols: list[transform_schema.AggColl], agg_expressions) -> bool:
+    @staticmethod
+    def _process_agg_expressions(agg_cols: list[transform_schema.AggColl], agg_expressions) -> bool:
         # (Implementation unchanged from user input)
         for expr in agg_expressions:
             if isinstance(expr, Expr):
@@ -97,9 +97,11 @@ class GroupByFrame:
                 return False
         return True
 
-    def _process_named_agg_expressions(self, agg_cols: list[transform_schema.AggColl], named_agg_exprs: dict) -> bool:
-        # (Implementation unchanged from user input)
+    @staticmethod
+    def _process_named_agg_expressions(agg_cols: list[transform_schema.AggColl], named_agg_exprs: dict) -> bool:
         for name, expr in named_agg_exprs.items():
+            if expr.is_complex:
+                return False
             if isinstance(expr, Expr):
                 agg_func = getattr(expr, "agg_func", "first")
                 old_name = getattr(expr, "_initial_column_name", expr.name) or expr.name
@@ -108,12 +110,17 @@ class GroupByFrame:
                 agg_cols.append(transform_schema.AggColl(old_name=expr, agg="first", new_name=name))
             elif isinstance(expr, tuple) and len(expr) == 2:
                 col_spec, agg_func_str = expr
-                if isinstance(col_spec, Expr): old_name = getattr(col_spec, "_initial_column_name", col_spec.name) or col_spec.name
-                elif isinstance(col_spec, str): old_name = col_spec
-                else: return False
-                if not isinstance(agg_func_str, str): return False
+                if isinstance(col_spec, Expr):
+                    old_name = getattr(col_spec, "_initial_column_name", col_spec.name) or col_spec.name
+                elif isinstance(col_spec, str):
+                    old_name = col_spec
+                else:
+                    return False
+                if not isinstance(agg_func_str, str):
+                    return False
                 agg_cols.append(transform_schema.AggColl(old_name=old_name, agg=agg_func_str, new_name=name))
-            else: return False
+            else:
+                return False
         return True
 
     def _create_agg_node(self, node_id_to_use: int, can_be_converted: bool, agg_cols: list, agg_expressions, named_agg_exprs, description: str):
@@ -130,12 +137,11 @@ class GroupByFrame:
             )
             self.parent.flow_graph.add_group_by(group_by_settings)
         else:
-            # Uses the generator specific to agg()
             code = self._generate_polars_agg_code(agg_expressions, named_agg_exprs)
             self.parent._add_polars_code(new_node_id=node_id_to_use, code=code, description=description)
         return self.parent._create_child_frame(node_id_to_use)
 
-    def _generate_direct_polars_code(self, method_name: str):
+    def _generate_direct_polars_code(self, method_name: str) -> "FlowFrame":
         """
         Generates Polars code for simple GroupBy methods like sum(), mean(), len(), count()
         which operate implicitly or have a standard Polars counterpart.

@@ -487,7 +487,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
                 return unique_values
         except Exception as e:
             if logger:
-                logger.warning(f"Failed reading external file: {str(e)}")
+                logger.debug(f"Failed reading external file: {str(e)}")
 
         unique_values = (lf.unique().collect(engine="streaming")[:, 0].to_list())
 

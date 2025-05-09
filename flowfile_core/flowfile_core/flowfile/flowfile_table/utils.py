@@ -159,9 +159,8 @@ def write_output(_df: pl.LazyFrame,
         raise Exception(f'Could not cache the data, {r.text}')
 
 
-def old_write_output(_df: pl.LazyFrame | pl.DataFrame, data_type: str, path: str, write_mode: str,
-                     sheet_name: str = None,
-                     delimiter: str = None):
+def local_write_output(_df: pl.LazyFrame | pl.DataFrame, data_type: str, path: str, write_mode: str,
+                       sheet_name: str = None, delimiter: str = None, flow_id: int = -1, node_id: int | str = -1):
     is_lazy = isinstance(_df, pl.LazyFrame)
     sink_method_str = 'sink_' + data_type
     write_method_str = 'write_' + data_type
@@ -176,8 +175,8 @@ def old_write_output(_df: pl.LazyFrame | pl.DataFrame, data_type: str, path: str
             _df = _df.collect()
         write_method = getattr(_df, write_method_str)
     if write_method is not None:
-        f = execute_write_method(write_method, path=path, data_type=data_type, sheet_name=sheet_name,
-                                 delimiter=delimiter, write_mode=write_mode)
+        execute_write_method(write_method, path=path, data_type=data_type, sheet_name=sheet_name,
+                             delimiter=delimiter, write_mode=write_mode)
 
 
 def create_pl_df_type_save(raw_data: Iterable[Iterable], orient: str = 'row') -> pl.DataFrame:

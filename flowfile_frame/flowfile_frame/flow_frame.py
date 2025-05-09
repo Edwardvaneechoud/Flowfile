@@ -15,7 +15,7 @@ from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import _parse_inputs_as_iterable
+from flowfile_frame.utils import _parse_inputs_as_iterable, create_etl_graph
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 
 node_id_counter = 0
@@ -26,11 +26,6 @@ def _to_string_val(v) -> str:
         return f"'{v}'"
     else:
         return v
-
-
-def _generate_id() -> int:
-    """Generate a simple unique ID for nodes."""
-    return int(uuid.uuid4().int % 100000)
 
 
 def generate_node_id() -> int:
@@ -96,13 +91,9 @@ class FlowFrame:
 
         # Create a new flow graph if none is provided
         if flow_graph is None:
-            flow_id = _generate_id()
-            flow_settings = schemas.FlowSettings(
-                flow_id=flow_id, name=f"Flow_{flow_id}", path=f"flow_{flow_id}"
-            )
-            flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
-        else:
-            flow_id = flow_graph.flow_id
+            flow_graph = create_etl_graph()
+
+        flow_id = flow_graph.flow_id
 
         # Convert data to a polars DataFrame/LazyFrame
         try:
@@ -206,14 +197,8 @@ class FlowFrame:
 
         # Initialize graph
         if flow_graph is None:
-            flow_id = _generate_id()
-            flow_settings = schemas.FlowSettings(
-                flow_id=flow_id, name=f"Flow_{flow_id}", path=f"flow_{flow_id}"
-            )
-            self.flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
-        else:
-            self.flow_graph = flow_graph
-
+            flow_graph = create_etl_graph()
+        self.flow_graph = flow_graph
         # Set up data
         if isinstance(data, FlowfileTable):
             self.data = data.data_frame
@@ -222,10 +207,6 @@ class FlowFrame:
 
     def __repr__(self):
         return str(self.data)
-
-    @property
-    def columns(self):
-        return self.data.collect_schema().names()
 
     def _add_connection(self, from_id, to_id, input_type: input_schema.InputType = "main"):
         """Helper method to add a connection between nodes"""
@@ -497,24 +478,26 @@ class FlowFrame:
             New FlowFrame with join operation applied.
         """
         new_node_id = generate_node_id()
+        print('new node id', new_node_id)
         use_polars_code = not(maintain_order is None and
-                           coalesce is None and
-                           nulls_equal is False and
-                           validate is None and
-                           suffix == '_right')
+                              coalesce is None and
+                              nulls_equal is False and
+                              validate is None and
+                              suffix == '_right')
         join_mappings = None
         if on is not None:
             left_columns = right_columns = _normalize_columns_to_list(on)
         elif left_on is not None and right_on is not None:
             left_columns = _normalize_columns_to_list(left_on)
             right_columns = _normalize_columns_to_list(right_on)
+        elif how == 'cross' and left_on is None and right_on is None and on is None:
+            left_columns = None
+            right_columns = None
         else:
-            raise ValueError(
-                "Must specify either 'on' or both 'left_on' and 'right_on'"
-            )
+            raise ValueError("Must specify either 'on' or both 'left_on' and 'right_on'")
 
         # Ensure left and right column lists have same length
-        if len(left_columns) != len(right_columns):
+        if how != 'cross' and len(left_columns) != len(right_columns):
             raise ValueError(
                 f"Length mismatch: left columns ({len(left_columns)}) != right columns ({len(right_columns)})"
             )
@@ -554,7 +537,6 @@ class FlowFrame:
                 how=how,
             )
             join_input.auto_rename()
-
             # Create node settings
             join_settings = input_schema.NodeJoin(
                 flow_id=self.flow_graph.flow_id,
@@ -568,8 +550,6 @@ class FlowFrame:
                 depending_on_ids=[self.node_id, other.node_id],
                 description=description or f"Join with {how} strategy",
             )
-
-            # Add to graph
             self.flow_graph.add_join(join_settings)
             self._add_connection(self.node_id, new_node_id, "main")
             other._add_connection(other.node_id, new_node_id, "right")
@@ -967,10 +947,6 @@ class FlowFrame:
         self.flow_graph.add_formula(function_settings)
         return self._create_child_frame(new_node_id)
 
-    @property
-    def schema(self):
-        return self.data.collect_schema()
-
     def head(self, n: int, description: str = None):
         new_node_id = generate_node_id()
         settings = input_schema.NodeSample(flow_id=self.flow_graph.flow_id,
@@ -988,6 +964,7 @@ class FlowFrame:
     def cache(self) -> "FlowFrame":
         setting_input = self.get_node_settings().setting_input
         setting_input.cache_results = True
+        self.data.cache()
         return self
 
     def get_node_settings(self) -> NodeStep:
@@ -1817,6 +1794,71 @@ class FlowFrame:
 
         return self._create_child_frame(new_node_id)
 
+    @property
+    def columns(self) -> List[str]:
+        """Get the column names."""
+        return self.data.columns
+
+    @property
+    def dtypes(self) -> List[pl.DataType]:
+        """Get the column data types."""
+        return self.data.dtypes
+
+    @property
+    def schema(self) -> pl.schema.Schema:
+        """Get an ordered mapping of column names to their data type."""
+        return self.data.schema
+
+    @property
+    def width(self) -> int:
+        """Get the number of columns."""
+        return self.data.width
+
+
+
+def _add_delegated_methods():
+    """Add delegated methods from polars LazyFrame."""
+    delegate_methods = [
+        "collect_async",
+        "profile",
+        "describe",
+        "explain",
+        "show_graph",
+        "serialize",
+        "fetch",
+        "get_meta",
+        "columns",
+        "dtypes",
+        "schema",
+        "estimated_size",
+        "n_chunks",
+        "is_empty",
+        "chunk_lengths",
+        "optimization_toggle",
+        "set_polars_options",
+    ]
+
+    already_implemented = set(dir(FlowFrame))
+
+    for method_name in delegate_methods:
+        if method_name not in already_implemented and hasattr(
+            pl.LazyFrame, method_name
+        ):
+            # Create a simple delegate method
+            def make_delegate(name):
+                def delegate_method(self, *args, **kwargs):
+                    return getattr(self.data, name)(*args, **kwargs)
+
+                # Set docstring and name
+                delegate_method.__doc__ = (
+                    f"See pl.LazyFrame.{name} for full documentation."
+                )
+                delegate_method.__name__ = name
+                return delegate_method
+
+            # Add the method to the class
+            setattr(FlowFrame, method_name, make_delegate(method_name))
+
 
 def sum(expr):
     """Sum aggregation function."""
@@ -1873,15 +1915,10 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, separator: str = ';',
     # Create new node ID
     node_id = generate_node_id()
     if flow_graph is None:
-        flow_id = _generate_id()
-        flow_settings = schemas.FlowSettings(
-            flow_id=flow_id,
-            name=f"Flow_{flow_id}",
-            path=f"flow_{flow_id}"
-        )
-        flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
-    else:
-        flow_id = flow_graph.flow_id
+        flow_graph = create_etl_graph()
+
+    flow_id = flow_graph.flow_id
+
     has_headers = options.get('has_header', True)
     encoding = options.get('encoding', 'utf-8')
 
@@ -1933,15 +1970,9 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_id = _generate_id()
-        flow_settings = schemas.FlowSettings(
-            flow_id=flow_id,
-            name=f"Flow_{flow_id}",
-            path=f"flow_{flow_id}"
-        )
-        flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
-    else:
-        flow_id = flow_graph.flow_id
+        flow_graph = create_etl_graph()
+
+    flow_id = flow_graph.flow_id
 
     received_table = input_schema.ReceivedTable(
         file_type='parquet',
@@ -1985,15 +2016,8 @@ def from_dict(data, *, flow_graph: EtlGraph = None, description: str = None) -> 
     node_id = generate_node_id()
 
     if not flow_graph:
-        flow_id = _generate_id()
-        flow_settings = schemas.FlowSettings(
-            flow_id=flow_id,
-            name=f"Flow_{flow_id}",
-            path=f"flow_{flow_id}"
-        )
-        flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
-    else:
-        flow_id = flow_graph.flow_id
+        flow_graph = create_etl_graph()
+    flow_id = flow_graph.flow_id
 
     input_node = input_schema.NodeManualInput(
         flow_id=flow_id,
@@ -2055,14 +2079,3 @@ def concat(frames: List['FlowFrame'],
     return first_frame.concat(remaining_frames, how=how,
                               rechunk=rechunk, parallel=parallel,
                               description=description)
-
-
-class Test():
-    a: int = 0
-
-class Test2(Test):
-    ...
-
-t : List[Test2|Test] = []
-
-

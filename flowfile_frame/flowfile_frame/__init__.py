@@ -4,11 +4,13 @@
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
 
+from flowfile_frame.utils import create_etl_graph  # noqa: F401
+
 # Commonly used functions
 from flowfile_frame.expr import (  # noqa: F401
     col, lit, column,
     cum_count, len,
-    sum, min, max, mean, count
+    sum, min, max, mean, count, when
 )
 
 # Selector utilities
