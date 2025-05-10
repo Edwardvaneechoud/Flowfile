@@ -835,7 +835,7 @@ class Expr:
                     repr_str=f"{self._repr_str}.sort(descending={descending}, nulls_last={nulls_last})",
                     initial_column_name=self._initial_column_name, agg_func=None)
 
-    def cast(self, dtype: Union[pl.DataType, str, pl.datatypes.classes.DataTypeClass], *, strict=True):
+    def cast(self, dtype: Union[pl.DataType, str, type], *, strict=True):
         """ Casts the Expr to a specified data type. """
         pl_dtype = dtype
         dtype_repr = repr(dtype)
