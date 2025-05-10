@@ -1,6 +1,7 @@
 import flowfile_frame as ff
 from pathlib import Path
 import os
+import platform
 
 
 def create_flow_frame_with_parquet_read() -> ff.FlowFrame:
@@ -25,15 +26,22 @@ def test_read_from_parquet_in_performance():
     graph = flow_frame.flow_graph
     graph.flow_settings.execution_mode = 'Performance'
     output_node = graph.nodes[-1]  # get the output node
-    execution_plan_before_run = output_node.get_resulting_data().data_frame.explain(format="plain")  # get the execution plan
 
-    # Create a normalized path fragment that works across platforms
-    expected_path_fragment = os.path.normpath("tests/support_files/data/fake_data.parquet")
-    # For Windows paths, need to handle backslashes in string comparisons
-    expected_path_fragment = expected_path_fragment.replace('\\', '\\\\')
+    # Get execution plan
+    execution_plan_before_run = output_node.get_resulting_data().data_frame.explain(format="plain")
 
-    # assert expected_path_fragment in execution_plan_before_run, f'The execution plan should contain the parquet file path. Expected path fragment: {expected_path_fragment}'
+    # Instead of checking for the exact path, check that the plan contains a reference to parquet reading
+    assert "ScanParquet" in execution_plan_before_run or "parquet" in execution_plan_before_run.lower(), \
+        "The execution plan should include parquet file scanning"
 
+    # Run the graph
     graph.run_graph()
-    execution_plan_after_run = output_node.get_resulting_data().data_frame.explain(format="plain")  # get the execution plan
-    # assert expected_path_fragment in execution_plan_after_run, f'The execution plan should contain the parquet file path. Expected path fragment: {expected_path_fragment}'
+
+    # Check execution plan after run
+    execution_plan_after_run = output_node.get_resulting_data().data_frame.explain(format="plain")
+    assert "ScanParquet" in execution_plan_after_run or "parquet" in execution_plan_after_run.lower(), \
+        "The execution plan should include parquet file scanning after running the graph"
+
+    # You could also check that the data was actually loaded correctly
+    result_df = output_node.get_resulting_data().data_frame
+    assert not result_df.is_empty(), "The resulting dataframe should not be empty"
