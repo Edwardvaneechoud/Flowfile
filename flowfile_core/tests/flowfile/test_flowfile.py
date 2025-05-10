@@ -283,11 +283,11 @@ def test_add_fuzzy_match():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowfileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'right_name': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'right_name': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'right_name': 'courtney'}]
+    expected_data = FlowfileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
+                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
                                   )
     output_data.assert_equal(expected_data)
 
@@ -325,6 +325,24 @@ def test_add_read_excel():
     graph = create_graph()
     add_node_promise_on_type(graph, node_type='read', node_id=1)
     graph.add_read(input_file=input_schema.NodeRead(**settings))
+
+
+def ensure_excel_is_read_from_arrow_object():
+    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
+                'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
+                'received_file': {'id': None, 'name': 'fake_data.xlsx',
+                                  'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
+                                  'directory': None, 'analysis_file_available': False, 'status': None,
+                                  'file_type': 'excel', 'fields': [], 'reference': '', 'starting_from_line': 0,
+                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
+                                  'row_delimiter': '\n', 'quote_char': '"', 'infer_schema_length': 1000,
+                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': 'Sheet1',
+                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
+                                  'type_inference': False}}
+    graph = create_graph()
+    add_node_promise_on_type(graph, node_type='read', node_id=1)
+    graph.add_read(input_file=input_schema.NodeRead(**settings))
+    graph.get_node(1).get_resulting_data()
 
 
 def test_add_record_id():

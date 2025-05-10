@@ -49,6 +49,6 @@ def verify_join_map_integrity(join_input: transform_schema.JoinInput,
         right_column_info: FlowfileColumn | None = right_column_dict.get(join_mapping.right_col)
         if not left_column_info or not right_column_info:
             return False
-        if left_column_info.data_type != right_column_info.data_type:
+        if left_column_info.generic_datatype() != right_column_info.generic_datatype():
             return False
     return True

@@ -202,7 +202,8 @@ class NodeStep:
         if isinstance(self.setting_input, input_schema.NodePromise):
             return False
         return (self.node_template.input == len(self.node_inputs.get_all_inputs()) or
-        (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0))
+                (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0) or
+                (self.node_template.multi and self.node_template.can_be_start))
 
     def set_node_information(self):
         logger.info('setting node information')
@@ -417,7 +418,10 @@ class NodeStep:
         if results_exists(self.hash):
             logger.warning('Not implemented')
 
-    def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None) -> bool:
+    def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None,
+                  execution_location: schemas.ExecutionLocationsLiteral = "auto") -> bool:
+        if execution_location == "local":
+            return False
         flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run:
@@ -539,7 +543,7 @@ class NodeStep:
             self.node_stats.has_run = False
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
-            if self.needs_run(performance_mode, node_logger):
+            if self.needs_run(performance_mode, node_logger, run_location):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')

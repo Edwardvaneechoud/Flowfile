@@ -116,6 +116,7 @@ def remove_comments_and_docstrings(source: str) -> str:
 class PolarsCodeParser:
     """
     Securely executes Polars code with restricted access to Python functionality.
+    Supports multiple input DataFrames or no input DataFrames.
     """
 
     def __init__(self):
@@ -170,43 +171,60 @@ class PolarsCodeParser:
         except SyntaxError as e:
             raise ValueError(f"Invalid Python syntax: {str(e)}")
 
-    @staticmethod
-    def _wrap_in_function(code: str) -> str:
+    def _wrap_in_function(self, code: str, num_inputs: int = 1) -> str:
         """
-        Wraps code in a function definition, handling various input formats.
-        """
-        # Dedent the code first to handle various indentation styles
-
-        # If it's a single expression or statement, wrap it appropriately
-        if '\n' not in code.strip():
-            # Handle expression that might return a value
-            if any(code.startswith(prefix) for prefix in ['pl.', 'col(', 'input_df', 'expr(']):
-                return f"def _transform(input_df):\n    return {code}"
-            # Handle assignment to df
-            else:
-                return f"def _transform(input_df):\n    {code}\n    return output_df"
-
-        # For multi-line scripts
-        return (f"def _transform(input_df):\n" + '\n'.join(f"    {line}" for line in code.split('\n')) +
-                '\n    return output_df')
-
-    def get_executable(self, code: str) -> Callable:
-        """
-        Securely get a function that can be executed on a DataFrame.
+        Wraps code in a function definition that can accept multiple input DataFrames or none.
 
         Args:
-            code (str): The code to execute
+            code: The code to wrap
+            num_inputs: Number of expected input DataFrames (0 for none)
 
         Returns:
-            pl.DataFrame: The transformed DataFrame
+            Wrapped code as a function
         """
-        # Validate the code first
+        # Dedent the code first to handle various indentation styles
+        code = textwrap.dedent(code).strip()
+
+        # Create appropriate function signature based on number of inputs
+        if num_inputs == 0:
+            function_def = "def _transform():\n"
+        elif num_inputs == 1:
+            function_def = "def _transform(input_df):\n"
+        else:
+            params = ", ".join([f"input_df_{i+1}" for i in range(num_inputs)])
+            function_def = f"def _transform({params}):\n"
+
+        # Handle single line expressions
+        if '\n' not in code:
+            # For expressions that should return directly
+            if any(code.startswith(prefix) for prefix in ['pl.', 'col(', 'input_df', 'expr(']):
+                return function_def + f"    return {code}"
+            # For assignments
+            else:
+                return function_def + f"    {code}\n    return output_df"
+
+        # For multi-line code
+        indented_code = '\n'.join(f"    {line}" for line in code.split('\n'))
+        return function_def + indented_code + '\n    return output_df'
+
+    def get_executable(self, code: str, num_inputs: int = 1) -> Callable:
+        """
+        Securely get a function that can be executed with multiple DataFrames or none.
+
+        Args:
+            code: The code to execute
+            num_inputs: Number of expected input DataFrames (0 for none)
+
+        Returns:
+            Callable: A function that takes the specified number of DataFrames
+        """
+        # Validate and clean the code
         code = remove_comments_and_docstrings(code)
         code = textwrap.dedent(code).strip()
         self._validate_code(code)
 
         # Wrap the code in a function
-        wrapped_code = self._wrap_in_function(code)
+        wrapped_code = self._wrap_in_function(code, num_inputs)
 
         try:
             # Create namespace for execution

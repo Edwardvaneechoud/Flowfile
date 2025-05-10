@@ -254,7 +254,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
   if ((event.metaKey || event.ctrlKey) && event.key === "c") {
     const isNodeSelected = nodeStore.node_id === props.data.id;
     const target = event.target as HTMLElement;
-    const isTargetNodeButton= target.classList.contains('node-button');
+    const isTargetNodeButton = target.classList.contains("node-button");
     if (isNodeSelected && isTargetNodeButton) {
       copyNode();
       event.preventDefault();
@@ -319,7 +319,12 @@ const overlayStyle = computed(() => {
 });
 
 const isTruncated = computed(() => {
-  return description.value.length > CHAR_LIMIT;
+  try {
+    return description.value.length > CHAR_LIMIT;
+  } catch (error) {
+    // Return false if description is null or accessing its properties causes an error
+    return false;
+  }
 });
 
 const descriptionSummary = computed(() => {

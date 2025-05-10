@@ -53,6 +53,7 @@ from flowfile_core.flowfile.flowfile_table.threaded_processes import (
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 
 
+
 @dataclass
 class FlowfileTable:
     """
@@ -180,12 +181,16 @@ class FlowfileTable:
 
     def _handle_dict_input(self, data: Dict):
         """Handle dictionary input."""
-        number_of_records = 1 if len(data) > 0 else 0
-        if number_of_records > 0:
-            self.number_of_records = number_of_records
-            self.data_frame = pl.DataFrame([data])
-        else:
+        if len(data) == 0:
             self.initialize_empty_fl()
+        lengths = [len(v) if isinstance(v, (list, tuple)) else 1 for v in data.values()]
+
+        if len(set(lengths)) == 1 and lengths[0]>1:
+            self.number_of_records = lengths[0]
+            self.data_frame = pl.DataFrame(data)
+        else:
+            self.number_of_records = 1
+            self.data_frame = pl.DataFrame([data])
 
     def _handle_list_input(self, data: List):
         """Handle list input."""
@@ -502,7 +507,7 @@ class FlowfileTable:
             raise Exception(f'Cannot create from {received_table.file_type}')
 
         flow_file = cls(handler(received_table))
-        flow_file._org_path = received_table.file_path
+        flow_file._org_path = received_table.abs_file_path
         return flow_file
 
     @classmethod
@@ -640,7 +645,7 @@ class FlowfileTable:
         input_df = grouped_ff.data_frame.with_columns(
             pivot_column.cast(pl.String).alias(pivot_input.pivot_column)
         )
-
+        number_of_aggregations = len(pivot_input.aggregations)
         df = (
             input_df.select(
                 *index_columns,
@@ -657,7 +662,7 @@ class FlowfileTable:
             .select(
                 *index_columns,
                 *[
-                    pl.col(new_col).struct.field(agg).alias(f'{new_col}_{agg}')
+                    pl.col(new_col).struct.field(agg).alias(f'{new_col + "_" + agg if number_of_aggregations > 1 else new_col }')
                     for new_col in new_cols_unique
                     for agg in pivot_input.aggregations
                 ]
@@ -976,8 +981,8 @@ class FlowfileTable:
 
         verify_join_select_integrity(cross_join_input, left_columns=self.columns, right_columns=other.columns)
 
-        if auto_generate_selection:
-            cross_join_input.auto_rename()
+        # if auto_generate_selection:
+        #     cross_join_input.auto_rename()
 
         right_select = [v.old_name for v in cross_join_input.right_select.renames
                         if (v.keep or v.join_key) and v.is_available]
@@ -1025,13 +1030,12 @@ class FlowfileTable:
         Raises:
             Exception: If join would result in too many records or is invalid
         """
-        self.lazy = False if join_input.how == 'right' else True
-        other.lazy = False if join_input.how == 'right' else True
+        # self.lazy = False if join_input.how == 'right' else True
+        # other.lazy = False if join_input.how == 'right' else True
 
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
         if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')
-
         if auto_generate_selection:
             join_input.auto_rename()
 
@@ -1039,31 +1043,34 @@ class FlowfileTable:
                         if (v.keep or v.join_key) and v.is_available]
         left_select = [v.old_name for v in join_input.left_select.renames
                        if (v.keep or v.join_key) and v.is_available]
-
         left = self.data_frame.select(left_select).rename(join_input.left_select.rename_table)
         right = other.data_frame.select(right_select).rename(join_input.right_select.rename_table)
 
-        if verify_integrity:
+        if verify_integrity and join_input.how != 'right':
             n_records = get_join_count(left, right, left_on_keys=join_input.left_join_keys,
                                        right_on_keys=join_input.right_join_keys, how=join_input.how)
             if n_records > 1_000_000_000:
                 raise Exception("Join will result in too many records, ending process")
         else:
             n_records = -1
-
-        joined_df = left.join(right, left_on=join_input.left_join_keys,
-                              right_on=join_input.right_join_keys,
-                              how=join_input.how, suffix="")
-
+        if join_input.how == 'right':
+            #  Default to left join since right join can give panic issues in execution plan downstream
+            joined_df = right.join(left, left_on=join_input.right_join_keys,
+                                   right_on=join_input.left_join_keys, how="left", suffix="")
+        else:
+            joined_df = left.join(right, left_on=join_input.left_join_keys,
+                                  right_on=join_input.right_join_keys,
+                                  how=join_input.how, suffix="")
         cols_to_delete_after = [col.new_name for col in
                                 join_input.left_select.renames + join_input.left_select.renames
                                 if col.join_key and not col.keep and col.is_available]
-
+        if len(cols_to_delete_after) > 0:
+            joined_df = joined_df.drop(cols_to_delete_after)
         if verify_integrity:
-            return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=True,
+            return FlowfileTable(joined_df, calculate_schema_stats=True,
                                  number_of_records=n_records, streamable=False)
         else:
-            fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
+            fl = FlowfileTable(joined_df, calculate_schema_stats=False,
                                number_of_records=0, streamable=False)
             return fl
 
@@ -1305,20 +1312,6 @@ class FlowfileTable:
         schema = sorted(self.schema, key=lambda x: column_order.index(x.column_name))
         return FlowfileTable(df, schema=schema, number_of_records=self.number_of_records)
 
-    # Formula and Expression Methods
-    def execute_polars_code(self, code: str) -> "FlowfileTable":
-        """
-        Execute arbitrary Polars code.
-
-        Args:
-            code: Polars code to execute
-
-        Returns:
-            FlowfileTable: Result of code execution
-        """
-        polars_executable = polars_code_parser.get_executable(code)
-        return FlowfileTable(polars_executable(self.data_frame))
-
     def apply_flowfile_formula(self, func: str, col_name: str,
                                output_data_type: pl.DataType = None) -> "FlowfileTable":
         """
@@ -1361,32 +1354,47 @@ class FlowfileTable:
 
         return FlowfileTable(df, number_of_records=self.number_of_records)
 
-    def output(self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str) -> "FlowfileTable":
+    def output(self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str,
+               execute_remote: bool = True) -> "FlowfileTable":
         """
         Write DataFrame to output file.
 
         Args:
-            output_fs: Output settings
-            flow_id: Flow ID for tracking
-            node_id: Node ID for tracking
-
+            output_fs: Output settings.
+            flow_id: Flow ID for tracking.
+            node_id: Node ID for tracking.
+            execute_remote: If the output should be executed at the flowfile worker process.
         Returns:
             FlowfileTable: Self for chaining
         """
         logger.info('Starting to write output')
-        status = utils.write_output(
-            self.data_frame,
-            data_type=output_fs.file_type,
-            path=output_fs.abs_file_path,
-            write_mode=output_fs.write_mode,
-            sheet_name=output_fs.output_excel_table.sheet_name,
-            delimiter=output_fs.output_csv_table.delimiter,
-            flow_id=flow_id,
-            node_id=node_id
-        )
-        tracker = ExternalExecutorTracker(status)
-        tracker.get_result()
-        logger.info('Finished writing output')
+        if execute_remote:
+            status = utils.write_output(
+                self.data_frame,
+                data_type=output_fs.file_type,
+                path=output_fs.abs_file_path,
+                write_mode=output_fs.write_mode,
+                sheet_name=output_fs.output_excel_table.sheet_name,
+                delimiter=output_fs.output_csv_table.delimiter,
+                flow_id=flow_id,
+                node_id=node_id
+            )
+            tracker = ExternalExecutorTracker(status)
+            tracker.get_result()
+            logger.info('Finished writing output')
+        else:
+            logger.info("Starting to write results locally")
+            utils.local_write_output(
+                self.data_frame,
+                data_type=output_fs.file_type,
+                path=output_fs.abs_file_path,
+                write_mode=output_fs.write_mode,
+                sheet_name=output_fs.output_excel_table.sheet_name,
+                delimiter=output_fs.output_csv_table.delimiter,
+                flow_id=flow_id,
+                node_id=node_id,
+            )
+            logger.info("Finished writing output")
         return self
 
     # Data Operations
@@ -1493,3 +1501,23 @@ class FlowfileTable:
         external_fetcher = ExternalCreateFetcher(received_table=received_table,
                                                  file_type=received_table.file_type, flow_id=flow_id, node_id=node_id)
         return cls(external_fetcher.get_result())
+
+
+def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "FlowfileTable":
+    """
+    Execute arbitrary Polars code.
+
+    Args:
+        code: Polars code to execute
+
+    Returns:
+        FlowfileTable: Result of code execution
+    """
+    polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
+    if len(flowfile_tables) == 0:
+        kwargs = {}
+    elif len(flowfile_tables) == 1:
+        kwargs = {'input_df': flowfile_tables[0].data_frame}
+    else:
+        kwargs = {f'input_df_{i+1}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
+    return FlowfileTable(polars_executable(**kwargs))

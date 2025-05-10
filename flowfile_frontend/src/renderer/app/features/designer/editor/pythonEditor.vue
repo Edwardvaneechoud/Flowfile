@@ -3,7 +3,7 @@
     <codemirror
       v-model="code"
       placeholder="Enter Polars code here..."
-      :style="{ height: '300px' }"
+      :style="{ height: '500px' }"
       :autofocus="true"
       :indent-with-tab="false"
       :tab-size="4"

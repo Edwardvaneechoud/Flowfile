@@ -18,6 +18,7 @@ class FlowSettings(BaseModel):
     show_detailed_progress: bool = True
     is_running: bool = False
     is_canceled: bool = False
+    execution_location: ExecutionLocationsLiteral = "auto"
 
 
 class RawLogInput(BaseModel):
@@ -36,6 +37,7 @@ class NodeTemplate(BaseModel):
     multi: bool = False
     node_group: str
     prod_ready: bool = True
+    can_be_start: bool = False
 
 
 class NodeInformation(BaseModel):

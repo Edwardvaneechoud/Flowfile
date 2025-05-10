@@ -121,6 +121,9 @@ jobs:
       - name: Start Mock Database with Sample Data
         run: poetry run start_postgres
 
+      - name: Run pytest for flowfile_frame
+        run: poetry run pytest flowfile_frame/tests --disable-warnings
+
       - name: Run pytest for flowfile_core
         run: poetry run pytest flowfile_core/tests --disable-warnings
 
@@ -179,9 +182,14 @@ jobs:
         shell: pwsh
         run: poetry run start_postgres
 
+      - name: Run pytest for flowfile_frame
+        shell: pwsh
+        run: poetry run pytest flowfile_frame/tests --disable-warnings
+
       - name: Run pytest for flowfile_core
         shell: pwsh
         run: poetry run pytest flowfile_core/tests --disable-warnings
+
 
       - name: Run pytest for flowfile_worker
         shell: pwsh

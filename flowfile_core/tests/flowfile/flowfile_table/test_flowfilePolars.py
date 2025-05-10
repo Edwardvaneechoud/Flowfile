@@ -1,7 +1,8 @@
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable, execute_polars_code
 from flowfile_core.flowfile.flowfile_table.polars_code_parser import remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
 import polars as pl
+import pytest
 
 
 def create_sample_data():
@@ -22,11 +23,11 @@ def test_fuzzy_match():
     fuzzy_match_result = left_flowfile_table.do_fuzzy_join(fuzzy_match_input, right_flowfile_table, 'test')
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
-    expected_data = FlowfileTable([{'name': 'court', 'fuzzy_score_0': 1.0, 'right_name': 'court'},
-     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'right_name': 'eduward'},
-     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'eduward'},
-     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'right_name': 'edward'},
-     {'name': 'edward', 'fuzzy_score_0': 1.0, 'right_name': 'edward'}])
+    expected_data = FlowfileTable([{'name': 'court', 'fuzzy_score_0': 1.0, 'name_right': 'court'},
+     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+     {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
 
 
@@ -42,7 +43,7 @@ def test_cross_join():
                                                           other=right_flowfile_table,
                                                           auto_generate_selection=True,
                                                           verify_integrity=True)
-    right_columns = ['right_' + c for c in right_flowfile_table.columns]
+    right_columns = [c + "_right" for c in right_flowfile_table.columns]
     assert cross_join_result is not None, 'Cross join failed'
     assert cross_join_result.get_number_of_records() == 100 * 100, 'Number of records is not correct'
     assert cross_join_result.columns == left_flowfile_table.columns + right_columns, 'Columns are not correct'
@@ -129,9 +130,9 @@ def test_pivot_numeric():
     pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
                                               aggregations=['sum'])
     output = fl_table.do_pivot(pivot_input)
-    expected_output = FlowfileTable([{'category': 'C', '1_sum': 5, '2_sum': 30},
-                                     {'category': 'B', '1_sum': None, '2_sum': 40},
-                                     {'category': 'A', '1_sum': 40, '2_sum': None}])
+    expected_output = FlowfileTable([{'category': 'C', '1': 5, '2': 30},
+                                     {'category': 'B', '1': None, '2': 40},
+                                     {'category': 'A', '1': 40, '2': None}])
     output.assert_equal(expected_output)
 
 
@@ -144,9 +145,9 @@ def test_pivot_string_concat():
     pivot_input = transform_schema.PivotInput(pivot_column='id', value_col='value', index_columns=['category'],
                                               aggregations=['concat'])
     output = fl_table.do_pivot(pivot_input)
-    expected_output = FlowfileTable([{'category': 'A', '1_concat': '10,20,10', '2_concat': None},
-                                     {'category': 'B', '1_concat': None, '2_concat': '15,25'},
-                                     {'category': 'C', '1_concat': '5', '2_concat': '30'}])
+    expected_output = FlowfileTable([{'category': 'A', '1': '10,20,10', '2': None},
+                                     {'category': 'B', '1': None, '2': '15,25'},
+                                     {'category': 'C', '1': '5', '2': '30'}])
     output.assert_equal(expected_output)
 
 
@@ -189,7 +190,7 @@ def test_execute_polars_code():
         return df.group_by('value3').len()
     output_df = abc(input_df)
     """
-    result_data = fl_table.execute_polars_code(code)
+    result_data = execute_polars_code(fl_table, code=code)
     expected_data = FlowfileTable([[30, 20, 5, 25, 10, 15], [1, 1, 1, 1, 2, 1]], schema=['value3', 'len'])
     result_data.assert_equal(expected_data)
 
@@ -282,6 +283,122 @@ def test_join_anti():
     expected_df = FlowfileTable([{"name": "eduward"},
                                  {"name": "courtney"}])
     result_df.assert_equal(expected_df)
+
+
+def test_execute_polars_code_no_frame():
+    result = execute_polars_code(code="output_df = pl.LazyFrame({'r':[1,2,3]})")
+    assert len(result) == 3, 'Expecting three records'
+    assert result.columns == ['r'], 'Columns should be r'
+    result.assert_equal(FlowfileTable({'r': [1, 2, 3]}))
+
+
+def test_polars_code_one_frame():
+    test_df = FlowfileTable([{"name": "eduward"},
+                             {"name": "edward"},
+                             {"name": "courtney"}])
+    result = execute_polars_code(test_df, code='input_df.with_columns([pl.col("name").alias("other_name")])')
+    expected_result = FlowfileTable([{'name': 'eduward', 'other_name': 'eduward'},
+                                     {'name': 'edward', 'other_name': 'edward'},
+                                     {'name': 'courtney', 'other_name': 'courtney'}])
+    result.assert_equal(expected_result)
+
+
+def test_execute_polars_code_function():
+    test_df = FlowfileTable([{"name": "eduward"},
+                             {"name": "edward"},
+                             {"name": "courtney"}])
+    code = """def do_something(df):
+    return df.with_columns([pl.col("name").alias("other_name")])
+output_df = do_something(input_df)"""
+    result = execute_polars_code(test_df, code=code)
+    expected_result = FlowfileTable([{'name': 'eduward', 'other_name': 'eduward'},
+                                     {'name': 'edward', 'other_name': 'edward'},
+                                     {'name': 'courtney', 'other_name': 'courtney'}])
+    result.assert_equal(expected_result)
+
+
+def test_execute_multi_line():
+    test_df = FlowfileTable([{"name": "eduward"},
+                             {"name": "edward"},
+                             {"name": "courtney"}])
+    code = """temp_df = input_df.with_columns([pl.col("name").alias("other_name")])
+output_df = temp_df.select("other_name")"""
+    result = execute_polars_code(test_df, code=code)
+    expected_result = FlowfileTable([{'other_name': 'eduward'}, {'other_name': 'edward'}, {'other_name': 'courtney'}])
+    result.assert_equal(expected_result)
+
+
+def test_error_no_output_df():
+    test_df = FlowfileTable(
+        [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+    )
+    code = """temp_df = input_df.with_columns([pl.col("name").alias("other_name")])
+something_else_df = temp_df.select("other_name")"""
+
+    # Using pytest to check for the expected exception
+    with pytest.raises(NameError) as excinfo:
+        execute_polars_code(test_df, code=code)
+
+    # Verify the error message
+    assert "name 'output_df' is not defined" in str(
+        excinfo.value
+    ), "Expected error about output_df not being defined"
+
+
+def test_execute_polars_code_multiple_frames():
+    # Create two test dataframes
+    test_df1 = FlowfileTable(
+        [
+            {"id": 1, "name": "eduward"},
+            {"id": 2, "name": "edward"},
+            {"id": 3, "name": "courtney"},
+        ]
+    )
+
+    test_df2 = FlowfileTable(
+        [
+            {"id": 1, "department": "Engineering"},
+            {"id": 2, "department": "Marketing"},
+            {"id": 4, "department": "Sales"},
+        ]
+    )
+
+    # Code that joins the two dataframes
+    code = """
+# Join the two dataframes on id
+joined_df = input_df_1.join(input_df_2, on="id", how="inner")
+output_df = joined_df.select(["id", "name", "department"])
+"""
+
+    result = execute_polars_code(test_df1, test_df2, code=code)
+
+    expected_result = FlowfileTable(
+        [
+            {"id": 1, "name": "eduward", "department": "Engineering"},
+            {"id": 2, "name": "edward", "department": "Marketing"},
+        ]
+    )
+
+    result.assert_equal(expected_result)
+
+
+def test_execute_polars_code_with_syntax_error():
+    """Test handling of code with syntax errors"""
+    test_df = FlowfileTable(
+        [{"name": "eduward"}, {"name": "edward"}, {"name": "courtney"}]
+    )
+
+    # Code with a syntax error (missing closing parenthesis)
+    code = """
+output_df = input_df.filter(pl.col("name").str.contains("e"
+"""
+
+    # Check that appropriate error is raised
+    with pytest.raises(ValueError) as excinfo:
+        execute_polars_code(test_df, code=code)
+
+    # Verify the error message mentions syntax
+    assert "syntax" in str(excinfo.value).lower(), "Expected error about syntax"
 
 
 def test_remove_comments_and_docstrings():

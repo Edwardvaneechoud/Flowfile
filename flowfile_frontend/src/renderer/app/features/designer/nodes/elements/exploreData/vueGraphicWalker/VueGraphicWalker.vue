@@ -54,7 +54,7 @@ const getReactProps = (): GraphicWalkerCombinedProps => {
     storeRef: internalStoreRef.value as unknown as React.RefObject<VizSpecStore | null> | undefined,
     ...(chartSpecArray.length > 0 && { chart: chartSpecArray }),
 
-    computation: dummyComputation, // We do not have compute 
+    computation: dummyComputation, // We do not have compute
   };
 
   Object.keys(reactProps).forEach((key) => {

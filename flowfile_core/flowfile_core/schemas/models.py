@@ -31,7 +31,6 @@ class DirItem:
         else:
             self.name = name
             self.source_path = os.sep.join(os.path.split(self.full_path)[:-1])
-        #self.path =
         self.path = self.full_path
         self.stats = os.stat(self.full_path) if stats is None else stats
         self.creation_date = datetime.fromtimestamp(self.stats.st_ctime) if creation_date is None else creation_date
@@ -106,7 +105,6 @@ class DirLocation(DirItem):
         for item_name in self.all_items:
 
             ref = os.path.join(self.full_path, item_name)
-            #print(f'{self.full_path}  -> {ref}')
             if os.path.isdir(ref):
                 self.directories.append(self.__class__(item_name,ref))
             elif os.path.isfile(ref):
