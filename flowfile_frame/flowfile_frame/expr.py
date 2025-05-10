@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal
+from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal, TypeVar
 
 import polars as pl
 from polars.expr.string import ExprStringNameSpace
@@ -11,9 +11,14 @@ from builtins import len as built_in_len
 if TYPE_CHECKING:
     # Import Selector only for type hints
     from flowfile_frame.selectors import Selector
+    # Define types that will be used in forward references
+    ExprType = TypeVar('ExprType', bound='Expr')
+    ColumnType = "Column"  # Use string literal instead of direct class reference
 
+ExprOrStr = Union['Expr', str]
+ExprOrStrList = List[ExprOrStr]
+ExprStrOrList = Union[ExprOrStr, ExprOrStrList]
 
-# --- Helper Functions ---
 
 def _repr_args(*args, **kwargs):
     """Helper to represent arguments for __repr__."""
@@ -57,7 +62,7 @@ class StringMethods:
         self.expr = parent_expr.expr.str if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
 
-    def _create_next_expr(self ,*args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, **kwargs) -> 'Expr':
+    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.str.{method_name}({args_repr})"
         new_expr = Expr(result_expr, self.parent.name, repr_str=new_repr,
@@ -82,8 +87,8 @@ class StringMethods:
 
     def replace(self, pattern, replacement, *, literal=False):
         res_expr = self.expr.replace(pattern, replacement, literal=literal) if self.expr is not None else None
-        return self._create_next_expr(pattern, replacement, method_name="replace", result_expr=res_expr
-                                      , literal=literal, is_complex=True)
+        return self._create_next_expr(pattern, replacement, method_name="replace",
+                                      result_expr=res_expr, literal=literal, is_complex=True)
 
     def to_uppercase(self):
         res_expr = self.expr.to_uppercase() if self.expr is not None else None
@@ -125,7 +130,7 @@ class StringMethods:
 
 
 class DateTimeMethods:
-    expr: Optional[Any] # Polars DateTimeNameSpace
+    expr: Optional[Any]
 
     def __init__(self, parent_expr: 'Expr', parent_repr_str: str):
         self.parent = parent_expr
@@ -135,8 +140,7 @@ class DateTimeMethods:
     def _create_next_expr(self, method_name: str, result_expr: Optional[pl.Expr], *args, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.dt.{method_name}({args_repr})"
-        # Datetime ops clear selector link but keep agg_func/initial_name
-        # Note: Datetime ops themselves aren't aggregations, so they don't set agg_func, just inherit
+
         new_expr = Expr(result_expr, self.parent.name, repr_str=new_repr,
                         initial_column_name=self.parent._initial_column_name,
                         selector=None,
@@ -217,7 +221,7 @@ class Expr:
         if repr_str is not None:
             self._repr_str = repr_str
         elif self.selector is not None and self.agg_func is not None:
-            selector_repr = self.selector._repr_str
+            selector_repr = self.selector.repr_str
             func_name = self.agg_func
             kwargs_dict = {}
             if func_name in ("std", "var") and ddof is not None:
@@ -226,14 +230,13 @@ class Expr:
             self._repr_str = f"{selector_repr}.{func_name}({kwargs_repr})"
             self.expr = None
         elif self.selector is not None:
-            self._repr_str = f"{self.selector._repr_str}"
+            self._repr_str = f"{self.selector.repr_str}"
             self.expr = None
         elif self.expr is not None:
             _, default_repr = _get_expr_and_repr(self.expr)
             self._repr_str = default_repr
         else:
             raise ValueError("Cannot initialize Expr without expr, repr_str, or selector+agg_func")
-
 
         if self.name is None and self.selector is None and self.expr is not None:
             try:
@@ -362,65 +365,63 @@ class Expr:
             self._dt_namespace = DateTimeMethods(self, self._repr_str)
         return self._dt_namespace
 
-    # --- Aggregation methods ---
-    # ****** MODIFIED SECTION START ******
     def sum(self):
         result_expr = self.expr.sum() if self.expr is not None else None
-        result = self._create_next_expr(method_name="sum", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="sum", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "sum"
         return result
 
     def mean(self):
         result_expr = self.expr.mean() if self.expr is not None else None
-        result = self._create_next_expr(method_name="mean", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="mean", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "mean"
         return result
 
     def min(self):
         result_expr = self.expr.min() if self.expr is not None else None
-        result = self._create_next_expr(method_name="min", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="min", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "min"
         return result
 
     def max(self):
         result_expr = self.expr.max() if self.expr is not None else None
-        result = self._create_next_expr(method_name="max", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="max", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "max"
         return result
 
     def median(self):
         result_expr = self.expr.median() if self.expr is not None else None
-        result = self._create_next_expr(method_name="median", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="median", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "median"
         return result
 
     def count(self):
         result_expr = self.expr.count() if self.expr is not None else None
-        result = self._create_next_expr(method_name="count", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="count", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "count"
         return result
 
     def first(self):
         result_expr = self.expr.first() if self.expr is not None else None
-        result = self._create_next_expr(method_name="first", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="first", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "first"
         return result
 
     def last(self):
         result_expr = self.expr.last() if self.expr is not None else None
-        result = self._create_next_expr(method_name="last", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="last", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "last"
         return result
 
     def n_unique(self):
         result_expr = self.expr.n_unique() if self.expr is not None else None
-        result = self._create_next_expr(method_name="n_unique", result_expr=result_expr , is_complex=self.is_complex)
+        result = self._create_next_expr(method_name="n_unique", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "n_unique"
         return result
 
     def std(self, ddof=1):
         result_expr = self.expr.std(ddof=ddof) if self.expr is not None else None
-        result = self._create_next_expr(method_name="std", result_expr=result_expr , ddof=ddof, is_complex=True)
+        result = self._create_next_expr(method_name="std", result_expr=result_expr, ddof=ddof, is_complex=True)
         result.agg_func = "std"
         return result
 
@@ -441,13 +442,13 @@ class Expr:
         result_expr = (
             self.expr.cum_count(reverse=reverse) if self.expr is not None else None
         )
-        result = self._create_next_expr(method_name="cum_count", result_expr=result_expr , reverse=reverse, is_complex=True)
+        result = self._create_next_expr(method_name="cum_count", result_expr=result_expr, reverse=reverse, is_complex=True)
         result.agg_func = None
         return result
 
     def var(self, ddof=1):
         result_expr = self.expr.var(ddof=ddof) if self.expr is not None else None
-        result = self._create_next_expr(method_name="var", result_expr=result_expr , ddof=ddof, is_complex=True)
+        result = self._create_next_expr(method_name="var", result_expr=result_expr, ddof=ddof, is_complex=True)
         result.agg_func = "var"
         return result
 
@@ -590,7 +591,7 @@ class Expr:
     def is_null(self):
         result_expr = self.expr.is_null() if self.expr is not None else None
         # is_null is not an aggregation, resets agg_func
-        result = self._create_next_expr(method_name="is_null", result_expr=result_expr , is_complex=True)
+        result = self._create_next_expr(method_name="is_null", result_expr=result_expr, is_complex=True)
         result.agg_func = None
         return result
 
@@ -638,7 +639,6 @@ class Expr:
                 print(f"Warning: Could not create polars expression for filter(): {e}")
                 pass  # res_expr will remain None
 
-        # Filter preserves aggregation status since it's often used in aggregation contexts
         return Expr(
             res_expr,
             self.name,
@@ -650,7 +650,6 @@ class Expr:
 
     def is_not_null(self):
         result_expr = self.expr.is_not_null() if self.expr is not None else None
-         # is_not_null is not an aggregation, resets agg_func
         result = self._create_next_expr(method_name="is_not_null", result_expr=result_expr, is_complex=True)
         result.agg_func = None
         return result
@@ -684,39 +683,36 @@ class Expr:
     def fill_nan(self, value):
         res_expr = None
         if self.expr is not None and hasattr(self.expr, 'fill_nan'):
-             res_expr = self.expr.fill_nan(value)
-        # fill_nan is not an aggregation, resets agg_func
+            res_expr = self.expr.fill_nan(value)
         result = self._create_next_expr(value, method_name="fill_nan", result_expr=res_expr, is_complex=True)
         result.agg_func = None
         return result
 
-    def _get_expr_repr(self, expr):
+    @staticmethod
+    def _get_expr_repr(expr):
         """Helper to get appropriate string representation for an expression"""
-        # Ensure this helper is robust or defined if it's used as self._get_expr_repr
-        if isinstance(expr, (Expr, Column)): # Assuming Column is a subclass of Expr or similar
+        if isinstance(expr, (Expr, Column)):
             return expr._repr_str
-        elif isinstance(expr, str): # Should ideally be pl.col() or lit() for consistency
-            return f"pl.col('{expr}')" # Or handle more generically
+        elif isinstance(expr, str):
+            return f"pl.col('{expr}')"
         elif isinstance(expr, pl.Expr):
-             base_str = str(expr)
-             if base_str.startswith("col("):
-                 return f"pl.{base_str}"
-             if base_str.startswith("lit("):
-                 return f"pl.{base_str}"
-             return f"pl.Expr({base_str})"
+            base_str = str(expr)
+            if base_str.startswith("col("):
+                return f"pl.{base_str}"
+            if base_str.startswith("lit("):
+                return f"pl.{base_str}"
+            return f"pl.Expr({base_str})"
         else:
             return repr(expr)
 
-
-    def over(
-        self,
-        partition_by: Union["Expr", str, List[Union["Expr", str]]],
-        *more_exprs: Union["Expr", str],
-        order_by: Optional[Union["Expr", str, List[Union["Expr", str]]]] = None,
-        descending: bool = False,
-        nulls_last: bool = False,
-        mapping_strategy: Literal["group_to_rows", "join", "explode"] = "group_to_rows",
-    ) -> "Expr":
+    def over(self,
+             partition_by: ExprStrOrList,  # Use the type alias defined earlier
+             *more_exprs: ExprOrStr,
+             order_by: Optional[ExprStrOrList] = None,
+             descending: bool = False,
+             nulls_last: bool = False,
+             mapping_strategy: Literal["group_to_rows", "join", "explode"] = "group_to_rows",
+             ) -> "Expr":
         """
         Compute expressions over the given groups.
         String representation will show 'descending' and 'nulls_last' if they are True,
@@ -730,31 +726,29 @@ class Expr:
         processed_partition_cols = []
         for col_expr in all_partition_cols:
             if isinstance(col_expr, str):
-                processed_partition_cols.append(col(col_expr)) # Use your col() factory
+                processed_partition_cols.append(col(col_expr))
             elif isinstance(col_expr, list):
                 processed_list = []
                 for item in col_expr:
                     if isinstance(item, str):
-                        processed_list.append(col(item)) # Use your col() factory
+                        processed_list.append(col(item))
                     else:
                         processed_list.append(item)
                 processed_partition_cols.extend(processed_list)
             else:
-                processed_partition_cols.append(col_expr) # Assumes it's already an Expr-like object
+                processed_partition_cols.append(col_expr)
 
         processed_order_by = None
         if order_by is not None:
             if isinstance(order_by, str):
-                processed_order_by = col(order_by) # Use your col() factory
+                processed_order_by = col(order_by)
             elif isinstance(order_by, list):
                 processed_order_by = [
                     col(o) if isinstance(o, str) else o for o in order_by
                 ]
             else:
-                processed_order_by = order_by # Assumes it's already an Expr-like object
+                processed_order_by = order_by
 
-
-        # --- Build string representation for .over() arguments ---
         over_arg_strings_for_repr = []
 
         if built_in_len(processed_partition_cols) == 1:
@@ -772,30 +766,25 @@ class Expr:
                 order_by_repr_val = self._get_expr_repr(processed_order_by)
             over_arg_strings_for_repr.append(f"order_by={order_by_repr_val}")
 
-        # descending (show in string if True, regardless of order_by)
-        if descending: # `descending` is the boolean method parameter
-            over_arg_strings_for_repr.append(f"descending={repr(descending)}") # repr(True) -> "True"
+        if descending:
+            over_arg_strings_for_repr.append(f"descending={repr(descending)}")
 
-        # nulls_last (show in string if True, regardless of order_by)
-        if nulls_last: # `nulls_last` is the boolean method parameter
+        if nulls_last:
             over_arg_strings_for_repr.append(f"nulls_last={repr(nulls_last)}")
 
-        # mapping_strategy (show if not default)
         if mapping_strategy != "group_to_rows":
             over_arg_strings_for_repr.append(f"mapping_strategy='{mapping_strategy}'")
 
         args_str_for_repr = ", ".join(over_arg_strings_for_repr)
 
-        # --- Create the actual polars expression (THIS LOGIC REMAINS UNCHANGED) ---
         res_expr = None
         if self.expr is not None:
             try:
-                # Convert partition_by to Polars expressions
                 if len(processed_partition_cols) == 1:
                     partition_arg = (
                         processed_partition_cols[0].expr
                         if hasattr(processed_partition_cols[0], "expr")
-                        else processed_partition_cols[0] # Fallback if not your Expr type
+                        else processed_partition_cols[0]
                     )
                 else:
                     partition_arg = [
@@ -827,25 +816,21 @@ class Expr:
                 res_expr = self.expr.over(partition_by=partition_arg, **polars_call_kwargs)
 
             except Exception as e:
-                # It's good practice to either log this or allow it to propagate
-                # if it's unexpected, rather than just printing.
-                # For now, keeping your print statement.
-                print(f"Warning: Could not create polars expression for over(): {e}")
-                pass # res_expr will remain None
 
-        # Window functions (over) clear the simple aggregation state
+                print(f"Warning: Could not create polars expression for over(): {e}")
+                pass
+
         return Expr(
             res_expr,
             self.name,
-            repr_str=f"{self._repr_str}.over({args_str_for_repr})", # Use the modified string
+            repr_str=f"{self._repr_str}.over({args_str_for_repr})",
             initial_column_name=self._initial_column_name,
-            selector=None, # .over() typically removes selector link
-            agg_func=None, # Window functions reset agg_func
+            selector=None,
+            agg_func=None,
         )
 
     def sort(self, *, descending=False, nulls_last=False):
         res_expr = self.expr.sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
-        # Sort is not an aggregation, resets agg_func
         return Expr(res_expr, self.name,
                     repr_str=f"{self._repr_str}.sort(descending={descending}, nulls_last={nulls_last})",
                     initial_column_name=self._initial_column_name, agg_func=None)
@@ -864,7 +849,7 @@ class Expr:
         elif hasattr(dtype, '__name__'):
             dtype_repr = f"pl.{dtype.__name__}"
         elif isinstance(dtype, pl.DataType):
-             dtype_repr = f"pl.{dtype!s}"
+            dtype_repr = f"pl.{dtype!s}"
 
         res_expr = self.expr.cast(pl_dtype, strict=strict) if self.expr is not None else None
         # Cast preserves aggregation status (e.g., cast(col('a').sum()))
@@ -899,7 +884,7 @@ class Column(Expr):
             data_type_change=self._select_input.data_type_change,
             is_altered=True
         )
-        if self.expr is None: # Should not happen for Column
+        if self.expr is None:
             raise ValueError("Cannot alias Column without underlying polars expression.")
 
         new_pl_expr = self.expr.alias(new_name)
@@ -908,9 +893,8 @@ class Column(Expr):
         new_column = Column(new_name, new_select)
         new_column.expr = new_pl_expr
         new_column._repr_str = new_repr
-        # Alias on Column preserves that it's effectively still the 'same' column conceptually
-        # Thus, agg_func remains None unless explicitly aggregated later.
-        new_column.agg_func = self.agg_func # Should be None initially
+
+        new_column.agg_func = self.agg_func
         new_column.is_complex = self.is_complex
         return new_column
 
@@ -928,7 +912,7 @@ class Column(Expr):
         elif hasattr(dtype, '__name__'):
             dtype_repr = f"pl.{dtype.__name__}"
         elif isinstance(dtype, pl.DataType):
-             dtype_repr = f"pl.{dtype!s}"
+            dtype_repr = f"pl.{dtype!s}"
 
         if not isinstance(pl_dtype, pl.DataType):
             try:
@@ -936,7 +920,7 @@ class Column(Expr):
                 if isinstance(pl_dtype_instance, pl.DataType):
                     pl_dtype = pl_dtype_instance
             except TypeError:
-                 raise TypeError(f"Invalid Polars data type specified for cast: {dtype}")
+                raise TypeError(f"Invalid Polars data type specified for cast: {dtype}")
 
         new_select = transform_schema.SelectInput(
             old_name=self._select_input.old_name,
@@ -945,7 +929,7 @@ class Column(Expr):
             data_type_change=True,
             is_altered=True
         )
-        if self.expr is None: # Should not happen for Column
+        if self.expr is None:
             raise ValueError("Cannot cast Column without underlying polars expression.")
 
         new_pl_expr = self.expr.cast(pl_dtype, strict=strict)
@@ -979,7 +963,6 @@ class Column(Expr):
             is_altered=final_is_altered
         )
 
-    # Properties return base Expr instances but use the column's repr
     @property
     def str(self) -> StringMethods:
         return super().str
@@ -1004,7 +987,8 @@ class When(Expr):
         super().__init__(expr=None, repr_str=repr_str, is_complex=True)
         self._branch_expr = None
 
-    def _get_expr_and_repr(self, value):
+    @staticmethod
+    def _get_expr_and_repr(value):
         """Extract expression and representation from a value."""
         if hasattr(value, 'expr') and hasattr(value, '_repr_str'):
             return value.expr, value._repr_str
@@ -1020,7 +1004,6 @@ class When(Expr):
 
         self._repr_str = f"{self._repr_str}.then({value_repr})"
         try:
-            import polars as pl
             self._branch_expr = pl.when(self.condition).then(value_expr)
         except Exception as e:
             print(f"Warning: Error in then() creation: {e}")

@@ -1,6 +1,7 @@
 import uuid
 import os
 from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
+from pathlib import Path
 
 import re
 import polars as pl
@@ -1934,7 +1935,7 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, separator: str = ';',
     received_table = input_schema.ReceivedTable(
         file_type='csv',
         path=file_path,
-        name=file_path.split('/')[-1],
+        name=Path(file_path).name,
         delimiter=separator,
         has_headers=has_headers,
         encoding=encoding
@@ -1988,7 +1989,7 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     received_table = input_schema.ReceivedTable(
         file_type='parquet',
         path=file_path,
-        name=file_path.split('/')[-1]
+        name=Path(file_path).name,
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path

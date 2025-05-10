@@ -16,6 +16,10 @@ class Selector:
         self._repr_str = self._get_repr_str()  # Use base repr calculation method
         # No agg_func state stored here anymore
 
+    @property
+    def repr_str(self):
+        return self._repr_str
+
     def _get_repr_str(self) -> str:
         """Get representation string for the selector itself."""
         # Default implementation, specific selectors override this
