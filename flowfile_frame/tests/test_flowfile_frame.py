@@ -44,4 +44,4 @@ def test_read_from_parquet_in_performance():
 
     # You could also check that the data was actually loaded correctly
     result_df = output_node.get_resulting_data().data_frame
-    assert not result_df.is_empty(), "The resulting dataframe should not be empty"
+    assert len(result_df.collect())>0, "The resulting dataframe should not be empty"
