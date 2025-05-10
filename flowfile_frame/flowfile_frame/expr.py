@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal, TypeVar, Type
 
 import polars as pl
