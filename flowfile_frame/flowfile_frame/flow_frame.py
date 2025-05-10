@@ -748,7 +748,8 @@ class FlowFrame:
         else:
             file_str = path
             is_path_input = False
-
+        if "~" in file_str:
+            file_str = os.path.expanduser(file_str)
         file_name = file_str.split(os.sep)[-1]
         use_polars_code = bool(kwargs.items()) or not is_path_input
 
@@ -813,6 +814,7 @@ class FlowFrame:
             convert_to_absolute_path: bool = True,
             **kwargs: Any,
     ) -> "FlowFrame":
+
         new_node_id = generate_node_id()
 
         is_path_input = isinstance(file, (str, os.PathLike))
@@ -823,7 +825,8 @@ class FlowFrame:
         else:
             file_str = file
             is_path_input = False
-
+        if "~" in file_str:
+            file_str = os.path.expanduser(file_str)
         file_name = file_str.split(os.sep)[-1] if is_path_input else "output.csv"
 
         use_polars_code = bool(kwargs) or not is_path_input
@@ -1973,6 +1976,8 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     Returns:
         A FlowFrame with the Parquet data
     """
+    if '~' in file_path:
+        file_path = os.path.expanduser(file_path)
     node_id = generate_node_id()
 
     if flow_graph is None:
