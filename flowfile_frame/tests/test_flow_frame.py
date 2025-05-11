@@ -69,7 +69,6 @@ def test_select_columns():
 
     # Select specific columns
     result = df.select("id", "name")
-    open_graph_in_editor(result.flow_graph)
     assert result.columns == ["id", "name"]
 
     # Select with expressions

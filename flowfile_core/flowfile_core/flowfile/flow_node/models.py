@@ -36,16 +36,16 @@ class NodeStepSettings:
 
 
 class NodeStepInputs:
-    left_input: "NodeStep" = None
-    right_input: "NodeStep" = None
-    main_inputs: List["NodeStep"] = None
+    left_input: "FlowNode" = None
+    right_input: "FlowNode" = None
+    main_inputs: List["FlowNode"] = None
 
     @property
     def input_ids(self) -> List[int]:
         if self.main_inputs is not None:
             return [node_input.node_information.id for node_input in self.get_all_inputs()]
 
-    def get_all_inputs(self) -> List["NodeStep"]:
+    def get_all_inputs(self) -> List["FlowNode"]:
         main_inputs = self.main_inputs or []
         return [v for v in main_inputs + [self.left_input, self.right_input] if v is not None]
 

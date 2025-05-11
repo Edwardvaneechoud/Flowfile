@@ -1,19 +1,19 @@
 from typing import List, Dict, Set
-from flowfile_core.flowfile.flow_node.flow_node import NodeStep
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.configs import logger
 from collections import deque, defaultdict
 
 
-def determine_execution_order(all_nodes: List[NodeStep], flow_starts: List[NodeStep] = None) -> List[NodeStep]:
+def determine_execution_order(all_nodes: List[FlowNode], flow_starts: List[FlowNode] = None) -> List[FlowNode]:
     """
     Determines the execution order of nodes using topological sorting based on node dependencies.
 
     Args:
-        all_nodes (List[NodeStep]): A list of all nodes (steps) in the flow.
-        flow_starts (List[NodeStep], optional): A list of starting nodes for the flow. If not provided, the function starts with nodes having zero in-degree.
+        all_nodes (List[FlowNode]): A list of all nodes (steps) in the flow.
+        flow_starts (List[FlowNode], optional): A list of starting nodes for the flow. If not provided, the function starts with nodes having zero in-degree.
 
     Returns:
-        List[NodeStep]: A list of nodes in the order they should be executed.
+        List[FlowNode]: A list of nodes in the order they should be executed.
 
     Raises:
         Exception: If a cycle is detected, meaning that a valid execution order cannot be determined.
@@ -32,27 +32,27 @@ def determine_execution_order(all_nodes: List[NodeStep], flow_starts: List[NodeS
     return execution_order
 
 
-def build_node_map(all_nodes: List[NodeStep]) -> Dict[str, NodeStep]:
+def build_node_map(all_nodes: List[FlowNode]) -> Dict[str, FlowNode]:
     """
     Creates a mapping from node ID to node object.
 
     Args:
-        all_nodes (List[NodeStep]): A list of all nodes (steps) in the flow.
+        all_nodes (List[FlowNode]): A list of all nodes (steps) in the flow.
 
     Returns:
-        Dict[str, NodeStep]: A dictionary mapping node IDs to NodeStep objects.
+        Dict[str, FlowNode]: A dictionary mapping node IDs to FlowNode objects.
     """
     return {node.node_id: node for node in all_nodes}
 
 
-def compute_in_degrees_and_adjacency_list(all_nodes: List[NodeStep],
-                                          node_map: Dict[str, NodeStep]) -> (Dict[str, int], Dict[str, List[str]]):
+def compute_in_degrees_and_adjacency_list(all_nodes: List[FlowNode],
+                                          node_map: Dict[str, FlowNode]) -> (Dict[str, int], Dict[str, List[str]]):
     """
     Computes the in-degree and adjacency list for all nodes.
 
     Args:
-        all_nodes (List[NodeStep]): A list of all nodes (steps) in the flow.
-        node_map (Dict[str, NodeStep]): A dictionary mapping node IDs to NodeStep objects.
+        all_nodes (List[FlowNode]): A list of all nodes (steps) in the flow.
+        node_map (Dict[str, FlowNode]): A dictionary mapping node IDs to FlowNode objects.
 
     Returns:
         (Dict[str, int], Dict[str, List[str]]): A tuple containing:
@@ -72,14 +72,14 @@ def compute_in_degrees_and_adjacency_list(all_nodes: List[NodeStep],
     return in_degree, adjacency_list
 
 
-def initialize_queue(flow_starts: List[NodeStep], all_nodes: List[NodeStep], in_degree: Dict[str, int]) -> (
+def initialize_queue(flow_starts: List[FlowNode], all_nodes: List[FlowNode], in_degree: Dict[str, int]) -> (
 deque, Set[str]):
     """
     Initializes the queue with nodes that have zero in-degree or based on specified flow start nodes.
 
     Args:
-        flow_starts (List[NodeStep]): A list of starting nodes for the flow.
-        all_nodes (List[NodeStep]): A list of all nodes (steps) in the flow.
+        flow_starts (List[FlowNode]): A list of starting nodes for the flow.
+        all_nodes (List[FlowNode]): A list of all nodes (steps) in the flow.
         in_degree (Dict[str, int]): A dictionary mapping node IDs to their in-degree count.
 
     Returns:
@@ -106,20 +106,20 @@ deque, Set[str]):
     return queue, visited_nodes
 
 
-def perform_topological_sort(queue: deque, node_map: Dict[str, NodeStep], in_degree: Dict[str, int],
-                             adjacency_list: Dict[str, List[str]], visited_nodes: Set[str]) -> List[NodeStep]:
+def perform_topological_sort(queue: deque, node_map: Dict[str, FlowNode], in_degree: Dict[str, int],
+                             adjacency_list: Dict[str, List[str]], visited_nodes: Set[str]) -> List[FlowNode]:
     """
     Performs topological sorting to determine the execution order of nodes.
 
     Args:
         queue (deque): A deque containing nodes with zero in-degree.
-        node_map (Dict[str, NodeStep]): A dictionary mapping node IDs to NodeStep objects.
+        node_map (Dict[str, FlowNode]): A dictionary mapping node IDs to FlowNode objects.
         in_degree (Dict[str, int]): A dictionary mapping node IDs to their in-degree count.
         adjacency_list (Dict[str, List[str]]): A dictionary mapping node IDs to a list of their connected nodes (outgoing edges).
         visited_nodes (Set[str]): A set of visited node IDs.
 
     Returns:
-        List[NodeStep]: A list of nodes in the order they should be executed.
+        List[FlowNode]: A list of nodes in the order they should be executed.
     """
     execution_order = []
     logger.info('Starting topological sort to determine execution order')
