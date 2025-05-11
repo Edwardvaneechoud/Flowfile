@@ -1,4 +1,6 @@
-from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal, TypeVar, Type
+from __future__ import annotations
+
+from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal, TypeVar
 
 import polars as pl
 from polars.expr.string import ExprStringNameSpace
@@ -9,9 +11,7 @@ from builtins import len as built_in_len
 
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
-    # Import Selector only for type hints
     from flowfile_frame.selectors import Selector
-    # Define types that will be used in forward references
     ExprType = TypeVar('ExprType', bound='Expr')
     ColumnType = "Column"  # Use string literal instead of direct class reference
 
@@ -835,7 +835,7 @@ class Expr:
                     repr_str=f"{self._repr_str}.sort(descending={descending}, nulls_last={nulls_last})",
                     initial_column_name=self._initial_column_name, agg_func=None)
 
-    def cast(self, dtype: Union[pl.DataType, str, Type[Any]], *, strict=True):
+    def cast(self, dtype: Union[pl.DataType, str, pl.datatypes.classes.DataTypeClass], *, strict=True):
         """ Casts the Expr to a specified data type. """
         pl_dtype = dtype
         dtype_repr = repr(dtype)
@@ -898,7 +898,7 @@ class Column(Expr):
         new_column.is_complex = self.is_complex
         return new_column
 
-    def cast(self, dtype: Union[pl.DataType, str, Type[Any]], *, strict=True):
+    def cast(self, dtype: Union[pl.DataType, str, pl.datatypes.classes.DataTypeClass], *, strict=True) -> "Column":
         """Change the data type of a column, returning a new Column instance."""
         pl_dtype = dtype
         dtype_repr = repr(dtype)
