@@ -9,7 +9,7 @@ packages = [
     { include = "build_backends", from = "build_backends" },
     { include = "flowfile_frame", from = "flowfile_frame" },
     { include = "test_utils" },
-
+    { include = "flowfile" },
 ]
 
 [tool.poetry.dependencies]
