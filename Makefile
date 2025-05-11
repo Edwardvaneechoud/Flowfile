@@ -41,8 +41,6 @@ install_python_deps:
 	@$(CHECK_POETRY)
 	@echo "Installing Python dependencies with Poetry..."
 	poetry install
-	@echo "Installing Polars Sim from fork into active environment..."
-	poetry run pip install git+https://github.com/edwardvaneechoud/polars_sim.git@main
 	@echo "Python dependencies installed."
 
 # Build Python services

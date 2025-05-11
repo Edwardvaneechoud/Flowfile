@@ -10,7 +10,6 @@ on:
 jobs:
   backend-tests:
     runs-on: ${{ matrix.os }}
-    # needs: build-polars-sim # Removed
     strategy:
       fail-fast: false
       matrix:
@@ -46,9 +45,6 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      # Removed Restore polars-sim wheel step
-      # Removed Install polars-sim into Poetry environment step
-
       - name: Start Mock Database with Sample Data
         run: poetry run start_postgres
 
@@ -66,7 +62,6 @@ jobs:
 
   backend-tests-windows:
     runs-on: windows-latest
-    # needs: build-polars-sim # Removed
     steps:
       - uses: actions/checkout@v4
 
@@ -86,9 +81,6 @@ jobs:
         shell: pwsh
         run: |
           poetry install --no-interaction --no-ansi
-
-      # Removed Restore polars-sim wheel step
-      # Removed Install polars-sim into Poetry environment step
 
       - name: Start Mock Database with Sample Data
         shell: pwsh
@@ -148,7 +140,6 @@ jobs:
     needs: # Ensure these needs are still appropriate or adjust as necessary
       - backend-tests
       - test-web
-    # - build-polars-sim # Removed
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -176,9 +167,6 @@ jobs:
         run: |
           poetry install
 
-      # Removed Restore polars-sim wheel step
-      # Removed Install polars-sim into Poetry environment step
-
       - name: Build Python services
         run: |
           poetry run build_backends
@@ -199,7 +187,6 @@ jobs:
     needs: # Ensure these needs are still appropriate or adjust as necessary
       - backend-tests # Assuming backend-tests is what you meant, not backend-tests (which doesn't exist)
       - test-web
-      # - build-polars-sim # Removed
       - backend-tests-windows
     steps:
       - name: Checkout repository
@@ -228,9 +215,6 @@ jobs:
         shell: pwsh
         run: |
           poetry install
-
-      # Removed Restore polars-sim wheel step
-      # Removed Install polars-sim into Poetry environment step
 
       - name: Build Python services
         shell: pwsh

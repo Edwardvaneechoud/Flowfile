@@ -8,7 +8,7 @@ from flowfile_worker.polars_fuzzy_match.pre_process import pre_process_for_fuzzy
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
 from flowfile_worker.polars_fuzzy_match.utils import cache_polars_frame_to_temp
 from flowfile_worker.utils import collect_lazy_frame
-import polars_sim as ps
+import polars_simed as ps
 
 
 HAS_POLARS_SIM = True
