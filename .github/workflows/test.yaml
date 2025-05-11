@@ -8,60 +8,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-polars-sim:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11"]
-        include:
-          - os: ubuntu-latest
-            python-version: "3.10"
-          - os: ubuntu-latest
-            python-version: "3.12"
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          # Removed 'cache: pip' to avoid the error
-
-      # Check if polars-sim wheel is already cached with a more efficient key
-      - name: Check for cached polars-sim wheel
-        id: check-wheel-cache
-        uses: actions/cache@v3
-        with:
-          path: ./polars_sim_wheel
-          key: polars-sim-wheel-${{ runner.os }}-python-${{ matrix.python-version }}
-
-      # Build the wheel only if needed for Linux/macOS
-      - name: Build polars-sim wheel if needed (Linux/macOS)
-        if: steps.check-wheel-cache.outputs.cache-hit != 'true' && runner.os != 'Windows'
-        shell: bash
-        run: |
-          mkdir -p ./polars_sim_wheel
-          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
-          echo "Wheels after building:"
-          ls -la ./polars_sim_wheel
-
-      # Build the wheel only if needed for Windows
-      - name: Build polars-sim wheel if needed (Windows)
-        if: steps.check-wheel-cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -Path "./polars_sim_wheel" -ItemType Directory -Force
-          pip wheel git+https://github.com/edwardvaneechoud/polars_sim.git@main -w ./polars_sim_wheel
-          Write-Output "Wheels after building:"
-          Get-ChildItem -Path "./polars_sim_wheel"
-
   backend-tests:
     runs-on: ${{ matrix.os }}
-    needs: build-polars-sim
+    # needs: build-polars-sim # Removed
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +29,7 @@ jobs:
 
       - name: Set up Docker on macOS
         if: runner.os == 'macOS'
-        run: |
+        run: | # Add any specific Docker setup commands if needed, or remove if not
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -97,26 +46,8 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      # Restore cached polars-sim wheel
-      - name: Restore polars-sim wheel
-        uses: actions/cache@v3
-        with:
-          path: ./polars_sim_wheel
-          key: polars-sim-wheel-${{ runner.os }}-python-${{ matrix.python-version }}
-
-      # Install polars-sim directly into Poetry's virtual environment
-      - name: Install polars-sim into Poetry environment
-        run: |
-          # Get the path to the Poetry virtual environment
-          VENV_PATH=$(poetry env info -p)
-          echo "Poetry virtual environment: $VENV_PATH"
-          
-          # Install polars-sim directly into the Poetry virtual environment
-          $VENV_PATH/bin/pip install --no-index --find-links=./polars_sim_wheel polars_sim
-          
-          # Verify the installation
-          poetry run pip list | grep polars
-          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
+      # Removed Restore polars-sim wheel step
+      # Removed Install polars-sim into Poetry environment step
 
       - name: Start Mock Database with Sample Data
         run: poetry run start_postgres
@@ -135,7 +66,7 @@ jobs:
 
   backend-tests-windows:
     runs-on: windows-latest
-    needs: build-polars-sim
+    # needs: build-polars-sim # Removed
     steps:
       - uses: actions/checkout@v4
 
@@ -156,27 +87,8 @@ jobs:
         run: |
           poetry install --no-interaction --no-ansi
 
-      # Restore cached polars-sim wheel
-      - name: Restore polars-sim wheel
-        uses: actions/cache@v3
-        with:
-          path: ./polars_sim_wheel
-          key: polars-sim-wheel-${{ runner.os }}-python-3.11
-
-      # Install polars-sim directly into Poetry's virtual environment
-      - name: Install polars-sim into Poetry environment
-        shell: pwsh
-        run: |
-          # Get the path to the Poetry virtual environment
-          $VENV_PATH = $(poetry env info -p)
-          Write-Output "Poetry virtual environment: $VENV_PATH"
-          
-          # Install polars-sim directly into the Poetry virtual environment
-          & "$VENV_PATH\Scripts\pip" install --no-index --find-links=./polars_sim_wheel polars_sim
-          
-          # Verify the installation
-          poetry run pip list | findstr polars
-          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
+      # Removed Restore polars-sim wheel step
+      # Removed Install polars-sim into Poetry environment step
 
       - name: Start Mock Database with Sample Data
         shell: pwsh
@@ -190,7 +102,6 @@ jobs:
         shell: pwsh
         run: poetry run pytest flowfile_core/tests --disable-warnings
 
-
       - name: Run pytest for flowfile_worker
         shell: pwsh
         run: poetry run pytest flowfile_worker/tests --disable-warnings
@@ -198,7 +109,6 @@ jobs:
       - name: Stop Mock Database
         shell: pwsh
         run: poetry run stop_postgres
-
 
   test-web:
     runs-on: ubuntu-latest
@@ -235,10 +145,10 @@ jobs:
 
   electron-tests-macos:
     runs-on: macos-latest
-    needs:
+    needs: # Ensure these needs are still appropriate or adjust as necessary
       - backend-tests
       - test-web
-      - build-polars-sim
+    # - build-polars-sim # Removed
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -266,26 +176,8 @@ jobs:
         run: |
           poetry install
 
-      # Restore cached polars-sim wheel
-      - name: Restore polars-sim wheel
-        uses: actions/cache@v3
-        with:
-          path: ./polars_sim_wheel
-          key: polars-sim-wheel-${{ runner.os }}-python-3.11
-
-      # Install polars-sim directly into Poetry's virtual environment
-      - name: Install polars-sim into Poetry environment
-        run: |
-          # Get the path to the Poetry virtual environment
-          VENV_PATH=$(poetry env info -p)
-          echo "Poetry virtual environment: $VENV_PATH"
-          
-          # Install polars-sim directly into the Poetry virtual environment
-          $VENV_PATH/bin/pip install --no-index --find-links=./polars_sim_wheel polars_sim
-          
-          # Verify the installation
-          poetry run pip list | grep polars
-          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
+      # Removed Restore polars-sim wheel step
+      # Removed Install polars-sim into Poetry environment step
 
       - name: Build Python services
         run: |
@@ -304,10 +196,10 @@ jobs:
 
   electron-tests-windows:
     runs-on: windows-latest
-    needs:
-      - backend-tests
+    needs: # Ensure these needs are still appropriate or adjust as necessary
+      - backend-tests # Assuming backend-tests is what you meant, not backend-tests (which doesn't exist)
       - test-web
-      - build-polars-sim
+      # - build-polars-sim # Removed
       - backend-tests-windows
     steps:
       - name: Checkout repository
@@ -337,27 +229,8 @@ jobs:
         run: |
           poetry install
 
-      # Restore cached polars-sim wheel
-      - name: Restore polars-sim wheel
-        uses: actions/cache@v3
-        with:
-          path: ./polars_sim_wheel
-          key: polars-sim-wheel-${{ runner.os }}-python-3.11
-
-      # Install polars-sim directly into Poetry's virtual environment
-      - name: Install polars-sim into Poetry environment
-        shell: pwsh
-        run: |
-          # Get the path to the Poetry virtual environment
-          $VENV_PATH = $(poetry env info -p)
-          Write-Output "Poetry virtual environment: $VENV_PATH"
-          
-          # Install polars-sim directly into the Poetry virtual environment
-          & "$VENV_PATH\Scripts\pip" install --no-index --find-links=./polars_sim_wheel polars_sim
-          
-          # Verify the installation
-          poetry run pip list | findstr polars
-          poetry run python -c "import polars_sim; print('polars_sim successfully imported')"
+      # Removed Restore polars-sim wheel step
+      # Removed Install polars-sim into Poetry environment step
 
       - name: Build Python services
         shell: pwsh
