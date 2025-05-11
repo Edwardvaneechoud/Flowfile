@@ -1,11 +1,11 @@
 
 from typing import List
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn, PlType
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas import input_schema
 from polars import datatypes
 import polars as pl
-from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import fetch_unique_values
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
 from flowfile_core.configs.flow_logger import main_logger
 
 

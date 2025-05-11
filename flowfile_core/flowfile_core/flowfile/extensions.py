@@ -1,5 +1,5 @@
 from flowfile_core.flowfile._extensions.real_time_interface import get_realtime_func_results
-from flowfile_core.flowfile.node_step.node_step import NodeStep
+from flowfile_core.flowfile.flow_node.flow_node import NodeStep
 from flowfile_core.schemas.output_model import InstantFuncResult
 from flowfile_core.utils.arrow_reader import read_top_n
 import pyarrow as pa

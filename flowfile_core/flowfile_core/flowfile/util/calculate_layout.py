@@ -5,11 +5,11 @@ from typing import List, Dict, Set, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     # Make sure this import path is correct for your project structure
-    from flowfile_core.flowfile.FlowfileFlow import EtlGraph
+    from flowfile_core.flowfile.FlowfileFlow import FlowGraph
 
 
 def calculate_layered_layout(
-    graph: 'EtlGraph',
+    graph: 'FlowGraph',
     x_spacing: int = 250,
     y_spacing: int = 100,
     initial_y: int = 50
@@ -20,7 +20,7 @@ def calculate_layered_layout(
     nodes within a stage are spread vertically (Y).
 
     Args:
-        graph: The EtlGraph instance.
+        graph: The FlowGraph instance.
         x_spacing: Horizontal distance between stage centers (X spacing).
         y_spacing: Vertical distance between node centers within a stage (Y spacing).
         initial_y: Reference Y position for vertically centering stages.

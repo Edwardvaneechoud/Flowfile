@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional, Any, List, Dict, Literal
 from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.flowfile_table.flow_file_column.utils import type_to_polars_str
-from flowfile_core.flowfile.flowfile_table.flow_file_column.polars_type import PlType
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars_str
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
 from polars import datatypes
 import polars as pl
 

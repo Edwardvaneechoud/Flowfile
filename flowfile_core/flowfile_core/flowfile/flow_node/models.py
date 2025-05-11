@@ -2,8 +2,8 @@
 import pyarrow as pa
 from typing import List, Union, Callable, Optional, Literal
 
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import schemas
 from dataclasses import dataclass
 
@@ -74,9 +74,9 @@ class NodeSchemaInformation:
 
 
 class NodeResults:
-    _resulting_data: Optional[FlowfileTable] = None  # after successful execution this will contain the Flowfile
+    _resulting_data: Optional[FlowDataEngine] = None  # after successful execution this will contain the Flowfile
     example_data: Optional[
-        FlowfileTable] = None  # after success this will contain a sample of the data (to provide frontend data)
+        FlowDataEngine] = None  # after success this will contain a sample of the data (to provide frontend data)
     example_data_path: Optional[str] = None  # Path to the arrow table file
     example_data_generator: Optional[Callable[[], pa.Table]] = None
     run_time: int = -1
@@ -98,11 +98,11 @@ class NodeResults:
             return self.example_data_generator()
 
     @property
-    def resulting_data(self) -> FlowfileTable:
+    def resulting_data(self) -> FlowDataEngine:
         return self._resulting_data
 
     @resulting_data.setter
-    def resulting_data(self, d: FlowfileTable):
+    def resulting_data(self, d: FlowDataEngine):
         self._resulting_data = d
 
     def reset(self):

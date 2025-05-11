@@ -30,7 +30,7 @@ Flowfile Core is the central engine of Flowfile, providing a powerful ETL (Extra
 
 ## 🔧 Core Components
 
-### EtlGraph
+### FlowGraph
 The main class handling the ETL workflow:
 ```python
 from flowfile_core.flowfile.handler import FlowfileHandler

@@ -2,8 +2,8 @@ import polars as pl
 import os
 
 from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.flowfile_table.sample_data import create_fake_data
-from flowfile_core.flowfile.flowfile_table.read_excel_tables import df_from_openpyxl, df_from_calamine_xlsx
+from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
+from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_openpyxl, df_from_calamine_xlsx
 
 
 def create_from_json(received_table: input_schema.ReceivedCsvTable):

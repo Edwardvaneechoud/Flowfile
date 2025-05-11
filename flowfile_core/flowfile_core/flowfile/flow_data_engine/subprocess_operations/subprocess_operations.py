@@ -11,7 +11,7 @@ import requests
 
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import WORKER_URL
-from flowfile_core.flowfile.flowfile_table.subprocess_operations.models import (
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     FuzzyJoinInput,
     FuzzyMap,
     OperationType,

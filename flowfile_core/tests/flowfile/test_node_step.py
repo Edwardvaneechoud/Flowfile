@@ -5,7 +5,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.schemas import transform_schema
 import pytest
 from typing import List, Dict
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection, RunInformation
 
 
 try:
@@ -52,7 +52,7 @@ def create_graph(execution_mode: str = 'Development'):
     return graph
 
 
-def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
+def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
@@ -66,7 +66,7 @@ def get_graph():
     return graph
 
 
-def add_node_promise_on_type(graph: EtlGraph, node_type: str, node_id: int, flow_id: int = 1):
+def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flow_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(node_promise)
 

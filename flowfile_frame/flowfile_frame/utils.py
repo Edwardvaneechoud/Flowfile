@@ -5,7 +5,7 @@ import requests
 import subprocess
 from pathlib import Path
 from typing import Iterable, Any, List, Optional
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph
 from flowfile_core.schemas import schemas
 from tempfile import TemporaryDirectory
 
@@ -33,14 +33,14 @@ def _generate_id() -> int:
     return int(uuid.uuid4().int % 100000)
 
 
-def create_etl_graph() -> EtlGraph:
+def create_etl_graph() -> FlowGraph:
     flow_id = _generate_id()
     flow_settings = schemas.FlowSettings(
         flow_id=flow_id,
         name=f"Flow_{flow_id}",
         path=f"flow_{flow_id}"
     )
-    flow_graph = EtlGraph(flow_id=flow_id, flow_settings=flow_settings)
+    flow_graph = FlowGraph(flow_id=flow_id, flow_settings=flow_settings)
     flow_graph.flow_settings.execution_location = 'local'  # always create a local frame so that the run time does not attempt to use the flowfile_worker process
     return flow_graph
 
@@ -127,13 +127,13 @@ def import_flow_to_editor(flow_path: str, auth_token: str) -> Optional[int]:
         return None
 
 
-def open_graph_in_editor(etl_graph: EtlGraph, storage_location: str = None) -> bool:
+def open_graph_in_editor(etl_graph: FlowGraph, storage_location: str = None) -> bool:
     """
     Save the ETL graph and open it in the Flowfile editor.
 
     Parameters:
     -----------
-    etl_graph : EtlGraph
+    etl_graph : FlowGraph
         The graph to save and open
     storage_location : str, optional
         Where to save the flowfile. If None, a default name is used.

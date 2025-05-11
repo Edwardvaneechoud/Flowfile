@@ -13,25 +13,25 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import type_to_polars_str, FlowfileColumn
-from flowfile_core.flowfile.flowfile_table.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
-                                                                                     pre_calculate_pivot_schema)
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import type_to_polars_str, FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
+                                                                                       pre_calculate_pivot_schema)
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable, execute_polars_code
-from flowfile_core.flowfile.flowfile_table.read_excel_tables import get_open_xlsx_datatypes, \
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
+from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_xlsx_datatypes, \
     get_calamine_xlsx_data_types
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
-from flowfile_core.flowfile.node_step.node_step import NodeStep
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
-from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
-                                                                                               ExternalDatabaseFetcher,
-                                                                                               ExternalDatabaseWriter,
-                                                                                               ExternalDfFetcher)
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
+                                                                                                 ExternalDatabaseFetcher,
+                                                                                                 ExternalDatabaseWriter,
+                                                                                                 ExternalDfFetcher)
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
@@ -62,13 +62,13 @@ def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int
         return []
 
 
-def skip_node_message(flow_logger: FlowLogger, nodes: List[NodeStep]) -> None:
+def skip_node_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
     if len(nodes) > 0:
         msg = "\n".join(str(node) for node in nodes)
         flow_logger.warning(f'skipping nodes:\n{msg}')
 
 
-def execution_order_message(flow_logger: FlowLogger, nodes: List[NodeStep]) -> None:
+def execution_order_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
     msg = "\n".join(str(node) for node in nodes)
     flow_logger.info(f'execution order:\n{msg}')
 
@@ -79,9 +79,9 @@ def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start
                    start_column=start_column, end_row=end_row, end_column=end_column, has_headers=has_headers)
 
 
-class EtlGraph:
+class FlowGraph:
     """
-       EtlGraph is a class that enables Extract, Transform and Load (ETL) operations
+       FlowGraph is a class that enables Extract, Transform and Load (ETL) operations
        on data. It allows you to create a Directed Acyclic Graph (DAG) where each
        node represents a step in the ETL pipeline.
 
@@ -93,14 +93,14 @@ class EtlGraph:
            _output_cols (set): A set that stores the output columns from the transformations.
        """
     uuid: str
-    depends_on: Dict[int, Union[ParquetFile, FlowfileTable, "EtlGraph", pl.DataFrame,]]
+    depends_on: Dict[int, Union[ParquetFile, FlowDataEngine, "FlowGraph", pl.DataFrame,]]
     _flow_id: int
-    _input_data: Union[ParquetFile, FlowfileTable, "EtlGraph"]
+    _input_data: Union[ParquetFile, FlowDataEngine, "FlowGraph"]
     _input_cols: List[str]
     _output_cols: List[str]
-    _node_db: Dict[Union[str, int], NodeStep]
+    _node_db: Dict[Union[str, int], FlowNode]
     _node_ids: List[Union[str, int]]
-    _results: Optional[FlowfileTable] = None
+    _results: Optional[FlowDataEngine] = None
     cache_results: bool = False
     schema: Optional[List[FlowfileColumn]] = None
     has_over_row_function: bool = False
@@ -118,7 +118,7 @@ class EtlGraph:
                  name: str = None, input_cols: List[str] = None,
                  output_cols: List[str] = None,
                  path_ref: str = None,
-                 input_flow: Union[ParquetFile, FlowfileTable, "EtlGraph"] = None,
+                 input_flow: Union[ParquetFile, FlowDataEngine, "FlowGraph"] = None,
                  cache_results: bool = False):
         self.flow_settings = flow_settings
         self.uuid = str(uuid1())
@@ -129,7 +129,7 @@ class EtlGraph:
         self.node_results = []
         self._flow_id = flow_id
         self.flow_logger = FlowLogger(flow_id)
-        self._flow_starts: List[NodeStep] = []
+        self._flow_starts: List[FlowNode] = []
         self._results = None
         self.schema = None
         self.has_over_row_function = False
@@ -147,9 +147,9 @@ class EtlGraph:
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
 
-        def placeholder(n: NodeStep = None):
+        def placeholder(n: FlowNode = None):
             if n is None:
-                return FlowfileTable()
+                return FlowDataEngine()
             return n
 
         self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
@@ -202,7 +202,7 @@ class EtlGraph:
     def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
         sample_size: int = 10000
 
-        def analysis_preparation(flowfile_table: FlowfileTable):
+        def analysis_preparation(flowfile_table: FlowDataEngine):
 
             if flowfile_table.number_of_records<0:
 
@@ -254,10 +254,10 @@ class EtlGraph:
 
     def __repr__(self):
         """
-        Official string representation of the EtlGraph class.
+        Official string representation of the FlowGraph class.
         """
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
-        return f"EtlGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
+        return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
     def get_nodes_overview(self):
         output = []
@@ -269,7 +269,7 @@ class EtlGraph:
         cols = set(columns)
         self._output_cols = [c for c in self._output_cols if c not in cols]
 
-    def get_node(self, node_id: Union[int, str] = None) -> NodeStep:
+    def get_node(self, node_id: Union[int, str] = None) -> FlowNode:
         if node_id is None:
             node_id = self._node_ids[-1]
         node = self._node_db.get(node_id)
@@ -277,7 +277,7 @@ class EtlGraph:
             return node
 
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
-        def _func(fl: FlowfileTable):
+        def _func(fl: FlowDataEngine):
             return fl.do_pivot(pivot_settings.pivot_input, self.flow_logger.get_node_logger(pivot_settings.node_id))
 
         self.add_node_step(node_id=pivot_settings.node_id,
@@ -297,7 +297,7 @@ class EtlGraph:
 
     def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):
 
-        def _func(fl: FlowfileTable) -> FlowfileTable:
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.unpivot(unpivot_settings.unpivot_input)
 
         self.add_node_step(node_id=unpivot_settings.node_id,
@@ -307,9 +307,9 @@ class EtlGraph:
                            input_node_ids=[unpivot_settings.depending_on_id])
 
     def add_union(self, union_settings: input_schema.NodeUnion):
-        def _func(*flowfile_tables: FlowfileTable):
+        def _func(*flowfile_tables: FlowDataEngine):
             dfs: List[pl.LazyFrame] | List[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
-            return FlowfileTable(pl.concat(dfs, how='diagonal_relaxed'))
+            return FlowDataEngine(pl.concat(dfs, how='diagonal_relaxed'))
 
         self.add_node_step(node_id=union_settings.node_id,
                            function=_func,
@@ -319,7 +319,7 @@ class EtlGraph:
 
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
 
-        def _func(fl: FlowfileTable) -> FlowfileTable:
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.do_group_by(group_by_settings.groupby_input, False)
 
         self.add_node_step(node_id=group_by_settings.node_id,
@@ -342,7 +342,7 @@ class EtlGraph:
 
         node.schema_callback = schema_callback
 
-    def add_or_update_column_func(self, col_name: str, pl_dtype: pl.DataType, depends_on: NodeStep):
+    def add_or_update_column_func(self, col_name: str, pl_dtype: pl.DataType, depends_on: FlowNode):
         col_output = FlowfileColumn.from_input(column_name=col_name, data_type=str(pl_dtype))
         schema = depends_on.schema
         col_exist = depends_on.get_flow_file_column_schema(col_name)
@@ -366,7 +366,7 @@ class EtlGraph:
             filter_settings.filter_input.advanced_filter = (f'[{_basic_filter.field}]{_basic_filter.filter_type}"'
                                                             f'{_basic_filter.filter_value}"')
 
-        def _func(fl: FlowfileTable):
+        def _func(fl: FlowDataEngine):
             is_advanced = filter_settings.filter_input.filter_type == 'advanced'
             if is_advanced:
                 return fl.do_filter(predicate)
@@ -391,7 +391,7 @@ class EtlGraph:
                            )
 
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
-        def _func(fl: FlowfileTable) -> FlowfileTable:
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.get_record_count()
 
         self.add_node_step(node_id=node_number_of_records.node_id,
@@ -401,7 +401,7 @@ class EtlGraph:
                            input_node_ids=[node_number_of_records.depending_on_id])
 
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
-        def _func(*flowfile_tables: FlowfileTable) -> FlowfileTable:
+        def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
 
         self.add_node_step(node_id=node_polars_code.node_id,
@@ -418,7 +418,7 @@ class EtlGraph:
 
     def add_unique(self, unique_settings: input_schema.NodeUnique):
 
-        def _func(fl: FlowfileTable) -> FlowfileTable:
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.make_unique(unique_settings.unique_input)
 
         self.add_node_step(node_id=unique_settings.node_id,
@@ -429,7 +429,7 @@ class EtlGraph:
                            input_node_ids=[unique_settings.node_id])
 
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
-        def _func(fl: FlowfileTable) -> FlowfileTable:
+        def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.solve_graph(graph_solver_settings.graph_solver_input)
 
         self.add_node_step(node_id=graph_solver_settings.node_id,
@@ -449,7 +449,7 @@ class EtlGraph:
         else:
             new_col = [FlowfileColumn.from_input(function_settings.function.field.name, 'String')]
 
-        def _func(fl: FlowfileTable):
+        def _func(fl: FlowDataEngine):
             return fl.apply_sql_formula(func=function_settings.function.function,
                                         col_name=function_settings.function.field.name,
                                         output_data_type=output_type)
@@ -468,9 +468,9 @@ class EtlGraph:
         else:
             return True, ""
 
-    def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "EtlGraph":
+    def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "FlowGraph":
 
-        def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
+        def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in cross_join_settings.cross_join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in cross_join_settings.cross_join_input.right_select.renames:
@@ -488,8 +488,8 @@ class EtlGraph:
                            setting_input=cross_join_settings)
         return self
 
-    def add_join(self, join_settings: input_schema.NodeJoin) -> "EtlGraph":
-        def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
+    def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":
+        def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in join_settings.join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in join_settings.join_input.right_select.renames:
@@ -508,13 +508,13 @@ class EtlGraph:
                            input_node_ids=join_settings.depending_on_ids)
         return self
 
-    def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "EtlGraph":
-        def _func(main: FlowfileTable, right: FlowfileTable) -> FlowfileTable:
+    def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "FlowGraph":
+        def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             f = main.start_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
                                       flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
             logger.info("Started the fuzzy match action")
             node._fetch_cached_df = f
-            return FlowfileTable(f.get_result())
+            return FlowDataEngine(f.get_result())
 
         self.add_node_step(node_id=fuzzy_settings.node_id,
                            function=_func,
@@ -532,8 +532,8 @@ class EtlGraph:
         node.schema_callback = schema_callback
         return self
 
-    def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "EtlGraph":
-        def _func(table: FlowfileTable) -> FlowfileTable:
+    def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "FlowGraph":
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.split(node_text_to_rows.text_to_rows_input)
 
         self.add_node_step(node_id=node_text_to_rows.node_id,
@@ -543,8 +543,8 @@ class EtlGraph:
                            input_node_ids=[node_text_to_rows.depending_on_id])
         return self
 
-    def add_sort(self, sort_settings: input_schema.NodeSort) -> "EtlGraph":
-        def _func(table: FlowfileTable) -> FlowfileTable:
+    def add_sort(self, sort_settings: input_schema.NodeSort) -> "FlowGraph":
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.do_sort(sort_settings.sort_input)
 
         self.add_node_step(node_id=sort_settings.node_id,
@@ -554,8 +554,8 @@ class EtlGraph:
                            input_node_ids=[sort_settings.depending_on_id])
         return self
 
-    def add_sample(self, sample_settings: input_schema.NodeSample) -> "EtlGraph":
-        def _func(table: FlowfileTable) -> FlowfileTable:
+    def add_sample(self, sample_settings: input_schema.NodeSample) -> "FlowGraph":
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.get_sample(sample_settings.sample_size)
 
         self.add_node_step(node_id=sample_settings.node_id,
@@ -566,9 +566,9 @@ class EtlGraph:
                            )
         return self
 
-    def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "EtlGraph":
+    def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "FlowGraph":
 
-        def _func(table: FlowfileTable) -> FlowfileTable:
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.add_record_id(record_id_settings.record_id_input)
 
         self.add_node_step(node_id=record_id_settings.node_id,
@@ -579,11 +579,11 @@ class EtlGraph:
                            )
         return self
 
-    def add_select(self, select_settings: input_schema.NodeSelect) -> "EtlGraph":
+    def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
         select_cols = select_settings.select_input
         drop_cols = tuple(s.old_name for s in select_settings.select_input)
 
-        def _func(table: FlowfileTable) -> FlowfileTable:
+        def _func(table: FlowDataEngine) -> FlowDataEngine:
             input_cols = set(f.name for f in table.schema)
             ids_to_remove = []
             for i, select_col in enumerate(select_cols):
@@ -620,7 +620,7 @@ class EtlGraph:
         if node:
             logger.info(f"Found node: {node_id}, processing deletion")
 
-            lead_to_steps: List[NodeStep] = node.leads_to_nodes
+            lead_to_steps: List[FlowNode] = node.leads_to_nodes
             logger.debug(f"Node {node_id} leads to {len(lead_to_steps)} other nodes")
 
             if len(lead_to_steps) > 0:
@@ -629,7 +629,7 @@ class EtlGraph:
                     lead_to_step.delete_input_node(node_id, complete=True)
 
             if not node.is_start:
-                depends_on: List[NodeStep] = node.node_inputs.get_all_inputs()
+                depends_on: List[FlowNode] = node.node_inputs.get_all_inputs()
                 logger.debug(f"Node {node_id} depends on {len(depends_on)} other nodes")
 
                 for depend_on in depends_on:
@@ -681,7 +681,7 @@ class EtlGraph:
         if input_nodes is not None or function.__name__ in ('placeholder', 'analysis_preparation'):
 
             if not existing_node:
-                node = NodeStep(node_id=node_id,
+                node = FlowNode(node_id=node_id,
                                 function=function,
                                 output_schema=output_schema,
                                 input_columns=input_columns,
@@ -716,14 +716,14 @@ class EtlGraph:
         return self
 
     def add_output(self, output_file: input_schema.NodeOutput):
-        def _func(df: FlowfileTable):
+        def _func(df: FlowDataEngine):
             execute_remote = self.execution_location != 'local'
             df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id,
                       execute_remote=execute_remote)
             return df
 
         def schema_callback():
-            input_node: NodeStep = self.get_node(output_file.node_id).node_inputs.main_inputs[0]
+            input_node: FlowNode = self.get_node(output_file.node_id).node_inputs.main_inputs[0]
 
             return input_node.schema
 
@@ -751,7 +751,7 @@ class EtlGraph:
                                                                         node_database_writer.user_id)
             encrypted_password = database_reference_settings.password.get_secret_value()
 
-        def _func(df: FlowfileTable):
+        def _func(df: FlowDataEngine):
             df.lazy = True
             database_external_write_settings = (
                 sql_models.DatabaseExternalWriteSettings.create_from_from_node_database_writer(
@@ -770,7 +770,7 @@ class EtlGraph:
             return df
 
         def schema_callback():
-            input_node: NodeStep = self.get_node(node_database_writer.node_id).node_inputs.main_inputs[0]
+            input_node: FlowNode = self.get_node(node_database_writer.node_id).node_inputs.main_inputs[0]
             return input_node.schema
 
         self.add_node_step(
@@ -818,7 +818,7 @@ class EtlGraph:
 
             external_database_fetcher = ExternalDatabaseFetcher(database_external_read_settings, wait_on_completion=False)
             node._fetch_cached_df = external_database_fetcher
-            fl = FlowfileTable(external_database_fetcher.get_result())
+            fl = FlowDataEngine(external_database_fetcher.get_result())
             node_database_reader.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -848,7 +848,7 @@ class EtlGraph:
                 self._flow_starts.append(node)
             node.schema_callback = schema_callback
         else:
-            node = NodeStep(node_database_reader.node_id, function=_func,
+            node = FlowNode(node_database_reader.node_id, function=_func,
                             setting_input=node_database_reader,
                             name=node_type, node_type=node_type, parent_uuid=self.uuid,
                             schema_callback=schema_callback)
@@ -871,7 +871,7 @@ class EtlGraph:
             logger.info('Calling external source')
             external_fetcher = ExternalAirbyteFetcher(airbyte_settings, wait_on_completion=False)
             node._fetch_cached_df = external_fetcher
-            fl = FlowfileTable(external_fetcher.get_result())
+            fl = FlowDataEngine(external_fetcher.get_result())
             external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -889,7 +889,7 @@ class EtlGraph:
                 self._flow_starts.append(node)
             node.schema_callback = schema_callback
         else:
-            node = NodeStep(external_source_input.node_id, function=_func,
+            node = FlowNode(external_source_input.node_id, function=_func,
                             setting_input=external_source_input,
                             name=node_type, node_type=node_type, parent_uuid=self.uuid,
                             schema_callback=schema_callback)
@@ -936,7 +936,7 @@ class EtlGraph:
 
         def _func():
             logger.info('Calling external source')
-            fl = FlowfileTable.create_from_external_source(external_source=external_source)
+            fl = FlowDataEngine.create_from_external_source(external_source=external_source)
             external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
             return fl
 
@@ -950,7 +950,7 @@ class EtlGraph:
             if external_source_input.node_id not in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
         else:
-            node = NodeStep(external_source_input.node_id, function=_func,
+            node = FlowNode(external_source_input.node_id, function=_func,
                             setting_input=external_source_input,
                             name=node_type, node_type=node_type, parent_uuid=self.uuid)
             self._node_db[external_source_input.node_id] = node
@@ -983,11 +983,11 @@ class EtlGraph:
 
         def _func():
             if input_file.received_file.file_type == 'parquet':
-                input_data = FlowfileTable.create_from_path(input_file.received_file)
+                input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:
-                input_data = FlowfileTable.create_from_path(input_file.received_file)
+                input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
-                input_data = FlowfileTable.create_from_path_worker(input_file.received_file,
+                input_data = FlowDataEngine.create_from_path_worker(input_file.received_file,
                                                                    node_id=input_file.node_id,
                                                                    flow_id=self.flow_id)
             input_data.name = input_file.received_file.name
@@ -1014,7 +1014,7 @@ class EtlGraph:
                 elif input_file.received_file.file_type in ('csv', 'json', 'parquet'):
                     # everything that can be scanned by polars
                     def schema_callback():
-                        input_data = FlowfileTable.create_from_path(input_file.received_file)
+                        input_data = FlowDataEngine.create_from_path(input_file.received_file)
                         return input_data.schema
 
                 elif input_file.received_file.file_type in ('xlsx', 'excel'):
@@ -1030,7 +1030,7 @@ class EtlGraph:
                 else:
                     schema_callback = None
         else:
-            node = NodeStep(input_file.node_id, function=_func,
+            node = FlowNode(input_file.node_id, function=_func,
                             setting_input=input_file,
                             name='read', node_type='read', parent_uuid=self.uuid)
             self._node_db[input_file.node_id] = node
@@ -1044,11 +1044,11 @@ class EtlGraph:
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
 
         if isinstance(input_file, input_schema.NodeManualInput):
-            input_data = FlowfileTable(input_file.raw_data)
+            input_data = FlowDataEngine(input_file.raw_data)
             ref = 'manual_input'
 
         else:
-            input_data = FlowfileTable(path_ref=input_file.file_ref)
+            input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = 'datasource'
         node = self.get_node(input_file.node_id)
         if node:
@@ -1060,7 +1060,7 @@ class EtlGraph:
             if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
         else:
-            node = NodeStep(input_file.node_id, function=input_data,
+            node = FlowNode(input_file.node_id, function=input_data,
                             setting_input=input_file,
                             name=ref, node_type=ref, parent_uuid=self.uuid)
             self._node_db[input_file.node_id] = node
@@ -1072,7 +1072,7 @@ class EtlGraph:
         self.add_datasource(input_file)
 
     @property
-    def nodes(self) -> List[NodeStep]:
+    def nodes(self) -> List[FlowNode]:
         return list(self._node_db.values())
 
     def check_for_missed_cols(self, expected_cols: List):
@@ -1090,7 +1090,7 @@ class EtlGraph:
     def execution_mode(self) -> str:
         return self.flow_settings.execution_mode
 
-    def get_implicit_starter_nodes(self) -> List[NodeStep]:
+    def get_implicit_starter_nodes(self) -> List[FlowNode]:
         """Ensures that nodes that can be a start (e.g. polars code), will be a starting node"""
         starting_node_ids = [node.node_id for node in self._flow_starts]
         implicit_starting_nodes = []
@@ -1370,7 +1370,7 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     return copied_setting_input
 
 
-def add_connection(flow: EtlGraph, node_connection: input_schema.NodeConnection):
+def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection):
     logger.info('adding a connection')
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)

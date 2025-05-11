@@ -1,8 +1,8 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, RunInformation
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection, RunInformation
 from flowfile_core.schemas import input_schema, transform_schema, schemas
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
@@ -51,14 +51,14 @@ def create_flowfile_handler():
     return handler
 
 
-def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development') -> EtlGraph:
+def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Performance'] = 'Development') -> FlowGraph:
     handler = create_flowfile_handler()
     handler.register_flow(schemas.FlowSettings(flow_id=flow_id, name='new_flow', path='.', execution_mode=execution_mode))
     graph = handler.get_flow(flow_id)
     return graph
 
 
-def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
+def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
@@ -66,21 +66,21 @@ def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
     return graph
 
 
-def add_node_promise_for_manual_input(graph: EtlGraph, node_type: str = 'manual_input', node_id: int = 1,
+def add_node_promise_for_manual_input(graph: FlowGraph, node_type: str = 'manual_input', node_id: int = 1,
                                       flow_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(node_promise)
     return graph
 
 
-def add_node_promise_on_type(graph: EtlGraph, node_type: str, node_id: int, flow_id: int = 1):
+def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flow_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type=node_type)
     graph.add_node_promise(node_promise)
 
 
 def get_group_by_flow():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
+    input_data = (FlowDataEngine.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'sales_data']))
     add_manual_input(graph, data=input_data.to_pylist())
     add_node_promise_on_type(graph, 'group_by', 2)
@@ -283,7 +283,7 @@ def test_add_fuzzy_match():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowfileTable([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
                                    {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
                                    {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
                                    {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
@@ -305,7 +305,7 @@ def test_add_record_count():
     graph.add_record_count(node_number_of_records)
     run_info = graph.run_graph()
     handle_run_info(run_info)
-    expected_data = FlowfileTable(raw_data=[3], schema=['number_of_records'])
+    expected_data = FlowDataEngine(raw_data=[3], schema=['number_of_records'])
     d = graph.get_node(2).get_resulting_data()
     d.assert_equal(expected_data)
 
@@ -360,7 +360,7 @@ def test_add_record_id():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowfileTable([{'record_id': 1, 'name': 'eduward'},
+    expected_data = FlowDataEngine([{'record_id': 1, 'name': 'eduward'},
                                    {'record_id': 2, 'name': 'edward'},
                                    {'record_id': 3, 'name': 'courtney'}]
                                   )
@@ -386,7 +386,7 @@ def test_copy_add_record_id():
     add_connection(graph, connection)
     graph.run_graph()
     output_data = graph.get_node(3).get_resulting_data()
-    expected_data = FlowfileTable([{'record_id': 1, 'name': 'eduward'},
+    expected_data = FlowDataEngine([{'record_id': 1, 'name': 'eduward'},
                                    {'record_id': 2, 'name': 'edward'},
                                    {'record_id': 3, 'name': 'courtney'}]
                                   )
@@ -437,7 +437,7 @@ def test_add_and_run_group_by():
 
 def test_add_and_run_group_by_string():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(100)
+    input_data = (FlowDataEngine.create_random(100)
                   .apply_flowfile_formula('to_string(random_int(0, 40))', 'groups')
                   .apply_flowfile_formula('to_string(random_int(0, 10))', 'vals')
                   .select_columns(['groups', 'vals']))
@@ -458,7 +458,7 @@ def test_add_and_run_group_by_string():
 
 def test_add_pivot():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(10000).apply_flowfile_formula('random_int(0, 4)', 'groups')
+    input_data = (FlowDataEngine.create_random(10000).apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'sales_data']))
     add_manual_input(graph, data=input_data.to_pylist())
     add_node_promise_on_type(graph, 'pivot', 2)
@@ -479,7 +479,7 @@ def test_add_pivot():
 
 def test_add_pivot_string_count():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(10000)
+    input_data = (FlowDataEngine.create_random(10000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
     add_manual_input(graph, data=input_data.to_pylist())
@@ -501,7 +501,7 @@ def test_add_pivot_string_count():
 
 def test_add_pivot_string_concat():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(10000)
+    input_data = (FlowDataEngine.create_random(10000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
     add_manual_input(graph, data=input_data.to_pylist())
@@ -523,7 +523,7 @@ def test_add_pivot_string_concat():
 def test_try_add_to_big_pivot():
     graph = create_graph()
     graph.execution_mode = 'Performance'
-    input_data = (FlowfileTable.create_random(10000)
+    input_data = (FlowDataEngine.create_random(10000)
                   .add_record_id(record_id_settings=transform_schema.RecordIdInput(output_column_name='groups'))
                   .select_columns(['groups', 'Country', 'sales_data']))
     add_manual_input(graph, data=input_data.to_pylist())
@@ -574,7 +574,7 @@ def test_add_cross_join():
     graph.add_cross_join(input_schema.NodeCrossJoin(**data))
     graph.run_graph()
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowfileTable([{'name': 'eduward', 'right_name': 'eduward'}]
+    expected_data = FlowDataEngine([{'name': 'eduward', 'right_name': 'eduward'}]
                                   )
     output_data.assert_equal(expected_data)
 

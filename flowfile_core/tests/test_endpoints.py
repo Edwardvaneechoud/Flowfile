@@ -8,7 +8,7 @@ from time import sleep
 from typing import Dict
 
 from flowfile_core import main
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
 from flowfile_core.routes.routes import (add_node,
                                          flow_file_handler,
                                          input_schema,
@@ -81,7 +81,7 @@ def get_join_data(flow_id: int, how: str = 'inner'):
             'auto_keep_left': True}
 
 
-def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
+def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)

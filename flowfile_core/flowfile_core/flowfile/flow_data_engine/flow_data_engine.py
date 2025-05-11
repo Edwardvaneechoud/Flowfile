@@ -23,39 +23,37 @@ from flowfile_core.schemas import (
 )
 
 # Local imports - Flow File Components
-from flowfile_core.flowfile.flowfile_table import utils
-from flowfile_core.flowfile.flowfile_table.create import funcs as create_funcs
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import (
+from flowfile_core.flowfile.flow_data_engine import utils
+from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
     convert_stats_to_column_info
 )
-from flowfile_core.flowfile.flowfile_table.flow_file_column.utils import type_to_polars
-from flowfile_core.flowfile.flowfile_table.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
-from flowfile_core.flowfile.flowfile_table.join import (
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars
+from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
+from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
     verify_join_map_integrity
 )
-from flowfile_core.flowfile.flowfile_table.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flowfile_table.sample_data import create_fake_data
-from flowfile_core.flowfile.flowfile_table.subprocess_operations.subprocess_operations import (
+from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
+from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
     ExternalCreateFetcher,
     ExternalDfFetcher,
     ExternalExecutorTracker,
     ExternalFuzzyMatchFetcher,
     fetch_unique_values
 )
-from flowfile_core.flowfile.flowfile_table.threaded_processes import (
+from flowfile_core.flowfile.flow_data_engine.threaded_processes import (
     get_join_count,
     write_threaded
 )
 
-# Local imports - Other
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 
 
-
 @dataclass
-class FlowfileTable:
+class FlowDataEngine:
     """
     A class that provides a unified interface for working with tabular data, supporting both eager and lazy evaluation.
 
@@ -121,7 +119,7 @@ class FlowfileTable:
                  streamable: bool = True,
                  number_of_records_callback: Callable = None,
                  data_callback: Callable = None):
-        """Initialize FlowfileTable with various data sources and configuration options."""
+        """Initialize FlowDataEngine with various data sources and configuration options."""
         self._initialize_attributes(number_of_records_callback, data_callback, streamable)
 
         if raw_data is not None:
@@ -396,13 +394,13 @@ class FlowfileTable:
     # Data Transformation Methods
 
     def do_group_by(self, group_by_input: transform_schemas.GroupByInput,
-                    calculate_schema_stats: bool = True) -> "FlowfileTable":
+                    calculate_schema_stats: bool = True) -> "FlowDataEngine":
         """Perform group by operations on the DataFrame."""
         aggregations = [c for c in group_by_input.agg_cols if c.agg != 'groupby']
         group_columns = [c for c in group_by_input.agg_cols if c.agg == 'groupby']
 
         if len(group_columns) == 0:
-            return FlowfileTable(
+            return FlowDataEngine(
                 self.data_frame.select(
                     ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations
                 ),
@@ -411,24 +409,24 @@ class FlowfileTable:
 
         df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
         group_by_columns = [n_c.new_name for n_c in group_columns]
-        return FlowfileTable(
+        return FlowDataEngine(
             df.group_by(*group_by_columns).agg(
                 ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations
             ),
             calculate_schema_stats=calculate_schema_stats
         )
 
-    def do_sort(self, sorts: List[transform_schemas.SortByInput]) -> "FlowfileTable":
+    def do_sort(self, sorts: List[transform_schemas.SortByInput]) -> "FlowDataEngine":
         """Sort the DataFrame based on specified columns and directions."""
         if not sorts:
             return self
 
         descending = [s.how == 'desc' or s.how.lower() == 'descending' for s in sorts]
         df = self.data_frame.sort([sort_by.column for sort_by in sorts], descending=descending)
-        return FlowfileTable(df, number_of_records=self.number_of_records, schema=self.schema)
+        return FlowDataEngine(df, number_of_records=self.number_of_records, schema=self.schema)
 
     def change_column_types(self, transforms: List[transform_schemas.SelectInput],
-                            calculate_schema: bool = False) -> "FlowfileTable":
+                            calculate_schema: bool = False) -> "FlowDataEngine":
         """Change the data types of specified columns."""
         dtypes = [dtype.base_type() for dtype in self.data_frame.collect_schema().dtypes()]
         idx_mapping = list(
@@ -443,7 +441,7 @@ class FlowfileTable:
         ]
 
         df = self.data_frame.with_columns(transformations)
-        return FlowfileTable(
+        return FlowDataEngine(
             df,
             number_of_records=self.number_of_records,
             calculate_schema_stats=calculate_schema,
@@ -465,8 +463,8 @@ class FlowfileTable:
         return self.data_frame.to_dicts()
 
     @classmethod
-    def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowfileTable":
-        """Create a FlowfileTable from an external data source."""
+    def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowDataEngine":
+        """Create a FlowDataEngine from an external data source."""
         if external_source.schema is not None:
             ff = cls.create_from_schema(external_source.schema)
         elif external_source.initial_data_getter is not None:
@@ -477,13 +475,13 @@ class FlowfileTable:
         return ff
 
     @classmethod
-    def create_from_sql(cls, sql: str, conn: Any) -> "FlowfileTable":
-        """Create a FlowfileTable from a SQL query."""
+    def create_from_sql(cls, sql: str, conn: Any) -> "FlowDataEngine":
+        """Create a FlowDataEngine from a SQL query."""
         return cls(pl.read_sql(sql, conn))
 
     @classmethod
-    def create_from_schema(cls, schema: List[FlowfileColumn]) -> "FlowfileTable":
-        """Create a FlowfileTable from a schema definition."""
+    def create_from_schema(cls, schema: List[FlowfileColumn]) -> "FlowDataEngine":
+        """Create a FlowDataEngine from a schema definition."""
         pl_schema = []
         for i, flow_file_column in enumerate(schema):
             pl_schema.append((flow_file_column.name, type_to_polars(flow_file_column.data_type)))
@@ -492,8 +490,8 @@ class FlowfileTable:
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
 
     @classmethod
-    def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowfileTable":
-        """Create a FlowfileTable from a file path."""
+    def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowDataEngine":
+        """Create a FlowDataEngine from a file path."""
         received_table.set_absolute_filepath()
 
         file_type_handlers = {
@@ -511,13 +509,13 @@ class FlowfileTable:
         return flow_file
 
     @classmethod
-    def create_random(cls, number_of_records: int = 1000) -> "FlowfileTable":
-        """Create a FlowfileTable with random data."""
+    def create_random(cls, number_of_records: int = 1000) -> "FlowDataEngine":
+        """Create a FlowDataEngine with random data."""
         return cls(create_fake_data(number_of_records))
 
     @classmethod
-    def generate_enumerator(cls, length: int = 1000, output_name: str = 'output_column') -> "FlowfileTable":
-        """Generate a sequence of numbers as a FlowfileTable."""
+    def generate_enumerator(cls, length: int = 1000, output_name: str = 'output_column') -> "FlowDataEngine":
+        """Generate a sequence of numbers as a FlowDataEngine."""
         if length > 10_000_000:
             length = 10_000_000
         return cls(pl.LazyFrame().select((pl.int_range(0, length, dtype=pl.UInt32)).alias(output_name)))
@@ -572,7 +570,7 @@ class FlowfileTable:
 
     # Data Manipulation Methods
 
-    def split(self, split_input: transform_schemas.TextToRowsInput) -> "FlowfileTable":
+    def split(self, split_input: transform_schemas.TextToRowsInput) -> "FlowDataEngine":
         """Split a column into multiple rows based on a delimiter."""
         output_column_name = (
             split_input.output_column_name
@@ -595,9 +593,9 @@ class FlowfileTable:
             .explode(output_column_name)
         )
 
-        return FlowfileTable(df)
+        return FlowDataEngine(df)
 
-    def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> "FlowfileTable":
+    def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> "FlowDataEngine":
         """Convert data from wide to long format."""
         lf = self.data_frame
 
@@ -614,9 +612,9 @@ class FlowfileTable:
         else:
             result = lf.unpivot()
 
-        return FlowfileTable(result)
+        return FlowDataEngine(result)
 
-    def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> "FlowfileTable":
+    def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> "FlowDataEngine":
         """Convert data from long to wide format with aggregations."""
         # Get unique values for pivot columns
         max_unique_vals = 200
@@ -674,9 +672,9 @@ class FlowfileTable:
             df = df.drop('__temp__')
             pivot_input.index_columns = []
 
-        return FlowfileTable(df, calculate_schema_stats=False)
+        return FlowDataEngine(df, calculate_schema_stats=False)
 
-    def do_filter(self, predicate: str) -> "FlowfileTable":
+    def do_filter(self, predicate: str) -> "FlowDataEngine":
         """Filter the DataFrame based on a predicate expression."""
         try:
             f = to_expr(predicate)
@@ -684,15 +682,15 @@ class FlowfileTable:
             logger.warning(f'Error in filter expression: {e}')
             f = to_expr("False")
         df = self.data_frame.filter(f)
-        return FlowfileTable(df, schema=self.schema, streamable=self._streamable)
+        return FlowDataEngine(df, schema=self.schema, streamable=self._streamable)
 
-    def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTable":
+    def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
         """Add a record ID column with optional grouping."""
         if record_id_settings.group_by and len(record_id_settings.group_by_columns) > 0:
             return self._add_grouped_record_id(record_id_settings)
         return self._add_simple_record_id(record_id_settings)
 
-    def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTable":
+    def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
         """Add a record ID column with grouping."""
         select_cols = [pl.col(record_id_settings.output_column_name)] + [pl.col(c) for c in self.columns]
 
@@ -710,9 +708,9 @@ class FlowfileTable:
         output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, 'UInt64')]
         output_schema.extend(self.schema)
 
-        return FlowfileTable(df, schema=output_schema)
+        return FlowDataEngine(df, schema=output_schema)
 
-    def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowfileTable":
+    def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
         """Add a simple sequential record ID column."""
         df = self.data_frame.with_row_index(
             record_id_settings.output_column_name,
@@ -722,7 +720,7 @@ class FlowfileTable:
         output_schema = [FlowfileColumn.from_input(record_id_settings.output_column_name, 'UInt64')]
         output_schema.extend(self.schema)
 
-        return FlowfileTable(df, schema=output_schema)
+        return FlowDataEngine(df, schema=output_schema)
 
     # Utility Methods
 
@@ -739,10 +737,10 @@ class FlowfileTable:
         return 0
 
     def __repr__(self) -> str:
-        """Return string representation of the FlowfileTable."""
+        """Return string representation of the FlowDataEngine."""
         return f'flowfile table\n{self.data_frame.__repr__()}'
 
-    def __call__(self) -> "FlowfileTable":
+    def __call__(self) -> "FlowDataEngine":
         """Make the class callable, returning self."""
         return self
 
@@ -750,12 +748,12 @@ class FlowfileTable:
         """Get the number of records in the table."""
         return self.number_of_records if self.number_of_records >= 0 else self.get_number_of_records()
 
-    def cache(self) -> "FlowfileTable":
+    def cache(self) -> "FlowDataEngine":
         """
         Cache the data in background and update the DataFrame reference.
 
         Returns:
-            FlowfileTable: Self with cached data
+            FlowDataEngine: Self with cached data
         """
         edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False,
                                 flow_id=-1,
@@ -796,7 +794,7 @@ class FlowfileTable:
             df = self.collect()
         return df.to_dicts()
 
-    def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> "FlowfileTable":
+    def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> "FlowDataEngine":
         if not self.lazy:
             df = self.data_frame.lazy()
         else:
@@ -810,10 +808,10 @@ class FlowfileTable:
                 df = df.head(n_rows).collect(engine="auto")
         else:
             df = self.collect()
-        return FlowfileTable(df, number_of_records=len(df), schema=self.schema)
+        return FlowDataEngine(df, number_of_records=len(df), schema=self.schema)
 
     def get_sample(self, n_rows: int = 100, random: bool = False, shuffle: bool = False,
-                   seed: int = None) -> "FlowfileTable":
+                   seed: int = None) -> "FlowDataEngine":
         """
         Get a sample of rows from the DataFrame.
 
@@ -824,7 +822,7 @@ class FlowfileTable:
             seed: Random seed for reproducibility
 
         Returns:
-            FlowfileTable: New instance with sampled data
+            FlowDataEngine: New instance with sampled data
         """
         n_records = min(n_rows, self.number_of_records)
         logging.info(f'Getting sample of {n_rows} rows')
@@ -847,9 +845,9 @@ class FlowfileTable:
                 self.collect(n_rows)
             sample_df = self.data_frame.head(n_rows)
 
-        return FlowfileTable(sample_df, schema=self.schema, number_of_records=n_records)
+        return FlowDataEngine(sample_df, schema=self.schema, number_of_records=n_records)
 
-    def get_subset(self, n_rows: int = 100) -> "FlowfileTable":
+    def get_subset(self, n_rows: int = 100) -> "FlowDataEngine":
         """
         Get a subset of rows from the DataFrame.
 
@@ -857,12 +855,12 @@ class FlowfileTable:
             n_rows: Number of rows to include
 
         Returns:
-            FlowfileTable: New instance with subset of data
+            FlowDataEngine: New instance with subset of data
         """
         if not self.lazy:
-            return FlowfileTable(self.data_frame.head(n_rows), calculate_schema_stats=True)
+            return FlowDataEngine(self.data_frame.head(n_rows), calculate_schema_stats=True)
         else:
-            return FlowfileTable(self.data_frame.head(n_rows), calculate_schema_stats=True)
+            return FlowDataEngine(self.data_frame.head(n_rows), calculate_schema_stats=True)
 
     # Iterator Methods
     def iter_batches(self, batch_size: int = 1000, columns: Union[List, Tuple, str] = None):
@@ -874,17 +872,17 @@ class FlowfileTable:
             columns: Columns to include
 
         Yields:
-            FlowfileTable: New instance for each batch
+            FlowDataEngine: New instance for each batch
         """
         if columns:
             self.data_frame = self.data_frame.select(columns)
         self.lazy = False
         batches = self.data_frame.iter_slices(batch_size)
         for batch in batches:
-            yield FlowfileTable(batch)
+            yield FlowDataEngine(batch)
 
     def start_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                         other: "FlowfileTable", file_ref: str, flow_id: int = -1,
+                         other: "FlowDataEngine", file_ref: str, flow_id: int = -1,
                          node_id: int | str = -1) -> ExternalFuzzyMatchFetcher:
         """
         Starts a fuzzy join with another DataFrame and returns the object to track.
@@ -896,7 +894,7 @@ class FlowfileTable:
             flow_id: Flow ID for tracking
             node_id: Node ID for tracking
         Returns:
-            FlowfileTable: New instance with joined data
+            FlowDataEngine: New instance with joined data
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
@@ -908,8 +906,8 @@ class FlowfileTable:
                                          node_id=node_id)
 
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowfileTable", file_ref: str, flow_id: int = -1,
-                      node_id: int | str = -1) -> "FlowfileTable":
+                      other: "FlowDataEngine", file_ref: str, flow_id: int = -1,
+                      node_id: int | str = -1) -> "FlowDataEngine":
         """
         Perform a fuzzy join with another DataFrame.
 
@@ -920,7 +918,7 @@ class FlowfileTable:
             flow_id: Flow ID for tracking
             node_id: Node ID for tracking
         Returns:
-            FlowfileTable: New instance with joined data
+            FlowDataEngine: New instance with joined data
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
@@ -930,10 +928,10 @@ class FlowfileTable:
                                       wait_on_completion=True,
                                       flow_id=flow_id,
                                       node_id=node_id)
-        return FlowfileTable(f.get_result())
+        return FlowDataEngine(f.get_result())
 
-    def fuzzy_match(self, right: "FlowfileTable", left_on: str, right_on: str,
-                    fuzzy_method: str = 'levenshtein', threshold: float = 0.75) -> "FlowfileTable":
+    def fuzzy_match(self, right: "FlowDataEngine", left_on: str, right_on: str,
+                    fuzzy_method: str = 'levenshtein', threshold: float = 0.75) -> "FlowDataEngine":
         """
         Perform fuzzy matching between two DataFrames.
 
@@ -945,7 +943,7 @@ class FlowfileTable:
             threshold: Matching threshold
 
         Returns:
-            FlowfileTable: New instance with matched data
+            FlowDataEngine: New instance with matched data
         """
         fuzzy_match_input = transform_schemas.FuzzyMatchInput(
             [transform_schemas.FuzzyMap(
@@ -960,7 +958,7 @@ class FlowfileTable:
 
     def do_cross_join(self, cross_join_input: transform_schemas.CrossJoinInput,
                       auto_generate_selection: bool, verify_integrity: bool,
-                      other: "FlowfileTable") -> "FlowfileTable":
+                      other: "FlowDataEngine") -> "FlowDataEngine":
         """
         Perform a cross join with another DataFrame.
 
@@ -971,7 +969,7 @@ class FlowfileTable:
             other: Right DataFrame for join
 
         Returns:
-            FlowfileTable: New instance with joined data
+            FlowDataEngine: New instance with joined data
 
         Raises:
             Exception: If join would result in too many records
@@ -1006,15 +1004,15 @@ class FlowfileTable:
                                 if col.join_key and not col.keep and col.is_available]
 
         if verify_integrity:
-            return FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
+            return FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
                                  number_of_records=n_records, streamable=False)
         else:
-            fl = FlowfileTable(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
+            fl = FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
                                number_of_records=0, streamable=False)
             return fl
 
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
-             verify_integrity: bool, other: "FlowfileTable") -> "FlowfileTable":
+             verify_integrity: bool, other: "FlowDataEngine") -> "FlowDataEngine":
         """
         Perform a join operation with another DataFrame.
 
@@ -1025,7 +1023,7 @@ class FlowfileTable:
             other: Right DataFrame for join
 
         Returns:
-            FlowfileTable: New instance with joined data
+            FlowDataEngine: New instance with joined data
 
         Raises:
             Exception: If join would result in too many records or is invalid
@@ -1067,15 +1065,15 @@ class FlowfileTable:
         if len(cols_to_delete_after) > 0:
             joined_df = joined_df.drop(cols_to_delete_after)
         if verify_integrity:
-            return FlowfileTable(joined_df, calculate_schema_stats=True,
+            return FlowDataEngine(joined_df, calculate_schema_stats=True,
                                  number_of_records=n_records, streamable=False)
         else:
-            fl = FlowfileTable(joined_df, calculate_schema_stats=False,
+            fl = FlowDataEngine(joined_df, calculate_schema_stats=False,
                                number_of_records=0, streamable=False)
             return fl
 
     # Graph Operations
-    def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> "FlowfileTable":
+    def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> "FlowDataEngine":
         """
         Solve a graph problem using the specified columns.
 
@@ -1083,16 +1081,16 @@ class FlowfileTable:
             graph_solver_input: Graph solving parameters
 
         Returns:
-            FlowfileTable: New instance with solved graph data
+            FlowDataEngine: New instance with solved graph data
         """
         lf = self.data_frame.with_columns(
             graph_solver(graph_solver_input.col_from, graph_solver_input.col_to)
             .alias(graph_solver_input.output_column_name)
         )
-        return FlowfileTable(lf)
+        return FlowDataEngine(lf)
 
     # Data Modification Methods
-    def add_new_values(self, values: Iterable, col_name: str = None) -> "FlowfileTable":
+    def add_new_values(self, values: Iterable, col_name: str = None) -> "FlowDataEngine":
         """
         Add a new column with specified values.
 
@@ -1101,22 +1099,22 @@ class FlowfileTable:
             col_name: Name for new column
 
         Returns:
-            FlowfileTable: New instance with added column
+            FlowDataEngine: New instance with added column
         """
         if col_name is None:
             col_name = 'new_values'
-        return FlowfileTable(self.data_frame.with_columns(pl.Series(values).alias(col_name)))
+        return FlowDataEngine(self.data_frame.with_columns(pl.Series(values).alias(col_name)))
 
-    def get_record_count(self) -> "FlowfileTable":
+    def get_record_count(self) -> "FlowDataEngine":
         """
         Get the total number of records.
 
         Returns:
-            FlowfileTable: New instance with record count
+            FlowDataEngine: New instance with record count
         """
-        return FlowfileTable(self.data_frame.select(pl.len().alias('number_of_records')))
+        return FlowDataEngine(self.data_frame.select(pl.len().alias('number_of_records')))
 
-    def assert_equal(self, other: "FlowfileTable", ordered: bool = True, strict_schema: bool = False):
+    def assert_equal(self, other: "FlowDataEngine", ordered: bool = True, strict_schema: bool = False):
         """
         Assert that this DataFrame is equal to another.
 
@@ -1254,7 +1252,7 @@ class FlowfileTable:
             [transform_schemas.SelectInput(old_name=c.name, data_type=c.data_type) for c in self.schema]
         )
 
-    def select_columns(self, list_select: Union[List[str], Tuple[str], str]) -> "FlowfileTable":
+    def select_columns(self, list_select: Union[List[str], Tuple[str], str]) -> "FlowDataEngine":
         """
         Select specific columns from the DataFrame.
 
@@ -1262,7 +1260,7 @@ class FlowfileTable:
             list_select: Columns to select
 
         Returns:
-            FlowfileTable: New instance with selected columns
+            FlowDataEngine: New instance with selected columns
         """
         if isinstance(list_select, str):
             list_select = [list_select]
@@ -1271,14 +1269,14 @@ class FlowfileTable:
         selects = [ls for ls, id_to_keep in zip(list_select, idx_to_keep) if id_to_keep is not None]
         new_schema = [self.schema[i] for i in idx_to_keep if i is not None]
 
-        return FlowfileTable(
+        return FlowDataEngine(
             self.data_frame.select(selects),
             number_of_records=self.number_of_records,
             schema=new_schema,
             streamable=self._streamable
         )
 
-    def drop_columns(self, columns: List[str]) -> "FlowfileTable":
+    def drop_columns(self, columns: List[str]) -> "FlowDataEngine":
         """
         Drop specified columns from the DataFrame.
 
@@ -1286,19 +1284,19 @@ class FlowfileTable:
             columns: Columns to drop
 
         Returns:
-            FlowfileTable: New instance without dropped columns
+            FlowDataEngine: New instance without dropped columns
         """
         cols_for_select = tuple(set(self.columns) - set(columns))
         idx_to_keep = [self.cols_idx.get(c) for c in cols_for_select]
         new_schema = [self.schema[i] for i in idx_to_keep]
 
-        return FlowfileTable(
+        return FlowDataEngine(
             self.data_frame.select(cols_for_select),
             number_of_records=self.number_of_records,
             schema=new_schema
         )
 
-    def reorganize_order(self, column_order: List[str]) -> "FlowfileTable":
+    def reorganize_order(self, column_order: List[str]) -> "FlowDataEngine":
         """
         Reorganize columns in specified order.
 
@@ -1306,14 +1304,14 @@ class FlowfileTable:
             column_order: Desired column order
 
         Returns:
-            FlowfileTable: New instance with reordered columns
+            FlowDataEngine: New instance with reordered columns
         """
         df = self.data_frame.select(column_order)
         schema = sorted(self.schema, key=lambda x: column_order.index(x.column_name))
-        return FlowfileTable(df, schema=schema, number_of_records=self.number_of_records)
+        return FlowDataEngine(df, schema=schema, number_of_records=self.number_of_records)
 
     def apply_flowfile_formula(self, func: str, col_name: str,
-                               output_data_type: pl.DataType = None) -> "FlowfileTable":
+                               output_data_type: pl.DataType = None) -> "FlowDataEngine":
         """
         Apply a formula to create a new column.
 
@@ -1323,7 +1321,7 @@ class FlowfileTable:
             output_data_type: Data type for output
 
         Returns:
-            FlowfileTable: New instance with added column
+            FlowDataEngine: New instance with added column
         """
         parsed_func = to_expr(func)
         if output_data_type is not None:
@@ -1331,10 +1329,10 @@ class FlowfileTable:
         else:
             df2 = self.data_frame.with_columns(parsed_func.alias(col_name))
 
-        return FlowfileTable(df2, number_of_records=self.number_of_records)
+        return FlowDataEngine(df2, number_of_records=self.number_of_records)
 
     def apply_sql_formula(self, func: str, col_name: str,
-                          output_data_type: pl.DataType = None) -> "FlowfileTable":
+                          output_data_type: pl.DataType = None) -> "FlowDataEngine":
         """
         Apply an SQL-style formula to create a new column.
 
@@ -1344,7 +1342,7 @@ class FlowfileTable:
             output_data_type: Data type for output
 
         Returns:
-            FlowfileTable: New instance with added column
+            FlowDataEngine: New instance with added column
         """
         expr = to_expr(func)
         if output_data_type is not None:
@@ -1352,10 +1350,10 @@ class FlowfileTable:
         else:
             df = self.data_frame.with_columns(expr.alias(col_name))
 
-        return FlowfileTable(df, number_of_records=self.number_of_records)
+        return FlowDataEngine(df, number_of_records=self.number_of_records)
 
     def output(self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str,
-               execute_remote: bool = True) -> "FlowfileTable":
+               execute_remote: bool = True) -> "FlowDataEngine":
         """
         Write DataFrame to output file.
 
@@ -1365,7 +1363,7 @@ class FlowfileTable:
             node_id: Node ID for tracking.
             execute_remote: If the output should be executed at the flowfile worker process.
         Returns:
-            FlowfileTable: Self for chaining
+            FlowDataEngine: Self for chaining
         """
         logger.info('Starting to write output')
         if execute_remote:
@@ -1398,7 +1396,7 @@ class FlowfileTable:
         return self
 
     # Data Operations
-    def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> "FlowfileTable":
+    def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> "FlowDataEngine":
         """
         Get unique rows based on specified columns.
 
@@ -1406,13 +1404,13 @@ class FlowfileTable:
             unique_input: Unique operation parameters
 
         Returns:
-            FlowfileTable: New instance with unique rows
+            FlowDataEngine: New instance with unique rows
         """
         if unique_input is None or unique_input.columns is None:
-            return FlowfileTable(self.data_frame.unique())
-        return FlowfileTable(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
+            return FlowDataEngine(self.data_frame.unique())
+        return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
 
-    def concat(self, other: Iterable["FlowfileTable"] | "FlowfileTable") -> "FlowfileTable":
+    def concat(self, other: Iterable["FlowDataEngine"] | "FlowDataEngine") -> "FlowDataEngine":
         """
         Concatenate with other DataFrames.
 
@@ -1420,16 +1418,16 @@ class FlowfileTable:
             other: DataFrames to concatenate
 
         Returns:
-            FlowfileTable: Concatenated DataFrame
+            FlowDataEngine: Concatenated DataFrame
         """
-        if isinstance(other, FlowfileTable):
+        if isinstance(other, FlowDataEngine):
             other = [other]
 
         dfs: List[pl.LazyFrame] | List[pl.DataFrame] = [self.data_frame] + [flt.data_frame for flt in other]
-        return FlowfileTable(pl.concat(dfs, how='diagonal_relaxed'))
+        return FlowDataEngine(pl.concat(dfs, how='diagonal_relaxed'))
 
     def do_select(self, select_inputs: transform_schemas.SelectInputs,
-                  keep_missing: bool = True) -> "FlowfileTable":
+                  keep_missing: bool = True) -> "FlowDataEngine":
         """
         Perform complex column selection and transformation.
 
@@ -1438,7 +1436,7 @@ class FlowfileTable:
             keep_missing: Whether to keep columns not specified
 
         Returns:
-            FlowfileTable: New instance with selected/transformed columns
+            FlowDataEngine: New instance with selected/transformed columns
         """
         new_schema = deepcopy(self.schema)
         renames = [r for r in select_inputs.renames if r.is_available]
@@ -1471,7 +1469,7 @@ class FlowfileTable:
         renames.sort(key=lambda r: 0 if r.position is None else r.position)
         sorted_cols = utils.match_order(ndf.collect_schema().names(),
                                         [r.new_name for r in renames] + self.data_frame.collect_schema().names())
-        output_file = FlowfileTable(ndf, number_of_records=self.number_of_records)
+        output_file = FlowDataEngine(ndf, number_of_records=self.number_of_records)
         return output_file.reorganize_order(sorted_cols)
 
     # Utility Methods
@@ -1503,7 +1501,7 @@ class FlowfileTable:
         return cls(external_fetcher.get_result())
 
 
-def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "FlowfileTable":
+def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowDataEngine":
     """
     Execute arbitrary Polars code.
 
@@ -1511,7 +1509,7 @@ def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "Flowfi
         code: Polars code to execute
 
     Returns:
-        FlowfileTable: Result of code execution
+        FlowDataEngine: Result of code execution
     """
     polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
     if len(flowfile_tables) == 0:
@@ -1520,4 +1518,4 @@ def execute_polars_code(*flowfile_tables: "FlowfileTable", code: str) -> "Flowfi
         kwargs = {'input_df': flowfile_tables[0].data_frame}
     else:
         kwargs = {f'input_df_{i+1}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
-    return FlowfileTable(polars_executable(**kwargs))
+    return FlowDataEngine(polars_executable(**kwargs))

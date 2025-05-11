@@ -2,10 +2,10 @@ import polars as pl
 import pytest
 import base64
 
-from flowfile_core.flowfile.flowfile_table.subprocess_operations import (trigger_database_read_collector,
-                                                                         DatabaseExternalReadSettings,
-                                                                         ExternalDatabaseFetcher,
-                                                                         ExternalDatabaseWriter)
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (trigger_database_read_collector,
+                                                                           DatabaseExternalReadSettings,
+                                                                           ExternalDatabaseFetcher,
+                                                                           ExternalDatabaseWriter)
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (ExtDatabaseConnection,
                                                                                DatabaseExternalWriteSettings)
 from flowfile_core.secrets.secrets import encrypt_secret

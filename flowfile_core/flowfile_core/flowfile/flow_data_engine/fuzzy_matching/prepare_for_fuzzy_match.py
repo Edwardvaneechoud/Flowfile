@@ -1,21 +1,20 @@
-from flowfile_core.configs import logger
 from flowfile_core.schemas.transform_schema import FuzzyMatchInput
-from flowfile_core.flowfile.flowfile_table.join import verify_join_select_integrity, verify_join_map_integrity
+from flowfile_core.flowfile.flow_data_engine.join import verify_join_select_integrity, verify_join_map_integrity
 import polars as pl
 from typing import TYPE_CHECKING, Tuple
 
 if TYPE_CHECKING:
-    from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+    from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
 
-def prepare_for_fuzzy_match(left: "FlowfileTable", right: "FlowfileTable",
+def prepare_for_fuzzy_match(left: "FlowDataEngine", right: "FlowDataEngine",
                             fuzzy_match_input: FuzzyMatchInput) -> Tuple[pl.LazyFrame, pl.LazyFrame]:
     """
-    Prepare two FlowfileTables for fuzzy matching.
+    Prepare two FlowDataEngines for fuzzy matching.
 
     Args:
-        left: Left FlowfileTable for fuzzy join
-        right: Right FlowfileTable for fuzzy join
+        left: Left FlowDataEngine for fuzzy join
+        right: Right FlowDataEngine for fuzzy join
         fuzzy_match_input: Parameters for fuzzy matching configuration
     Returns:
         Tuple[pl.LazyFrame, pl.LazyFrame]: Prepared left and right lazy frames

@@ -1,11 +1,11 @@
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
-from flowfile_core.flowfile.flowfile_table.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.schemas import transform_schema
 
 
 def test_prepare_for_fuzzy_match():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
-    left_flowfile_table = FlowfileTable(['edward', 'eduward', 'court']).do_select(r)
+    left_flowfile_table = FlowDataEngine(['edward', 'eduward', 'court']).do_select(r)
     right_flowfile_table = left_flowfile_table
 
     left_flowfile_table.calculate_schema()

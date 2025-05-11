@@ -8,10 +8,10 @@ import polars as pl
 from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orientation
 
 # Assume these imports are correct from your original context
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
-from flowfile_core.flowfile.node_step.node_step import NodeStep
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.schemas import input_schema, transform_schema
 
 from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
@@ -36,8 +36,8 @@ def generate_node_id() -> int:
 
 
 class FlowFrame:
-    """Main class that wraps FlowfileTable and maintains the ETL graph."""
-    flow_graph: EtlGraph
+    """Main class that wraps FlowDataEngine and maintains the ETL graph."""
+    flow_graph: FlowGraph
     data: pl.LazyFrame
 
     @staticmethod
@@ -74,7 +74,7 @@ class FlowFrame:
             Number of rows to use for schema inference
         nan_to_null : bool, default False
             Whether to convert NaN values to null
-        flow_graph : EtlGraph, optional
+        flow_graph : FlowGraph, optional
             Existing ETL graph to add nodes to
         node_id : int, optional
             ID for the new node
@@ -112,8 +112,8 @@ class FlowFrame:
         except Exception as e:
             raise ValueError(f"Could not convert data to a polars DataFrame: {e}")
 
-        # Create a FlowfileTable to get data in the right format for manual input
-        flow_table = FlowfileTable(raw_data=pl_data)
+        # Create a FlowDataEngine to get data in the right format for manual input
+        flow_table = FlowDataEngine(raw_data=pl_data)
 
         # Create a manual input node
         input_node = input_schema.NodeManualInput(
@@ -201,7 +201,7 @@ class FlowFrame:
             flow_graph = create_etl_graph()
         self.flow_graph = flow_graph
         # Set up data
-        if isinstance(data, FlowfileTable):
+        if isinstance(data, FlowDataEngine):
             self.data = data.data_frame
         else:
             self.data = data
@@ -971,7 +971,7 @@ class FlowFrame:
         self.data.cache()
         return self
 
-    def get_node_settings(self) -> NodeStep:
+    def get_node_settings(self) -> FlowNode:
         return self.flow_graph.get_node(self.node_id)
 
     def pivot(self,
@@ -1902,7 +1902,7 @@ def count(expr):
     return expr.count()
 
 
-def read_csv(file_path, *, flow_graph: EtlGraph = None, separator: str = ';',
+def read_csv(file_path, *, flow_graph: FlowGraph = None, separator: str = ';',
              convert_to_absolute_path: bool = True,
              description: str = None, **options):
     """
@@ -1962,7 +1962,7 @@ def read_csv(file_path, *, flow_graph: EtlGraph = None, separator: str = ';',
     )
 
 
-def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = None,
+def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = None,
                  convert_to_absolute_path: bool = True, **options) -> FlowFrame:
     """
     Read a Parquet file into a FlowFrame.
@@ -2013,7 +2013,7 @@ def read_parquet(file_path, *, flow_graph: EtlGraph = None, description: str = N
     )
 
 
-def from_dict(data, *, flow_graph: EtlGraph = None, description: str = None) -> FlowFrame:
+def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) -> FlowFrame:
     """
     Create a FlowFrame from a dictionary or list of dictionaries.
 
@@ -2034,7 +2034,7 @@ def from_dict(data, *, flow_graph: EtlGraph = None, description: str = None) -> 
     input_node = input_schema.NodeManualInput(
         flow_id=flow_id,
         node_id=node_id,
-        raw_data=FlowfileTable(data).to_pylist(),
+        raw_data=FlowDataEngine(data).to_pylist(),
         pos_x=100,
         pos_y=100,
         is_setup=True,

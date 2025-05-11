@@ -1,8 +1,8 @@
 
 from typing import List, Union, Callable, Any, Optional, Generator, Literal
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.configs.flow_logger import NodeLogger
@@ -12,14 +12,14 @@ from flowfile_core.flowfile.utils import get_hash
 from flowfile_core.configs.node_store import nodes as node_interface
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
-from flowfile_core.flowfile.flowfile_table.subprocess_operations import (
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result, ExternalDatabaseFetcher, ExternalDatabaseWriter)
-from flowfile_core.flowfile.node_step.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
+from flowfile_core.flowfile.flow_node.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
-from flowfile_core.flowfile.node_step.schema_callback import SingleExecutionFuture
+from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
 
 
-class NodeStep:
+class FlowNode:
     parent_uuid: str
     node_type: str
     node_template: node_interface.NodeTemplate
@@ -30,7 +30,7 @@ class NodeStep:
     node_settings: NodeStepSettings
     results: NodeResults
     node_information: Optional[schemas.NodeInformation] = None
-    leads_to_nodes: List["NodeStep"] = []  # list with target flows, after execution the step will trigger those step(s)
+    leads_to_nodes: List["FlowNode"] = []  # list with target flows, after execution the step will trigger those step(s)
     _setting_input: Any = None
     _hash: Optional[str] = None  # host this for caching results
     _function: Callable = None  # the function that needs to be executed when triggered
@@ -193,7 +193,7 @@ class NodeStep:
         return self.node_inputs.right_input
 
     @property
-    def main_input(self) -> List["NodeStep"]:
+    def main_input(self) -> List["FlowNode"]:
         return self.node_inputs.main_inputs
 
     @property
@@ -237,7 +237,7 @@ class NodeStep:
         return False
 
     @property
-    def all_inputs(self) -> List["NodeStep"]:
+    def all_inputs(self) -> List["FlowNode"]:
         return self.node_inputs.get_all_inputs()
 
     def calculate_hash(self, setting_input: Any):
@@ -256,7 +256,7 @@ class NodeStep:
         self._function = function
         # self.reset()
 
-    def add_node_connection(self, from_node: "NodeStep", insert_type: Literal['main', 'left', 'right'] = 'main'):
+    def add_node_connection(self, from_node: "FlowNode", insert_type: Literal['main', 'left', 'right'] = 'main'):
         from_node.leads_to_nodes.append(self)
         if insert_type == 'main':
             if self.node_template.input <= 2 or self.node_inputs.main_inputs is None:
@@ -319,15 +319,15 @@ class NodeStep:
     def print(self, v: Any):
         logger.info(f'{self.node_type}, node_id: {self.node_id}: {v}')
 
-    def get_resulting_data(self) -> FlowfileTable:
+    def get_resulting_data(self) -> FlowDataEngine:
         if self.is_setup:
             if self.results.resulting_data is None and self.results.errors is None:
                 self.print('getting resulting data')
                 try:
-                    if isinstance(self.function, FlowfileTable):
-                        fl: FlowfileTable = self.function
+                    if isinstance(self.function, FlowDataEngine):
+                        fl: FlowDataEngine = self.function
                     elif self.node_type in ('external_source', 'airbyte_reader'):
-                        fl: FlowfileTable = self.function()
+                        fl: FlowDataEngine = self.function()
                         fl.collect_external()
                         self.node_settings.streamable = False
                     else:
@@ -339,13 +339,13 @@ class NodeStep:
                     self.results.resulting_data = fl
                     self.node_schema.result_schema = fl.schema
                 except Exception as e:
-                    self.results.resulting_data = FlowfileTable()
+                    self.results.resulting_data = FlowDataEngine()
                     self.results.errors = str(e)
                     self.node_stats.has_run = False
                     raise e
             return self.results.resulting_data
 
-    def _predicted_data_getter(self) -> FlowfileTable|None:
+    def _predicted_data_getter(self) -> FlowDataEngine|None:
         try:
             fl = self._function(*[v.get_predicted_resulting_data() for v in self.all_inputs])
             return fl
@@ -354,23 +354,23 @@ class NodeStep:
                 logger.info('Generator already executing, waiting for the result')
                 sleep(1)
                 return self._predicted_data_getter()
-            fl = FlowfileTable()
+            fl = FlowDataEngine()
             return fl
 
         except Exception as e:
             logger.warning('there was an issue with the function, returning an empty Flowfile')
             logger.warning(e)
 
-    def get_predicted_resulting_data(self) -> FlowfileTable:
+    def get_predicted_resulting_data(self) -> FlowDataEngine:
         if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print('Getting data based on the schema')
             _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
-            return FlowfileTable.create_from_schema(_s)
+            return FlowDataEngine.create_from_schema(_s)
         else:
-            if isinstance(self.function, FlowfileTable):
+            if isinstance(self.function, FlowDataEngine):
                 fl = self.function
             else:
-                fl = FlowfileTable.create_from_schema(self.get_predicted_schema())
+                fl = FlowDataEngine.create_from_schema(self.get_predicted_schema())
             return fl
 
     def add_lead_to_in_depend_source(self):
@@ -378,7 +378,7 @@ class NodeStep:
             if self.node_id not in [n.node_id for n in input_node.leads_to_nodes]:
                 input_node.leads_to_nodes.append(self)
 
-    def get_all_dependent_nodes(self) -> Generator["NodeStep", None, None]:
+    def get_all_dependent_nodes(self) -> Generator["FlowNode", None, None]:
         for node in self.leads_to_nodes:
             yield node
             for n in node.get_all_dependent_nodes():
@@ -407,10 +407,10 @@ class NodeStep:
         except:
             return []
 
-    def load_from_cache(self) -> FlowfileTable:
+    def load_from_cache(self) -> FlowDataEngine:
         if results_exists(self.hash):
             try:
-                return FlowfileTable(self._fetch_cached_df.get_result())
+                return FlowDataEngine(self._fetch_cached_df.get_result())
             except Exception as e:
                 logger.error(e)
 
@@ -491,7 +491,7 @@ class NodeStep:
             self._fetch_cached_df = external_df_fetcher
             try:
                 lf = external_df_fetcher.get_result()
-                self.results.resulting_data = FlowfileTable(
+                self.results.resulting_data = FlowDataEngine(
                     lf, number_of_records=ExternalDfFetcher(lf=lf, operation_type='calculate_number_of_records',
                                                             flow_id=node_logger.flow_id, node_id=self.node_id).result
                 )
@@ -561,7 +561,7 @@ class NodeStep:
                 except Exception as e:
                     if 'No such file or directory (os error' in str(e) and retry:
                         logger.warning('Error with the input node, starting to rerun the input node...')
-                        all_inputs: List[NodeStep] = self.node_inputs.get_all_inputs()
+                        all_inputs: List[FlowNode] = self.node_inputs.get_all_inputs()
                         for node_input in all_inputs:
                             node_input.execute_node(run_location=run_location,
                                                     performance_mode=performance_mode, retry=True,
@@ -651,7 +651,7 @@ class NodeStep:
             return output
 
     def get_repr(self):
-        return dict(NodeStep=
+        return dict(FlowNode=
                     dict(node_id=self.node_id,
                          step_name=self.__name__,
                          output_columns=self.node_schema.output_columns,
@@ -675,7 +675,7 @@ class NodeStep:
         return self.node_template.input == 1
 
     @property
-    def singular_main_input(self) -> "NodeStep":
+    def singular_main_input(self) -> "FlowNode":
         if self.singular_input:
             return self.all_inputs[0]
 

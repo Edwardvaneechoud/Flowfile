@@ -1,8 +1,8 @@
 import polars as pl
 from flowfile_core.configs.settings import AVAILABLE_RAM, WORKER_URL
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flowfile_table.subprocess_operations import ExternalDfFetcher
-from flowfile_core.flowfile.flowfile_table.subprocess_operations import Status
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import Status
 import os
 from typing import List, Dict, Iterable, Callable, Any
 from itertools import chain

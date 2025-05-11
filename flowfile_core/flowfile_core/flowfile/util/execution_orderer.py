@@ -1,5 +1,5 @@
 from typing import List, Dict, Set
-from flowfile_core.flowfile.node_step.node_step import NodeStep
+from flowfile_core.flowfile.flow_node.flow_node import NodeStep
 from flowfile_core.configs import logger
 from collections import deque, defaultdict
 

@@ -1,10 +1,10 @@
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel, field_validator, ConfigDict
 import polars as pl
-from flowfile_core.flowfile.flowfile_table.flow_file_column.utils import type_to_polars_str
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars_str
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas.input_schema import MinimalFieldInfo
-from flowfile_core.flowfile.flowfile_table.flow_file_column.polars_type import PlType
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
 from flowfile_core.configs import logger
 
 # Use TYPE_CHECKING to avoid circular imports
