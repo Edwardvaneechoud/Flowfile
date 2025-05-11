@@ -3,7 +3,7 @@ name: Build and Release Python Package
 on:
   push:
     tags:
-      - 'v*'  # This will trigger on tags like v0.1.0, v1.0.0, etc.
+      - 'v*'
   workflow_dispatch:  # Allow manual triggering
 
 permissions:
