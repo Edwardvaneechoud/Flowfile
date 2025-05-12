@@ -2,7 +2,7 @@
 name = "Flowfile"
 version = "0.2.2"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
-readme = "README.md"
+readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 packages = [
     { include = "flowfile_core", from = "flowfile_core" },

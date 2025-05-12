@@ -127,13 +127,13 @@ def import_flow_to_editor(flow_path: str, auth_token: str) -> Optional[int]:
         return None
 
 
-def open_graph_in_editor(etl_graph: FlowGraph, storage_location: str = None) -> bool:
+def open_graph_in_editor(flow_graph: FlowGraph, storage_location: str = None) -> bool:
     """
     Save the ETL graph and open it in the Flowfile editor.
 
     Parameters:
     -----------
-    etl_graph : FlowGraph
+    flow_graph : FlowGraph
         The graph to save and open
     storage_location : str, optional
         Where to save the flowfile. If None, a default name is used.
@@ -152,8 +152,8 @@ def open_graph_in_editor(etl_graph: FlowGraph, storage_location: str = None) -> 
         # Ensure path is absolute
         storage_location = os.path.abspath(storage_location)
 
-    etl_graph.apply_layout()
-    etl_graph.save_flow(storage_location)
+    flow_graph.apply_layout()
+    flow_graph.save_flow(storage_location)
     print(f"Flow saved to: {storage_location}")
 
     # Check if Flowfile is running, and start it if not

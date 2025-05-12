@@ -5,10 +5,10 @@ import platform
 
 
 def create_flow_frame_with_parquet_read() -> ff.FlowFrame:
-    etl_graph = ff.create_etl_graph()
-    etl_graph.execution_location = 'local'
+    flow_graph = ff.create_etl_graph()
+    flow_graph.execution_location = 'local'
     file_path = str(Path('flowfile_core') / 'tests' / 'support_files' / 'data' / 'fake_data.parquet')
-    input_df = ff.read_parquet(file_path=file_path, description="fake_data_df", flow_graph=etl_graph)
+    input_df = ff.read_parquet(file_path=file_path, description="fake_data_df", flow_graph=flow_graph)
 
     sorted_df = input_df.sort(by=ff.col('sales_data'), descending=True, description='cached_df').cache()
     filtered_df = sorted_df.filter(flowfile_formula='contains([Email],"@")', description='filter with flowfile formula')
