@@ -1,10 +1,22 @@
-# Flowfile
+<h1 align="center">
+  <img src="https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/.github/images/logo.png" alt="Flowfile Logo" width="100">
+  <br>
+  Flowfile
+</h1>
 
-![Flowfile Logo](https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/.github/images/logo.png)
+<p align="center">
+  <b>Main Repository</b>: <a href="https://github.com/Edwardvaneechoud/Flowfile">Edwardvaneechoud/Flowfile</a><br>
+  <b>Documentation</b>: 
+  <a href="https://edwardvaneechoud.github.io/Flowfile/">Website</a> - 
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_core/README.md">Core</a> - 
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_worker/README.md">Worker</a> - 
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_frontend/README.md">Frontend</a> - 
+  <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
+</p>
 
+<p>
 Flowfile is a visual ETL tool and Python library suite that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, or define data flows programmatically with Python and analyze results - all with high-performance data processing.
-
-![Flowfile Interface](https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/.github/images/group_by_screenshot.png)
+</p>
 
 ## 🚀 Getting Started
 
