@@ -142,7 +142,14 @@ def build_server_command(module_name: str) -> List[str]:
     return command
 
 
-def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> bool:
+def check_if_in_single_mode() -> bool:
+    response: requests.Response = requests.get(f"{FLOWFILE_BASE_URL}/single_mode", timeout=1)
+    if response.ok:
+        return response.json() == "1"
+    return False
+
+
+def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tuple[bool, bool]:
     """
     Start the Flowfile server as a background process if it's not already running.
     Automatically detects and uses Poetry if in a Poetry environment.
@@ -153,7 +160,8 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> boo
     """
     global _server_process
     if is_flowfile_running():
-        return True
+        return True, check_if_in_single_mode()
+
 
     if _server_process and _server_process.poll() is None:
         logger.warning("Server process object exists but API not responding. Attempting to restart.")
@@ -179,7 +187,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> boo
             time.sleep(1)
             if is_flowfile_running():
                 logger.info("Server started successfully.")
-                return True
+                return True, check_if_in_single_mode()
         else:
             logger.error("Failed to start server: API did not become responsive.")
             if _server_process and _server_process.stderr:
@@ -189,16 +197,16 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> boo
                 except Exception as read_err:
                     logger.error(f"Could not read stderr from server process: {read_err}")
                     stop_flowfile_server_process()
-                    return False
+                    return False, check_if_in_single_mode()
             else:
                 stop_flowfile_server_process()
-                return False
+                return False, check_if_in_single_mode()
 
     except FileNotFoundError:
         logger.error(f"Error: Could not execute command: '{' '.join(command)}'.")
         logger.error(f"Ensure '{module_name}' is installed correctly.")
         _server_process = None
-        return False
+        return False, False
     except Exception as e:
         logger.error(f"An unexpected error occurred while starting the server process: {e}")
         if _server_process and _server_process.stderr:
@@ -209,7 +217,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> boo
                 logger.error(f"Could not read stderr from server process: {read_err}")
         stop_flowfile_server_process()
         _server_process = None
-        return False
+        return False, False
 
 
 def get_auth_token() -> Optional[str]:
@@ -361,7 +369,8 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
         if not flow_file_path:
             return False
         flow_graph.flow_settings = original_execution_settings
-        if not start_flowfile_server_process(module_name):
+        flow_running, flow_in_single_mode = start_flowfile_server_process(module_name)
+        if not flow_running:
             return False
 
         auth_token = get_auth_token()
@@ -371,7 +380,8 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
         flow_id = import_flow_to_editor(flow_file_path, auth_token)
 
         if flow_id is not None:
-            _open_flow_in_browser(flow_id)
+            if flow_in_single_mode:
+                _open_flow_in_browser(flow_id)
             return True
         else:
             return False

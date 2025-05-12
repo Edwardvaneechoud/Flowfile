@@ -49,10 +49,9 @@ def extend_app(app: FastAPI):
             return FileResponse(svg_path, media_type="image/svg+xml")
         return Response(status_code=404)
 
-    @app.get("/test")
-    async def get_worker_host():
-        from flowfile_core.configs.settings import WORKER_URL
-        return WORKER_URL
+    @app.get("/single_mode")
+    async def in_single_mode():
+        return os.environ.get('SINGLE_FILE_MODE', "0")
 
     @app.get("/ui", include_in_schema=False)
     async def web_ui_root():
