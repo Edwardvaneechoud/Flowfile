@@ -2,7 +2,7 @@ from typing import Dict, Set, List
 
 from flowfile_core.flowfile.analytics.graphic_walker import (get_initial_gf_data_from_ff,
                                                convert_ff_columns_to_gw_fields)
-from flowfile_core.flowfile.node_step.node_step import NodeStep
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas.input_schema import NodeExploreData
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput, DataModel, MutField, ViewField
 from flowfile_core.configs import logger
@@ -11,7 +11,7 @@ from flowfile_core.configs import logger
 class AnalyticsProcessor:
 
     @staticmethod
-    def process_graphic_walker_input(node_step: NodeStep) -> NodeExploreData:
+    def process_graphic_walker_input(node_step: FlowNode) -> NodeExploreData:
         node_explore_data: NodeExploreData = node_step.setting_input
         if hasattr(node_explore_data, 'graphic_walker_input'):
             graphic_walker_input = node_explore_data.graphic_walker_input
@@ -24,7 +24,7 @@ class AnalyticsProcessor:
         return node_explore_data
 
     @staticmethod
-    def create_graphic_walker_input(node_step: NodeStep,
+    def create_graphic_walker_input(node_step: FlowNode,
                                     graphic_walker_input: GraphicWalkerInput = None) -> GraphicWalkerInput:
         if not node_step.results.analysis_data_generator:
             fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())

@@ -1,5 +1,5 @@
 from flowfile_core.flowfile._extensions.real_time_interface import get_realtime_func_results
-from flowfile_core.flowfile.node_step.node_step import NodeStep
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas.output_model import InstantFuncResult
 from flowfile_core.utils.arrow_reader import read_top_n
 import pyarrow as pa
@@ -12,7 +12,7 @@ def get_first_row(arrow_path: str) -> pl.DataFrame:
     return pl.from_arrow(read_top_n(arrow_path, 1, strict=True))
 
 
-def get_instant_func_results(node_step: NodeStep, func_string: str) -> InstantFuncResult:
+def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFuncResult:
     if len(node_step.main_input) == 0:
         return InstantFuncResult(result='No input data connected, so cannot evaluate the result', success=None)
     node_input = node_step.main_input[0]

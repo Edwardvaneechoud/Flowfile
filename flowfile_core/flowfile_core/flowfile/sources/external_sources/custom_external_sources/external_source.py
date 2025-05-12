@@ -1,5 +1,5 @@
 from typing import Any, Dict, Generator, List, Optional, Callable
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 import polars as pl

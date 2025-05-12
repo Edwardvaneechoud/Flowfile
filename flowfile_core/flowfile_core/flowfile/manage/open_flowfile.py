@@ -2,7 +2,7 @@ from flowfile_core.schemas import schemas, input_schema
 from typing import List, Tuple
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility
 import pickle
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph
 from pathlib import Path
 
 
@@ -54,14 +54,14 @@ def determine_insertion_order(node_storage: schemas.FlowInformation):
     return ingest_order
 
 
-def open_flow(flow_path: Path) -> EtlGraph:
+def open_flow(flow_path: Path) -> FlowGraph:
     """
     Open a flowfile from a given path
     Args:
         flow_path (Path): The absolute or relative path to the flowfile
 
     Returns:
-        EtlGraph: The flowfile object
+        FlowGraph: The flowfile object
     """
     with open(str(flow_path), 'rb') as f:
         flow_storage_obj: schemas.FlowInformation = pickle.load(f)
@@ -70,7 +70,7 @@ def open_flow(flow_path: Path) -> EtlGraph:
     flow_storage_obj.flow_name = str(flow_path.stem)
     ensure_compatibility(flow_storage_obj, str(flow_path))
     ingestion_order = determine_insertion_order(flow_storage_obj)
-    new_flow = EtlGraph(flow_id=flow_storage_obj.flow_id, name=flow_storage_obj.flow_name,
+    new_flow = FlowGraph(flow_id=flow_storage_obj.flow_id, name=flow_storage_obj.flow_name,
                         flow_settings=flow_storage_obj.flow_settings)
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
@@ -121,7 +121,7 @@ def open_flow(flow_path: Path) -> EtlGraph:
     return new_flow
 
 
-def test_if_circular_connection(connection: Tuple[int, int], flow: EtlGraph):
+def test_if_circular_connection(connection: Tuple[int, int], flow: FlowGraph):
     to_node = flow.get_node(connection[1])
     leads_to_nodes_queue = [n for n in to_node.leads_to_nodes]
     circular_connection: bool = False

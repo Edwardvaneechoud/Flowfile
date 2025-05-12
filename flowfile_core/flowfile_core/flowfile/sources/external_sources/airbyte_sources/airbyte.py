@@ -3,7 +3,7 @@ from ast import literal_eval
 import polars as pl
 from typing import Any, Dict, Generator, List, Optional
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import (
     AirbyteProperty, JsonSchema, AirbyteResponse, AirbyteSettings

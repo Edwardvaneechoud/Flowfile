@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Generator, Callable, List, Any, Optional, Dict
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 import polars as pl
 
 

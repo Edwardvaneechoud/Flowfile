@@ -10,7 +10,7 @@ from flowfile_core.schemas.input_schema import (MinimalFieldInfo, FullDatabaseCo
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
                                                                                store_database_connection)
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from sqlalchemy import create_engine
 
 try:

@@ -8,7 +8,7 @@ from time import sleep
 from typing import Dict
 
 from flowfile_core import main
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
 from flowfile_core.routes.routes import (add_node,
                                          flow_file_handler,
                                          input_schema,
@@ -81,7 +81,7 @@ def get_join_data(flow_id: int, how: str = 'inner'):
             'auto_keep_left': True}
 
 
-def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
+def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
@@ -358,14 +358,15 @@ def test_get_flow_data_v2():
     client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
     response = client.get('/flow_data/v2', params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow data not retrieved'
+
     expected_data = {'node_edges': [
         {'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}],
         'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
                          'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
-                         'prod_ready': True, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
+                         'prod_ready': True, 'can_be_start': False, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
                         {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
                          'image': 'select.png', 'multi': False, 'node_group': 'transform',
-                         'prod_ready': True, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
+                         'prod_ready': True, 'can_be_start': False, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
     assert response.json() == expected_data, 'Flow data not correct'
 
 

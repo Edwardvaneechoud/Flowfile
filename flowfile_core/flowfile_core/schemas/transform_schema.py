@@ -19,8 +19,9 @@ def get_func_type_mapping(func: str):
 def string_concat(*column: str):
     return pl.col(column).cast(pl.Utf8).str.concat(delimiter=',')
 
+
 JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']
-FuzzyTypeLiteral = Literal['levenshtein','jaro', 'jaro_winkler', 'hamming', 'damerau_levenshtein', 'indel']
+FuzzyTypeLiteral = Literal['levenshtein', 'jaro', 'jaro_winkler', 'hamming', 'damerau_levenshtein', 'indel']
 
 
 @dataclass
@@ -257,7 +258,7 @@ class JoinInput:
 
     def __init__(self, join_mapping: List[JoinMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str],
-                 how: str = 'inner'):
+                 how: JoinStrategy = 'inner'):
         self.join_mapping = self.parse_join_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)
@@ -283,14 +284,19 @@ class JoinInput:
 
     @property
     def overlapping_records(self):
-        return self.left_select.new_cols & self.right_select.new_cols
+        if self.how in ('left', 'right', 'inner'):
+            #  Never consider join keys as overlapping records since they will be dropped after the join
+            return ((self.left_select.new_cols & self.right_select.new_cols) -
+                    (set(self.left_join_keys) & set(self.right_join_keys)))
+        else:
+            return self.left_select.new_cols & self.right_select.new_cols
 
     def auto_rename(self):
         overlapping_records = self.overlapping_records
         while len(overlapping_records) > 0:
             for right_col in self.right_select.renames:
                 if right_col.new_name in overlapping_records:
-                    right_col.new_name = 'right_' + right_col.new_name
+                    right_col.new_name = right_col.new_name + '_right'
             overlapping_records = self.overlapping_records
 
     @property
@@ -362,6 +368,10 @@ class FuzzyMatchInput(JoinInput):
         [setattr(v, "join_key", v.old_name in self._left_join_keys) for v in self.left_select.renames]
         [setattr(v, "join_key", v.old_name in self._right_join_keys) for v in self.right_select.renames]
         self.aggregate_output = aggregate_output
+
+    @property
+    def overlapping_records(self):
+        return self.left_select.new_cols & self.right_select.new_cols
 
     @property
     def fuzzy_maps(self) -> List[FuzzyMap]:
@@ -506,6 +516,7 @@ class TextToRowsInput:
     split_by_fixed_value: Optional[bool] = True
     split_fixed_value: Optional[str] = ','
     split_by_column: Optional[str] = None
+
 
 @dataclass
 class UnpivotInput:

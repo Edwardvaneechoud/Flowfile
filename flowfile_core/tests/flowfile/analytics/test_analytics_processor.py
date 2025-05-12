@@ -1,9 +1,9 @@
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph, add_connection, delete_connection
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection, delete_connection
 from flowfile_core.schemas import input_schema, schemas
-from flowfile_core.flowfile.flowfile_table.flowfile_table import FlowfileTable
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
 
 def get_starting_gw_node_settings() -> input_schema.NodeExploreData:
@@ -281,7 +281,7 @@ def create_graph(flow_id: int = 1):
     return graph
 
 
-def add_manual_input(graph: EtlGraph, data, node_id: int = 1):
+def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
@@ -353,8 +353,7 @@ def create_big_flow():
     return graph
 
 
-
-def add_node_promise_on_type(graph: EtlGraph, node_type: str, node_id: int, flow_id: int = 1):
+def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flow_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=flow_id, node_id=node_id, node_type=node_type)
     if node_type == 'explore_data':
         graph.add_initial_node_analysis(node_promise)
@@ -369,7 +368,7 @@ def expected_graphic_walker_data_not_run():
 
 def test_analytics_processor_create_graphic_walker_input_not_run():
     graph = create_graph()
-    input_data = (FlowfileTable.create_random(1000)
+    input_data = (FlowDataEngine.create_random(1000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
     add_manual_input(graph, data=input_data.to_pylist())

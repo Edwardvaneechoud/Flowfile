@@ -13,6 +13,7 @@ OutputConnectionClass = Literal['output-0', 'output-1', 'output-2', 'output-3', 
 InputConnectionClass = Literal['input-0', 'input-1', 'input-2', 'input-3', 'input-4',
                                'input-5', 'input-6', 'input-7', 'input-8', 'input-9']
 
+InputType = Literal["main", "left", "right"]
 
 class NewDirectory(BaseModel):
     source_path: str
@@ -251,7 +252,6 @@ class NodeManualInput(NodeBase):
 
 
 class NodeRead(NodeBase):
-    cache_results: bool = True
     received_file: ReceivedTable
 
 
@@ -419,7 +419,7 @@ class NodeUnion(NodeMultiInput):
     union_input: transform_schema.UnionInput = Field(default_factory=transform_schema.UnionInput)
 
 
-class NodeOutput(NodeBase):
+class NodeOutput(NodeSingleInput):
     output_settings: OutputSettings
 
 
@@ -433,8 +433,18 @@ class NodeConnection(BaseModel):
     output_connection: NodeOutputConnection
 
     @classmethod
-    def create_from_simple_input(cls, from_id: int, to_id: int):
-        node_input = NodeInputConnection(node_id=to_id, connection_class='input-0')
+    def create_from_simple_input(cls, from_id: int, to_id: int, input_type: InputType = "input-0"):
+
+        match input_type:
+            case "main":
+                connection_class: InputConnectionClass = "input-0"
+            case "right":
+                connection_class: InputConnectionClass = "input-1"
+            case "left":
+                connection_class: InputConnectionClass = "input-2"
+            case _:
+                connection_class: InputConnectionClass = "input-0"
+        node_input = NodeInputConnection(node_id=to_id, connection_class=connection_class)
         node_output = NodeOutputConnection(node_id=from_id, connection_class='output-0')
         return cls(input_connection=node_input, output_connection=node_output)
 
@@ -463,5 +473,5 @@ class NodeRecordCount(NodeSingleInput):
     pass
 
 
-class NodePolarsCode(NodeSingleInput):
+class NodePolarsCode(NodeMultiInput):
     polars_code_input: transform_schema.PolarsCodeInput

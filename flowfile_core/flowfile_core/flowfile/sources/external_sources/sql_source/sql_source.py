@@ -1,7 +1,7 @@
 from typing import Any, Dict, Generator, List, Optional, Literal, Tuple
 import polars as pl
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flowfile_table.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas.input_schema import MinimalFieldInfo, DatabaseSettings
 from sqlalchemy import Engine, inspect, create_engine, text
 from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret

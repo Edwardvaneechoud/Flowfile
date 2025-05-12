@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
-from flowfile_core.flowfile.FlowfileFlow import EtlGraph
+from flowfile_core.flowfile.FlowfileFlow import FlowGraph
 from flowfile_core.schemas.schemas import FlowSettings
 from flowfile_core.configs import logger
 
@@ -43,16 +43,16 @@ def create_unique_id() -> int:
 
 @dataclass
 class FlowfileHandler:
-    _flows: Dict[int, EtlGraph]
+    _flows: Dict[int, FlowGraph]
 
     def __init__(self):
         self._flows = {}
 
     @property
-    def flowfile_flows(self) -> List[EtlGraph]:
+    def flowfile_flows(self) -> List[FlowGraph]:
         return list(self._flows.values())
 
-    def __add__(self, other: EtlGraph) -> int:
+    def __add__(self, other: FlowGraph) -> int:
         self._flows[other.flow_id] = other
         return other.flow_id
 
@@ -71,10 +71,10 @@ class FlowfileHandler:
             raise 'flow already registered'
         else:
             name = flow_settings.name if flow_settings.name else flow_settings.flow_id
-            self._flows[flow_settings.flow_id] = EtlGraph(name=name, flow_id=flow_settings.flow_id, flow_settings=flow_settings)
+            self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_id=flow_settings.flow_id, flow_settings=flow_settings)
         return self.get_flow(flow_settings.flow_id)
 
-    def get_flow(self, flow_id: int) -> EtlGraph | None:
+    def get_flow(self, flow_id: int) -> FlowGraph | None:
         return self._flows.get(flow_id, None)
 
     def delete_flow(self, flow_id: int):
