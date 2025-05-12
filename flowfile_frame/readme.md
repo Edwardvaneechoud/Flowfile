@@ -16,9 +16,9 @@
 
 ```bash
 pip install Flowfile
-
-The `flowfile_frame` module is included as part of the main Flowfile package. The installation provides the complete Flowfile toolkit, including the FlowFile Frame API, Core (`flowfile_core`), and Worker (`flowfile_worker`) components.
 ```
+The `flowfile_frame` module is included as part of the main Flowfile package. The installation provides the complete Flowfile toolkit, including the FlowFile Frame API, Core (`flowfile_core`), and Worker (`flowfile_worker`) components.
+
 ## Quick Start
 
 ```python
