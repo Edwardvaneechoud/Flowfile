@@ -54,7 +54,7 @@ def extend_app(app: FastAPI):
         from flowfile_core.configs.settings import WORKER_URL
         return WORKER_URL
 
-    @app.get("/web", include_in_schema=False)
+    @app.get("/ui", include_in_schema=False)
     async def web_ui_root():
         """Serve the main index.html file for the web UI"""
         index_path = static_dir / "index.html"
@@ -62,7 +62,7 @@ def extend_app(app: FastAPI):
             return FileResponse(index_path)
         return {"error": "Web UI not installed. Build the frontend and install it in the package."}
 
-    @app.get("/web/{path:path}", include_in_schema=False)
+    @app.get("/ui/{path:path}", include_in_schema=False)
     async def serve_vue_app(path: str):
         """Serve static files or the index.html for client-side routing"""
         # Try to serve the requested file
@@ -72,7 +72,7 @@ def extend_app(app: FastAPI):
 
         # If it's a directory, redirect to add trailing slash
         if (static_dir / path).exists() and (static_dir / path).is_dir():
-            return RedirectResponse(f"/web/{path}/")
+            return RedirectResponse(f"/ui/{path}/")
 
         # For client-side routing, serve the index.html
         index_path = static_dir / "index.html"
@@ -143,11 +143,11 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     # Open browser if requested
     if open_browser:
         time.sleep(2)
-        webbrowser.open_new_tab(f"http://{host}:{port}/web")
+        webbrowser.open_new_tab(f"http://{host}:{port}/ui")
 
     print("\n" + "=" * 60)
     print("    FlowFile - Visual ETL Tool (Unified Mode)")
-    print(f"    Web UI: http://{host}:{port}/web")
+    print(f"    Web UI: http://{host}:{port}/ui")
     print(f"    API Docs: http://{host}:{port}/docs")
     print("=" * 60 + "\n")
 

@@ -19,7 +19,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "run" and args.component:
-        if args.component == "web":
+        if args.component == "ui":
             try:
                 flowfile.start_web_ui(
                     host=args.host,
@@ -42,19 +42,18 @@ def main():
         print("A framework combining visual ETL with a Polars-like API")
         print("\nUsage:")
         print("  # Start the FlowFile web UI with integrated services")
-        print("  flowfile run web")
+        print("  flowfile run ui")
         print("")
         print("  # Advanced: Run individual components")
         print("  flowfile run core  # Start only the core service")
         print("  flowfile run worker  # Start only the worker service")
         print("")
         print("  # Options")
-        print("  flowfile run web --host 0.0.0.0 --port 8080  # Custom host/port")
-        print("  flowfile run web --no-browser  # Don't open browser")
+        print("  flowfile run ui --host 0.0.0.0 --port 8080  # Custom host/port")
+        print("  flowfile run ui --no-browser  # Don't open browser")
         print("")
         print("  # Python API usage examples")
         print("  import flowfile as ff")
         print("  df = ff.read_csv('data.csv')")
         print("  result = df.filter(ff.col('value') > 10)")
         print("  ff.open_graph_in_editor(result)")
-        print("  ff.start_web_ui()")

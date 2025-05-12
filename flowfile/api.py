@@ -119,7 +119,7 @@ def build_server_command(module_name: str) -> List[str]:
                 "run",
                 module_name,
                 "run",
-                "web",
+                "ui",
                 "--no-browser",
                 f"--port={FLOWFILE_PORT}",
             ]
@@ -134,7 +134,7 @@ def build_server_command(module_name: str) -> List[str]:
         "-m",
         module_name,
         "run",
-        "web",
+        "ui",
         "--no-browser",
         f"--port={FLOWFILE_PORT}",
     ]
@@ -314,7 +314,7 @@ def _save_flow_to_location(
 def _open_flow_in_browser(flow_id: int) -> None:
     """Opens the specified flow ID in a browser tab if in unified mode."""
     if os.environ.get("FLOWFILE_MODE") == "electron":
-        flow_url = f"http://{FLOWFILE_HOST}:{FLOWFILE_PORT}/web/flow/{flow_id}"
+        flow_url = f"http://{FLOWFILE_HOST}:{FLOWFILE_PORT}/ui/flow/{flow_id}"
         logger.info(f"Unified mode detected. Opening imported flow in browser: {flow_url}")
         try:
             time.sleep(0.5)
@@ -335,7 +335,8 @@ def _cleanup_temporary_storage(temp_dir_obj: Optional[TemporaryDirectory]) -> No
             logger.error(f"Error cleaning up temporary directory {temp_dir_obj.name}: {e}")
 
 
-def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] = None, module_name: str = DEFAULT_MODULE_NAME) -> bool:
+def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] = None,
+                         module_name: str = DEFAULT_MODULE_NAME) -> bool:
     """
     Save the ETL graph, ensure the Flowfile server is running (starting it
     if necessary), import the graph via API, and open it in a new browser
@@ -353,10 +354,13 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
     """
     temp_dir_obj: Optional[TemporaryDirectory] = None
     try:
+        original_execution_settings = flow_graph.flow_settings.model_copy()
+        flow_graph.flow_settings.execution_location = "auto"
+        flow_graph.flow_settings.execution_mode = "Development"
         flow_file_path, temp_dir_obj = _save_flow_to_location(flow_graph, storage_location)
         if not flow_file_path:
             return False
-
+        flow_graph.flow_settings = original_execution_settings
         if not start_flowfile_server_process(module_name):
             return False
 

@@ -40,14 +40,6 @@ result = filtered_df.with_columns(
 # Save the resulting ETL graph
 result.save_graph("my_pipeline.flowfile")
 
-# The saved .flowfile can be opened in the Flowfile Designer UI
-# You can open the Designer UI through:
-# 1. Flowfile Desktop application (recommended)
-# 2. Web interface if using Docker setup
-# 3. Or programmatically (if the Designer is accessible):
-from flowfile_frame.utils import open_graph_in_editor
-open_graph_in_editor(result.flow_graph, "my_pipeline.flowfile")
-
 # Execute and get data as a Polars DataFrame
 result_data = result.collect()
 ```
