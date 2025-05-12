@@ -142,7 +142,7 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
 
     # Open browser if requested
     if open_browser:
-        time.sleep(2)
+        time.sleep(5)
         webbrowser.open_new_tab(f"http://{host}:{port}/ui")
 
     print("\n" + "=" * 60)

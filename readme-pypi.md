@@ -44,8 +44,8 @@ This will:
 
 **Options:**
 ```bash
-# Customize host and port
-flowfile run ui --host 0.0.0.0 --port 8080
+# Customize host
+flowfile run ui --host 0.0.0.0
 
 # Start without opening a browser
 flowfile run ui --no-browser
@@ -181,8 +181,8 @@ flowfile
 flowfile run ui [options]
 
 # Run individual services
-flowfile run core --host 0.0.0.0 --port 8080
-flowfile run worker --host 0.0.0.0 --port 8079
+flowfile run core --host 0.0.0.0 --port 63578
+flowfile run worker --host 0.0.0.0 --port 63579
 ```
 
 ## 📚 Resources

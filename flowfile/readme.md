@@ -29,9 +29,6 @@ You can start the Flowfile web UI using either the Python module or the command-
 # Start the web UI with default settings
 flowfile run ui
 
-# Customize host and port
-flowfile run ui --host 0.0.0.0 --port 8080
-
 # Start without automatically opening a browser window
 flowfile run ui --no-browser
 ```
@@ -45,7 +42,7 @@ import flowfile
 flowfile.start_web_ui()
 
 # Customize host, port, and browser launch
-flowfile.start_web_ui(host="0.0.0.0", port=8080, open_browser=False)
+flowfile.start_web_ui(host="0.0.0.0", port=63578, open_browser=False)
 ```
 
 ## Architecture Overview
@@ -107,10 +104,10 @@ For development or specialized deployments, you can run the components separatel
 
 ```bash
 # Run only the core service
-flowfile run core --host 0.0.0.0 --port 8080
+flowfile run core --host 0.0.0.0 --port 63578
 
 # Run only the worker service
-flowfile run worker --host 0.0.0.0 --port 8081
+flowfile run worker --host 0.0.0.0 --port 63579
 ```
 
 ## Troubleshooting
