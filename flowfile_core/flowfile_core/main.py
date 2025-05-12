@@ -54,6 +54,8 @@ origins = [
     "http://localhost:8081",
     "http://localhost:4173",
     "http://localhost:4174",
+    "http://localhost:63578",
+    "http://127.0.0.1:63578"
 ]
 
 app.add_middleware(
@@ -117,7 +119,8 @@ def run(host: str = None, port: int = None):
         app,
         host=host,
         port=port,
-        loop="asyncio"
+        loop="asyncio",
+        log_level="warning",
     )
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally

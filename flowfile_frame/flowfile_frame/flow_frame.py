@@ -1801,7 +1801,7 @@ class FlowFrame:
     @property
     def columns(self) -> List[str]:
         """Get the column names."""
-        return self.data.columns
+        return self.data.collect_schema().names()
 
     @property
     def dtypes(self) -> List[pl.DataType]:

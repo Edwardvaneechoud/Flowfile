@@ -26,7 +26,6 @@ from flowfile_frame.flow_frame import (  # noqa: F401
     read_csv, read_parquet, from_dict, concat
 )
 
-# Import Polars data types for user convenience
 from polars.datatypes import (  # noqa: F401
     # Integer types
     Int8, Int16, Int32, Int64, Int128,

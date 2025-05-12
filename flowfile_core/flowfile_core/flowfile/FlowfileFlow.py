@@ -717,6 +717,7 @@ class FlowGraph:
 
     def add_output(self, output_file: input_schema.NodeOutput):
         def _func(df: FlowDataEngine):
+            output_file.output_settings.populate_abs_file_path()
             execute_remote = self.execution_location != 'local'
             df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id,
                       execute_remote=execute_remote)
@@ -726,14 +727,14 @@ class FlowGraph:
             input_node: FlowNode = self.get_node(output_file.node_id).node_inputs.main_inputs[0]
 
             return input_node.schema
-
+        input_node_id = getattr(output_file, "depending_on_id") if hasattr(output_file, 'depending_on_id') else None
         self.add_node_step(node_id=output_file.node_id,
                            function=_func,
                            input_columns=[],
                            node_type='output',
                            setting_input=output_file,
                            schema_callback=schema_callback,
-                           input_node_ids=[output_file.depending_on_id])
+                           input_node_ids=[input_node_id])
 
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
         logger.info("Adding database reader")
@@ -982,6 +983,7 @@ class FlowGraph:
         input_file.received_file.set_absolute_filepath()
 
         def _func():
+            input_file.received_file.set_absolute_filepath()
             if input_file.received_file.file_type == 'parquet':
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:

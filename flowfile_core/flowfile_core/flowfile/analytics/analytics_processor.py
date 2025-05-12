@@ -1,7 +1,7 @@
 from typing import Dict, Set, List
 
 from flowfile_core.flowfile.analytics.graphic_walker import (get_initial_gf_data_from_ff,
-                                               convert_ff_columns_to_gw_fields)
+                                                             convert_ff_columns_to_gw_fields)
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas.input_schema import NodeExploreData
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput, DataModel, MutField, ViewField

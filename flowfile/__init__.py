@@ -7,9 +7,16 @@ This package ties together the FlowFile ecosystem components:
 - flowfile_worker: Computation engine
 """
 
-__version__ = "0.2.1"
+__version__ = "0.3.1"
 
-# Import the key components from flowfile_frame
+import os
+import logging
+
+os.environ['WORKER_PORT'] = "63578"
+os.environ['SINGLE_FILE_MODE'] = "1"
+
+from flowfile.web import start_server as start_web_ui
+from flowfile.api import open_graph_in_editor
 from flowfile_frame.flow_frame import (
     FlowFrame, read_csv, read_parquet, from_dict, concat
 )
@@ -18,7 +25,7 @@ from flowfile_frame.expr import (
     sum, min, max, mean, count, when
 )
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import create_flow_graph, open_graph_in_editor
+from flowfile_frame.utils import create_flow_graph
 from flowfile_frame.selectors import (
     numeric, float_, integer, string, temporal,
     datetime, date, time, duration, boolean,
@@ -26,7 +33,6 @@ from flowfile_frame.selectors import (
     by_dtype, contains, starts_with, ends_with, matches
 )
 
-# Import Polars data types for convenience
 from polars.datatypes import (
     Int8, Int16, Int32, Int64, Int128,
     UInt8, UInt16, UInt32, UInt64,
@@ -38,7 +44,6 @@ from polars.datatypes import (
     DataType, DataTypeClass, Field
 )
 
-# Define what's publicly available from the package
 __all__ = [
     # Core FlowFrame classes
     'FlowFrame', 'GroupByFrame',
@@ -68,4 +73,6 @@ __all__ = [
     'Date', 'Time', 'Datetime', 'Duration',
     'Categorical', 'Decimal', 'Enum', 'Unknown',
     'DataType', 'DataTypeClass', 'Field',
+    'start_web_ui'
 ]
+logging.getLogger("PipelineHandler").setLevel(logging.WARNING)

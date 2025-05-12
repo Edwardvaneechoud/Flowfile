@@ -4,11 +4,11 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write  # IMPORTANT: mandatory for trusted publishing to PyPI
+  id-token: write
 
 jobs:
   build:
@@ -20,6 +20,28 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      # Add Node.js setup for Vue
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # Build Vue app
+      - name: Build Vue app for web
+        run: |
+          cd flowfile_frontend
+          npm install
+          npm run build:web
+          
+          # Create the static directory if it doesn't exist
+          mkdir -p ../flowfile/web/static
+          touch ../flowfile/web/__init__.py
+
+          # Copy the built files to the Python package
+          cp -r build/renderer/* ../flowfile/web/static/
+          echo "Contents of web/static directory:"
+          ls -la ../flowfile/web/static/
 
       - name: Install Poetry
         run: |
@@ -40,10 +62,11 @@ jobs:
           name: dist
           path: dist/
 
+  # The release job remains the same
   release:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi  # Make sure you have this environment set up in your repository settings
+    environment: pypi
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
