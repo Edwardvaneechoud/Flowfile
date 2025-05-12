@@ -57,8 +57,8 @@ result_data = result.collect()
 One of the most powerful features of FlowFile Frame is the ability to visualize, save, and share your data transformation pipelines:
 
 ```python
-import flowfile_frame as ff
-from flowfile_frame.utils import open_graph_in_editor
+import flowfile as ff
+from flowfile import open_graph_in_editor
 
 # Create a complex data pipeline
 df = ff.from_dict({
