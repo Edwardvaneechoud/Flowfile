@@ -5,7 +5,6 @@ from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame import FlowFrame, read_parquet, from_dict, concat
 from flowfile_frame.expr import col, lit, cum_count
 from flowfile_frame import selectors as sc
-from flowfile_frame.utils import open_graph_in_editor
 
 
 def test_create_empty_flow_frame():

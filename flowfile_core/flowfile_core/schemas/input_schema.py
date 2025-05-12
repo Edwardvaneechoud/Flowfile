@@ -164,8 +164,7 @@ class OutputSettings(BaseModel):
 
     @model_validator(mode='after')
     def populate_abs_file_path(self):
-        if not self.abs_file_path:
-            self.set_absolute_filepath()
+        self.set_absolute_filepath()
         return self
 
 
@@ -296,12 +295,6 @@ class DatabaseSettings(BaseModel):
     table_name: Optional[str] = None
     query: Optional[str] = None
     query_mode: Literal['query', 'table', 'reference'] = 'table'
-
-    @model_validator(mode='after')
-    def validate_table_or_query(self):
-        if (not self.table_name and not self.query) and self.query_mode == 'inline':
-            raise ValueError("Either 'table' or 'query' must be provided")
-        return self
 
     @model_validator(mode='after')
     def validate_table_or_query(self):

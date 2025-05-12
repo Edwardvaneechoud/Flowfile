@@ -8,5 +8,6 @@ def main():
     print("       result = df.filter(ff.col('a') > 1)")
     print("       print(result.collect())")
 
+
 if __name__ == "__main__":
     main()

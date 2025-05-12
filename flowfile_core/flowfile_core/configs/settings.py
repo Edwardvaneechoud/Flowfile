@@ -15,6 +15,7 @@ from starlette.datastructures import Secret
 DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
+SINGLE_FILE_MODE: bool = os.environ.get("SINGLE_FILE_MODE", "0") == "1"
 
 
 def parse_args():
@@ -29,33 +30,9 @@ def parse_args():
     parser.add_argument(
         "--worker-port",
         type=int,
-        default=DEFAULT_WORKER_PORT,
         help="Port for the worker process",
     )
-
-    # Use known_args to handle PyInstaller's extra args
     args = parser.parse_known_args()[0]
-
-    # Validate arguments
-    if args.port < 1 or args.port > 65535:
-        raise ValueError(
-            f"Invalid port number: {args.port}. Port must be between 1 and 65535."
-        )
-
-    if args.worker_port < 1 or args.worker_port > 65535:
-        raise ValueError(
-            f"Invalid worker port number: {args.worker_port}. Port must be between 1 and 65535."
-        )
-
-    # Check if host is valid (basic check)
-    if not args.host:
-        raise ValueError("Host cannot be empty")
-
-    # Check that server and worker ports are different
-    if args.port == args.worker_port:
-        raise ValueError(
-            f"Server port ({args.port}) and worker port ({args.worker_port}) must be different"
-        )
 
     return args
 
@@ -80,7 +57,6 @@ def get_default_worker_url(worker_port=None):
     # Check for Docker environment first
     worker_host = os.getenv("WORKER_HOST", None)
 
-    # Use the provided port if available, otherwise get from env or default
     if worker_port is None:
         worker_port = os.getenv("WORKER_PORT", DEFAULT_WORKER_PORT)
 
@@ -88,22 +64,21 @@ def get_default_worker_url(worker_port=None):
     worker_port = int(worker_port) if isinstance(worker_port, str) else worker_port
 
     if worker_host:
-        return f"http://{worker_host}:{worker_port}"
+        worker_url = f"http://{worker_host}:{worker_port}"
 
-    if platform.system() == "Windows":
-        return f"http://127.0.0.1:{worker_port}"
+    elif platform.system() == "Windows":
+        worker_url = f"http://127.0.0.1:{worker_port}"
     else:
-        return f"http://0.0.0.0:{worker_port}"
+        worker_url = f"http://0.0.0.0:{worker_port}"
+    worker_url += "/worker" if SINGLE_FILE_MODE else ""
+    return worker_url
 
 
-# Get server arguments
 args = parse_args()
 
 SERVER_HOST = args.host if args.host is not None else DEFAULT_SERVER_HOST
 SERVER_PORT = args.port if args.port is not None else DEFAULT_SERVER_PORT
 WORKER_PORT = args.worker_port if args.worker_port is not None else int(os.getenv("WORKER_PORT", DEFAULT_WORKER_PORT))
-
-
 # Worker configuration
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 

@@ -56,7 +56,7 @@ build_backends = "build_backends.main:main"
 build_backends_prd = "build_backends.main_prd:main"
 start_postgres = "test_utils.postgres.commands:start_postgres"
 stop_postgres = "test_utils.postgres.commands:stop_postgres"
-flowframe = "flowframe.__main__:main"  # Add this line
+flowfile = "flowfile.__main__:main"
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
