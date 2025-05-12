@@ -67,14 +67,14 @@ df = ff.from_dict({
     "value": [100, 200, 150, 300, 250]
 })
 
-pipeline = (
+aggregated_df = (
     df
     .filter(ff.col("value") > 120)
     .with_columns(
-        (ff.col("value") * 1.1).alias("adjusted_value"),
-        ff.when(ff.col("category") == "A").then("Premium")
-          .when(ff.col("category") == "B").then("Standard")
-          .otherwise("Basic").alias("tier")
+        [(ff.col("value") * 1.1).alias("adjusted_value"),
+        ff.when(ff.col("category") == "A").then(ff.lit("Premium"))
+          .when(ff.col("category") == "B").then(ff.lit("Standard"))
+          .otherwise(ff.lit("Basic")).alias("tier")]
     )
     .group_by("tier")
     .agg([
@@ -85,15 +85,14 @@ pipeline = (
     .sort("total_value", descending=True)
 )
 
-# Save the ETL graph to a .flowfile file
-pipeline.save_graph("complex_analysis.flowfile")
+aggregated_df.write_csv("agg_output.csv")
+
 
 # Open the saved graph in the FlowFile Designer UI
 # This allows you to visualize, edit, and share your pipeline
-open_graph_in_editor(pipeline.flow_graph, "complex_analysis.flowfile")
+# !You need to have the latest version of flowfile installed or running locally to view this.
+open_graph_in_editor(aggregated_df.flow_graph)
 
-# You can also load a previously saved graph and modify it
-# loaded_graph = ff.load_graph("complex_analysis.flowfile")
 ```
 
 ### Graph Visualization Benefits

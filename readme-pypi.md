@@ -46,31 +46,18 @@ FlowFile Frame is a Python library that provides a familiar Polars-like API for 
 ### FlowFrame Quick Start
 
 ```python
-import flowfile_frame as ff # Available after 'pip install Flowfile'
+import flowfile_frame as ff
+from flowfile_frame.utils import open_graph_in_editor
 
-# Create a dataframe from a dictionary
-data = {
-    "name": ["Alice", "Bob", "Charlie", "David", "Eve"],
-    "age": [25, 35, 28, 42, 31],
-    "salary": [50000, 60000, 55000, 75000, 65000]
-}
-df = ff.from_dict(data)
+# Create a complex data pipeline
+df = ff.from_dict({
+    "id": [1, 2, 3, 4, 5],
+    "category": ["A", "B", "A", "C", "B"],
+    "value": [100, 200, 150, 300, 250]
+})
 
-# Basic transformations
-filtered_df = df.filter(ff.col("age") > 30)
-result_ff = filtered_df.with_columns(
-    (ff.col("salary") * 1.1).alias("new_salary")
-)
+open_graph_in_editor(df.flow_graph)
 
-# The operations have built a graph, which can be saved
-result_ff.save_graph("my_pipeline.flowfile")
-
-# The saved 'my_pipeline.flowfile' file can then be opened and visualized 
-# in the Flowfile Designer UI (Desktop app or web interface).
-
-# Execute and get data (as a Polars DataFrame)
-result_data_polars = result_ff.collect()
-print(result_data_polars)
 ```
 
 ### Key FlowFrame Features
@@ -95,6 +82,7 @@ df = ff.from_dict({
     "age": [25, 35, 28]
 })
 
+flow_graph = df.flow_graph
 # Reading data
 # df_csv = ff.read_csv("data.csv")
 # df_parquet = ff.read_parquet("data.parquet")
@@ -109,9 +97,9 @@ result = df.select(
 )
 
 # Add new columns
-df_with_cols = df.with_columns(
+df_with_cols = df.with_columns([
     (col("age") + 10).alias("future_age"),
-    when(col("age") >= 30).then("Senior").otherwise("Junior").alias("status")
+    when(col("age") >= 30).then(ff.lit("Senior")).otherwise(ff.lit("Junior")).alias("status")]
 )
 
 # Group by and aggregate
@@ -125,12 +113,12 @@ sales_by_region = df_sales.group_by("region").agg([
 ])
 
 # Joins
-customers = ff.from_dict({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]})
-orders = ff.from_dict({"id": [101, 102], "customer_id": [1, 2], "amount": [100, 200]})
+customers = ff.from_dict({"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]}, flow_graph=flow_graph)
+orders = ff.from_dict({"id": [101, 102], "customer_id": [1, 2], "amount": [100, 200]}, flow_graph=flow_graph)
 joined = customers.join(orders, left_on="id", right_on="customer_id")
 
 # Save and visualize ETL graph
-from flowfile_frame.utils import open_graph_in_editor
+
 result.save_graph("my_pipeline.flowfile")
 # open_graph_in_editor(result.flow_graph, "my_pipeline.flowfile") # Opens in Designer UI if installed
 ```

@@ -1,14 +1,11 @@
 import pytest
-from flowfile_frame import FlowFrame, col, lit, create_etl_graph, when
+from flowfile_frame import FlowFrame, col, lit, create_flow_graph, when
 import polars as pl
 
 
-class A():
-    graph = create_etl_graph()
-
 class TestJoins:
     """Tests focusing specifically on join operations."""
-    graph = create_etl_graph()
+    graph = create_flow_graph()
     @pytest.fixture
     def customers(self):
         """Create a customer dataset."""

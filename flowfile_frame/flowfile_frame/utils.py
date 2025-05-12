@@ -33,7 +33,7 @@ def _generate_id() -> int:
     return int(uuid.uuid4().int % 100000)
 
 
-def create_etl_graph() -> FlowGraph:
+def create_flow_graph() -> FlowGraph:
     flow_id = _generate_id()
     flow_settings = schemas.FlowSettings(
         flow_id=flow_id,

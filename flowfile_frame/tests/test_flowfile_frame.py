@@ -1,11 +1,9 @@
 import flowfile_frame as ff
 from pathlib import Path
-import os
-import platform
 
 
 def create_flow_frame_with_parquet_read() -> ff.FlowFrame:
-    flow_graph = ff.create_etl_graph()
+    flow_graph = ff.create_flow_graph()
     flow_graph.execution_location = 'local'
     file_path = str(Path('flowfile_core') / 'tests' / 'support_files' / 'data' / 'fake_data.parquet')
     input_df = ff.read_parquet(file_path=file_path, description="fake_data_df", flow_graph=flow_graph)
