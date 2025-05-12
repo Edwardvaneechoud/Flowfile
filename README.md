@@ -111,7 +111,7 @@ npm install
 npm run build      # All platforms
 ```
 
-### 2. Docker Setup
+#### 2. Docker Setup
 Perfect for quick testing, development or deployment scenarios. Runs all services in containers with proper networking and volume management:
 ```bash
 # Clone and start all services
@@ -128,7 +128,7 @@ Just place your files that you want to transform in the directory in shared_data
 
 Docker Compose is also excellent for development, as it automatically sets up all required services and ensures proper communication between them. Code changes in the mounted volumes will be reflected in the running containers.
 
-### 3. Manual Setup (Development)
+#### 3. Manual Setup (Development)
 Ideal for development work when you need direct access to all services and hot-reloading:
 
 ```bash
