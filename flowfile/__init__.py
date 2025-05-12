@@ -18,7 +18,7 @@ from flowfile_frame.expr import (
     sum, min, max, mean, count, when
 )
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import create_etl_graph, open_graph_in_editor
+from flowfile_frame.utils import create_flow_graph, open_graph_in_editor
 from flowfile_frame.selectors import (
     numeric, float_, integer, string, temporal,
     datetime, date, time, duration, boolean,
@@ -57,7 +57,7 @@ __all__ = [
     'by_dtype', 'contains', 'starts_with', 'ends_with', 'matches',
 
     # Utilities
-    'create_etl_graph', 'open_graph_in_editor',
+    'create_flow_graph', 'open_graph_in_editor',
 
     # Data types from Polars
     'Int8', 'Int16', 'Int32', 'Int64', 'Int128',

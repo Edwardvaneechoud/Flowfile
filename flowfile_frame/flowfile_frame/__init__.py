@@ -4,7 +4,7 @@
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
 
-from flowfile_frame.utils import create_etl_graph  # noqa: F401
+from flowfile_frame.utils import create_flow_graph  # noqa: F401
 
 # Commonly used functions
 from flowfile_frame.expr import (  # noqa: F401

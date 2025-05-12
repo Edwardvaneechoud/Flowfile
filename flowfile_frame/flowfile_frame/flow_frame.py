@@ -16,7 +16,7 @@ from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import _parse_inputs_as_iterable, create_etl_graph
+from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 
 node_id_counter = 0
@@ -92,7 +92,7 @@ class FlowFrame:
 
         # Create a new flow graph if none is provided
         if flow_graph is None:
-            flow_graph = create_etl_graph()
+            flow_graph = create_flow_graph()
 
         flow_id = flow_graph.flow_id
 
@@ -198,7 +198,7 @@ class FlowFrame:
 
         # Initialize graph
         if flow_graph is None:
-            flow_graph = create_etl_graph()
+            flow_graph = create_flow_graph()
         self.flow_graph = flow_graph
         # Set up data
         if isinstance(data, FlowDataEngine):
@@ -1922,7 +1922,7 @@ def read_csv(file_path, *, flow_graph: FlowGraph = None, separator: str = ';',
     # Create new node ID
     node_id = generate_node_id()
     if flow_graph is None:
-        flow_graph = create_etl_graph()
+        flow_graph = create_flow_graph()
 
     flow_id = flow_graph.flow_id
 
@@ -1982,7 +1982,7 @@ def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = 
     node_id = generate_node_id()
 
     if flow_graph is None:
-        flow_graph = create_etl_graph()
+        flow_graph = create_flow_graph()
 
     flow_id = flow_graph.flow_id
 
@@ -2028,7 +2028,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     node_id = generate_node_id()
 
     if not flow_graph:
-        flow_graph = create_etl_graph()
+        flow_graph = create_flow_graph()
     flow_id = flow_graph.flow_id
 
     input_node = input_schema.NodeManualInput(

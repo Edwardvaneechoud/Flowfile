@@ -1,14 +1,11 @@
 import pytest
-from flowfile_frame import FlowFrame, col, lit, create_etl_graph, when
+from flowfile_frame import FlowFrame, col, lit, create_flow_graph, when
 import polars as pl
 
 
-class A():
-    graph = create_etl_graph()
-
 class TestJoins:
     """Tests focusing specifically on join operations."""
-    graph = create_etl_graph()
+    graph = create_flow_graph()
     @pytest.fixture
     def customers(self):
         """Create a customer dataset."""
@@ -19,7 +16,6 @@ class TestJoins:
                       "david@example.com", "eve@example.com"],
             "country": ["USA", "Canada", "UK", "Australia", "France"]
         }
-        customers = FlowFrame(data, flow_graph=A.graph)
         return FlowFrame(data, flow_graph=self.graph)
 
     @pytest.fixture
@@ -32,7 +28,6 @@ class TestJoins:
             "order_date": ["2023-01-15", "2023-02-10", "2023-03-05",
                            "2023-04-20", "2023-05-15", "2023-06-10", "2023-07-05"]
         }
-        orders = FlowFrame(data, flow_graph=A.graph)
         return FlowFrame(data, flow_graph=self.graph)
 
     @pytest.fixture
@@ -44,7 +39,6 @@ class TestJoins:
             "category": ["Electronics", "Electronics", "Electronics", "Computer", "Computer"],
             "price": [1200.00, 800.00, 500.00, 350.00, 280.00]
         }
-        products = FlowFrame(data, flow_graph=A.graph)
         return FlowFrame(data, flow_graph=self.graph)
 
     @pytest.fixture
@@ -56,7 +50,6 @@ class TestJoins:
             "quantity": [1, 1, 2, 1, 1, 3, 1, 2],
             "price_at_order": [1200.00, 800.00, 500.00, 350.00, 1200.00, 800.00, 280.00, 500.00]
         }
-        order_items = FlowFrame(data, flow_graph=A.graph)
         return FlowFrame(data, flow_graph=self.graph)
 
     def test_inner_join(self, customers, orders):

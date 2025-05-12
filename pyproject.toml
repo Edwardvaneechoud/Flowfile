@@ -1,7 +1,8 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.2.2"
-description = "Project combining flowfile_designer (backend) and flowfile_worker (compute offloader)"
+version = "0.3.0"
+description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
+readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
 packages = [
     { include = "flowfile_core", from = "flowfile_core" },
@@ -35,7 +36,7 @@ gspread = "~6.1.3"
 google-api-python-client = "~2.149.0"
 polars-grouper = "~0.3.0"
 polars-ds = ">=0.6.0"
-airbyte = { url = "https://github.com/Edwardvaneechoud/PyAirbyte/releases/download/v0.20.1.dev/airbyte-0.20.1-py3-none-any.whl" }
+pyairbyte-flowfile = "0.20.2"
 airbyte-cdk = "6.47.2"
 pytest = "^8.3.4"
 aiofiles = "^24.1.0"
