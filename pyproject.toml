@@ -12,6 +12,10 @@ packages = [
     { include = "test_utils" },
     { include = "flowfile" },
 ]
+include = [
+    { path = "flowfile/web/static/**/*", format = "sdist" },
+    { path = "flowfile/web/static/**/*", format = "wheel" }
+]
 
 [tool.poetry.dependencies]
 pyinstaller = "^6.11.0"
