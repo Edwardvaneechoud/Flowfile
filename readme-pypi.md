@@ -29,7 +29,6 @@ The `Flowfile` PyPI package provides the backend services and the `flowfile_fram
 - **Core (`flowfile_core`)** (FastAPI): The main ETL engine using Polars for high-performance data transformations. Typically runs on port `:63578`.
 - **Worker (`flowfile_worker`)** (FastAPI): Handles computation-intensive tasks and caching of data operations, supporting the Core service. Typically runs on port `:63579`.
 - **FlowFrame API (`flowfile_frame`)**: A Python library with a Polars-like API for defining data manipulation pipelines programmatically, which also generates an underlying ETL graph compatible with the Flowfile ecosystem.
-- **Designer** (Electron + Vue): Visual interface for building data flows, available as a desktop application or web interface.
 
 Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations.
 
@@ -140,7 +139,7 @@ For more detailed information on all available operations, including pivoting, w
 
 ## 🔥 Example Use Cases
 
-The Flowfile system is great for:
+Flowfile is great for:
 
 - **Data Cleaning & Transformation**
   - Complex joins (fuzzy matching)
