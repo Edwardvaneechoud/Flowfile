@@ -9,8 +9,8 @@ def main():
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument("command", nargs="?", choices=["run"], help="Command to execute")
-    parser.add_argument("component", nargs="?", choices=["web", "core", "worker"],
-                        help="Component to run (web, core, or worker)")
+    parser.add_argument("component", nargs="?", choices=["ui", "core", "worker"],
+                        help="Component to run (ui, core, or worker)")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
