@@ -189,8 +189,8 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
                 logger.info("Server started successfully.")
                 return True, check_if_in_single_mode()
             if i % 5 == 0 and i > 0:
-                print("Still waiting for Flowfile UI to start.")
-
+                print("Waiting for Flowfile UI to start.")
+            time.sleep(1)
         else:
             logger.error("Failed to start server: API did not become responsive.")
             if _server_process and _server_process.stderr:
