@@ -9,6 +9,7 @@ import atexit
 import logging
 import webbrowser
 import shutil
+
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, Tuple, List
 from subprocess import Popen
@@ -181,12 +182,15 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
         atexit.register(stop_flowfile_server_process)
 
         logger.info("Waiting for server to initialize...")
-
-        for i in range(10):
-            time.sleep(1)
+        print("Starting the ui service")
+        for i in range(20):
             if is_flowfile_running():
+                print("Flowfile UI started.")
                 logger.info("Server started successfully.")
                 return True, check_if_in_single_mode()
+            if i % 5 == 0 and i > 0:
+                print("Still waiting for Flowfile UI to start.")
+
         else:
             logger.error("Failed to start server: API did not become responsive.")
             if _server_process and _server_process.stderr:
