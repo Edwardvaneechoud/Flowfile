@@ -341,15 +341,6 @@ class SampleUsers(ExternalSource):
     size: int = 100
 
 
-class GoogleSheet(ExternalSource):
-    GOOGLE_SHEET: bool
-    class_name: str = "google_sheet"
-    access_token: SecretStr = None
-    sheet_id: str
-    worksheet_name: str
-    sheet_name: str
-
-
 class AirbyteReader(AirbyteConfig):
     class_name: Optional[str] = "airbyte_reader"
     fields: Optional[List[MinimalFieldInfo]] = None
@@ -362,7 +353,7 @@ class AccessToken(BaseModel):
 
 class NodeExternalSource(NodeBase):
     identifier: str
-    source_settings: SampleUsers | GoogleSheet
+    source_settings: SampleUsers
 
 
 class NodeAirbyteReader(NodeExternalSource):

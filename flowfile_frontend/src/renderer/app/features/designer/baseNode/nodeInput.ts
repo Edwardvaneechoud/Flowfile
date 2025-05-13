@@ -128,18 +128,10 @@ export interface SampleUsers extends ExternalSource {
   size: number
 }
 
-export interface GoogleSheet extends ExternalSource {
-  GOOGLE_SHEET: boolean
-  class_name: string
-  access_token: string
-  sheet_id: string
-  worksheet_name: string
-  sheet_name: string
-}
 
 export interface NodeExternalSource extends NodeBase {
   identifier: string
-  source_settings: SampleUsers | GoogleSheet
+  source_settings: SampleUsers
 }
 
 interface ReceivedTable {
@@ -353,7 +345,7 @@ export interface NodeGraphSolver extends NodeSingleInput {
 
 export interface NodeFormula extends NodeSingleInput {
   function: FormulaInput
-} 
+}
 
 export interface DatabaseConnection {
   database_type: "postgresql" | "mysql"

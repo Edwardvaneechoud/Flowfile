@@ -203,8 +203,7 @@ class FlowGraph:
         sample_size: int = 10000
 
         def analysis_preparation(flowfile_table: FlowDataEngine):
-
-            if flowfile_table.number_of_records<0:
+            if flowfile_table.number_of_records < 0:
 
                 number_of_records = ExternalDfFetcher(
                     lf=flowfile_table.data_frame,
@@ -219,7 +218,7 @@ class FlowGraph:
 
             external_sampler = ExternalDfFetcher(
                 lf=flowfile_table.data_frame,
-                file_ref=node.hash,
+                file_ref="__gf_walker"+node.hash,
                 wait_on_completion=True,
                 node_id=node.node_id,
                 flow_id=self.flow_id,
@@ -900,9 +899,6 @@ class FlowGraph:
         if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
             logger.info('Using provided schema in the node')
 
-    def add_google_sheet(self, external_source_input: input_schema.NodeExternalSource):
-        logger.info('Adding google sheet reader')
-        self.add_external_source(external_source_input)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding sql source')

@@ -4,8 +4,6 @@ from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault, TransformTy
 nodes_list: List[NodeTemplate] = [
     NodeTemplate(name='Read Airbyte', item='airbyte_reader', input=0, output=1, image='airbyte.png',
                  node_group='input'),
-    NodeTemplate(name='Google sheets', item='google_sheet', input=0, output=1,
-                 image='google_sheet.png', node_group='input', prod_ready=False),
     NodeTemplate(name='External source', item='external_source', input=0, output=1,
                  image='external_source.png', node_group='input', prod_ready=False),
     NodeTemplate(name='Manual input', item='manual_input', input=0, output=1,
@@ -51,14 +49,14 @@ nodes_list: List[NodeTemplate] = [
 nodes_list.sort(key=lambda x: x.name)
 
 output = ['Explore data', 'Write data', 'Write to Database']
-_input = ['Read Airbyte', 'Google sheets', 'Manual input', 'Read data', 'External source', 'Read from Database']
+_input = ['Read Airbyte',  'Manual input', 'Read data', 'External source', 'Read from Database']
 transform = ['Join', 'Formula', 'Select data', 'Filter data', 'Group by', 'Fuzzy match', 'Sort data', 'Add record Id',
              'Take Sample', 'Pivot data', 'Unpivot data', 'Union data', 'Drop duplicates', 'Graph solver',
              'Count records', 'Cross join', 'Text to rows', 'Polars code']
 narrow = ['Select data', 'Filter data', 'Take Sample', 'Formula', 'Read data', 'Union data', 'Polars code']
 wide = ['Join', 'Group by', 'Fuzzy match', 'Sort data', 'Pivot data', 'Unpivot data', 'Add record Id',
         'Graph solver', 'Drop duplicates', 'Count records', 'Cross join', 'Text to rows']
-other = ['Explore data', 'Write data', 'Read Airbyte', 'Google sheets', 'Manual input', 'Read data', 'External source',
+other = ['Explore data', 'Write data', 'Read Airbyte','Manual input', 'Read data', 'External source',
          'Read from Database', 'Write to Database']
 nodes_with_defaults = {'sample', 'sort', 'union', 'select', 'record_count'}
 
