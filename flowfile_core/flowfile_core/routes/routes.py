@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import logging
 import os
@@ -570,9 +571,10 @@ def get_graphic_walker_input(flow_id: int, node_id: int):
 async def get_instant_function_result(flow_id: int, node_id: int, func_string: str):
     try:
         node = flow_file_handler.get_node(flow_id, node_id)
+        result = await asyncio.to_thread(get_instant_func_results, node, func_string)
+        return result
     except Exception as e:
-        raise HTTPException(404, str(e))
-    return get_instant_func_results(node, func_string)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=List[str])

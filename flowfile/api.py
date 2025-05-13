@@ -162,7 +162,6 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
     if is_flowfile_running():
         return True, check_if_in_single_mode()
 
-
     if _server_process and _server_process.poll() is None:
         logger.warning("Server process object exists but API not responding. Attempting to restart.")
         stop_flowfile_server_process()
