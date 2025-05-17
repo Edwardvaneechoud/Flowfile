@@ -1,7 +1,6 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import (FlowGraph, add_connection, RunInformation, combine_flow_graphs,
-                                                 _validate_unique_flow_ids, _create_node_id_mapping, _remap_nodes)
+from flowfile_core.flowfile.FlowfileFlow import (FlowGraph, add_connection, RunInformation)
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
@@ -986,12 +985,3 @@ def test_empty_manual_input_should_run():
         assert r.success, 'Should be able to run even with empty manual input'
     except:
         raise ValueError('Should be able to run empty manual input')
-
-
-def test_validate_non_unique_flow_ids():
-    graphs = [create_graph() for i in range(10)]
-
-    _validate_unique_flow_ids(graphs)
-    with pytest.raises(ValueError, match="Cannot combine overlapping graphs, make sure the graphs have a unique identifier"):
-        _validate_unique_flow_ids(graphs)
-

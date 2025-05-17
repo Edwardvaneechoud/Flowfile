@@ -450,4 +450,3 @@ def test_combine_complex_flow_graphs():
             assert "record_id" in data[0]
             assert all(row["age"] > 30 for row in data)
             assert set([row["record_id"] for row in data]) == {1, 2}
-

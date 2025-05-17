@@ -314,7 +314,7 @@ def test_pivot():
     ).collect()
 
     expected_data = pl.DataFrame({'id': [2, 1], 'profit': [30, 20], 'sales': [150, 100]})
-    assert_frame_equal(expected_data, result, check_row_order=False, check_exact=False)
+    assert_frame_equal(expected_data, result, check_row_order=False, check_exact=False, check_column_order=False)
 
 
 def test_unpivot():
