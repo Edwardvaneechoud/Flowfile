@@ -169,7 +169,7 @@ result = df.filter(col("value") > 150).with_columns([
 open_graph_in_editor(result.flow_graph)
 ```
 
-For more details, see the [flowfile_frame documentation](flowfile_frame/README.md).
+For more details, see the [flowfile_frame documentation](flowfile_frame/readme.md).
 
 ### Visualizing and Sharing Pipelines
 
