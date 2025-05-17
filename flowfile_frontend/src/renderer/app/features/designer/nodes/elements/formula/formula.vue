@@ -58,7 +58,7 @@ const outputColumnSelector = ref<OutputColumnSelectorType>({
 const editorChild = ref<EditorChildType | null>(null);
 const nodeFormula = ref<NodeFormula | null>(null);
 const formulaInput = ref<FormulaInput | null>(null);
-const dataTypes = nodeStore.getDataTypes();
+const dataTypes = [...nodeStore.getDataTypes(), "Auto"];
 const nodeData = ref<null | NodeData>(null);
 
 const loadNodeData = async (nodeId: number) => {

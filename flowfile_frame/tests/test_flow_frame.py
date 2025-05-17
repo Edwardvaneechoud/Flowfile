@@ -57,6 +57,8 @@ def test_from_dict_factory():
     assert "Test data" in df.get_node_settings().setting_input.description
 
 
+
+
 def test_select_columns():
     """Test selecting columns from a FlowFrame."""
     data = {
@@ -66,8 +68,6 @@ def test_select_columns():
         "city": ["New York", "Los Angeles", "Chicago"]
     }
     df = FlowFrame(data)
-
-    # Select specific columns
     result = df.select("id", "name")
     assert result.columns == ["id", "name"]
 
