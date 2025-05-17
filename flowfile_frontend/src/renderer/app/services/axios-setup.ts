@@ -1,5 +1,5 @@
 // src/app/services/axios-setup.ts
-import axios, { AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
+import axios, { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import authService from './auth.service';
 import { flowfileCorebaseURL } from '../../config/constants';
 
@@ -8,7 +8,7 @@ axios.defaults.withCredentials = true;
 
 // Add auth token to all requests
 axios.interceptors.request.use(
-  async (config: AxiosRequestConfig): Promise<AxiosRequestConfig> => {
+  async (config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> => {
     if (config.headers && config.headers['X-Skip-Auth-Header']) {
       delete config.headers['X-Skip-Auth-Header'];
       return config;
@@ -39,7 +39,7 @@ axios.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
     
     // If 401 Unauthorized and not retried yet
     if (

@@ -14,7 +14,8 @@
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux",
     "build:test": "node scripts/build.js && electron-builder --dir",
-    "test": "playwright test"
+    "test": "playwright test",
+    "preinstall": "npx npm-force-resolutions"
   },
   "repository": "https://github.com/Edwardvaneechoud/Flowfile",
   "author": {
@@ -73,8 +74,9 @@
     "@vue-flow/core": "^1.42.1",
     "@vue-flow/minimap": "^1.5.2",
     "@vue-flow/node-resizer": "^1.4.0",
-    "axios": "^0.27.2",
+    "axios": "^1.9.0",
     "chart.js": "^3.8.0",
+    "d3-color": "3.1.0",
     "depcheck": "^1.4.7",
     "electron-is-dev": "^2.0.0",
     "element-plus": "^1.1.0-beta.24",
@@ -95,5 +97,11 @@
     "vue-i18n": "^9.13.1",
     "vue-prism-editor": "^2.0.0-alpha.2",
     "vue-router": "^4.3.2"
-  }
+  },
+  "resolutions": {
+  "d3-color": "3.1.0",
+  "micromatch": "4.0.8",
+  "nanoid": "5.0.9",
+  "esbuild": "0.24.3"
+}
 }

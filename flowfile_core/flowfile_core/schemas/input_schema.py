@@ -15,6 +15,7 @@ InputConnectionClass = Literal['input-0', 'input-1', 'input-2', 'input-3', 'inpu
 
 InputType = Literal["main", "left", "right"]
 
+
 class NewDirectory(BaseModel):
     source_path: str
     dir_name: str

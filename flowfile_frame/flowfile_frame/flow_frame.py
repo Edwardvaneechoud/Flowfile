@@ -1,14 +1,16 @@
-import uuid
+import logging
 import os
 from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
 from pathlib import Path
 
 import re
 import polars as pl
-from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orientation
+from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation, IO, Mapping, PolarsDataType,
+                            Sequence)
 
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema, transform_schema
@@ -21,6 +23,14 @@ from flowfile_frame.join import _normalize_columns_to_list, _create_join_mapping
 
 node_id_counter = 0
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(message)s'
+)
+
+# Create and export the logger
+logger = logging.getLogger('flow_frame')
 
 def _to_string_val(v) -> str:
     if isinstance(v, str):
@@ -478,14 +488,25 @@ class FlowFrame:
         FlowFrame
             New FlowFrame with join operation applied.
         """
-        new_node_id = generate_node_id()
-        print('new node id', new_node_id)
         use_polars_code = not(maintain_order is None and
                               coalesce is None and
                               nulls_equal is False and
                               validate is None and
                               suffix == '_right')
         join_mappings = None
+        if self.flow_graph.flow_id != other.flow_graph.flow_id:
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
+            new_self_node_id = node_mappings.get((self.flow_graph.flow_id, self.node_id), None)
+            new_other_node_id = node_mappings.get((other.flow_graph.flow_id, other.node_id), None)
+            if new_other_node_id is None or new_self_node_id is None:
+                raise ValueError("Cannot remap the nodes")
+            self.node_id = new_self_node_id
+            other.node_id = new_other_node_id
+            self.flow_graph = combined_graph
+            other.flow_graph = combined_graph
+            global node_id_counter
+            node_id_counter += len(combined_graph.nodes)
+        new_node_id = generate_node_id()
         if on is not None:
             left_columns = right_columns = _normalize_columns_to_list(on)
         elif left_on is not None and right_on is not None:
@@ -1241,14 +1262,24 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with the concatenated data
         """
-        new_node_id = generate_node_id()
-
         # Convert single FlowFrame to list
         if isinstance(other, FlowFrame):
             others = [other]
         else:
             others = other
-
+        all_graphs = []
+        all_graph_ids = []
+        for g in [self.flow_graph] + [f.flow_graph for f in others]:
+            if g.flow_id not in all_graph_ids:
+                all_graph_ids.append(g.flow_id)
+                all_graphs.append(g)
+        if len(all_graphs) > 1:
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*all_graphs)
+            for f in [self] + other:
+                f.node_id = node_mappings.get((f.flow_graph.flow_id, f.node_id), None)
+            global node_id_counter
+            node_id_counter += len(combined_graph.nodes)
+        new_node_id = generate_node_id()
         use_native = how == "diagonal_relaxed" and parallel and not rechunk
 
         if use_native:
@@ -1902,11 +1933,52 @@ def count(expr):
     return expr.count()
 
 
-def read_csv(file_path, *, flow_graph: FlowGraph = None, separator: str = ';',
-             convert_to_absolute_path: bool = True,
-             description: str = None, **options):
+def read_csv(
+        file_path,
+        *,
+        flow_graph: FlowGraph = None,
+        separator: str = ',',
+        convert_to_absolute_path: bool = True,
+        description: str = None,
+        has_header: bool = True,
+        new_columns: List[str] | None = None,
+        comment_prefix: str | None = None,
+        quote_char: str = '"',
+        skip_rows: int = 0,
+        skip_lines: int = 0,
+        schema: dict | None = None,
+        schema_overrides: dict | None = None,
+        null_values: str | List[str] | dict | None = None,
+        missing_utf8_is_empty_string: bool = False,
+        ignore_errors: bool = False,
+        try_parse_dates: bool = False,
+        n_threads: int | None = None,
+        infer_schema: bool = True,
+        infer_schema_length: int = 100,
+        batch_size: int = 8192,
+        n_rows: int | None = None,
+        encoding: str = 'utf-8',
+        low_memory: bool = False,
+        rechunk: bool = False,
+        use_pyarrow: bool = False,
+        storage_options: dict | None = None,
+        skip_rows_after_header: int = 0,
+        row_index_name: str | None = None,
+        row_index_offset: int = 0,
+        sample_size: int = 1024,
+        eol_char: str = '\n',
+        raise_if_empty: bool = True,
+        truncate_ragged_lines: bool = False,
+        decimal_comma: bool = False,
+        glob: bool = True,
+        **other_options
+):
     """
     Read a CSV file into a FlowFrame.
+
+    This function uses the native FlowGraph implementation when the parameters
+    fall within the supported range, and falls back to using Polars' implementation
+    for more advanced features.
 
     Args:
         file_path: Path to CSV file
@@ -1914,7 +1986,40 @@ def read_csv(file_path, *, flow_graph: FlowGraph = None, separator: str = ';',
         separator: Single byte character to use as separator in the file.
         convert_to_absolute_path: If the path needs to be set to a fixed location
         description: if you want to add a readable name in the frontend (advised)
-        **options: Options for polars.read_csv
+
+        # Polars.read_csv parameters
+        has_header: Indicate if the first row of the dataset is a header or not
+        new_columns: Rename columns after selection
+        comment_prefix: String that indicates a comment line if found at beginning of line
+        quote_char: Character used for quoting
+        skip_rows: Start reading after this many rows
+        skip_lines: Skip this many lines
+        schema: Schema to use when reading the CSV
+        schema_overrides: Schema overrides for specific columns
+        null_values: Values to interpret as null
+        missing_utf8_is_empty_string: Treat missing utf8 values as empty strings
+        ignore_errors: Try to keep reading lines if some parsing errors occur
+        try_parse_dates: Try to automatically parse dates
+        n_threads: Number of threads to use during parsing
+        infer_schema: Infer schema from the data
+        infer_schema_length: Number of rows to use for schema inference
+        batch_size: Number of rows to process at once
+        n_rows: Stop reading after this many rows
+        encoding: Character encoding to use
+        low_memory: Reduce memory usage at the cost of performance
+        rechunk: Ensure data is in contiguous memory layout
+        use_pyarrow: Use the Arrow CSV parser
+        storage_options: Options for fsspec
+        skip_rows_after_header: Skip rows after header
+        row_index_name: Name of the row index column
+        row_index_offset: Start value for the row index
+        sample_size: Number of rows to sample for statistics
+        eol_char: End of line character
+        raise_if_empty: Raise error if file is empty
+        truncate_ragged_lines: Truncate lines with too many values
+        decimal_comma: Parse floats with decimal comma
+        glob: Use glob pattern for file path
+        other_options: Any other options to pass to polars.read_csv
 
     Returns:
         A FlowFrame with the CSV data
@@ -1923,43 +2028,240 @@ def read_csv(file_path, *, flow_graph: FlowGraph = None, separator: str = ';',
     node_id = generate_node_id()
     if flow_graph is None:
         flow_graph = create_flow_graph()
-
     flow_id = flow_graph.flow_id
 
-    has_headers = options.get('has_header', True)
-    encoding = options.get('encoding', 'utf-8')
-
-    if '~' in file_path:
+    # Handle file path
+    if isinstance(file_path, str) and '~' in file_path:
         file_path = os.path.expanduser(file_path)
 
-    received_table = input_schema.ReceivedTable(
-        file_type='csv',
-        path=file_path,
-        name=Path(file_path).name,
-        delimiter=separator,
-        has_headers=has_headers,
-        encoding=encoding
+    # Check if we can use the native implementation
+    can_use_native = (
+            isinstance(file_path, (str, os.PathLike)) and
+            comment_prefix is None and
+            skip_lines == 0 and
+            schema is None and
+            schema_overrides is None and
+            null_values is None and
+            not missing_utf8_is_empty_string and
+            not try_parse_dates and
+            n_threads is None and
+            infer_schema and
+            batch_size == 8192 and
+            n_rows is None and
+            not low_memory and
+            not rechunk and
+            not use_pyarrow and
+            storage_options is None and
+            skip_rows_after_header == 0 and
+            row_index_name is None and
+            row_index_offset == 0 and
+            eol_char == '\n' and
+            not decimal_comma and
+            new_columns is None
     )
 
-    if convert_to_absolute_path:
-        received_table.path = received_table.abs_file_path
+    if can_use_native:
+        # Use native implementation
+        received_table = input_schema.ReceivedTable(
+            file_type='csv',
+            path=file_path,
+            name=Path(file_path).name,
+            delimiter=separator,
+            has_headers=has_header,
+            encoding=encoding,
+            starting_from_line=skip_rows,
+            quote_char=quote_char,
+            infer_schema_length=infer_schema_length or 10000,
+            truncate_ragged_lines=truncate_ragged_lines,
+            ignore_errors=ignore_errors,
+            row_delimiter=eol_char
+        )
 
-    read_node = input_schema.NodeRead(
-        flow_id=flow_id,
-        node_id=node_id,
-        received_file=received_table,
-        pos_x=100,
-        pos_y=100,
-        is_setup=True
-    )
+        if convert_to_absolute_path:
+            try:
+                received_table.set_absolute_filepath()
+                received_table.path = received_table.abs_file_path
+            except Exception as e:
+                print(f"Warning: Could not determine absolute path for {file_path}: {e}")
 
-    flow_graph.add_read(read_node)
+        read_node = input_schema.NodeRead(
+            flow_id=flow_id,
+            node_id=node_id,
+            received_file=received_table,
+            pos_x=100,
+            pos_y=100,
+            is_setup=True,
+            description=description or f"Read CSV from {Path(file_path).name}"
+        )
 
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
-    )
+        flow_graph.add_read(read_node)
+
+        result_frame = FlowFrame(
+            data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+            flow_graph=flow_graph,
+            node_id=node_id
+        )
+
+        return result_frame
+    else:
+        # Fall back to polars implementation via code node
+        # Create a minimal read node first as a placeholder
+        polars_node_id = generate_node_id()
+        breakpoint()
+        # Build the polars code with parameters in an elegant way
+        _, polars_code = _build_polars_code_args(
+            file_path, separator, has_header, new_columns, comment_prefix,
+            quote_char, skip_rows, skip_lines, schema, schema_overrides, null_values,
+            missing_utf8_is_empty_string, ignore_errors, try_parse_dates, n_threads,
+            infer_schema, infer_schema_length, batch_size, n_rows, encoding,
+            low_memory, rechunk, use_pyarrow, storage_options, skip_rows_after_header,
+            row_index_name, row_index_offset, sample_size, eol_char, raise_if_empty,
+            truncate_ragged_lines, decimal_comma, glob
+        )
+        breakpoint()
+        # Create polars code node
+        polars_code_settings = input_schema.NodePolarsCode(
+            flow_id=flow_id,
+            node_id=polars_node_id,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=polars_code),
+            is_setup=True,
+            depending_on_ids=[node_id],  # Depend on the basic read node
+            description=description or f"Read CSV with advanced features from {Path(file_path).name if isinstance(file_path, (str, os.PathLike)) else 'file-like object'}"
+        )
+        breakpoint()
+        # Add to graph
+        flow_graph.add_polars_code(polars_code_settings)
+
+        # Return the frame from the polars code node
+        return FlowFrame(
+            data=d.data_frame,
+            flow_graph=flow_graph,
+            node_id=polars_node_id,
+            parent_node_id=node_id
+        )
+
+
+def _build_polars_code_args(
+        file_path,
+        separator,
+        has_header,
+        new_columns,
+        comment_prefix,
+        quote_char,
+        skip_rows,
+        skip_lines,
+        schema,
+        schema_overrides,
+        null_values,
+        missing_utf8_is_empty_string,
+        ignore_errors,
+        try_parse_dates,
+        n_threads,
+        infer_schema,
+        infer_schema_length,
+        batch_size,
+        n_rows,
+        encoding,
+        low_memory,
+        rechunk,
+        use_pyarrow,
+        storage_options,
+        skip_rows_after_header,
+        row_index_name,
+        row_index_offset,
+        sample_size,
+        eol_char,
+        raise_if_empty,
+        truncate_ragged_lines,
+        decimal_comma,
+        glob
+):
+    """
+    Build the arguments for polars.read_csv code in a clean and maintainable way.
+
+    Returns:
+        Tuple[List[str], str]: A tuple containing positional args and the full code string
+    """
+    # Handle file path argument
+    if isinstance(file_path, (str, os.PathLike)):
+        file_path_str = str(file_path)
+        args = [f"'{file_path_str}'"]
+    else:
+        # For file-like objects, handle in code
+        args = ["input_file_obj"]
+
+    # Define parameter mapping with their default values and formatting functions
+    param_mapping = {
+        # (parameter_name, default_value, format_function)
+        'has_header': (True, lambda x: str(x)),
+        'new_columns': (None, lambda x: repr(x)),
+        'separator': (',', lambda x: f"'{x}'"),
+        'comment_prefix': (None, lambda x: f"'{x}'"),
+        'quote_char': ('"', lambda x: f"'{x}'"),
+        'skip_rows': (0, str),
+        'skip_lines': (0, str),
+        'schema': (None, repr),
+        'schema_overrides': (None, repr),
+        'null_values': (None, repr),
+        'missing_utf8_is_empty_string': (False, str),
+        'ignore_errors': (False, str),
+        'try_parse_dates': (False, str),
+        'n_threads': (None, str),
+        'infer_schema': (True, str),
+        'infer_schema_length': (100, str),
+        'batch_size': (8192, str),
+        'n_rows': (None, str),
+        'encoding': ('utf8', lambda x: f"'{x}'"),
+        'low_memory': (False, str),
+        'rechunk': (False, str),
+        'use_pyarrow': (False, str),
+        'storage_options': (None, repr),
+        'skip_rows_after_header': (0, str),
+        'row_index_name': (None, lambda x: f"'{x}'"),
+        'row_index_offset': (0, str),
+        'sample_size': (1024, str),
+        'eol_char': (repr('\n'), lambda x: f"'{x}'"),
+        'raise_if_empty': (True, str),
+        'truncate_ragged_lines': (False, str),
+        'decimal_comma': (False, str),
+        'glob': (True, str),
+    }
+
+    # Get all local variables as a dictionary
+    all_vars = locals()
+    # Build keyword arguments array
+    kwargs = []
+    # Process each parameter
+    for param_name, (default_value, format_func) in param_mapping.items():
+        value = all_vars.get(param_name)
+        formatted_value = format_func(value)
+        kwargs.append(f"{param_name}={formatted_value}")
+
+    # Build final args string
+    all_args = ", ".join(args + kwargs)
+
+    # Generate code
+    if isinstance(file_path, (str, os.PathLike)):
+        polars_code = f"output_df = pl.scan_csv({all_args})"
+    else:
+        breakpoint()
+        # Handle file-like objects
+        polars_code = f"""
+import io
+
+# Handle file-like object
+input_file_obj = None  # This will be provided by the system
+
+# Determine type of file-like object and handle accordingly
+if hasattr(input_file_obj, 'read'):  
+    # It's already a file-like object
+    resuloutput_dft = pl.scan_scv(input_file_obj, {', '.join(kwargs)})
+elif isinstance(input_file_obj, bytes):
+    # It's bytes data
+    output_df = pl.scan_csv(io.BytesIO(input_file_obj), {', '.join(kwargs)})
+"""
+
+    return args, polars_code
 
 
 def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = None,

@@ -207,6 +207,23 @@ def group_by():
     assert expected_result.equals(result)
 
 
+def test_join_not_in_graph():
+    df1 = FlowFrame({
+        "id": [1, 2, 3],
+        "name": ["Alice", "Bob", "Charlie"]
+    })
+
+    # Create second dataframe
+    df2 = FlowFrame({
+        "id": [1, 2, 4],
+        "age": [25, 30, 40]
+    })
+    result = df1.join(df2, on="id").collect()
+    assert len(result) == 2  # Only matches for id 1 and 2
+    assert result.columns == ["id", "name", "age"]
+    assert_frame_equal(result, df1.data.join(df2.data, on="id").collect())
+
+
 def test_join():
     """Test joining FlowFrames."""
     # Create main dataframe
@@ -506,3 +523,273 @@ def test_schema():
     assert str(schema["id"]) == "Int64"
     assert str(schema["name"]) == "String"
     assert str(schema["active"]) == "Boolean"
+
+
+import os
+import io
+import pytest
+import tempfile
+import polars as pl
+from polars.testing import assert_frame_equal
+from flowfile_frame.flow_frame import FlowFrame, read_csv
+from flowfile_frame.expr import col
+
+
+def test_read_csv_basic():
+    """Test basic CSV reading functionality."""
+    # Create a temporary CSV file
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
+        tmp.write("id,name,age\n1,Alice,25\n2,Bob,30\n3,Charlie,35")
+        tmp_path = tmp.name
+
+    try:
+        # Read the CSV file
+        df = read_csv(tmp_path)
+
+        # Check the instance
+        assert isinstance(df, FlowFrame)
+        assert isinstance(df.data, pl.LazyFrame)
+
+        # Check the data
+        result = df.collect()
+        assert len(result) == 3
+        assert result.columns == ["id", "name", "age"]
+        assert result["name"][1] == "Bob"
+
+        # Check data types
+        assert result["id"].dtype == pl.Int64
+        assert result["name"].dtype == pl.Utf8
+        assert result["age"].dtype == pl.Int64
+    finally:
+        # Clean up
+        os.unlink(tmp_path)
+
+
+def test_read_csv_parameter_variations():
+    """Test CSV reading with different parameter combinations."""
+    # Create a CSV with various data types and formats
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
+        tmp.write("id;first_name;last_name;salary;active\n")
+        tmp.write("1;Alice;Smith;50000.50;true\n")
+        tmp.write("2;Bob;Jones;60000.75;false\n")
+        tmp.write("3;Charlie;Brown;55000.25;true\n")
+        tmp_path = tmp.name
+    try:
+        # Test with custom separator
+        df = read_csv(tmp_path, separator=";")
+        result = df.collect()
+        assert len(result) == 3
+        assert result.columns == ["id", "first_name", "last_name", "salary", "active"]
+        assert result["first_name"][0] == "Alice"
+
+        breakpoint()
+        # Test with column renaming
+        df = read_csv(tmp_path, separator=";",
+                      new_columns=["user_id", "first", "last"])
+        result = df.collect()
+        assert result.columns == ["user_id", "first", "last"]
+
+        # Test with no header
+        df = read_csv(tmp_path, separator=";", has_header=False)
+        result = df.collect()
+        assert len(result) == 4  # Now includes the header row as data
+
+        # Test with skip_rows
+        df = read_csv(tmp_path, separator=";", skip_rows=1)
+        result = df.collect()
+        assert len(result) == 2
+        assert result["first_name"][0] == "Bob"
+
+        # Test with row index
+        df = read_csv(tmp_path, separator=";", row_index_name="row_num", row_index_offset=10)
+        result = df.collect()
+        assert "row_num" in result.columns
+        assert result["row_num"].to_list() == [10, 11, 12]
+    finally:
+        # Clean up
+        os.unlink(tmp_path)
+
+
+def test_read_csv_schema_handling():
+    """Test CSV reading with schema handling."""
+    # Create a CSV with data that could be interpreted in multiple ways
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
+        tmp.write("id,name,value\n")
+        tmp.write("1,Alice,10.5\n")
+        tmp.write("2,Bob,20.0\n")
+        tmp.write("3,Charlie,N/A\n")  # Missing value
+        tmp_path = tmp.name
+
+    try:
+        # Test with automatic schema inference
+        df = read_csv(tmp_path)
+        result = df.collect()
+        # The "value" column might be inferred as Float64 or Utf8 depending on the implementation
+
+        # Test with explicit schema
+        schema = {"id": pl.Int32, "name": pl.Utf8, "value": pl.Float64}
+        df = read_csv(tmp_path, schema=schema)
+        result = df.collect()
+        assert result.schema["id"] == pl.Int32
+        assert result.schema["name"] == pl.Utf8
+        assert result.schema["value"] == pl.Float64
+
+        # Test with schema overrides
+        df = read_csv(tmp_path, schema_overrides={"id": pl.UInt8})
+        result = df.collect()
+        assert result.schema["id"] == pl.UInt8
+
+        # Test with null values
+        df = read_csv(tmp_path, null_values=["N/A"])
+        result = df.collect()
+        assert result["value"][2] is None  # The N/A should be converted to None
+    finally:
+        # Clean up
+        os.unlink(tmp_path)
+
+
+def test_read_csv_error_handling():
+    """Test CSV reading error handling."""
+    # Create a CSV with problematic data
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
+        tmp.write("id,name,age\n")
+        tmp.write("1,Alice,twenty-five\n")  # Non-numeric age
+        tmp.write("2,Bob,30\n")
+        tmp.write("not a number,Charlie,35\n")  # Non-numeric id
+        tmp_path = tmp.name
+
+    try:
+        # Test with ignore_errors=False (default)
+        with pytest.raises(Exception):
+            df = read_csv(tmp_path)
+            df.collect()  # Should raise an error due to parsing issues
+
+        # Test with ignore_errors=True
+        df = read_csv(tmp_path, ignore_errors=True)
+        result = df.collect()
+        assert len(result) > 0  # Should at least have some data
+    finally:
+        # Clean up
+        os.unlink(tmp_path)
+
+
+def test_read_csv_file_like_object():
+    """Test reading CSV from file-like objects."""
+    # Create a CSV string
+    csv_data = "id,name,age\n1,Alice,25\n2,Bob,30\n3,Charlie,35"
+
+    # Create file-like objects
+    bytes_io = io.BytesIO(csv_data.encode('utf-8'))
+    string_io = io.StringIO(csv_data)
+
+    # Test reading from BytesIO
+    df = read_csv(bytes_io)
+    result = df.collect()
+    assert len(result) == 3
+    assert result["name"][0] == "Alice"
+
+    # Test reading from StringIO
+    df = read_csv(string_io)
+    result = df.collect()
+    assert len(result) == 3
+    assert result["name"][0] == "Alice"
+
+
+def test_read_csv_with_flow_graph():
+    """Test reading CSV with an existing flow graph."""
+    # Create a base FlowFrame
+    base_df = FlowFrame({
+        "id": [1, 2, 3],
+        "name": ["Alice", "Bob", "Charlie"]
+    })
+
+    # Create a temporary CSV file
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
+        tmp.write("id,age\n1,25\n2,30\n3,35")
+        tmp_path = tmp.name
+
+    try:
+        # Read CSV into the same flow graph
+        df = read_csv(tmp_path, flow_graph=base_df.flow_graph)
+
+        # Check that they share the same flow graph
+        assert df.flow_graph is base_df.flow_graph
+
+        # Test joining the two dataframes
+        result = base_df.join(df, on="id").collect()
+        assert len(result) == 3
+        assert result.columns == ["id", "name", "age"]
+    finally:
+        # Clean up
+        os.unlink(tmp_path)
+
+
+def test_read_csv_complex_operations():
+    """Test CSV reading followed by complex operations."""
+    # Create a CSV file
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
+        tmp.write("id,name,department,salary\n")
+        tmp.write("1,Alice,Sales,50000\n")
+        tmp.write("2,Bob,IT,60000\n")
+        tmp.write("3,Charlie,Sales,55000\n")
+        tmp.write("4,David,HR,65000\n")
+        tmp.write("5,Eve,IT,70000\n")
+        tmp_path = tmp.name
+
+    try:
+        # Read the CSV
+        df = read_csv(tmp_path)
+
+        result = (df
+                  .filter(col("salary") > 55000)
+                  .with_columns((col("salary") * 1.1).alias("new_salary"))
+                  .group_by("department")
+                  .agg([
+            col("new_salary").mean().alias("avg_salary"),
+            col("id").count().alias("employee_count")
+        ])
+                  .sort("avg_salary", descending=True)
+                  .collect())
+
+        # Check results
+        assert len(result) == 2  # IT and HR departments
+        assert "avg_salary" in result.columns
+        assert "employee_count" in result.columns
+    finally:
+        # Clean up
+        os.unlink(tmp_path)
+
+
+def test_read_csv_integration():
+    """Test CSV reading integration with other FlowFrame operations."""
+    # Create two CSV files for testing
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp1:
+        tmp1.write("id,name\n1,Alice\n2,Bob\n3,Charlie")
+        tmp1_path = tmp1.name
+
+    with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp2:
+        tmp2.write("id,age\n1,25\n2,30\n4,40")
+        tmp2_path = tmp2.name
+
+    try:
+        # Read both CSVs
+        df1 = read_csv(tmp1_path)
+        df2 = read_csv(tmp2_path, flow_graph=df1.flow_graph)
+
+        # Test joining them
+        joined = df1.join(df2, on="id", how="left")
+        result = joined.collect()
+
+        # Check the results
+        assert len(result) == 3  # All rows from df1
+        assert result["id"].to_list() == [1, 2, 3]
+        assert result["age"][2] is None  # No match for id=3
+
+        # Test filtering and transforming
+        filtered = joined.filter(col("age").is_not_null())
+        result = filtered.collect()
+        assert len(result) == 2  # Only rows with matching ages
+    finally:
+        # Clean up
+        os.unlink(tmp1_path)
+        os.unlink(tmp2_path)
