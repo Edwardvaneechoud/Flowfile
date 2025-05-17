@@ -2,6 +2,8 @@ import datetime
 import pickle
 import polars as pl
 import fastexcel
+import copy
+
 from fastapi.exceptions import HTTPException
 from time import time
 from functools import partial
@@ -203,8 +205,7 @@ class FlowGraph:
         sample_size: int = 10000
 
         def analysis_preparation(flowfile_table: FlowDataEngine):
-
-            if flowfile_table.number_of_records<0:
+            if flowfile_table.number_of_records < 0:
 
                 number_of_records = ExternalDfFetcher(
                     lf=flowfile_table.data_frame,
@@ -219,7 +220,7 @@ class FlowGraph:
 
             external_sampler = ExternalDfFetcher(
                 lf=flowfile_table.data_frame,
-                file_ref=node.hash,
+                file_ref="__gf_walker"+node.hash,
                 wait_on_completion=True,
                 node_id=node.node_id,
                 flow_id=self.flow_id,
@@ -439,11 +440,11 @@ class FlowGraph:
 
     def add_formula(self, function_settings: input_schema.NodeFormula):
         error = ""
-        if function_settings.function.field.data_type is not None:
+        if function_settings.function.field.data_type not in (None, "Auto"):
             output_type = type_to_polars_str(function_settings.function.field.data_type)
         else:
             output_type = None
-        if output_type is not None:
+        if output_type not in (None, "Auto"):
             new_col = [FlowfileColumn.from_input(column_name=function_settings.function.field.name,
                                                  data_type=str(output_type))]
         else:
@@ -587,6 +588,8 @@ class FlowGraph:
             input_cols = set(f.name for f in table.schema)
             ids_to_remove = []
             for i, select_col in enumerate(select_cols):
+                if select_col.data_type is None:
+                    select_col.data_type = table.get_schema_column(select_col.old_name).data_type
                 if select_col.old_name not in input_cols:
                     select_col.is_available = False
                     if not select_col.keep:
@@ -900,9 +903,6 @@ class FlowGraph:
         if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
             logger.info('Using provided schema in the node')
 
-    def add_google_sheet(self, external_source_input: input_schema.NodeExternalSource):
-        logger.info('Adding google sheet reader')
-        self.add_external_source(external_source_input)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding sql source')
@@ -1083,7 +1083,7 @@ class FlowGraph:
         self._output_cols += cols_available
 
     @property
-    def input_data_columns(self) -> List[str]:
+    def input_data_columns(self) -> List[str] | None:
         if self._input_cols:
             return list(set([col for col in self._input_cols if
                              col in [table_col.name for table_col in self._input_data.schema]]))
@@ -1102,7 +1102,7 @@ class FlowGraph:
         return implicit_starting_nodes
 
     @execution_mode.setter
-    def execution_mode(self, mode: str):
+    def execution_mode(self, mode: schemas.ExecutionModeLiteral):
         self.flow_settings.execution_mode = mode
 
     @property
@@ -1158,13 +1158,13 @@ class FlowGraph:
                         continue
                     node_result.success = node.results.errors is None
                     node_result.end_timestamp = time()
-                    node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+                    node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
                     node_result.is_running = False
                 except Exception as e:
                     node_result.error = 'Node did not run'
                     node_result.success = False
                     node_result.end_timestamp = time()
-                    node_result.run_time = node_result.end_timestamp - node_result.start_timestamp
+                    node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
                     node_result.is_running = False
                     node_logger.error(f'Error in node {node.node_id}: {e}')
                 if not node_result.success:
@@ -1350,6 +1350,66 @@ class FlowGraph:
             existing_setting_input, new_node_settings
         )
         getattr(self, f"add_{node_type}")(combined_settings)
+
+
+def combine_flow_graphs(*flow_graphs: FlowGraph) -> FlowGraph:
+    """
+    Combine multiple flow graphs into a single graph, ensuring node IDs don't overlap.
+
+    Args:
+        *flow_graphs: Multiple FlowGraph instances to combine
+
+    Returns:
+        A new FlowGraph containing all nodes and edges from the input graphs with remapped IDs
+
+    Raises:
+        ValueError: If any flow_ids overlap
+    """
+    # Validate flow IDs are unique
+    _validate_unique_flow_ids(flow_graphs)
+
+    # Create ID mapping for all nodes
+    node_id_mapping = _create_node_id_mapping(flow_graphs)
+
+    # Remap and combine nodes
+    all_nodes = _remap_nodes(flow_graphs, node_id_mapping)
+
+    # Create a new combined flow graph
+    combined_flow_id = hash(tuple(fg.flow_id for fg in flow_graphs))
+    # return FlowGraph(flow_id=combined_flow_id, nodes=all_nodes, edges=all_edges)
+
+
+def _validate_unique_flow_ids(flow_graphs: Tuple[FlowGraph, ...]) -> None:
+    """Ensure all flow graphs have unique flow_ids."""
+    all_flow_ids = [fg.flow_id for fg in flow_graphs]
+    if len(all_flow_ids) != len(set(all_flow_ids)):
+        raise ValueError("Cannot combine overlapping graphs, make sure the graphs have a unique identifier")
+
+
+def _create_node_id_mapping(flow_graphs: Tuple[FlowGraph, ...]) -> Dict[int, Dict[int, int]]:
+    """Create a mapping from original node IDs to new unique node IDs."""
+    node_id_mapping: Dict[int, Dict[int, int]] = {}
+    next_node_id = 0
+
+    for fg in flow_graphs:
+        node_id_mapping[fg.flow_id] = {}
+        for node in fg.nodes:
+            node_id_mapping[fg.flow_id][node.node_id] = next_node_id
+            next_node_id += 1
+
+    return node_id_mapping
+
+
+def _remap_nodes(flow_graphs: Tuple[FlowGraph, ...],
+                 node_id_mapping: Dict[int, Dict[int, int]]) -> List:
+    """Create new nodes with remapped IDs."""
+    all_nodes = []
+    for fg in flow_graphs:
+        for node in fg.nodes:
+            new_node = copy.deepcopy(node)
+            new_node.node_id = node_id_mapping[fg.flow_id][node.node_id]
+            all_nodes.append(new_node)
+    return all_nodes
 
 
 def combine_existing_settings_and_new_settings(setting_input: Any, new_settings: input_schema.NodePromise) -> Any:

@@ -17,12 +17,6 @@
         v-if="selectedExternalSource === 'sample_users' && sampleUsers"
         class="file-upload-wrapper"
       ></div>
-      <div
-        v-if="selectedExternalSource === 'google_sheet' && googleSheet"
-        class="file-upload-wrapper"
-      >
-        <GoogleSheets v-model="googleSheet" />
-      </div>
     </div>
     <CodeLoader v-else />
   </div>
@@ -31,14 +25,12 @@
 <script lang="ts" setup>
 import { ref, watch, watchEffect } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import GoogleSheets from "./googleSheet.vue";
 import { get_template_source_type } from "./createTemplateExternalSource";
-import { SampleUsers, NodeExternalSource, GoogleSheet } from "../../../baseNode/nodeInput";
+import { SampleUsers, NodeExternalSource } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { WatchStopHandle } from "vue";
 const nodeStore = useNodeStore();
 const sampleUsers = ref<SampleUsers | null>(null);
-const googleSheet = ref<GoogleSheet | null>(null);
 const nodeExternalSource = ref<null | NodeExternalSource>(null);
 const dataLoaded = ref(false);
 const typeSelected = ref(false);
@@ -53,17 +45,6 @@ watchEffect(() => {
     activeWatchStopHandle();
     activeWatchStopHandle = null;
   }
-
-  // Only start the new watch if the condition is met
-  if (dataLoaded.value) {
-    activeWatchStopHandle = watch(
-      googleSheet,
-      () => {
-        isDirty.value = true;
-      },
-      { deep: true },
-    );
-  }
 });
 
 const loadNodeData = async (nodeId: number) => {
@@ -73,9 +54,6 @@ const loadNodeData = async (nodeId: number) => {
     if (nodeExternalSource.value?.identifier == "sample_users") {
       sampleUsers.value = nodeExternalSource.value?.source_settings as SampleUsers;
       selectedExternalSource.value = "sample_users";
-    } else if (nodeExternalSource.value?.identifier == "google_sheet") {
-      googleSheet.value = nodeExternalSource.value?.source_settings as GoogleSheet;
-      selectedExternalSource.value = "google_sheet";
     }
   typeSelected.value = true;
   dataLoaded.value = true;
@@ -89,14 +67,6 @@ const loadTemplateValue = () => {
       nodeExternalSource.value.source_settings = sampleUsers.value;
     }
     isDirty.value = true;
-  } else if (selectedExternalSource.value === "google_sheet") {
-    if (!googleSheet.value) {
-      googleSheet.value = get_template_source_type("GOOGLE_SHEET") as GoogleSheet;
-    }
-    if (nodeExternalSource.value) {
-      nodeExternalSource.value.source_settings = googleSheet.value;
-    }
-    isDirty.value = false;
   }
   typeSelected.value = true;
   if (nodeExternalSource.value && selectedExternalSource.value) {

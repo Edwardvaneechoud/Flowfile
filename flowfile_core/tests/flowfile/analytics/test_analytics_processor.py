@@ -366,6 +366,21 @@ def expected_graphic_walker_data_not_run():
     return expected_data
 
 
+def test_analytics_data_generator_when_run_development_no_settings():
+    graph = create_graph()
+    graph.flow_settings.execution_mode = "Development"
+    input_data = (FlowDataEngine.create_random(1000)
+                  .apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'Work']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'explore_data', 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    graph.run_graph()
+    node = graph.get_node(2)
+    graphic_walker_input = AnalyticsProcessor.create_graphic_walker_input(node)
+    assert len(graphic_walker_input.dataModel.data) == 1_000, "Expected a data length of 1000"
+
+
 def test_analytics_processor_create_graphic_walker_input_not_run():
     graph = create_graph()
     input_data = (FlowDataEngine.create_random(1000)
