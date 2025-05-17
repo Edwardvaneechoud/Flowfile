@@ -440,7 +440,7 @@ class FlowGraph:
 
     def add_formula(self, function_settings: input_schema.NodeFormula):
         error = ""
-        if function_settings.function.field.data_type is not None:
+        if function_settings.function.field.data_type not in (None, "Auto"):
             output_type = type_to_polars_str(function_settings.function.field.data_type)
         else:
             output_type = None
