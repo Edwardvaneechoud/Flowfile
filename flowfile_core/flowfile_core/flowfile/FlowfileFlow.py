@@ -444,7 +444,7 @@ class FlowGraph:
             output_type = type_to_polars_str(function_settings.function.field.data_type)
         else:
             output_type = None
-        if output_type is not None:
+        if output_type not in (None, "Auto"):
             new_col = [FlowfileColumn.from_input(column_name=function_settings.function.field.name,
                                                  data_type=str(output_type))]
         else:
@@ -588,6 +588,8 @@ class FlowGraph:
             input_cols = set(f.name for f in table.schema)
             ids_to_remove = []
             for i, select_col in enumerate(select_cols):
+                if select_col.data_type is None:
+                    select_col.data_type = table.get_schema_column(select_col.old_name).data_type
                 if select_col.old_name not in input_cols:
                     select_col.is_available = False
                     if not select_col.keep:

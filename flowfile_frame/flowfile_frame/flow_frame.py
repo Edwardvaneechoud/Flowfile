@@ -619,10 +619,8 @@ class FlowFrame:
         if (len(columns) == 1 and isinstance(columns[0], Expr)
                 and str(columns[0]) == "pl.Expr(len()).alias('number_of_records')"):
             return self._add_number_of_records(new_node_id, description)
-
-        # Handle simple column names
         if all(isinstance(col_, (str, Column)) for col_ in columns):
-            # Create select inputs
+
             select_inputs = [
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
                 for col_ in columns
@@ -968,7 +966,7 @@ class FlowFrame:
             input_schema.NodeFormula(flow_id=self.flow_graph.flow_id, node_id=new_node_id, depending_on_id=self.node_id,
                                      function=transform_schema.FunctionInput(
                                          function=flowfile_formula,
-                                         field=transform_schema.FieldInput(name=output_column_name)),
+                                         field=transform_schema.FieldInput(name=output_column_name, data_type='Auto')),
                                      description=description))
         self.flow_graph.add_formula(function_settings)
         return self._create_child_frame(new_node_id)
