@@ -7,11 +7,6 @@
 3. **Visualize, save, and open your data pipelines in the FlowFile Designer UI**
 4. Get the performance benefits of Polars with the traceability of ETL graphs
 
-1. Write data transformation code using a simple, Pandas/Polars-like API
-2. Automatically generate executable ETL workflows
-3. **Visualize, save, and open your data pipelines in the FlowFile Designer UI**
-4. Get the performance benefits of Polars with the traceability of ETL graphs
-
 ## Installation
 
 ```bash
@@ -91,21 +86,4 @@ open_graph_in_editor(aggregated_df.flow_graph)
 
 - **Inspect Data Flow**: See exactly how your data is transformed step by step
 - **Debugging**: Identify issues in your data pipeline visually
-- **Documentation**: Share your data transformation logic with teammates visually
-- **Iteration**: Modify your pipeline in the Designer UI and export it back to code
-- **Production Deployment**: Save your graph for execution in production environments
-
-### Graph File Workflow Options
-
-1. **Develop in Code → Visualize in UI**:
-   - Build your data pipeline with the FlowFile Frame API
-   - Save the graph and open it in the Designer for visualization or sharing
-
-2. **Develop in UI → Use in Code**:
-   - Build your data pipeline visually in the Designer UI
-   - Save the `.flowfile` file and load it in your Python code
-   - Execute or extend the pipeline programmatically
-
-3. **Hybrid Approach**:
-   - Start in one environment and refine in the other
-   - Allows data scientists and engineers to collaborate using their preferred tools
+- **Documentation**: Share your data transformation logic with teammates 
