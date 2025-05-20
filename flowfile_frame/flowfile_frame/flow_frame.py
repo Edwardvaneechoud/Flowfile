@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import polars as pl
 from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orientation
+from flowfile_frame.lazy_methods import add_lazyframe_methods
+
 
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
@@ -16,7 +18,7 @@ from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph
+from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph, stringify_values
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 
 node_id_counter = 0
@@ -34,7 +36,7 @@ def generate_node_id() -> int:
     node_id_counter += 1
     return node_id_counter
 
-
+@add_lazyframe_methods
 class FlowFrame:
     """Main class that wraps FlowDataEngine and maintains the ETL graph."""
     flow_graph: FlowGraph
@@ -325,7 +327,7 @@ class FlowFrame:
             for i, expr in enumerate(sort_expressions):
                 # Convert expr to column name
                 if isinstance(expr, Column):
-                    column_name = expr.name
+                    column_name = expr.column_name
                 elif isinstance(expr, str):
                     column_name = expr
                 else:
@@ -351,7 +353,6 @@ class FlowFrame:
                 or f"Sort by {', '.join(str(e) for e in sort_expressions)}",
             )
             self.flow_graph.add_sort(sort_settings)
-
         return self._create_child_frame(new_node_id)
 
     def _generate_sort_polars_code(
@@ -600,6 +601,8 @@ class FlowFrame:
 
         # Handle simple column names
         if all(isinstance(col_, (str, Column)) for col_ in columns):
+            if len(columns) == 1 and columns[0] == "*":
+                columns = existing_columns
             # Create select inputs
             select_inputs = [
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
@@ -649,7 +652,7 @@ class FlowFrame:
             self._add_polars_code(new_node_id, code, description)
             return self._create_child_frame(new_node_id)
 
-    def filter(self, predicate: Expr | Any = None, *, flowfile_formula: str = None, description: str = None):
+    def filter(self, *predicates: Expr | Any, flowfile_formula: str = None, description: str = None, **constraints):
         """
         Filter rows based on a predicate.
 
@@ -660,15 +663,26 @@ class FlowFrame:
         Returns:
             A new FlowFrame with filtered rows
         """
+        if (len(predicates) > 0 or len(constraints)) > 0 and flowfile_formula:
+            raise ValueError(
+                "You can only use one of the following: predicates, constraints or flowfile_formula"
+            )
         new_node_id = generate_node_id()
-        # Create new node ID
-        if predicate:
-            # we use for now the fallback on polars code.
-            if isinstance(predicate, Expr):
-                predicate_expr = predicate
-            else:
-                predicate_expr = lit(predicate)
-            code = f"input_df.filter({str(predicate_expr)})"
+        if len(predicates) > 0 or len(constraints) > 0:
+            predicate_exprs = []
+            for pred in predicates:
+                if isinstance(pred, Expr):
+                    predicate_exprs.append(pred)
+                elif isinstance(pred, Iterable):
+                    predicate_exprs.append(list(pred))
+                else:
+                    predicate_exprs.append(f'"{pred}"')
+            str_predicate = " & ".join(str(p) for p in predicate_exprs)
+            # str_predicate = str(final_predicate)
+
+            str_constraints = ", ".join(f"{k}={stringify_values(v)}" for k, v in constraints.items())
+            full_filter = ", ".join([v for v in (str_predicate, str_constraints) if v !=""])
+            code = f"input_df.filter({full_filter})"
             self._add_polars_code(new_node_id, code, description)
 
         elif flowfile_formula:
@@ -688,7 +702,6 @@ class FlowFrame:
             )
 
             self.flow_graph.add_filter(filter_settings)
-
         return self._create_child_frame(new_node_id)
 
     def sink_csv(self,
@@ -1343,7 +1356,7 @@ class FlowFrame:
             return False, None
 
         # Extract the output name
-        output_name = expr.name
+        output_name = expr.column_name
 
         if ".over(" not in expr._repr_str:
             # Simple cumulative count can be implemented as a record ID with offset=1
@@ -1579,31 +1592,31 @@ class FlowFrame:
             A new FlowFrame with exploded rows
         """
         new_node_id = generate_node_id()
-
         all_columns = []
 
         if isinstance(columns, (list, tuple)):
             all_columns.extend(
-                [col.name if isinstance(col, Column) else col for col in columns]
+                [col.column_name if isinstance(col, Column) else col for col in columns]
             )
         else:
-            all_columns.append(columns.name if isinstance(columns, Column) else columns)
+            all_columns.append(columns.column_name if isinstance(columns, Column) else columns)
 
         if more_columns:
             for col in more_columns:
-                all_columns.append(col.name if isinstance(col, Column) else col)
+                all_columns.append(col.column_name if isinstance(col, Column) else col)
 
         if len(all_columns) == 1:
-            columns_str = f"'{all_columns[0]}'"
+
+            columns_str = stringify_values(all_columns[0])
         else:
-            columns_str = "[" + ", ".join([f"'{col}'" for col in all_columns]) + "]"
+            columns_str = "[" + ", ".join([ stringify_values(col) for col in all_columns]) + "]"
 
         code = f"""
         # Explode columns into multiple rows
         output_df = input_df.explode({columns_str})
         """
 
-        cols_desc = ", ".join(all_columns)
+        cols_desc = ", ".join(str(s) for s in all_columns)
         desc = description or f"Explode column(s): {cols_desc}"
 
         # Add polars code node
@@ -1646,7 +1659,7 @@ class FlowFrame:
         new_node_id = generate_node_id()
 
         if isinstance(column, Column):
-            column_name = column.name
+            column_name = column.column_name
         else:
             column_name = column
 
@@ -1730,7 +1743,7 @@ class FlowFrame:
                     if col_expr._select_input.is_altered:
                         can_use_native = False
                         break
-                    processed_subset.append(col_expr.name)
+                    processed_subset.append(col_expr.column_name)
                 else:
                     can_use_native = False
                     break
@@ -1867,227 +1880,96 @@ def _add_delegated_methods():
 _add_delegated_methods()
 
 
-def sum(expr):
-    """Sum aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.sum()
-
-
-def mean(expr):
-    """Mean aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.mean()
-
-
-def min(expr):
-    """Min aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.min()
-
-
-def max(expr):
-    """Max aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.max()
-
-
-def count(expr):
-    """Count aggregation function."""
-    if isinstance(expr, str):
-        expr = col(expr)
-    return expr.count()
-
-
-def read_csv(file_path, *, flow_graph: FlowGraph = None, separator: str = ';',
-             convert_to_absolute_path: bool = True,
-             description: str = None, **options):
+def polars_function_wrapper(polars_func_name, is_agg=False):
     """
-    Read a CSV file into a FlowFrame.
-
-    Args:
-        file_path: Path to CSV file
-        flow_graph: if you want to add it to an existing graph
-        separator: Single byte character to use as separator in the file.
-        convert_to_absolute_path: If the path needs to be set to a fixed location
-        description: if you want to add a readable name in the frontend (advised)
-        **options: Options for polars.read_csv
-
-    Returns:
-        A FlowFrame with the CSV data
-    """
-    # Create new node ID
-    node_id = generate_node_id()
-    if flow_graph is None:
-        flow_graph = create_flow_graph()
-
-    flow_id = flow_graph.flow_id
-
-    has_headers = options.get('has_header', True)
-    encoding = options.get('encoding', 'utf-8')
-
-    if '~' in file_path:
-        file_path = os.path.expanduser(file_path)
-
-    received_table = input_schema.ReceivedTable(
-        file_type='csv',
-        path=file_path,
-        name=Path(file_path).name,
-        delimiter=separator,
-        has_headers=has_headers,
-        encoding=encoding
-    )
-
-    if convert_to_absolute_path:
-        received_table.path = received_table.abs_file_path
-
-    read_node = input_schema.NodeRead(
-        flow_id=flow_id,
-        node_id=node_id,
-        received_file=received_table,
-        pos_x=100,
-        pos_y=100,
-        is_setup=True
-    )
-
-    flow_graph.add_read(read_node)
-
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
-    )
-
-
-def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = None,
-                 convert_to_absolute_path: bool = True, **options) -> FlowFrame:
-    """
-    Read a Parquet file into a FlowFrame.
-
-    Args:
-        file_path: Path to Parquet file
-        flow_graph: if you want to add it to an existing graph
-        description: if you want to add a readable name in the frontend (advised)
-        convert_to_absolute_path: If the path needs to be set to a fixed location
-        **options: Options for polars.read_parquet
-
-    Returns:
-        A FlowFrame with the Parquet data
-    """
-    if '~' in file_path:
-        file_path = os.path.expanduser(file_path)
-    node_id = generate_node_id()
-
-    if flow_graph is None:
-        flow_graph = create_flow_graph()
-
-    flow_id = flow_graph.flow_id
-
-    received_table = input_schema.ReceivedTable(
-        file_type='parquet',
-        path=file_path,
-        name=Path(file_path).name,
-    )
-    if convert_to_absolute_path:
-        received_table.path = received_table.abs_file_path
-
-    read_node = input_schema.NodeRead(
-        flow_id=flow_id,
-        node_id=node_id,
-        received_file=received_table,
-        pos_x=100,
-        pos_y=100,
-        is_setup=True,
-        description=description
-    )
-
-    flow_graph.add_read(read_node)
-
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
-    )
-
-
-def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) -> FlowFrame:
-    """
-    Create a FlowFrame from a dictionary or list of dictionaries.
-
-    Args:
-        data: Dictionary of lists or list of dictionaries
-        flow_graph: if you want to add it to an existing graph
-        description: if you want to add a readable name in the frontend (advised)
-    Returns:
-        A FlowFrame with the data
-    """
-    # Create new node ID
-    node_id = generate_node_id()
-
-    if not flow_graph:
-        flow_graph = create_flow_graph()
-    flow_id = flow_graph.flow_id
-
-    input_node = input_schema.NodeManualInput(
-        flow_id=flow_id,
-        node_id=node_id,
-        raw_data=FlowDataEngine(data).to_pylist(),
-        pos_x=100,
-        pos_y=100,
-        is_setup=True,
-        description=description
-    )
-
-    # Add to graph
-    flow_graph.add_manual_input(input_node)
-
-    # Return new frame
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
-    )
-
-
-def concat(frames: List['FlowFrame'],
-                  how: str = 'vertical',
-                  rechunk: bool = False,
-                  parallel: bool = True,
-                  description: str = None) -> 'FlowFrame':
-    """
-    Concatenate multiple FlowFrames into one.
+    Create a wrapper for a polars function that returns an Expr.
 
     Parameters
     ----------
-    frames : List[FlowFrame]
-        List of FlowFrames to concatenate
-    how : str, default 'vertical'
-        How to combine the FlowFrames (see concat method documentation)
-    rechunk : bool, default False
-        Whether to ensure contiguous memory in result
-    parallel : bool, default True
-        Whether to use parallel processing for the operation
-    description : str, optional
-        Description of this operation
+    polars_func_name : str
+        Name of the polars function (e.g., 'fold', 'reduce', etc.)
+    is_agg : bool, default False
+        Whether this is an aggregation function
 
     Returns
     -------
-    FlowFrame
-        A new FlowFrame with the concatenated data
+    function
+        A wrapped function that returns a properly configured Expr
     """
-    if not frames:
-        raise ValueError("No frames provided to concat_frames")
+    def wrapper(*args, **kwargs):
+        from flowfile_frame.expr import Expr, _get_expr_and_repr
 
-    if len(frames) == 1:
-        return frames[0]
+        # Process args for representation
+        args_repr = []
+        pl_args = []
+        convertable_to_code = True
 
-    # Use first frame's concat method with remaining frames
-    first_frame = frames[0]
-    remaining_frames = frames[1:]
+        for arg in args:
+            # Handle callable arguments specially (e.g., functions)
+            if callable(arg) and not hasattr(arg, 'expr'):
+                if hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
+                    args_repr.append(arg.__name__)
+                else:
+                    args_repr.append("<lambda>")
+                    convertable_to_code = False
+                pl_args.append(arg)
+            else:
+                # Handle normal arguments
+                arg_expr, repr_str = _get_expr_and_repr(arg)
+                args_repr.append(repr_str)
+                pl_args.append(arg_expr if arg_expr is not None else arg)
 
-    return first_frame.concat(remaining_frames, how=how,
-                              rechunk=rechunk, parallel=parallel,
-                              description=description)
+        # Process kwargs for representation
+        kwargs_repr = []
+        pl_kwargs = {}
+
+        for key, value in kwargs.items():
+            if callable(value) and not hasattr(value, 'expr'):
+                if hasattr(value, "__name__") and value.__name__ != "<lambda>":
+                    kwargs_repr.append(f"{key}={value.__name__}")
+                else:
+                    kwargs_repr.append(f"{key}=<lambda>")
+                    convertable_to_code = False
+                pl_kwargs[key] = value
+            else:
+                val_expr, val_repr = _get_expr_and_repr(value)
+                kwargs_repr.append(f"{key}={val_repr}")
+                pl_kwargs[key] = val_expr if val_expr is not None else value
+
+        # Build the representation string
+        full_repr = f"pl.{polars_func_name}({', '.join(args_repr)}"
+        if kwargs_repr:
+            if args_repr:
+                full_repr += ", "
+            full_repr += ", ".join(kwargs_repr)
+        full_repr += ")"
+
+        # Create the actual polars expression if possible
+        pl_expr = None
+        try:
+            polars_func = getattr(pl, polars_func_name)
+            pl_expr = polars_func(*pl_args, **pl_kwargs)
+        except Exception as e:
+            print(f"Warning: Could not create polars expression for {polars_func_name}(): {e}")
+
+        # Create and return the FlowFile expression
+        return Expr(
+            pl_expr,
+            repr_str=full_repr,
+            agg_func=polars_func_name if is_agg else None,
+            is_complex=True,
+            convertable_to_code=convertable_to_code
+        )
+
+    # Set the wrapper's name and docstring
+    wrapper.__name__ = polars_func_name
+    wrapper.__doc__ = f"""
+    FlowFile wrapper for pl.{polars_func_name}.
+
+    See polars documentation for full details on parameters and usage.
+    """
+
+    return wrapper
+
+# Create the fold function using our generic wrapper
+fold = polars_function_wrapper('fold')

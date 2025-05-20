@@ -6,8 +6,11 @@ import polars as pl
 from polars.expr.string import ExprStringNameSpace
 
 from flowfile_core.schemas import transform_schema
+from functools import wraps
 
 from builtins import len as built_in_len
+from flowfile_frame.expr_name import ExprNameNameSpace
+from flowfile_frame.adding_expr import add_expr_methods
 
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
@@ -65,7 +68,7 @@ class StringMethods:
     def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.str.{method_name}({args_repr})"
-        new_expr = Expr(result_expr, self.parent.name, repr_str=new_repr,
+        new_expr = Expr(result_expr, self.parent.column_name, repr_str=new_repr,
                         initial_column_name=self.parent._initial_column_name,
                         selector=None,
                         agg_func=self.parent.agg_func,
@@ -141,7 +144,7 @@ class DateTimeMethods:
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.dt.{method_name}({args_repr})"
 
-        new_expr = Expr(result_expr, self.parent.name, repr_str=new_repr,
+        new_expr = Expr(result_expr, self.parent.column_name, repr_str=new_repr,
                         initial_column_name=self.parent._initial_column_name,
                         selector=None,
                         agg_func=self.parent.agg_func,
@@ -198,8 +201,10 @@ class Expr:
     expr: Optional[pl.Expr]
     agg_func: Optional[str]
     _repr_str: str
-    name: Optional[str]
+    _name_namespace: Optional[ExprNameNameSpace]
+    column_name: Optional[str]
     is_complex: bool = False
+    convertable_to_code: bool
 
     def __init__(self,
                  expr: Optional[pl.Expr],
@@ -209,14 +214,16 @@ class Expr:
                  selector: Optional['Selector'] = None,
                  agg_func: Optional[str] = None,
                  ddof: Optional[int] = None,
-                 is_complex: bool = False):
+                 is_complex: bool = False,
+                 convertable_to_code: bool = True):
 
         self.expr = expr
-        self.name = column_name
+        self.column_name = column_name
         self.agg_func = agg_func
         self.selector = selector
         self._initial_column_name = initial_column_name or column_name
         self.is_complex = is_complex
+        self.convertable_to_code = convertable_to_code
         # --- Determine Representation String ---
         if repr_str is not None:
             self._repr_str = repr_str
@@ -238,17 +245,18 @@ class Expr:
         else:
             raise ValueError("Cannot initialize Expr without expr, repr_str, or selector+agg_func")
 
-        if self.name is None and self.selector is None and self.expr is not None:
+        if self.column_name is None and self.selector is None and self.expr is not None:
             try:
-                self.name = self.expr._output_name
+                self.column_name = self.expr._output_name
             except AttributeError:
                 try:
-                    self.name = self.expr._name
+                    self.column_name = self.expr._name
                 except AttributeError:
                     pass
 
         self._str_namespace: Optional['StringMethods'] = None
         self._dt_namespace: Optional['DateTimeMethods'] = None
+        self._name_namespace: Optional['ExprNameNameSpace'] = None
 
     def __repr__(self) -> str:
         return self._repr_str
@@ -308,18 +316,35 @@ class Expr:
         # If we reach here, it's a simple expression (just column reference and maybe aggregation)
         return True
 
+    def arg_unique(self) -> "Expr":
+        result_expr = self.expr.arg_unique() if self.expr is not None else None
+        return self._create_next_expr(method_name="arg_unique", result_expr=result_expr, is_complex=True)
+
+    def arg_sort(self, *, descending: bool = False, nulls_last: bool = False) -> "Expr":
+        result_expr = self.expr.arg_sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
+        return self._create_next_expr(descending=descending, nulls_last=nulls_last, method_name="arg_sort",
+                                      result_expr=result_expr, is_complex=True)
+
     def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, **kwargs) -> 'Expr':
         """Creates a new Expr instance, appending method call to repr string."""
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self._repr_str}.{method_name}({args_repr})"
 
         # Create new instance, inheriting current agg_func status by default
-        new_expr_instance = Expr(result_expr, self.name, repr_str=new_repr,
+        new_expr_instance = Expr(result_expr, self.column_name, repr_str=new_repr,
                                  initial_column_name=self._initial_column_name,
                                  selector=None,
                                  agg_func=self.agg_func,
-                                 is_complex=is_complex)
+                                 is_complex=is_complex,
+                                 convertable_to_code=self.convertable_to_code)
         return new_expr_instance
+
+    @property
+    def name(self) -> ExprNameNameSpace:
+        """Access the name namespace for expression name operations."""
+        if self._name_namespace is None:
+            self._name_namespace = ExprNameNameSpace(self, self._repr_str)
+        return self._name_namespace
 
     def _create_binary_op_expr(
         self, op_symbol: str, other: Any, result_expr: Optional[pl.Expr]
@@ -353,6 +378,119 @@ class Expr:
             is_complex=True
         )
 
+    def map_batches(
+            self,
+            function: callable,
+            return_dtype=None,
+            *,
+            agg_list: bool = False,
+            is_elementwise: bool = False,
+            returns_scalar: bool = False,
+    ) -> "Expr":
+        """
+        Apply a custom python function to a whole Series or sequence of Series.
+
+        The output of this custom function is presumed to be either a Series,
+        or a NumPy array (in which case it will be automatically converted into
+        a Series), or a scalar that will be converted into a Series. If the
+        result is a scalar and you want it to stay as a scalar, pass in
+        ``returns_scalar=True``. If you want to apply a
+        custom function elementwise over single values, see :func:`map_elements`.
+        A reasonable use case for `map` functions is transforming the values
+        represented by an expression using a third-party library.
+
+        Parameters
+        ----------
+        function
+            Lambda/function to apply.
+        return_dtype
+            Dtype of the output Series.
+            If not set, the dtype will be inferred based on the first non-null value
+            that is returned by the function.
+        agg_list
+            Aggregate the values of the expression into a list before applying the
+            function. This parameter only works in a group-by context.
+            The function will be invoked only once on a list of groups, rather than
+            once per group.
+        is_elementwise
+            If set to true this can run in the streaming engine, but may yield
+            incorrect results in group-by. Ensure you know what you are doing!
+        returns_scalar
+            If the function returns a scalar, by default it will be wrapped in
+            a list in the output, since the assumption is that the function
+            always returns something Series-like. If you want to keep the
+            result as a scalar, set this argument to True.
+        """
+        # Format the arguments for the representation string
+        args_strs = []
+        convertable_to_code: bool = True
+        # Handle function representation
+        if hasattr(function, '_repr_str'):  # Handle case when expr is passed
+            args_strs.append(function._repr_str)
+        elif callable(function):
+            if hasattr(function, "__name__") and function.__name__ != "<lambda>":
+                # Named function - use its name
+                args_strs.append(function.__name__)
+            else:
+                # Lambda or unnamed function
+                print("Warning, using anonymous functions are not convertable to ui define function with a name")
+                args_strs.append("<lambda>")
+                convertable_to_code = False
+        else:
+            args_strs.append(repr(function))
+
+        kwargs_parts = []
+        if agg_list:
+            kwargs_parts.append(f"agg_list={agg_list}")
+        if is_elementwise:
+            kwargs_parts.append(f"is_elementwise={is_elementwise}")
+        if returns_scalar:
+            kwargs_parts.append(f"returns_scalar={returns_scalar}")
+        if return_dtype:
+            kwargs_parts.append(f"return_dtype=pl.{return_dtype}")
+
+        # Combine all parts for the representation
+        args_repr = ", ".join(args_strs)
+        if kwargs_parts:
+            kwargs_str = ", ".join(kwargs_parts)
+            if args_repr:
+                args_repr = f"{args_repr}, {kwargs_str}"
+            else:
+                args_repr = kwargs_str
+
+        # Create the full representation string
+        new_repr = f"{self._repr_str}.map_batches({args_repr})"
+
+        # For the actual computation, we need to call the polars implementation if available
+        res_expr = None
+        if self.expr is not None:
+            try:
+                # Get the function's polars expression if it's an Expr object
+                func_to_use = function.expr if hasattr(function, 'expr') else function
+
+                # Pass the correct parameters to Polars
+                res_expr = self.expr.map_batches(
+                    func_to_use,
+                    return_dtype,
+                    agg_list=agg_list,
+                    is_elementwise=is_elementwise,
+                    returns_scalar=returns_scalar,
+                )
+            except Exception as e:
+                print(f"Warning: Could not create polars expression for map_batches(): {e}")
+
+        # Create and return the new expression
+        return Expr(
+            res_expr,
+            self.column_name,
+            repr_str=new_repr,
+            initial_column_name=self._initial_column_name,
+            selector=None,
+            agg_func=None,
+            is_complex=True,
+            convertable_to_code=convertable_to_code
+        )
+
     @property
     def str(self) -> StringMethods:
         if self._str_namespace is None:
@@ -369,6 +507,18 @@ class Expr:
         result_expr = self.expr.sum() if self.expr is not None else None
         result = self._create_next_expr(method_name="sum", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "sum"
+        return result
+
+    def implode(self):
+        result_expr = self.expr.implode() if self.expr is not None else None
+        result = self._create_next_expr(method_name="implode", result_expr=result_expr, is_complex=self.is_complex)
+        result.agg_func = "implode"
+        return result
+
+    def explode(self):
+        result_expr = self.expr.explode() if self.expr is not None else None
+        result = self._create_next_expr(method_name="explode", result_expr=result_expr, is_complex=self.is_complex)
+        result.agg_func = "explode"
         return result
 
     def mean(self):
@@ -641,11 +791,12 @@ class Expr:
 
         return Expr(
             res_expr,
-            self.name,
+            self.column_name,
             repr_str=f"{self._repr_str}.filter({all_args_str})",
             initial_column_name=self._initial_column_name,
             selector=None,  # Filter typically removes selector link
             agg_func=self.agg_func,  # Preserve aggregation status
+            convertable_to_code=self.convertable_to_code
         )
 
     def is_not_null(self):
@@ -670,7 +821,8 @@ class Expr:
                             initial_column_name=self._initial_column_name,
                             selector=None,
                             agg_func=self.agg_func,
-                            is_complex=self.is_complex)
+                            is_complex=self.is_complex,
+                            convertable_to_code=self.convertable_to_code)
         return new_instance
 
     def fill_null(self, value):
@@ -822,7 +974,7 @@ class Expr:
 
         return Expr(
             res_expr,
-            self.name,
+            self.column_name,
             repr_str=f"{self._repr_str}.over({args_str_for_repr})",
             initial_column_name=self._initial_column_name,
             selector=None,
@@ -831,7 +983,7 @@ class Expr:
 
     def sort(self, *, descending=False, nulls_last=False):
         res_expr = self.expr.sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
-        return Expr(res_expr, self.name,
+        return Expr(res_expr, self.column_name,
                     repr_str=f"{self._repr_str}.sort(descending={descending}, nulls_last={nulls_last})",
                     initial_column_name=self._initial_column_name, agg_func=None)
 
@@ -853,12 +1005,13 @@ class Expr:
 
         res_expr = self.expr.cast(pl_dtype, strict=strict) if self.expr is not None else None
         # Cast preserves aggregation status (e.g., cast(col('a').sum()))
-        new_expr = Expr(res_expr, self.name,
+        new_expr = Expr(res_expr, self.column_name,
                         repr_str=f"{self._repr_str}.cast({dtype_repr}, strict={strict})",
                         initial_column_name=self._initial_column_name,
                         selector=None,
                         agg_func=self.agg_func,
-                        is_complex=True)
+                        is_complex=True,
+                        convertable_to_code=self.convertable_to_code)
         return new_expr
 
 
@@ -872,7 +1025,7 @@ class Column(Expr):
                          repr_str=f"pl.col('{name}')",
                          initial_column_name=select_input.old_name if select_input else name,
                          selector=None,
-                         agg_func=None)
+                         agg_func=None,)
         self._select_input = select_input or transform_schema.SelectInput(old_name=name)
 
     def alias(self, new_name: str) -> "Column":
@@ -946,7 +1099,7 @@ class Column(Expr):
     def to_select_input(self) -> transform_schema.SelectInput:
         """Convert Column state back to a SelectInput schema object."""
         # This logic seems correct based on your previous version
-        current_name = self.name
+        current_name = self.column_name
         original_name = self._select_input.old_name
         new_name_attr = self._select_input.new_name
 
@@ -970,6 +1123,9 @@ class Column(Expr):
     @property
     def dt(self) -> DateTimeMethods:
         return super().dt
+
+
+add_expr_methods(Expr)
 
 
 class When(Expr):
@@ -1065,33 +1221,94 @@ def len() -> Expr:
     return Expr(pl.len()).alias('number_of_records')
 
 
-def agg_function(func):
+def agg_function(func=None, *, customize_repr=True):
     """
-    Decorator for aggregation functions that sets appropriate properties based on number of arguments.
-    Uses the function name as the aggregation function name.
+    Enhanced decorator for aggregation functions that sets appropriate properties
+    and handles representation issues.
 
-    Parameters:
-    -----------
-    func : function
+    Parameters
+    ----------
+    func : function, optional
         The aggregation function to decorate
+    customize_repr : bool, default True
+        Whether to create a custom representation string for the function
+        Set to True for functions that may have problematic polars representation
+        (default is True since most aggregation functions need this)
 
-    Returns:
+    Returns
+    -------
+    function
+        A wrapped function that returns a properly configured Expr
+
+    Examples
     --------
-    wrapper
-        A wrapped function that returns the properly configured Expr
-    """
-    agg_func_name = func.__name__  # Use the function name as the agg_func
+    Basic usage:
 
-    def wrapper(*names):
-        # Get the Polars expression from the original function
-        pl_expr = func(*names)
-        if built_in_len(names) == 1 and isinstance(names[0], str):
-            return Expr(pl_expr, agg_func=agg_func_name, initial_column_name=names[0], is_complex=False)
-        elif built_in_len(names) == 1 and isinstance(names[0], Expr):
-            return Expr(pl_expr, agg_func=agg_func_name, initial_column_name=names[0].name, is_complex=names[0].is_complex)
-        else:
-            return Expr(pl_expr, agg_func=agg_func_name, is_complex=True)
-    return wrapper
+    @enhanced_agg_function
+    def sum(*names) -> Expr:
+        return pl.sum(*names)
+
+    For functions that don't need custom representation (rare):
+
+    @enhanced_agg_function(customize_repr=False)
+    def some_function(*names) -> Expr:
+        return pl.some_function(*names)
+    """
+    def decorator(func):
+        agg_func_name = func.__name__  # Use the function name as the agg_func
+
+        @wraps(func)
+        def wrapper(*names):
+            from flowfile_frame.expr import Expr
+            # Get the Polars expression from the original function
+            pl_expr = func(*names)
+
+            # Determine if we need to customize the representation
+            if customize_repr:
+                # Create a custom representation string
+                if built_in_len(names) == 1:
+                    # Single argument case
+                    if isinstance(names[0], str):
+                        repr_str = f"pl.{agg_func_name}('{names[0]}')"
+                    else:
+                        repr_str = f"pl.{agg_func_name}({str(names[0])})"
+                else:
+                    # Multiple arguments case
+                    args_repr = ", ".join(
+                        f"'{n}'" if isinstance(n, str) else str(n)
+                        for n in names
+                    )
+                    repr_str = f"pl.{agg_func_name}({args_repr})"
+            else:
+                # Use the default representation approach
+                repr_str = None
+
+            # Determine initial column name for tracking
+            if built_in_len(names) == 1:
+                if isinstance(names[0], str):
+                    initial_column_name = names[0]
+                elif hasattr(names[0], 'column_name'):
+                    initial_column_name = names[0].column_name
+                else:
+                    initial_column_name = None
+            else:
+                initial_column_name = None
+
+            # Create the expression with all necessary properties
+            return Expr(
+                pl_expr,
+                repr_str=repr_str,
+                initial_column_name=initial_column_name,
+                agg_func=agg_func_name,
+                is_complex=built_in_len(names) > 1 or not isinstance(names[0], str)
+            )
+
+        return wrapper
+
+    # Handle both @enhanced_agg_function and @enhanced_agg_function(customize_repr=True)
+    if func is None:
+        return decorator
+    return decorator(func)
 
 
 @agg_function
@@ -1111,6 +1328,8 @@ def first(*names) -> Expr:
 
 @agg_function
 def last(*names) -> Expr:
+    if built_in_len(names) == 0:
+        return pl.last()
     return pl.last(*names)
 
 
@@ -1123,6 +1342,15 @@ def mean(*names) -> Expr:
 def count(*names) -> Expr:
     return pl.count(*names)
 
+
+@agg_function
+def implode(*names) -> Expr:
+    return pl.implode(*names)
+
+
+@agg_function
+def explode(*names) -> Expr:
+    return pl.explode(*names)
 
 @agg_function
 def sum(*names) -> Expr:
@@ -1161,3 +1389,23 @@ def cum_count(expr, reverse: bool = False) -> Expr:
 def when(condition):
     """Start a when-then-otherwise expression."""
     return When(condition)
+
+
+
+# def last(*names) -> Expr:
+#     if not names:
+#         # When no column names are provided, get the last column
+#         return Expr(pl.last(), repr_str="pl.last()", agg_func=None)
+#
+#     # When column names are provided, use the standard approach
+#     if built_in_len(names) == 1:
+#         if isinstance(names[0], str):
+#             col_expr = col(names[0])
+#         else:
+#             col_expr = names[0]
+#         return col_expr.last()
+#     else:
+#         # Handle multiple columns case
+#         cols_repr = ", ".join(f"'{n}'" if isinstance(n, str) else str(n) for n in names)
+#         repr_str = f"pl.last({cols_repr})"
+#         return Expr(pl.last(*names), repr_str=repr_str, agg_func="last", is_complex=True)

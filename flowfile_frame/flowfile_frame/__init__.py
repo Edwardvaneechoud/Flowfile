@@ -10,8 +10,10 @@ from flowfile_frame.utils import create_flow_graph  # noqa: F401
 from flowfile_frame.expr import (  # noqa: F401
     col, lit, column,
     cum_count, len,
-    sum, min, max, mean, count, when
+    sum, min, max, mean, count, when, implode, last
 )
+
+from flowfile_frame.lazy import (fold)
 
 # Selector utilities
 from flowfile_frame.selectors import (  # noqa: F401
@@ -22,7 +24,7 @@ from flowfile_frame.selectors import (  # noqa: F401
 )
 
 # File I/O
-from flowfile_frame.flow_frame import (  # noqa: F401
+from flowfile_frame.flow_frame_methods import (  # noqa: F401
     read_csv, read_parquet, from_dict, concat
 )
 

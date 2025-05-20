@@ -24,13 +24,13 @@ class TestExpressions:
         # Basic column expression
         c = col("age")
         assert isinstance(c, Column)
-        assert c.name == "age"
+        assert c.column_name == "age"
         assert str(c) == "pl.col('age')"
 
         # Column with alias
         c_alias = col("age").alias("user_age")
         assert isinstance(c_alias, Column)
-        assert c_alias.name == "user_age"
+        assert c_alias.column_name == "user_age"
         assert str(c_alias) == "pl.col('age').alias('user_age')"
 
         # Column with cast
@@ -40,7 +40,7 @@ class TestExpressions:
 
         # Cast with custom name
         c_cast_named = col("score").cast(pl.Int32).alias("score_int")
-        assert c_cast_named.name == "score_int"
+        assert c_cast_named.column_name == "score_int"
 
     def test_literal_expr_creation(self):
         """Test literal expression creation."""

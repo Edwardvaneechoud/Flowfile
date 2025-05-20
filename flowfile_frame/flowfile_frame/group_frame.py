@@ -69,7 +69,7 @@ class GroupByFrame:
             if isinstance(col_expr, str):
                 agg_cols.append(transform_schema.AggColl(old_name=col_expr, agg="groupby"))
             elif isinstance(col_expr, Expr):
-                agg_cols.append(transform_schema.AggColl(old_name=col_expr.name, agg="groupby"))
+                agg_cols.append(transform_schema.AggColl(old_name=col_expr.column_name, agg="groupby"))
             elif isinstance(col_expr, Selector):
                 return False
             else:
@@ -81,14 +81,16 @@ class GroupByFrame:
         # (Implementation unchanged from user input)
         for expr in agg_expressions:
             if isinstance(expr, Expr):
+                if expr.is_complex:
+                    return False
                 agg_func = getattr(expr, "agg_func", None)
-                old_name = getattr(expr, "_initial_column_name", expr.name) or expr.name
+                old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 if agg_func:
                     agg_cols.append(
-                        transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=expr.name)
+                        transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=expr.column_name)
                     )
                 else:
-                    agg_cols.append(transform_schema.AggColl(old_name=expr.name, agg="first"))
+                    agg_cols.append(transform_schema.AggColl(old_name=expr.column_name, agg="first"))
             elif isinstance(expr, str):
                 agg_cols.append(transform_schema.AggColl(old_name=expr, agg="first"))
             elif isinstance(expr, Selector):
@@ -99,19 +101,20 @@ class GroupByFrame:
 
     @staticmethod
     def _process_named_agg_expressions(agg_cols: list[transform_schema.AggColl], named_agg_exprs: dict) -> bool:
+
         for name, expr in named_agg_exprs.items():
             if expr.is_complex:
                 return False
             if isinstance(expr, Expr):
                 agg_func = getattr(expr, "agg_func", "first")
-                old_name = getattr(expr, "_initial_column_name", expr.name) or expr.name
+                old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 agg_cols.append(transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=name))
             elif isinstance(expr, str):
                 agg_cols.append(transform_schema.AggColl(old_name=expr, agg="first", new_name=name))
             elif isinstance(expr, tuple) and len(expr) == 2:
                 col_spec, agg_func_str = expr
                 if isinstance(col_spec, Expr):
-                    old_name = getattr(col_spec, "_initial_column_name", col_spec.name) or col_spec.name
+                    old_name = getattr(col_spec, "_initial_column_name", col_spec.column_name) or col_spec.column_name
                 elif isinstance(col_spec, str):
                     old_name = col_spec
                 else:
@@ -141,14 +144,16 @@ class GroupByFrame:
             self.parent._add_polars_code(new_node_id=node_id_to_use, code=code, description=description)
         return self.parent._create_child_frame(node_id_to_use)
 
-    def _generate_direct_polars_code(self, method_name: str) -> "FlowFrame":
+    def _generate_direct_polars_code(self, method_name: str, *args, **kwargs) -> "FlowFrame":
         """
         Generates Polars code for simple GroupBy methods like sum(), mean(), len(), count()
         which operate implicitly or have a standard Polars counterpart.
         Always uses the Polars code path.
         """
         readable_group_str = self.readable_group()
-        code = f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}()"
+        execution = "("+",".join(args) + ",".join([f"{k}={v}" for k, v in kwargs.items()])+")"
+
+        code = f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}{execution}"
         node_description = self.description or f"{method_name.capitalize()} after grouping by {readable_group_str}"
         self.parent._add_polars_code(new_node_id=self.node_id, code=code, description=node_description)
         return self.parent._create_child_frame(self.node_id)
@@ -187,6 +192,16 @@ class GroupByFrame:
         """Calculate maximum for all non-grouping columns."""
         # Remove *columns argument
         return self._generate_direct_polars_code("max")
+
+    def tail(self, n: int = 10):
+        """Get last n rows for all non-grouping columns."""
+        # Remove *columns argument
+        return self._generate_direct_polars_code("tail", n=n)
+
+    def head(self, n: int = 10):
+        """Get the first n rows for all non-grouping columns."""
+        # Remove *columns argument
+        return self._generate_direct_polars_code("head", n=n)
 
     def first(self):
         """Get first value for all non-grouping columns."""
