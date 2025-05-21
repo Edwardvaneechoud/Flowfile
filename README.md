@@ -16,7 +16,7 @@
   <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
 </p>
 <p>
-Flowfile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
+Flowfile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code. It also includes flowfile_frame, a Python API for defining data flows programmatically with a Polars-like syntax.
 </p>
 
 <div align="center">
@@ -111,24 +111,7 @@ npm install
 npm run build      # All platforms
 ```
 
-#### 2. Docker Setup
-Perfect for quick testing, development or deployment scenarios. Runs all services in containers with proper networking and volume management:
-```bash
-# Clone and start all services
-git clone https://github.com/edwardvaneechoud/Flowfile.git
-cd Flowfile
-docker compose up -d
-
-# Access services:
-Frontend: http://localhost:8080 # main service
-Core API: http://localhost:63578/docs
-Worker API: http://localhost:63579/docs
-```
-Just place your files that you want to transform in the directory in shared_data and you're all set!
-
-Docker Compose is also excellent for development, as it automatically sets up all required services and ensures proper communication between them. Code changes in the mounted volumes will be reflected in the running containers.
-
-#### 3. Manual Setup (Development)
+#### 4. Manual Setup (Development)
 Ideal for development work when you need direct access to all services and hot-reloading:
 
 ```bash
@@ -147,6 +130,58 @@ cd flowfile_frontend
 npm install
 npm run dev:web  # Starts web interface on :8080
 ```
+
+#### 5. Python Package (PyPI)
+Install Flowfile directly from PyPI to use both the visual UI and the programmatic API:
+
+```bash
+pip install Flowfile
+```
+
+##### Launch the Web UI
+Start the web-based UI with a single command:
+
+```bash
+# Start the Flowfile web UI with integrated services
+flowfile run ui
+```
+
+##### FlowFrame API
+The package includes `flowfile_frame`, a Python module that provides a Polars-like API for creating data pipelines programmatically:
+
+```python
+import flowfile as ff
+from flowfile import col, open_graph_in_editor
+
+# Create a data pipeline
+df = ff.from_dict({
+    "id": [1, 2, 3, 4, 5],
+    "category": ["A", "B", "A", "C", "B"],
+    "value": [100, 200, 150, 300, 250]
+})
+
+# Process the data
+result = df.filter(col("value") > 150).with_columns([
+    (col("value") * 2).alias("double_value")
+])
+
+# Open the graph in the web UI
+open_graph_in_editor(result.flow_graph)
+```
+
+For more details, see the [flowfile_frame documentation](flowfile_frame/readme.md).
+
+### Visualizing and Sharing Pipelines
+
+One of the most powerful features is the ability to visualize your data transformation pipelines:
+
+- **Inspect Data Flow**: See exactly how your data is transformed step by step
+- **Debugging**: Identify issues in your data pipeline visually
+- **Documentation**: Share your data transformation logic with teammates visually
+- **Iteration**: Modify your pipeline in the Designer UI and export it back to code
+
+For more details on using the FlowFrame API, see the [flowfile_frame documentation](flowfile_frame/README.md).
+
 
 ## 📋 TODO
 

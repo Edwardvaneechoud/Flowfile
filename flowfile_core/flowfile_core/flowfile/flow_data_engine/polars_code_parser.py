@@ -126,6 +126,37 @@ class PolarsCodeParser:
             'col': pl.col,
             'lit': pl.lit,
             'expr': pl.expr,
+
+            # Polars datatypes - added directly
+            'Int8': pl.Int8,
+            'Int16': pl.Int16,
+            'Int32': pl.Int32,
+            'Int64': pl.Int64,
+            'Int128': pl.Int128,
+            'UInt8': pl.UInt8,
+            'UInt16': pl.UInt16,
+            'UInt32': pl.UInt32,
+            'UInt64': pl.UInt64,
+            'Float32': pl.Float32,
+            'Float64': pl.Float64,
+            'Boolean': pl.Boolean,
+            'String': pl.String,
+            'Utf8': pl.Utf8,
+            'Binary': pl.Binary,
+            'Null': pl.Null,
+            'List': pl.List,
+            'Array': pl.Array,
+            'Struct': pl.Struct,
+            'Object': pl.Object,
+            'Date': pl.Date,
+            'Time': pl.Time,
+            'Datetime': pl.Datetime,
+            'Duration': pl.Duration,
+            'Categorical': pl.Categorical,
+            'Decimal': pl.Decimal,
+            'Enum': pl.Enum,
+            'Unknown': pl.Unknown,
+
             # Basic Python built-ins
             'print': print,
             'len': len,
@@ -142,7 +173,7 @@ class PolarsCodeParser:
             'True': True,
             'False': False,
             'None': None,
-            'time': time
+            'time': time,
         }
 
     @staticmethod

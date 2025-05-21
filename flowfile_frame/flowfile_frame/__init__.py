@@ -25,8 +25,7 @@ from flowfile_frame.selectors import (  # noqa: F401
 
 # File I/O
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
-    read_csv, read_parquet, from_dict, concat
-)
+    read_csv, read_parquet, from_dict, concat,  scan_csv, scan_parquet)
 
 from polars.datatypes import (  # noqa: F401
     # Integer types

@@ -1,2 +1,1 @@
-from flowfile_core.flowfile.sources.external_sources.custom_external_sources import google_sheet
 from flowfile_core.flowfile.sources.external_sources.custom_external_sources import sample_users

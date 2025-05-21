@@ -1,6 +1,6 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection, RunInformation
+from flowfile_core.flowfile.FlowfileFlow import (FlowGraph, add_connection, RunInformation)
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor

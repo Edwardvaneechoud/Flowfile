@@ -1,16 +1,20 @@
-import uuid
+import logging
 import os
-from typing import Any, Iterable, List, Literal, Optional, Tuple, Union
+from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, Callable
 from pathlib import Path
 
+import io
 import re
 import polars as pl
 from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orientation
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 
+from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation, IO, Mapping, PolarsDataType,
+                            Sequence, CsvEncoding)
 
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema, transform_schema
@@ -23,6 +27,14 @@ from flowfile_frame.join import _normalize_columns_to_list, _create_join_mapping
 
 node_id_counter = 0
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(message)s'
+)
+
+# Create and export the logger
+logger = logging.getLogger('flow_frame')
 
 def _to_string_val(v) -> str:
     if isinstance(v, str):
@@ -473,14 +485,25 @@ class FlowFrame:
         FlowFrame
             New FlowFrame with join operation applied.
         """
-        new_node_id = generate_node_id()
-        print('new node id', new_node_id)
         use_polars_code = not(maintain_order is None and
                               coalesce is None and
                               nulls_equal is False and
                               validate is None and
                               suffix == '_right')
         join_mappings = None
+        if self.flow_graph.flow_id != other.flow_graph.flow_id:
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
+            new_self_node_id = node_mappings.get((self.flow_graph.flow_id, self.node_id), None)
+            new_other_node_id = node_mappings.get((other.flow_graph.flow_id, other.node_id), None)
+            if new_other_node_id is None or new_self_node_id is None:
+                raise ValueError("Cannot remap the nodes")
+            self.node_id = new_self_node_id
+            other.node_id = new_other_node_id
+            self.flow_graph = combined_graph
+            other.flow_graph = combined_graph
+            global node_id_counter
+            node_id_counter += len(combined_graph.nodes)
+        new_node_id = generate_node_id()
         if on is not None:
             left_columns = right_columns = _normalize_columns_to_list(on)
         elif left_on is not None and right_on is not None:
@@ -596,6 +619,7 @@ class FlowFrame:
             if len(columns) == 1 and columns[0] == "*":
                 columns = existing_columns
             # Create select inputs
+
             select_inputs = [
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
                 for col_ in columns
@@ -694,6 +718,7 @@ class FlowFrame:
             )
 
             self.flow_graph.add_filter(filter_settings)
+
         return self._create_child_frame(new_node_id)
 
     def sink_csv(self,
@@ -951,7 +976,7 @@ class FlowFrame:
             input_schema.NodeFormula(flow_id=self.flow_graph.flow_id, node_id=new_node_id, depending_on_id=self.node_id,
                                      function=transform_schema.FunctionInput(
                                          function=flowfile_formula,
-                                         field=transform_schema.FieldInput(name=output_column_name)),
+                                         field=transform_schema.FieldInput(name=output_column_name, data_type='Auto')),
                                      description=description))
         self.flow_graph.add_formula(function_settings)
         return self._create_child_frame(new_node_id)
@@ -1246,14 +1271,24 @@ class FlowFrame:
         FlowFrame
             A new FlowFrame with the concatenated data
         """
-        new_node_id = generate_node_id()
-
         # Convert single FlowFrame to list
         if isinstance(other, FlowFrame):
             others = [other]
         else:
             others = other
-
+        all_graphs = []
+        all_graph_ids = []
+        for g in [self.flow_graph] + [f.flow_graph for f in others]:
+            if g.flow_id not in all_graph_ids:
+                all_graph_ids.append(g.flow_id)
+                all_graphs.append(g)
+        if len(all_graphs) > 1:
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(*all_graphs)
+            for f in [self] + other:
+                f.node_id = node_mappings.get((f.flow_graph.flow_id, f.node_id), None)
+            global node_id_counter
+            node_id_counter += len(combined_graph.nodes)
+        new_node_id = generate_node_id()
         use_native = how == "diagonal_relaxed" and parallel and not rechunk
 
         if use_native:
@@ -1584,6 +1619,7 @@ class FlowFrame:
             A new FlowFrame with exploded rows
         """
         new_node_id = generate_node_id()
+
         all_columns = []
 
         if isinstance(columns, (list, tuple)):
@@ -1917,3 +1953,113 @@ def polars_function_wrapper(polars_func_name, is_agg=False):
 
 # Create the fold function using our generic wrapper
 fold = polars_function_wrapper('fold')
+
+
+def scan_csv(
+        source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
+        *,
+        flow_graph: Optional[Any] = None,  # Using Any for FlowGraph placeholder
+        separator: str = ',',
+        convert_to_absolute_path: bool = True,
+        description: Optional[str] = None,
+        has_header: bool = True,
+        new_columns: Optional[List[str]] = None,
+        comment_prefix: Optional[str] = None,
+        quote_char: Optional[str] = '"',
+        skip_rows: int = 0,
+        skip_lines: int = 0,
+        schema: Optional[SchemaDict] = None,
+        schema_overrides: Optional[Union[SchemaDict, Sequence[PolarsDataType]]] = None,
+        null_values: Optional[Union[str, List[str], Dict[str, str]]] = None,
+        missing_utf8_is_empty_string: bool = False,
+        ignore_errors: bool = False,
+        try_parse_dates: bool = False,
+        infer_schema: bool = True,
+        infer_schema_length: Optional[int] = 100,
+        n_rows: Optional[int] = None,
+        encoding: CsvEncoding = 'utf8',
+        low_memory: bool = False,
+        rechunk: bool = False,
+        storage_options: Optional[Dict[str, Any]] = None,
+        skip_rows_after_header: int = 0,
+        row_index_name: Optional[str] = None,
+        row_index_offset: int = 0,
+        eol_char: str = '\n',
+        raise_if_empty: bool = True,
+        truncate_ragged_lines: bool = False,
+        decimal_comma: bool = False,
+        glob: bool = True,
+        cache: bool = True,
+        with_column_names: Optional[Callable[[List[str]], List[str]]] = None,
+        **other_options: Any
+) -> FlowFrame:
+    """
+    Scan a CSV file into a FlowFrame. This function is an alias for read_csv.
+
+    This method is the same as read_csv but is provided for compatibility with
+    the polars API where scan_csv returns a LazyFrame.
+
+    See read_csv for full documentation.
+    """
+    return read_csv(
+        source=source,
+        flow_graph=flow_graph,
+        separator=separator,
+        convert_to_absolute_path=convert_to_absolute_path,
+        description=description,
+        has_header=has_header,
+        new_columns=new_columns,
+        comment_prefix=comment_prefix,
+        quote_char=quote_char,
+        skip_rows=skip_rows,
+        skip_lines=skip_lines,
+        schema=schema,
+        schema_overrides=schema_overrides,
+        null_values=null_values,
+        missing_utf8_is_empty_string=missing_utf8_is_empty_string,
+        ignore_errors=ignore_errors,
+        try_parse_dates=try_parse_dates,
+        infer_schema=infer_schema,
+        infer_schema_length=infer_schema_length,
+        n_rows=n_rows,
+        encoding=encoding,
+        low_memory=low_memory,
+        rechunk=rechunk,
+        storage_options=storage_options,
+        skip_rows_after_header=skip_rows_after_header,
+        row_index_name=row_index_name,
+        row_index_offset=row_index_offset,
+        eol_char=eol_char,
+        raise_if_empty=raise_if_empty,
+        truncate_ragged_lines=truncate_ragged_lines,
+        decimal_comma=decimal_comma,
+        glob=glob,
+        cache=cache,
+        with_column_names=with_column_names,
+        **other_options
+    )
+
+
+def scan_parquet(
+        file_path,
+        *,
+        flow_graph: FlowGraph = None,
+        description: str = None,
+        convert_to_absolute_path: bool = True,
+        **options
+) -> FlowFrame:
+    """
+    Scan a Parquet file into a FlowFrame. This function is an alias for read_parquet.
+
+    This method is the same as read_parquet but is provided for compatibility with
+    the polars API where scan_parquet returns a LazyFrame.
+
+    See read_parquet for full documentation.
+    """
+    return read_parquet(
+        file_path=file_path,
+        flow_graph=flow_graph,
+        description=description,
+        convert_to_absolute_path=convert_to_absolute_path,
+        **options
+    )

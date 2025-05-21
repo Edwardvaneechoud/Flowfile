@@ -1345,7 +1345,7 @@ class FlowDataEngine:
             FlowDataEngine: New instance with added column
         """
         expr = to_expr(func)
-        if output_data_type is not None:
+        if output_data_type not in (None, "Auto"):
             df = self.data_frame.with_columns(expr.cast(output_data_type).alias(col_name))
         else:
             df = self.data_frame.with_columns(expr.alias(col_name))
