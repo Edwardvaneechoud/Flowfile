@@ -66,14 +66,17 @@ class StringMethods:
         self.expr = parent_expr.expr.str if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
 
-    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, **kwargs) -> 'Expr':
+    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, convertable_to_code: bool = None, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.str.{method_name}({args_repr})"
+        if convertable_to_code is None:
+            convertable_to_code = self.convertable_to_code
         new_expr = Expr(result_expr, self.parent.column_name, repr_str=new_repr,
                         initial_column_name=self.parent._initial_column_name,
                         selector=None,
                         agg_func=self.parent.agg_func,
-                        is_complex=is_complex)
+                        is_complex=is_complex,
+                        convertable_to_code=convertable_to_code)
         return new_expr
 
     # ... (String methods remain unchanged from your provided code) ...
@@ -141,15 +144,17 @@ class DateTimeMethods:
         self.expr = parent_expr.expr.dt if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
 
-    def _create_next_expr(self, method_name: str, result_expr: Optional[pl.Expr], *args, **kwargs) -> 'Expr':
+    def _create_next_expr(self, method_name: str, result_expr: Optional[pl.Expr], convertable_to_code: bool = None, *args, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.dt.{method_name}({args_repr})"
-
+        if convertable_to_code is None:
+            convertable_to_code = self.convertable_to_code
         new_expr = Expr(result_expr, self.parent.column_name, repr_str=new_repr,
                         initial_column_name=self.parent._initial_column_name,
                         selector=None,
                         agg_func=self.parent.agg_func,
-                        is_complex=True)
+                        is_complex=True,
+                        convertable_to_code=convertable_to_code)
         return new_expr
 
     # ... (DateTime methods remain unchanged from your provided code) ...
@@ -326,18 +331,20 @@ class Expr:
         return self._create_next_expr(descending=descending, nulls_last=nulls_last, method_name="arg_sort",
                                       result_expr=result_expr, is_complex=True)
 
-    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, **kwargs) -> 'Expr':
+    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], convertable_to_code: bool = None,
+                          is_complex: bool, **kwargs) -> 'Expr':
         """Creates a new Expr instance, appending method call to repr string."""
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self._repr_str}.{method_name}({args_repr})"
-
+        if convertable_to_code is None:
+            convertable_to_code = self.convertable_to_code
         # Create new instance, inheriting current agg_func status by default
         new_expr_instance = Expr(result_expr, self.column_name, repr_str=new_repr,
                                  initial_column_name=self._initial_column_name,
                                  selector=None,
                                  agg_func=self.agg_func,
                                  is_complex=is_complex,
-                                 convertable_to_code=self.convertable_to_code)
+                                 convertable_to_code=convertable_to_code)
         return new_expr_instance
 
     @property
@@ -377,119 +384,6 @@ class Expr:
             selector=None,
             agg_func=None,
             is_complex=True
-        )
-
-    def map_batches(
-            self,
-            function: callable,
-            return_dtype=None,
-            *,
-            agg_list: bool = False,
-            is_elementwise: bool = False,
-            returns_scalar: bool = False,
-    ) -> "Expr":
-        """
-        Apply a custom python function to a whole Series or sequence of Series.
-
-        The output of this custom function is presumed to be either a Series,
-        or a NumPy array (in which case it will be automatically converted into
-        a Series), or a scalar that will be converted into a Series. If the
-        result is a scalar and you want it to stay as a scalar, pass in
-        ``returns_scalar=True``. If you want to apply a
-        custom function elementwise over single values, see :func:`map_elements`.
-        A reasonable use case for `map` functions is transforming the values
-        represented by an expression using a third-party library.
-
-        Parameters
-        ----------
-        function
-            Lambda/function to apply.
-        return_dtype
-            Dtype of the output Series.
-            If not set, the dtype will be inferred based on the first non-null value
-            that is returned by the function.
-        agg_list
-            Aggregate the values of the expression into a list before applying the
-            function. This parameter only works in a group-by context.
-            The function will be invoked only once on a list of groups, rather than
-            once per group.
-        is_elementwise
-            If set to true this can run in the streaming engine, but may yield
-            incorrect results in group-by. Ensure you know what you are doing!
-        returns_scalar
-            If the function returns a scalar, by default it will be wrapped in
-            a list in the output, since the assumption is that the function
-            always returns something Series-like. If you want to keep the
-            result as a scalar, set this argument to True.
-        """
-        # Format the arguments for the representation string
-        args_strs = []
-        convertable_to_code: bool = True
-        # Handle function representation
-        if hasattr(function, '_repr_str'):  # Handle case when expr is passed
-            args_strs.append(function._repr_str)
-        elif callable(function):
-            if hasattr(function, "__name__") and function.__name__ != "<lambda>":
-                # Named function - use its name
-                args_strs.append(function.__name__)
-            else:
-                # Lambda or unnamed function
-                print("Warning, using anonymous functions are not convertable to ui define function with a name")
-                args_strs.append("<lambda>")
-                convertable_to_code = False
-        else:
-            args_strs.append(repr(function))
-
-        kwargs_parts = []
-        if agg_list:
-            kwargs_parts.append(f"agg_list={agg_list}")
-        if is_elementwise:
-            kwargs_parts.append(f"is_elementwise={is_elementwise}")
-        if returns_scalar:
-            kwargs_parts.append(f"returns_scalar={returns_scalar}")
-        if return_dtype:
-            kwargs_parts.append(f"return_dtype=pl.{return_dtype}")
-
-        # Combine all parts for the representation
-        args_repr = ", ".join(args_strs)
-        if kwargs_parts:
-            kwargs_str = ", ".join(kwargs_parts)
-            if args_repr:
-                args_repr = f"{args_repr}, {kwargs_str}"
-            else:
-                args_repr = kwargs_str
-
-        # Create the full representation string
-        new_repr = f"{self._repr_str}.map_batches({args_repr})"
-
-        # For the actual computation, we need to call the polars implementation if available
-        res_expr = None
-        if self.expr is not None:
-            try:
-                # Get the function's polars expression if it's an Expr object
-                func_to_use = function.expr if hasattr(function, 'expr') else function
-
-                # Pass the correct parameters to Polars
-                res_expr = self.expr.map_batches(
-                    func_to_use,
-                    return_dtype,
-                    agg_list=agg_list,
-                    is_elementwise=is_elementwise,
-                    returns_scalar=returns_scalar,
-                )
-            except Exception as e:
-                print(f"Warning: Could not create polars expression for map_batches(): {e}")
-
-        # Create and return the new expression
-        return Expr(
-            res_expr,
-            self.column_name,
-            repr_str=new_repr,
-            initial_column_name=self._initial_column_name,
-            selector=None,
-            agg_func=None,
-            is_complex=True,
-            convertable_to_code=convertable_to_code
         )
 
     @property
@@ -1231,6 +1125,7 @@ def lit(value: Any) -> Expr:
 def len() -> Expr:
     return Expr(pl.len()).alias('number_of_records')
 
+
 def agg_function(func=None, *, customize_repr=True):
     """
     Enhanced decorator for aggregation functions that sets appropriate properties
@@ -1421,3 +1316,4 @@ def cum_count(expr, reverse: bool = False) -> Expr:
 def when(condition):
     """Start a when-then-otherwise expression."""
     return When(condition)
+

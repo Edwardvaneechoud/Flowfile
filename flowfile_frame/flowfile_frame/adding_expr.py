@@ -4,6 +4,7 @@ from typing import Any, Callable, Optional, TypeVar, Type, TYPE_CHECKING
 
 T = TypeVar('T')
 ExprT = TypeVar('ExprT', bound='Expr')
+PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
 
 
 def create_expr_method_wrapper(method_name: str, original_method: Callable) -> Callable:
@@ -100,7 +101,6 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
     # Get methods already defined in the class (including inherited methods)
     existing_methods = set(dir(cls))
 
-    # Skip properties and private methods
     skip_methods = {
         name for name in dir(pl.Expr)
         if name.startswith('_') or isinstance(getattr(pl.Expr, name, None), property)
@@ -113,8 +113,52 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
 
         attr = getattr(pl.Expr, name)
         if callable(attr):
-            wrapped_method = create_expr_method_wrapper(name, attr)
-            setattr(cls, name, wrapped_method)
+            if name in PASSTHROUGH_METHODS:
+                # Create passthrough method that marks the expression as not convertible to code
+                def create_passthrough_method(method_name, method_attr):
+                    @wraps(method_attr)
+                    def passthrough_method(self, *args, **kwargs):
+                        if not hasattr(self, "expr") or self.expr is None:
+                            raise ValueError(
+                                f"Cannot call '{method_name}' on Expr with no underlying polars expression."
+                            )
+
+                        # Handle function representation
+                        func_arg = args[0] if args else None
+                        convertable_to_code = True
+                        if func_arg is not None and callable(func_arg):
+                            if hasattr(func_arg, "__name__") and func_arg.__name__ != "<lambda>":
+                                # Named function - this is potentially convertible
+                                pass
+                            else:
+                                # Lambda or unnamed function - not convertible
+                                print(f"Warning: Using anonymous functions in {method_name} is not convertable to UI code")
+                                convertable_to_code = False
+
+                        # Call the underlying polars method
+                        result_expr = getattr(self.expr, method_name)(*args, **kwargs)
+
+                        # Create a representation string (simplified for passthrough)
+                        new_repr = f"{self._repr_str}.{method_name}(...)"
+
+                        # Return a new expression with the convertable_to_code flag set appropriately
+                        result = self._create_next_expr(
+                            *args,
+                            method_name=method_name,
+                            result_expr=result_expr,
+                            is_complex=True,
+                            convertable_to_code=False,
+                            **kwargs
+                        )
+                        return result
+
+                    return passthrough_method
+
+                setattr(cls, name, create_passthrough_method(name, attr))
+            else:
+                # Use standard wrapper for other methods
+                wrapped_method = create_expr_method_wrapper(name, attr)
+                setattr(cls, name, wrapped_method)
 
     overlap = {
         name for name in existing_methods
@@ -124,5 +168,3 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
         print(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")
 
     return cls
-
-

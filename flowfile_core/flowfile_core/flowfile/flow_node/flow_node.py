@@ -146,6 +146,7 @@ class FlowNode:
         self.node_settings.renew_schema = True
         if hasattr(setting_input, 'cache_results'):
             self.node_settings.cache_results = setting_input.cache_results
+
         self.setting_input = setting_input
         self.results.errors = None
         self.add_lead_to_in_depend_source()
@@ -174,7 +175,7 @@ class FlowNode:
         self.set_node_information()
         if self.node_type == 'manual_input' and isinstance(self._setting_input, input_schema.NodeManualInput):
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run:
-                self.function = self.function.__class__(setting_input.raw_data)
+                self.function = self.function.__class__(setting_input.raw_data_format)
                 self.reset()
                 self.get_predicted_schema()
         elif self._setting_input is not None:

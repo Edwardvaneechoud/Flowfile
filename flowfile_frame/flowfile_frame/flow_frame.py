@@ -1,4 +1,4 @@
-import logging
+
 import os
 from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, Callable
 from pathlib import Path
@@ -6,11 +6,9 @@ from pathlib import Path
 import io
 import re
 import polars as pl
-from polars._typing import FrameInitTypes, SchemaDefinition, SchemaDict, Orientation
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 
-from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation, IO, Mapping, PolarsDataType,
-                            Sequence, CsvEncoding)
+from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
 
 # Assume these imports are correct from your original context
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
@@ -28,13 +26,6 @@ from flowfile_frame.join import _normalize_columns_to_list, _create_join_mapping
 node_id_counter = 0
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(levelname)s] %(message)s'
-)
-
-# Create and export the logger
-logger = logging.getLogger('flow_frame')
 
 def _to_string_val(v) -> str:
     if isinstance(v, str):
@@ -47,6 +38,7 @@ def generate_node_id() -> int:
     global node_id_counter
     node_id_counter += 1
     return node_id_counter
+
 
 @add_lazyframe_methods
 class FlowFrame:
@@ -109,7 +101,6 @@ class FlowFrame:
             flow_graph = create_flow_graph()
 
         flow_id = flow_graph.flow_id
-
         # Convert data to a polars DataFrame/LazyFrame
         try:
             # Use polars to convert from various types
@@ -127,11 +118,12 @@ class FlowFrame:
             raise ValueError(f"Could not convert data to a polars DataFrame: {e}")
         # Create a FlowDataEngine to get data in the right format for manual input
         flow_table = FlowDataEngine(raw_data=pl_data)
+        raw_data_format = input_schema.RawData(data=list(flow_table.to_dict().values()), columns=[c.get_minimal_field_info() for c in flow_table.schema])
         # Create a manual input node
         input_node = input_schema.NodeManualInput(
             flow_id=flow_id,
             node_id=node_id,
-            raw_data=flow_table.to_pylist(),  # Convert to list of dicts
+            raw_data_format=raw_data_format,
             pos_x=100,
             pos_y=100,
             is_setup=True,
@@ -420,7 +412,13 @@ class FlowFrame:
             return f"input_df.sort({by_arg})"
 
     def _add_polars_code(self, new_node_id: int, code: str, description: str = None,
-                         depending_on_ids: List[str] | None = None):
+                         depending_on_ids: List[str] | None = None, convertable_to_code: bool = True):
+        if not convertable_to_code:
+            breakpoint()
+            try:
+                ...
+            except:
+                ...
         polars_code_settings = input_schema.NodePolarsCode(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -614,11 +612,10 @@ class FlowFrame:
         if (len(columns) == 1 and isinstance(columns[0], Expr)
                 and str(columns[0]) == "pl.Expr(len()).alias('number_of_records')"):
             return self._add_number_of_records(new_node_id, description)
-        # Handle simple column names
+
         if all(isinstance(col_, (str, Column)) for col_ in columns):
-            if len(columns) == 1 and columns[0] == "*":
+            if len(columns) == 1 and isinstance(columns[0], str) and columns[0] == '*':
                 columns = existing_columns
-            # Create select inputs
 
             select_inputs = [
                 transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
@@ -646,9 +643,11 @@ class FlowFrame:
         else:
             readable_exprs = []
             is_readable: bool = True
+            convertable_to_code: bool = True
             for col_ in columns:
                 if isinstance(col_, Expr):
                     readable_exprs.append(col_)
+                    convertable_to_code = col_.convertable_to_code if convertable_to_code else convertable_to_code
                 elif isinstance(col_, Selector):
                     readable_exprs.append(col_)
                 elif isinstance(col_, pl.expr.Expr):
@@ -665,7 +664,7 @@ class FlowFrame:
             else:
                 raise ValueError('Not supported')
 
-            self._add_polars_code(new_node_id, code, description)
+            self._add_polars_code(new_node_id, code, description, convertable_to_code=convertable_to_code)
             return self._create_child_frame(new_node_id)
 
     def filter(self, *predicates: Expr | Any, flowfile_formula: str = None, description: str = None, **constraints):
@@ -1290,7 +1289,6 @@ class FlowFrame:
             node_id_counter += len(combined_graph.nodes)
         new_node_id = generate_node_id()
         use_native = how == "diagonal_relaxed" and parallel and not rechunk
-
         if use_native:
             # Create union input for the transform schema
             union_input = transform_schema.UnionInput(
@@ -1334,8 +1332,6 @@ class FlowFrame:
                 parallel={parallel}
             )
             """
-
-
             # Add polars code node with dependencies on all input frames
             depending_on_ids = [self.node_id] + [frame.node_id for frame in others]
             self._add_polars_code(
@@ -1346,7 +1342,6 @@ class FlowFrame:
             self._add_connection(self.node_id, new_node_id, "main")
             for other_frame in others:
                 other_frame._add_connection(other_frame.node_id, new_node_id, "main")
-
         # Create and return the new frame
         return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
@@ -1859,6 +1854,15 @@ class FlowFrame:
         """Get the number of columns."""
         return self.data.width
 
+    def __contains__(self, key):
+        """This special method enables the 'in' operator to work with FlowFrame objects."""
+        return key in self.data
+
+    def __bool__(self):
+        """This special method determines how the object behaves in boolean contexts.
+        Returns True if the FlowFrame contains any data, False otherwise."""
+        return bool(self.data)
+
 
 def polars_function_wrapper(polars_func_name, is_agg=False):
     """
@@ -1954,112 +1958,3 @@ def polars_function_wrapper(polars_func_name, is_agg=False):
 # Create the fold function using our generic wrapper
 fold = polars_function_wrapper('fold')
 
-
-def scan_csv(
-        source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
-        *,
-        flow_graph: Optional[Any] = None,  # Using Any for FlowGraph placeholder
-        separator: str = ',',
-        convert_to_absolute_path: bool = True,
-        description: Optional[str] = None,
-        has_header: bool = True,
-        new_columns: Optional[List[str]] = None,
-        comment_prefix: Optional[str] = None,
-        quote_char: Optional[str] = '"',
-        skip_rows: int = 0,
-        skip_lines: int = 0,
-        schema: Optional[SchemaDict] = None,
-        schema_overrides: Optional[Union[SchemaDict, Sequence[PolarsDataType]]] = None,
-        null_values: Optional[Union[str, List[str], Dict[str, str]]] = None,
-        missing_utf8_is_empty_string: bool = False,
-        ignore_errors: bool = False,
-        try_parse_dates: bool = False,
-        infer_schema: bool = True,
-        infer_schema_length: Optional[int] = 100,
-        n_rows: Optional[int] = None,
-        encoding: CsvEncoding = 'utf8',
-        low_memory: bool = False,
-        rechunk: bool = False,
-        storage_options: Optional[Dict[str, Any]] = None,
-        skip_rows_after_header: int = 0,
-        row_index_name: Optional[str] = None,
-        row_index_offset: int = 0,
-        eol_char: str = '\n',
-        raise_if_empty: bool = True,
-        truncate_ragged_lines: bool = False,
-        decimal_comma: bool = False,
-        glob: bool = True,
-        cache: bool = True,
-        with_column_names: Optional[Callable[[List[str]], List[str]]] = None,
-        **other_options: Any
-) -> FlowFrame:
-    """
-    Scan a CSV file into a FlowFrame. This function is an alias for read_csv.
-
-    This method is the same as read_csv but is provided for compatibility with
-    the polars API where scan_csv returns a LazyFrame.
-
-    See read_csv for full documentation.
-    """
-    return read_csv(
-        source=source,
-        flow_graph=flow_graph,
-        separator=separator,
-        convert_to_absolute_path=convert_to_absolute_path,
-        description=description,
-        has_header=has_header,
-        new_columns=new_columns,
-        comment_prefix=comment_prefix,
-        quote_char=quote_char,
-        skip_rows=skip_rows,
-        skip_lines=skip_lines,
-        schema=schema,
-        schema_overrides=schema_overrides,
-        null_values=null_values,
-        missing_utf8_is_empty_string=missing_utf8_is_empty_string,
-        ignore_errors=ignore_errors,
-        try_parse_dates=try_parse_dates,
-        infer_schema=infer_schema,
-        infer_schema_length=infer_schema_length,
-        n_rows=n_rows,
-        encoding=encoding,
-        low_memory=low_memory,
-        rechunk=rechunk,
-        storage_options=storage_options,
-        skip_rows_after_header=skip_rows_after_header,
-        row_index_name=row_index_name,
-        row_index_offset=row_index_offset,
-        eol_char=eol_char,
-        raise_if_empty=raise_if_empty,
-        truncate_ragged_lines=truncate_ragged_lines,
-        decimal_comma=decimal_comma,
-        glob=glob,
-        cache=cache,
-        with_column_names=with_column_names,
-        **other_options
-    )
-
-
-def scan_parquet(
-        file_path,
-        *,
-        flow_graph: FlowGraph = None,
-        description: str = None,
-        convert_to_absolute_path: bool = True,
-        **options
-) -> FlowFrame:
-    """
-    Scan a Parquet file into a FlowFrame. This function is an alias for read_parquet.
-
-    This method is the same as read_parquet but is provided for compatibility with
-    the polars API where scan_parquet returns a LazyFrame.
-
-    See read_parquet for full documentation.
-    """
-    return read_parquet(
-        file_path=file_path,
-        flow_graph=flow_graph,
-        description=description,
-        convert_to_absolute_path=convert_to_absolute_path,
-        **options
-    )

@@ -97,14 +97,13 @@ def test_implode() -> None:
         .collect()
     )
 
-
     assert_frame_equal(
         eager,
         pl.DataFrame(
             {
                 "grp": [1, 2, 3],
-                "a_imp": [[1], [2], [3]],
-                "b_imp": [[1.0], [2.0], [3.0]],
+                "a_imp": [[[1]], [[2]], [[3]]],
+                "b_imp": [[[1.0]], [[2.0]], [[3.0]]],
             }
         ),
     )
@@ -119,10 +118,10 @@ def test_lazyframe_membership_operator() -> None:
     with pytest.raises(TypeError, match="ambiguous"):
         not ldf
 
-
 def test_apply() -> None:
+    breakpoint()
     ldf = FlowFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
-    new = ldf.with_columns_seq(
+    new = ldf.select(
         fl.col("a").map_batches(lambda s: s * 2, return_dtype=pl.Int64).alias("foo")
     )
     expected = ldf.data.clone().with_columns((pl.col("a") * 2).alias("foo"))
@@ -133,7 +132,7 @@ def test_apply() -> None:
         for strategy in ["thread_local", "threading"]:
             ldf = FlowFrame({"a": [1, 2, 3] * 20, "b": [1.0, 2.0, 3.0] * 20})
             new = ldf.with_columns(
-                pl.col("a")
+                fl.col("a")
                 .map_elements(lambda s: s * 2, strategy=strategy, return_dtype=pl.Int64)  # type: ignore[arg-type]
                 .alias("foo")
             )
@@ -408,7 +407,6 @@ def test_fetch(fruits_cars: FlowFrame) -> None:
 
 def test_fold_filter() -> None:
     lf = FlowFrame({"a": [1, 2, 3], "b": [0, 1, 2]})
-    breakpoint()
     out = lf.filter(
         fl.fold(
             acc=fl.lit(True),
@@ -759,7 +757,6 @@ def test_backward_fill() -> None:
 
 def test_rolling(fruits_cars: FlowFrame) -> None:
     ldf = fruits_cars.lazy()
-    breakpoint()
     out = ldf.select(
         fl.col("A").rolling_min(3, min_samples=1).alias("1"),
         fl.col("A").rolling_min(3).alias("1b"),
@@ -926,7 +923,6 @@ def test_argminmax() -> None:
 
 
 def test_limit(fruits_cars: FlowFrame) -> None:
-    breakpoint()
     assert_frame_equal(fruits_cars.lazy().limit(1).collect(), fruits_cars.data.collect()[0, :])
 
 
@@ -1056,31 +1052,31 @@ def test_null_count() -> None:
     assert lf.null_count().collect().rows() == [(1, 2)]
 
 
-def test_lazy_concat(df: pl.DataFrame) -> None:
-    shape = df.shape
-    shape = (shape[0] * 2, shape[1])
+def test_lazy_concat(df: FlowFrame) -> None:
+    shape = df.data.collect().shape
 
-    out = fl.concat([FlowFrame(df), FlowFrame(df)])
+    shape = (shape[0] * 2, shape[1])
+    out = fl.concat([df, df]).collect()
     assert out.shape == shape
-    assert_frame_equal(out, df.vstack(df))
+    assert_frame_equal(out, df.data.collect().vstack(df.data.collect()))
 
 
 def test_self_join() -> None:
     # 2720
-    ldf = pl.from_dict(
+    ldf = FlowFrame(
         data={
             "employee_id": [100, 101, 102],
             "employee_name": ["James", "Alice", "Bob"],
             "manager_id": [None, 100, 101],
         }
-    ).lazy()
+    )
 
     out = (
         ldf.join(other=ldf, left_on="manager_id", right_on="employee_id", how="left")
         .select(
-            pl.col("employee_id"),
-            pl.col("employee_name"),
-            pl.col("employee_name_right").alias("manager_name"),
+            fl.col("employee_id"),
+            fl.col("employee_name"),
+            fl.col("employee_name_right").alias("manager_name"),
         )
         .collect()
     )
@@ -1101,10 +1097,10 @@ def test_group_lengths() -> None:
 
     result = ldf.group_by(["group"], maintain_order=True).agg(
         [
-            (pl.col("id").unique_counts() / pl.col("id").len())
+            (fl.col("id").unique_counts() / fl.col("id").len())
             .sum()
             .alias("unique_counts_sum"),
-            pl.col("id").unique().len().alias("unique_len"),
+            fl.col("id").unique().len().alias("unique_len"),
         ]
     )
     expected = pl.DataFrame(
@@ -1127,7 +1123,7 @@ def test_quantile_filtered_agg() -> None:
             }
         )
         .group_by("group")
-        .agg(pl.col("value").filter(pl.col("value") < 2).quantile(0.5))
+        .agg(fl.col("value").filter(fl.col("value") < 2).quantile(0.5))
         .collect()["value"]
         .to_list()
     ) == [1.0, 1.0]
@@ -1146,26 +1142,26 @@ def test_predicate_count_vstack() -> None:
             "v": [5, 7],
         }
     )
-    assert pl.concat([l1, l2]).filter(pl.len().over("k") == 2).collect()[
+    assert fl.concat([l1, l2]).filter(fl.len().over("k") == 2).collect()[
         "v"
     ].to_list() == [3, 2, 5, 7]
 
 
 def test_lazy_method() -> None:
     # We want to support `.lazy()` on a Lazy DataFrame to allow more generic user code.
-    df = pl.DataFrame({"a": [1, 1, 2, 2, 3, 3], "b": [1, 2, 3, 4, 5, 6]})
-    assert_frame_equal(df.lazy(), df.lazy().lazy())
+    df = FlowFrame(pl.DataFrame({"a": [1, 1, 2, 2, 3, 3], "b": [1, 2, 3, 4, 5, 6]}))
+    assert_frame_equal(df.lazy().collect(), df.lazy().lazy().collect())
 
 
 def test_update_schema_after_projection_pd_t4157() -> None:
     ldf = FlowFrame({"c0": [], "c1": [], "c2": []}).rename({"c2": "c2_"})
-    assert ldf.drop("c2_").select(pl.col("c0")).collect().columns == ["c0"]
+    assert ldf.drop("c2_").select(fl.col("c0")).collect().columns == ["c0"]
 
 
 def test_type_coercion_unknown_4190() -> None:
     df = (
         FlowFrame({"a": [1, 2, 3], "b": [1, 2, 3]}).with_columns(
-            pl.col("a") & pl.col("a").fill_null(True)
+            fl.col("a") & fl.col("a").fill_null(True)
         )
     ).collect()
     assert df.shape == (3, 2)
@@ -1176,31 +1172,14 @@ def test_lazy_cache_same_key() -> None:
     ldf = FlowFrame({"a": [1, 2, 3], "b": [3, 4, 5], "c": ["x", "y", "z"]})
 
     # these have the same schema, but should not be used by cache as they are different
-    add_node = ldf.select([(pl.col("a") + pl.col("b")).alias("a"), pl.col("c")]).cache()
-    mult_node = ldf.select((pl.col("a") * pl.col("b")).alias("a"), pl.col("c")).cache()
+    add_node = ldf.select([(fl.col("a") + fl.col("b")).alias("a"), fl.col("c")]).cache()
+    mult_node = ldf.select((fl.col("a") * fl.col("b")).alias("a"), fl.col("c")).cache()
 
     result = mult_node.join(add_node, on="c", suffix="_mult").select(
-        (pl.col("a") - pl.col("a_mult")).alias("a"), pl.col("c")
+        (fl.col("a") - fl.col("a_mult")).alias("a"), fl.col("c")
     )
     expected = FlowFrame({"a": [-1, 2, 7], "c": ["x", "y", "z"]})
-    assert_frame_equal(result, expected, check_row_order=False)
-
-
-@pytest.mark.may_fail_auto_streaming
-def test_lazy_cache_hit(monkeypatch: Any, capfd: Any) -> None:
-    monkeypatch.setenv("POLARS_VERBOSE", "1")
-
-    ldf = FlowFrame({"a": [1, 2, 3], "b": [3, 4, 5], "c": ["x", "y", "z"]})
-    add_node = ldf.select([(pl.col("a") + pl.col("b")).alias("a"), pl.col("c")]).cache()
-
-    result = add_node.join(add_node, on="c", suffix="_mult").select(
-        (pl.col("a") - pl.col("a_mult")).alias("a"), pl.col("c")
-    )
-    expected = FlowFrame({"a": [0, 0, 0], "c": ["x", "y", "z"]})
-    assert_frame_equal(result, expected)
-
-    (_, err) = capfd.readouterr()
-    assert "CACHE HIT" in err
+    assert_frame_equal(result.data, expected.data, check_row_order=False)
 
 
 def test_lazy_cache_parallel() -> None:

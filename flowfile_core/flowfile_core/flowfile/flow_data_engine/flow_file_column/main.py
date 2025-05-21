@@ -142,3 +142,8 @@ class FlowfileColumn:
 
 def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowfileColumn]:
     return [FlowfileColumn.create_from_polars_type(PlType(**c)) for c in stats]
+
+
+def convert_pl_schema_to_raw_data_format(pl_schema: pl.Schema) -> List[input_schema.MinimalFieldInfo]:
+    return [FlowfileColumn.create_from_polars_type(PlType(column_name=k, pl_datatype=v)).get_minimal_field_info()
+            for k, v in pl_schema.items()]

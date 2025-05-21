@@ -1,4 +1,4 @@
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Iterator
 from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
@@ -247,8 +247,14 @@ class NodeDatasource(NodeBase):
     file_ref: str = None
 
 
+class RawData(BaseModel):
+    columns: List[MinimalFieldInfo] = None
+    data: List[List]  # List of list where each inner list is a column of data. This ensures more efficient storage
+
+
 class NodeManualInput(NodeBase):
     raw_data: List = None
+    raw_data_format: RawData = None
 
 
 class NodeRead(NodeBase):
