@@ -113,10 +113,8 @@ class FlowFrame:
             pl_data = pl_df.lazy()
         except Exception as e:
             raise ValueError(f"Could not convert data to a polars DataFrame: {e}")
-
         # Create a FlowDataEngine to get data in the right format for manual input
         flow_table = FlowDataEngine(raw_data=pl_data)
-
         # Create a manual input node
         input_node = input_schema.NodeManualInput(
             flow_id=flow_id,
@@ -130,7 +128,6 @@ class FlowFrame:
 
         # Add to graph
         flow_graph.add_manual_input(input_node)
-
         # Return new frame
         return FlowFrame(
             data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
@@ -154,7 +151,6 @@ class FlowFrame:
         parent_node_id=None,
     ):
         """Create a new FlowFrame instance."""
-
         # If data is not a LazyFrame, use the factory method
         if data is not None and not isinstance(data, pl.LazyFrame):
             return cls.create_from_any_type(
@@ -170,7 +166,6 @@ class FlowFrame:
                 parent_node_id=parent_node_id,
             )
 
-        # Otherwise create the instance normally
         instance = super().__new__(cls)
         return instance
 
@@ -189,7 +184,6 @@ class FlowFrame:
         parent_node_id=None,
     ):
         """Initialize the FlowFrame with data and graph references."""
-
         if data is None:
             data = pl.LazyFrame()
         if not isinstance(data, pl.LazyFrame):
@@ -594,11 +588,9 @@ class FlowFrame:
         columns = _parse_inputs_as_iterable(columns)
         new_node_id = generate_node_id()
         existing_columns = self.columns
-
         if (len(columns) == 1 and isinstance(columns[0], Expr)
                 and str(columns[0]) == "pl.Expr(len()).alias('number_of_records')"):
             return self._add_number_of_records(new_node_id, description)
-
         # Handle simple column names
         if all(isinstance(col_, (str, Column)) for col_ in columns):
             if len(columns) == 1 and columns[0] == "*":
@@ -947,10 +939,10 @@ class FlowFrame:
             self.flow_graph.apply_layout()
         self.flow_graph.save_flow(file_path)
 
-    def collect(self):
+    def collect(self, *args, **kwargs):
         """Collect lazy data into memory."""
         if hasattr(self.data, "collect"):
-            return self.data.collect()
+            return self.data.collect(*args, **kwargs)
         return self.data
 
     def _with_flowfile_formula(self, flowfile_formula: str, output_column_name, description: str = None) -> "FlowFrame":
@@ -1830,54 +1822,6 @@ class FlowFrame:
     def width(self) -> int:
         """Get the number of columns."""
         return self.data.width
-
-
-def _add_delegated_methods():
-    """Add delegated methods from polars LazyFrame."""
-    delegate_methods = [
-        "collect_async",
-        "profile",
-        "describe",
-        "explain",
-        "show_graph",
-        "serialize",
-        "fetch",
-        "get_meta",
-        "columns",
-        "dtypes",
-        "schema",
-        "estimated_size",
-        "n_chunks",
-        "is_empty",
-        "chunk_lengths",
-        "optimization_toggle",
-        "set_polars_options",
-        "collect_schema"
-    ]
-
-    already_implemented = set(dir(FlowFrame))
-
-    for method_name in delegate_methods:
-        if method_name not in already_implemented and hasattr(
-            pl.LazyFrame, method_name
-        ):
-            # Create a simple delegate method
-            def make_delegate(name):
-                def delegate_method(self, *args, **kwargs):
-                    return getattr(self.data, name)(*args, **kwargs)
-
-                # Set docstring and name
-                delegate_method.__doc__ = (
-                    f"See pl.LazyFrame.{name} for full documentation."
-                )
-                delegate_method.__name__ = name
-                return delegate_method
-
-            # Add the method to the class
-            setattr(FlowFrame, method_name, make_delegate(method_name))
-
-
-_add_delegated_methods()
 
 
 def polars_function_wrapper(polars_func_name, is_agg=False):

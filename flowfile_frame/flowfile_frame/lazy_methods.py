@@ -8,6 +8,15 @@ import types
 T = TypeVar('T')
 FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')
 
+
+PASSTHROUGH_METHODS = {
+    'collect', 'collect_async', 'profile', 'describe', 'explain',
+    'show_graph', 'fetch', 'collect_schema', 'columns', 'dtypes',
+    'schema', 'width', 'estimated_size', 'n_chunks', 'is_empty',
+    'chunk_lengths', 'get_meta'
+}
+
+
 def create_lazyframe_method_wrapper(method_name: str, original_method: Callable) -> Callable:
     """
     Creates a wrapper for a LazyFrame method that properly integrates with FlowFrame.
@@ -112,22 +121,27 @@ def add_lazyframe_methods(cls):
     for name in dir(pl.LazyFrame):
         if name in existing_methods or name in skip_methods:
             continue
-
         attr = getattr(pl.LazyFrame, name)
-        if callable(attr):
-            # Create a wrapper method
-            wrapped_method = create_lazyframe_method_wrapper(name, attr)
+        if name in PASSTHROUGH_METHODS:
+            def create_passthrough_method(method_name, method_attr):
 
-            # Add method to the class
-            setattr(cls, name, wrapped_method)
+                @wraps(method_attr)
+                def passthrough_method(self, *args, **kwargs):
+                    return getattr(self.data, method_name)(*args, **kwargs)
+                return passthrough_method
 
-    # Print message about preserved methods that overlap with LazyFrame
+            setattr(cls, name, create_passthrough_method(name, attr))
+
+        else:
+            attr = getattr(pl.LazyFrame, name)
+            if callable(attr):
+                wrapped_method = create_lazyframe_method_wrapper(name, attr)
+                setattr(cls, name, wrapped_method)
+
     overlap = {
         name for name in existing_methods
         if name in dir(pl.LazyFrame) and not name.startswith('_') and callable(getattr(pl.LazyFrame, name))
     }
     if overlap:
         print(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")
-
     return cls
-

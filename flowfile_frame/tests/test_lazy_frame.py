@@ -36,6 +36,35 @@ def fruits_cars() -> FlowFrame:
         schema_overrides={"A": pl.Int64, "B": pl.Int64},
     )
 
+@pytest.fixture
+def df() -> FlowFrame:
+    df = pl.DataFrame(
+        {
+            "bools": [False, True, False],
+            "bools_nulls": [None, True, False],
+            "int": [1, 2, 3],
+            "int_nulls": [1, None, 3],
+            "floats": [1.0, 2.0, 3.0],
+            "floats_nulls": [1.0, None, 3.0],
+            "strings": ["foo", "bar", "ham"],
+            "strings_nulls": ["foo", None, "ham"],
+            "date": [1324, 123, 1234],
+            "datetime": [13241324, 12341256, 12341234],
+            "time": [13241324, 12341256, 12341234],
+            "list_str": [["a", "b", None], ["a"], []],
+            "list_bool": [[True, False, None], [None], []],
+            "list_int": [[1, None, 3], [None], []],
+            "list_flt": [[1.0, None, 3.0], [None], []],
+        }
+    )
+    return FlowFrame(df.with_columns(
+        pl.col("date").cast(pl.Date),
+        pl.col("datetime").cast(pl.Datetime),
+        pl.col("strings").cast(pl.Categorical).alias("cat"),
+        pl.col("strings").cast(pl.Enum(["foo", "ham", "bar"])).alias("enum"),
+        pl.col("time").cast(pl.Time),
+    ))
+
 
 if TYPE_CHECKING:
     from _pytest.capture import CaptureFixture
@@ -764,47 +793,47 @@ def test_rolling(fruits_cars: FlowFrame) -> None:
     )
 
     out_single_val_variance = ldf.select(
-        pl.col("A").rolling_std(3, min_samples=1).round(decimals=4).alias("std"),
-        pl.col("A").rolling_var(3, min_samples=1).round(decimals=1).alias("var"),
+        fl.col("A").rolling_std(3, min_samples=1).round(decimals=4).alias("std"),
+        fl.col("A").rolling_var(3, min_samples=1).round(decimals=1).alias("var"),
     ).collect()
 
     assert cast(float, out_single_val_variance[0, "std"]) is None
     assert cast(float, out_single_val_variance[0, "var"]) is None
 
 
-def test_arr_namespace(fruits_cars: pl.DataFrame) -> None:
+def test_arr_namespace(fruits_cars: FlowFrame) -> None:
     ldf = fruits_cars.lazy()
     out = ldf.select(
         "fruits",
-        pl.col("B")
+        fl.col("B")
         .over("fruits", mapping_strategy="join")
         .list.min()
         .alias("B_by_fruits_min1"),
-        pl.col("B")
+        fl.col("B")
         .min()
         .over("fruits", mapping_strategy="join")
         .alias("B_by_fruits_min2"),
-        pl.col("B")
+        fl.col("B")
         .over("fruits", mapping_strategy="join")
         .list.max()
         .alias("B_by_fruits_max1"),
-        pl.col("B")
+        fl.col("B")
         .max()
         .over("fruits", mapping_strategy="join")
         .alias("B_by_fruits_max2"),
-        pl.col("B")
+        fl.col("B")
         .over("fruits", mapping_strategy="join")
         .list.sum()
         .alias("B_by_fruits_sum1"),
-        pl.col("B")
+        fl.col("B")
         .sum()
         .over("fruits", mapping_strategy="join")
         .alias("B_by_fruits_sum2"),
-        pl.col("B")
+        fl.col("B")
         .over("fruits", mapping_strategy="join")
         .list.mean()
         .alias("B_by_fruits_mean1"),
-        pl.col("B")
+        fl.col("B")
         .mean()
         .over("fruits", mapping_strategy="join")
         .alias("B_by_fruits_mean2"),
@@ -839,19 +868,18 @@ def test_arr_namespace(fruits_cars: pl.DataFrame) -> None:
 
 def test_arithmetic() -> None:
     ldf = FlowFrame({"a": [1, 2, 3]})
-
     out = ldf.select(
-        (pl.col("a") % 2).alias("1"),
-        (2 % pl.col("a")).alias("2"),
-        (1 // pl.col("a")).alias("3"),
-        (1 * pl.col("a")).alias("4"),
-        (1 + pl.col("a")).alias("5"),
-        (1 - pl.col("a")).alias("6"),
-        (pl.col("a") // 2).alias("7"),
-        (pl.col("a") * 2).alias("8"),
-        (pl.col("a") + 2).alias("9"),
-        (pl.col("a") - 2).alias("10"),
-        (-pl.col("a")).alias("11"),
+        (fl.col("a") % 2).alias("1"),
+        (2 % fl.col("a")).alias("2"),
+        (1 // fl.col("a")).alias("3"),
+        (1 * fl.col("a")).alias("4"),
+        (1 + fl.col("a")).alias("5"),
+        (1 - fl.col("a")).alias("6"),
+        (fl.col("a") // 2).alias("7"),
+        (fl.col("a") * 2).alias("8"),
+        (fl.col("a") + 2).alias("9"),
+        (fl.col("a") - 2).alias("10"),
+        (-fl.col("a")).alias("11"),
     )
     expected = pl.DataFrame(
         {
@@ -875,48 +903,49 @@ def test_float_floor_divide() -> None:
     x = 10.4
     step = 0.5
     ldf = FlowFrame({"x": [x]})
-    ldf_res = ldf.with_columns(pl.col("x") // step).collect().item()
+    ldf_res = ldf.with_columns(fl.col("x") // step).collect().item()
     assert ldf_res == x // step
 
 
 def test_argminmax() -> None:
     ldf = FlowFrame({"a": [1, 2, 3, 4, 5], "b": [1, 1, 2, 2, 2]})
     out = ldf.select(
-        pl.col("a").arg_min().alias("min"),
-        pl.col("a").arg_max().alias("max"),
+        fl.col("a").arg_min().alias("min"),
+        fl.col("a").arg_max().alias("max"),
     ).collect()
     assert out["max"][0] == 4
     assert out["min"][0] == 0
 
     out = (
         ldf.group_by("b", maintain_order=True)
-        .agg([pl.col("a").arg_min().alias("min"), pl.col("a").arg_max().alias("max")])
+        .agg([fl.col("a").arg_min().alias("min"), pl.col("a").arg_max().alias("max")])
         .collect()
     )
     assert out["max"][0] == 1
     assert out["min"][0] == 0
 
 
-def test_limit(fruits_cars: pl.DataFrame) -> None:
-    assert_frame_equal(fruits_cars.lazy().limit(1).collect(), fruits_cars[0, :])
+def test_limit(fruits_cars: FlowFrame) -> None:
+    breakpoint()
+    assert_frame_equal(fruits_cars.lazy().limit(1).collect(), fruits_cars.data.collect()[0, :])
 
 
-def test_head(fruits_cars: pl.DataFrame) -> None:
-    assert_frame_equal(fruits_cars.lazy().head(2).collect(), fruits_cars[:2, :])
+def test_head(fruits_cars: FlowFrame) -> None:
+    assert_frame_equal(fruits_cars.lazy().head(2).collect(), fruits_cars.data.collect()[:2, :])
 
 
-def test_tail(fruits_cars: pl.DataFrame) -> None:
-    assert_frame_equal(fruits_cars.lazy().tail(2).collect(), fruits_cars[3:, :])
+def test_tail(fruits_cars: FlowFrame) -> None:
+    assert_frame_equal(fruits_cars.lazy().tail(2).collect(), fruits_cars.data.collect()[3:, :])
 
 
-def test_last(fruits_cars: pl.DataFrame) -> None:
+def test_last(fruits_cars: FlowFrame) -> None:
     result = fruits_cars.lazy().last().collect()
-    expected = fruits_cars[(len(fruits_cars) - 1) :, :]
+    expected = fruits_cars.data.collect()[(len(fruits_cars.data.collect()) - 1) :, :]
     assert_frame_equal(result, expected)
 
 
-def test_first(fruits_cars: pl.DataFrame) -> None:
-    assert_frame_equal(fruits_cars.lazy().first().collect(), fruits_cars[0, :])
+def test_first(fruits_cars: FlowFrame) -> None:
+    assert_frame_equal(fruits_cars.lazy().first().collect(), fruits_cars.data.collect()[0, :])
 
 
 def test_join_suffix() -> None:
@@ -940,9 +969,9 @@ def test_join_suffix() -> None:
     assert out.columns == ["a", "b", "c", "b_bar", "c_bar"]
 
 
-def test_collect_unexpected_kwargs(df: pl.DataFrame) -> None:
+def test_collect_unexpected_kwargs(df: FlowFrame) -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        df.lazy().collect(common_subexpr_elim=False)  # type: ignore[call-overload]
+        df.collect(common_subexpr_elim=False)  # type: ignore[call-overload]
 
 
 def test_spearman_corr() -> None:
@@ -956,7 +985,7 @@ def test_spearman_corr() -> None:
 
     out = (
         ldf.group_by("era", maintain_order=True).agg(
-            pl.corr(pl.col("prediction"), pl.col("target"), method="spearman").alias(
+            fl.corr(fl.col("prediction"), fl.col("target"), method="spearman").alias(
                 "c"
             ),
         )
@@ -967,7 +996,7 @@ def test_spearman_corr() -> None:
     # we can also pass in column names directly
     out = (
         ldf.group_by("era", maintain_order=True).agg(
-            pl.corr("prediction", "target", method="spearman").alias("c"),
+            fl.corr("prediction", "target", method="spearman").alias("c"),
         )
     ).collect()["c"]
     assert np.isclose(out[0], 0.5)
@@ -1004,9 +1033,9 @@ def test_pearson_corr() -> None:
 
     out = (
         ldf.group_by("era", maintain_order=True).agg(
-            pl.corr(
-                pl.col("prediction"),
-                pl.col("target"),
+            fl.corr(
+                fl.col("prediction"),
+                fl.col("target"),
                 method="pearson",
             ).alias("c"),
         )
@@ -1016,7 +1045,7 @@ def test_pearson_corr() -> None:
     # we can also pass in column names directly
     out = (
         ldf.group_by("era", maintain_order=True).agg(
-            pl.corr("prediction", "target", method="pearson").alias("c"),
+            fl.corr("prediction", "target", method="pearson").alias("c"),
         )
     ).collect()["c"]
     assert out.to_list() == pytest.approx([0.6546536707079772, -5.477514993831792e-1])
@@ -1031,7 +1060,7 @@ def test_lazy_concat(df: pl.DataFrame) -> None:
     shape = df.shape
     shape = (shape[0] * 2, shape[1])
 
-    out = pl.concat([df.lazy(), df.lazy()]).collect()
+    out = fl.concat([FlowFrame(df), FlowFrame(df)])
     assert out.shape == shape
     assert_frame_equal(out, df.vstack(df))
 

@@ -10,7 +10,7 @@ from flowfile_frame.utils import create_flow_graph  # noqa: F401
 from flowfile_frame.expr import (  # noqa: F401
     col, lit, column,
     cum_count, len,
-    sum, min, max, mean, count, when, implode, last
+    sum, min, max, mean, count, when, implode, last, corr, cov
 )
 
 from flowfile_frame.lazy import (fold)

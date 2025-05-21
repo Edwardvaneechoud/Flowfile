@@ -241,7 +241,6 @@ def concat(frames: List['FlowFrame'],
     # Use first frame's concat method with remaining frames
     first_frame = frames[0]
     remaining_frames = frames[1:]
-
     return first_frame.concat(remaining_frames, how=how,
                               rechunk=rechunk, parallel=parallel,
                               description=description)

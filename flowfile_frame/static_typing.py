@@ -12,6 +12,15 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, get_type_hints, Union, Collection
 
 
+PASSTHROUGH_METHODS = {
+    'collect', 'collect_async', 'profile', 'describe', 'explain',
+    'show_graph', 'fetch', 'collect_schema', 'columns', 'dtypes',
+    'schema', 'width', 'estimated_size', 'n_chunks', 'is_empty',
+    'chunk_lengths', 'get_meta'
+}
+
+
+
 def format_type_annotation(annotation_obj) -> str:
     """
     Properly format a type annotation object to a string representation.
@@ -230,7 +239,6 @@ def generate_improved_type_stub(
                 continue
 
             lazyframe_methods[name] = method
-
     # Helper function for handling special methods
     def handle_special_methods(name: str, sig: inspect.Signature) -> Optional[str]:
         """Handle methods that need special formatting in the stub file."""
@@ -297,9 +305,9 @@ def generate_improved_type_stub(
             return False
 
         # For LazyFrame methods we couldn't analyze, use a heuristic
-        if not name.startswith("_") and name not in ["collect", "collect_schema", "fetch",
-                                                  "columns", "dtypes", "schema", "width",
-                                                  "describe", "explain", "profile", "show_graph"]:
+        if not name.startswith("_") and name not in ["collect_schema", "fetch",
+                                                     "columns", "dtypes", "schema", "width",
+                                                     "describe", "explain", "profile", "show_graph"]:
             return True
 
         return False
@@ -372,7 +380,7 @@ def generate_improved_type_stub(
                 processed_params.append(param_str)
 
             # Add description parameter for non-private methods if not already present and not a special case
-            if not has_var_keyword and not name.startswith('_') and not any(p.startswith('description') for p in processed_params):
+            if not has_var_keyword and not name.startswith('_') and not any(p.startswith('description') for p in processed_params) and name not in PASSTHROUGH_METHODS:
                 processed_params.append("description: Optional[str] = None")
 
             # If we have a description param that was saved, add it before var_keyword
@@ -423,7 +431,7 @@ def generate_improved_type_stub(
     for name, method in sorted(lazyframe_methods.items()):
         try:
             # Skip methods that we know are already properly handled
-            if name in flowframe_methods:
+            if name in flowframe_methods and name != 'collect':
                 continue
 
             # Check if this method needs special handling
@@ -456,7 +464,6 @@ def generate_improved_type_stub(
             has_var_keyword = False  # Flag to track if **kwargs is present
             var_keyword_param = None # Hold the **kwargs parameter
             description_param = None # Hold the description parameter if we need to reposition it
-
             for i, (param_name, param) in enumerate(sig.parameters.items()):
                 if i == 0:  # Skip first parameter (self/cls)
                     continue
@@ -498,7 +505,8 @@ def generate_improved_type_stub(
                 processed_params.append(param_str)
 
             # Add description parameter if not already present
-            if not any(p.startswith('description') for p in processed_params):
+            if not any(p.startswith('description') for p in processed_params) and param_name != 'collect_schema':
+                breakpoint()
                 processed_params.append("description: Optional[str] = None")
 
             # If we have a description param that was saved, add it before var_keyword

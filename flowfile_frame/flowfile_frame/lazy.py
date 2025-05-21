@@ -17,7 +17,6 @@ def polars_function_wrapper(polars_func_name, is_agg=False):
         A wrapped function that returns a properly configured Expr
     """
     def wrapper(*args, **kwargs):
-        breakpoint()
         from flowfile_frame.expr import Expr, _get_expr_and_repr
 
         # Process args for representation

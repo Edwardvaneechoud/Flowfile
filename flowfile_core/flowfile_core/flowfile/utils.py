@@ -2,7 +2,7 @@ from typing import List
 import os
 import shutil
 import hashlib
-from datetime import datetime
+from datetime import datetime, date, time
 import json
 
 
@@ -24,11 +24,17 @@ def snake_case_to_camel_case(text: str) -> str:
 
 
 def json_default(val):
+
     if isinstance(val, datetime):
         return val.isoformat(timespec='microseconds')
+    elif isinstance(val, date):
+        return val.isoformat()
+    elif isinstance(val, time):
+        return val.isoformat()
     elif hasattr(val, '__dict__'):
         return val.__dict__
     else:
+        # breakpoint()
         raise Exception('Value is not serializable')
 
 

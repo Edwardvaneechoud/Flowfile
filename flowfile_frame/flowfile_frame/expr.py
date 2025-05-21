@@ -11,6 +11,7 @@ from functools import wraps
 from builtins import len as built_in_len
 from flowfile_frame.expr_name import ExprNameNameSpace
 from flowfile_frame.adding_expr import add_expr_methods
+from flowfile_frame.list_name_space import ExprListNameSpace
 
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
@@ -253,7 +254,7 @@ class Expr:
                     self.column_name = self.expr._name
                 except AttributeError:
                     pass
-
+        self._list_namespace: Optional['ExprListNameSpace'] = None
         self._str_namespace: Optional['StringMethods'] = None
         self._dt_namespace: Optional['DateTimeMethods'] = None
         self._name_namespace: Optional['ExprNameNameSpace'] = None
@@ -371,7 +372,7 @@ class Expr:
         return Expr(
             result_expr,
             None,
-            repr_str=f"({new_repr})",  # Add parentheses around the ENTIRE expression
+            repr_str=f"({new_repr})",
             initial_column_name=self._initial_column_name,
             selector=None,
             agg_func=None,
@@ -502,6 +503,12 @@ class Expr:
         if self._dt_namespace is None:
             self._dt_namespace = DateTimeMethods(self, self._repr_str)
         return self._dt_namespace
+
+    @property
+    def list(self) -> ExprListNameSpace:
+        if self._list_namespace is None:
+            self._list_namespace = ExprListNameSpace(self, self._repr_str)
+        return self._list_namespace
 
     def sum(self):
         result_expr = self.expr.sum() if self.expr is not None else None
@@ -640,44 +647,43 @@ class Expr:
     # --- Right-side Arithmetic ---
     def __radd__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} + {self._repr_str}"
+        new_repr = f"({other_repr} + {self._repr_str})"
         res_expr = other_expr + self.expr if other_expr is not None and self.expr is not None else None
-        # Right-side ops also clear agg_func
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
     def __rsub__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} - {self._repr_str}"
+        new_repr = f"({other_repr} - {self._repr_str})"
         res_expr = other_expr - self.expr if other_expr is not None and self.expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
     def __rmul__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} * {self._repr_str}"
+        new_repr = f"({other_repr} * {self._repr_str})"
         res_expr = other_expr * self.expr if other_expr is not None and self.expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
     def __rtruediv__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} / {self._repr_str}"
+        new_repr = f"({other_repr} / {self._repr_str})"
         res_expr = other_expr / self.expr if other_expr is not None and self.expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
     def __rfloordiv__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} // {self._repr_str}"
+        new_repr = f"({other_repr} // {self._repr_str})"
         res_expr = other_expr // self.expr if other_expr is not None and self.expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
     def __rmod__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} % {self._repr_str}"
+        new_repr = f"({other_repr} % {self._repr_str})"
         res_expr = other_expr % self.expr if other_expr is not None and self.expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
     def __rpow__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
-        new_repr = f"{other_repr} ** {self._repr_str}"
+        new_repr = f"({other_repr} ** {self._repr_str})"
         base_expr = pl.lit(other) if not isinstance(other, (Expr, pl.Expr)) else other_expr
         res_expr = base_expr.pow(self.expr) if self.expr is not None and base_expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
@@ -703,18 +709,18 @@ class Expr:
         res_expr = self.expr < other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("<", other, res_expr)
 
-    def __ge__(self, other):
+    def __ge__(self, other) -> "Expr":
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr >= other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr(">=", other, res_expr)
 
-    def __le__(self, other):
+    def __le__(self, other) -> "Expr":
         other_expr, _ = _get_expr_and_repr(other)
         res_expr = self.expr <= other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("<=", other, res_expr)
 
     # --- Logical operations ---
-    def __and__(self, other):
+    def __and__(self, other) -> "Expr":
         from flowfile_frame.selectors import Selector
         if isinstance(other, Selector):
             raise TypeError("Unsupported operation: Expr & Selector")
@@ -722,7 +728,7 @@ class Expr:
         res_expr = self.expr & other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("&", other, res_expr)
 
-    def __or__(self, other):
+    def __or__(self, other) -> "Expr":
         from flowfile_frame.selectors import Selector
         if isinstance(other, Selector):
             raise TypeError("Unsupported operation: Expr | Selector")
@@ -730,14 +736,19 @@ class Expr:
         res_expr = self.expr | other_expr if self.expr is not None and other_expr is not None else None
         return self._create_binary_op_expr("|", other, res_expr)
 
-    def __invert__(self):
+    def __invert__(self) -> "Expr":
         new_repr = f"~({self._repr_str})"
         res_expr = ~self.expr if self.expr is not None else None
         # Invert clears agg_func
         return Expr(res_expr, None, repr_str=new_repr,
                     initial_column_name=self._initial_column_name, agg_func=None)
 
-    # --- Other useful methods ---
+    def __neg__(self) -> "Expr":
+        new_repr = f"-{self._repr_str}"
+        res_expr = -self.expr if self.expr is not None else None
+        return Expr(res_expr, None, repr_str=new_repr,
+                    initial_column_name=self._initial_column_name, agg_func=None)
+
     def is_null(self):
         result_expr = self.expr.is_null() if self.expr is not None else None
         # is_null is not an aggregation, resets agg_func
@@ -932,7 +943,7 @@ class Expr:
         res_expr = None
         if self.expr is not None:
             try:
-                if len(processed_partition_cols) == 1:
+                if built_in_len(processed_partition_cols) == 1:
                     partition_arg = (
                         processed_partition_cols[0].expr
                         if hasattr(processed_partition_cols[0], "expr")
@@ -1220,11 +1231,10 @@ def lit(value: Any) -> Expr:
 def len() -> Expr:
     return Expr(pl.len()).alias('number_of_records')
 
-
 def agg_function(func=None, *, customize_repr=True):
     """
     Enhanced decorator for aggregation functions that sets appropriate properties
-    and handles representation issues.
+    and handles representation issues, now supporting all args and kwargs.
 
     Parameters
     ----------
@@ -1232,67 +1242,66 @@ def agg_function(func=None, *, customize_repr=True):
         The aggregation function to decorate
     customize_repr : bool, default True
         Whether to create a custom representation string for the function
-        Set to True for functions that may have problematic polars representation
-        (default is True since most aggregation functions need this)
 
     Returns
     -------
     function
         A wrapped function that returns a properly configured Expr
-
-    Examples
-    --------
-    Basic usage:
-
-    @enhanced_agg_function
-    def sum(*names) -> Expr:
-        return pl.sum(*names)
-
-    For functions that don't need custom representation (rare):
-
-    @enhanced_agg_function(customize_repr=False)
-    def some_function(*names) -> Expr:
-        return pl.some_function(*names)
     """
     def decorator(func):
         agg_func_name = func.__name__  # Use the function name as the agg_func
 
         @wraps(func)
-        def wrapper(*names):
+        def wrapper(*args, **kwargs):
             from flowfile_frame.expr import Expr
             # Get the Polars expression from the original function
-            pl_expr = func(*names)
+            pl_expr = func(*args, **kwargs)
 
-            # Determine if we need to customize the representation
+            # Generate representation string
             if customize_repr:
-                # Create a custom representation string
-                if built_in_len(names) == 1:
-                    # Single argument case
-                    if isinstance(names[0], str):
-                        repr_str = f"pl.{agg_func_name}('{names[0]}')"
+                # Process positional arguments
+                args_reprs = []
+                for arg in args:
+                    if isinstance(arg, str):
+                        args_reprs.append(f"'{arg}'")
+                    elif hasattr(arg, '_repr_str'):
+                        args_reprs.append(arg._repr_str)
                     else:
-                        repr_str = f"pl.{agg_func_name}({str(names[0])})"
-                else:
-                    # Multiple arguments case
-                    args_repr = ", ".join(
-                        f"'{n}'" if isinstance(n, str) else str(n)
-                        for n in names
-                    )
-                    repr_str = f"pl.{agg_func_name}({args_repr})"
+                        args_reprs.append(repr(arg))
+
+                # Process keyword arguments
+                kwargs_reprs = []
+                for k, v in kwargs.items():
+                    if isinstance(v, str) and not (k == 'method' or k == 'mapping_strategy'):
+                        kwargs_reprs.append(f"{k}='{v}'")
+                    elif isinstance(v, pl.DataType):
+                        kwargs_reprs.append(f"{k}={v!s}")
+                    elif isinstance(v, type) and issubclass(v, pl.DataType):
+                        kwargs_reprs.append(f"{k}=pl.{v.__name__}")
+                    else:
+                        kwargs_reprs.append(f"{k}={repr(v)}")
+
+                # Combine into final representation
+                all_args = args_reprs + kwargs_reprs
+                args_str = ", ".join(all_args)
+                repr_str = f"pl.{agg_func_name}({args_str})"
             else:
-                # Use the default representation approach
+                # Use default representation (rarely needed)
                 repr_str = None
 
-            # Determine initial column name for tracking
-            if built_in_len(names) == 1:
-                if isinstance(names[0], str):
-                    initial_column_name = names[0]
-                elif hasattr(names[0], 'column_name'):
-                    initial_column_name = names[0].column_name
-                else:
-                    initial_column_name = None
-            else:
-                initial_column_name = None
+            # Determine initial column name for tracking (if applicable)
+            initial_column_name = None
+            if built_in_len(args) > 0:
+                first_arg = args[0]
+                if isinstance(first_arg, str):
+                    initial_column_name = first_arg
+                elif hasattr(first_arg, 'column_name'):
+                    initial_column_name = first_arg.column_name
+
+            # Determine if this is a complex expression
+            is_complex = True
+            if built_in_len(args) == 1 and isinstance(args[0], str) and not kwargs:
+                is_complex = False
 
             # Create the expression with all necessary properties
             return Expr(
@@ -1300,16 +1309,15 @@ def agg_function(func=None, *, customize_repr=True):
                 repr_str=repr_str,
                 initial_column_name=initial_column_name,
                 agg_func=agg_func_name,
-                is_complex=built_in_len(names) > 1 or not isinstance(names[0], str)
+                is_complex=is_complex
             )
 
         return wrapper
 
-    # Handle both @enhanced_agg_function and @enhanced_agg_function(customize_repr=True)
+    # Handle both @agg_function and @agg_function(customize_repr=True)
     if func is None:
         return decorator
     return decorator(func)
-
 
 @agg_function
 def max(*names) -> Expr:
@@ -1352,9 +1360,33 @@ def implode(*names) -> Expr:
 def explode(*names) -> Expr:
     return pl.explode(*names)
 
+
 @agg_function
 def sum(*names) -> Expr:
     return pl.sum(*names)
+
+
+@agg_function
+def corr(a: Union[str, Expr], b: Union[str, Expr], *,
+         method: str = "pearson", ddof: int = None, propagate_nans: bool = False) -> Expr:
+    """
+    Compute the correlation between two columns.
+    """
+    a_expr = a.expr if isinstance(a, Expr) else pl.col(a) if isinstance(a, str) else a
+    b_expr = b.expr if isinstance(b, Expr) else pl.col(b) if isinstance(b, str) else b
+
+    return pl.corr(a_expr, b_expr, method=method, ddof=ddof, propagate_nans=propagate_nans)
+
+
+@agg_function
+def cov(a: Union[str, Expr], b: Union[str, Expr], ddof: int = 1) -> Expr:
+    """
+    Compute the covariance between two columns.
+    """
+    a_expr = a.expr if isinstance(a, Expr) else pl.col(a) if isinstance(a, str) else a
+    b_expr = b.expr if isinstance(b, Expr) else pl.col(b) if isinstance(b, str) else b
+
+    return pl.cov(a_expr, b_expr, ddof=ddof)
 
 
 def std(column, ddof) -> Expr:
@@ -1389,23 +1421,3 @@ def cum_count(expr, reverse: bool = False) -> Expr:
 def when(condition):
     """Start a when-then-otherwise expression."""
     return When(condition)
-
-
-
-# def last(*names) -> Expr:
-#     if not names:
-#         # When no column names are provided, get the last column
-#         return Expr(pl.last(), repr_str="pl.last()", agg_func=None)
-#
-#     # When column names are provided, use the standard approach
-#     if built_in_len(names) == 1:
-#         if isinstance(names[0], str):
-#             col_expr = col(names[0])
-#         else:
-#             col_expr = names[0]
-#         return col_expr.last()
-#     else:
-#         # Handle multiple columns case
-#         cols_repr = ", ".join(f"'{n}'" if isinstance(n, str) else str(n) for n in names)
-#         repr_str = f"pl.last({cols_repr})"
-#         return Expr(pl.last(*names), repr_str=repr_str, agg_func="last", is_complex=True)
