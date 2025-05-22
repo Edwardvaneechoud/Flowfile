@@ -3,6 +3,7 @@ from typing import Dict, Any, Callable
 import textwrap
 import ast
 import time
+from io import BytesIO
 
 
 def remove_comments_and_docstrings(source: str) -> str:
@@ -174,6 +175,7 @@ class PolarsCodeParser:
             'False': False,
             'None': None,
             'time': time,
+            'BytesIO': BytesIO
         }
 
     @staticmethod

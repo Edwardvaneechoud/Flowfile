@@ -19,7 +19,7 @@ from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph, stringify_values
+from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph, stringify_values, ensure_inputs_as_iterable
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 from flowfile_frame.utils import _check_if_convertible_to_code
 
@@ -43,7 +43,8 @@ def _to_string_val(v) -> str:
         return v
 
 
-def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr = None) -> None:
+def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None,
+                                group_expr: pl.Expr | None = None) -> None:
     if method_name is None:
         raise NotImplemented("Cannot create a polars lambda expression without the method")
     if polars_expr is None:
@@ -51,6 +52,11 @@ def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr = 
     method_ref = getattr(pl.LazyFrame, method_name)
     if method_ref is None:
         raise ModuleNotFoundError(f"Could not find the method {method_name} in polars lazyframe")
+    if method_name == 'group_by':
+        if group_expr is None:
+            raise NotImplemented("Cannot create a polars lambda expression without the groupby expression")
+        if not all(isinstance(ge, pl.Expr) for ge in group_expr):
+            raise NotImplemented("Cannot create a polars lambda expression without the groupby expression")
 
 
 def generate_node_id() -> int:
@@ -432,12 +438,18 @@ class FlowFrame:
 
     def _add_polars_code(self, new_node_id: int, code: str, description: str = None,
                          depending_on_ids: List[str] | None = None, convertable_to_code: bool = True,
-                         method_name: str = None, polars_expr: pl.Expr | List[pl.Expr] = None):
-        breakpoint()
+                         method_name: str = None, polars_expr: pl.Expr | List[pl.Expr] | None = None,
+                         group_expr: pl.Expr | List[pl.Expr] | None = None, kwargs_expr: Dict | None = None):
         if not convertable_to_code or _contains_lambda_pattern(code):
             method_name = get_method_name_from_code(code) if method_name else method_name
-            _check_ok_for_serialization(polars_expr=polars_expr, method_name=method_name)
-            result = getattr(self.data, method_name)(*polars_expr)
+            _check_ok_for_serialization(polars_expr=polars_expr, method_name=method_name, group_expr=group_expr)
+            group_exprs = ensure_inputs_as_iterable(group_expr)
+            if kwargs_expr is None:
+                kwargs_expr = {}
+            if method_name == "group_by":
+                result = getattr(self.data, method_name)(*group_exprs).agg(*polars_expr, **kwargs_expr)
+            else:
+                result = getattr(self.data, method_name)(*polars_expr, **kwargs_expr)
             polars_code = "\n".join([
                     f"serialized_value = '{result.serialize(format='json')}'",
                     "buffer = BytesIO(serialized_value.encode('utf-8'))",

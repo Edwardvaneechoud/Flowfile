@@ -284,7 +284,6 @@ def test_apply_custom_function() -> None:
             "cars": ["beetle", "audi", "beetle", "beetle", "beetle"],
         }
     )
-    breakpoint()
     # two ways to determine the length groups.
     df = (
         ldf.group_by("fruits")
@@ -298,6 +297,7 @@ def test_apply_custom_function() -> None:
                 .alias("custom_2"),
                 fl.count("cars").alias("cars_count"),
             ]
+
         )
         .sort("custom_1", descending=True)
     ).collect()
@@ -533,11 +533,11 @@ def test_len() -> None:
 def test_cum_agg(dtype: PolarsDataType) -> None:
     ldf = FlowFrame({"a": [1, 2, 3, 2]}, schema={"a": dtype})
     assert_series_equal(
-        ldf.select(pl.col("a").cum_min()).collect()["a"],
+        ldf.select(fl.col("a").cum_min()).collect()["a"],
         pl.Series("a", [1, 1, 1, 1], dtype=dtype),
     )
     assert_series_equal(
-        ldf.select(pl.col("a").cum_max()).collect()["a"],
+        ldf.select(fl.col("a").cum_max()).collect()["a"],
         pl.Series("a", [1, 2, 3, 3], dtype=dtype),
     )
 
@@ -545,7 +545,7 @@ def test_cum_agg(dtype: PolarsDataType) -> None:
         pl.Int64 if dtype in [pl.Int8, pl.Int16, pl.UInt8, pl.UInt16] else dtype
     )
     assert_series_equal(
-        ldf.select(pl.col("a").cum_sum()).collect()["a"],
+        ldf.select(fl.col("a").cum_sum()).collect()["a"],
         pl.Series("a", [1, 3, 6, 8], dtype=expected_dtype),
     )
 
@@ -555,7 +555,7 @@ def test_cum_agg(dtype: PolarsDataType) -> None:
         else dtype
     )
     assert_series_equal(
-        ldf.select(pl.col("a").cum_prod()).collect()["a"],
+        ldf.select(fl.col("a").cum_prod()).collect()["a"],
         pl.Series("a", [1, 2, 6, 12], dtype=expected_dtype),
     )
 
