@@ -9,8 +9,7 @@ import polars as pl
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 
 from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
-
-# Assume these imports are correct from your original context
+from collections.abc import Iterator
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -22,9 +21,19 @@ from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph, stringify_values
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
+from flowfile_frame.utils import _check_if_convertible_to_code
 
 node_id_counter = 0
 
+
+def _contains_lambda_pattern(text: str) -> bool:
+    return "<lambda> at" in text
+
+
+def get_method_name_from_code(code: str) -> str | None:
+    split_code = code.split("input_df.")
+    if len(split_code) > 1:
+        return split_code[1].split("(")[0]
 
 
 def _to_string_val(v) -> str:
@@ -32,6 +41,16 @@ def _to_string_val(v) -> str:
         return f"'{v}'"
     else:
         return v
+
+
+def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr = None) -> None:
+    if method_name is None:
+        raise NotImplemented("Cannot create a polars lambda expression without the method")
+    if polars_expr is None:
+        raise NotImplemented("Cannot create polars expressions with lambda function")
+    method_ref = getattr(pl.LazyFrame, method_name)
+    if method_ref is None:
+        raise ModuleNotFoundError(f"Could not find the method {method_name} in polars lazyframe")
 
 
 def generate_node_id() -> int:
@@ -412,17 +431,24 @@ class FlowFrame:
             return f"input_df.sort({by_arg})"
 
     def _add_polars_code(self, new_node_id: int, code: str, description: str = None,
-                         depending_on_ids: List[str] | None = None, convertable_to_code: bool = True):
-        if not convertable_to_code:
-            breakpoint()
-            try:
-                ...
-            except:
-                ...
+                         depending_on_ids: List[str] | None = None, convertable_to_code: bool = True,
+                         method_name: str = None, polars_expr: pl.Expr | List[pl.Expr] = None):
+        breakpoint()
+        if not convertable_to_code or _contains_lambda_pattern(code):
+            method_name = get_method_name_from_code(code) if method_name else method_name
+            _check_ok_for_serialization(polars_expr=polars_expr, method_name=method_name)
+            result = getattr(self.data, method_name)(*polars_expr)
+            polars_code = "\n".join([
+                    f"serialized_value = '{result.serialize(format='json')}'",
+                    "buffer = BytesIO(serialized_value.encode('utf-8'))",
+                    "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
+                    ])
+        else:
+            polars_code = code
         polars_code_settings = input_schema.NodePolarsCode(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=code),
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=polars_code),
             is_setup=True,
             depending_on_ids=depending_on_ids if depending_on_ids is not None else [self.node_id],
             description=description,
@@ -643,28 +669,31 @@ class FlowFrame:
         else:
             readable_exprs = []
             is_readable: bool = True
-            convertable_to_code: bool = True
+            convertable_to_code = _check_if_convertible_to_code(columns)
+            exprs = []
             for col_ in columns:
                 if isinstance(col_, Expr):
                     readable_exprs.append(col_)
-                    convertable_to_code = col_.convertable_to_code if convertable_to_code else convertable_to_code
+                    exprs.append(col_.expr)
                 elif isinstance(col_, Selector):
                     readable_exprs.append(col_)
+                    exprs.append(col_.expr)
                 elif isinstance(col_, pl.expr.Expr):
-                    print('warning this cannot be converted to flowfile frontend. Make sure you use the flowfile expr')
-                    is_readable = False
+                    raise NotImplementedError('warning this cannot be converted to flowfile frontend. Make sure you use the flowfile expr')
                 elif isinstance(col_, str) and col_ in self.columns:
                     col_expr = Column(col_)
                     readable_exprs.append(col_expr)
+                    exprs.append(col_expr.expr)
                 else:
                     lit_expr = lit(col_)
+                    exprs.append(lit_expr.expr)
                     readable_exprs.append(lit_expr)
             if is_readable:
                 code = f"input_df.select([{', '.join(str(e) for e in readable_exprs)}])"
             else:
                 raise ValueError('Not supported')
-
-            self._add_polars_code(new_node_id, code, description, convertable_to_code=convertable_to_code)
+            self._add_polars_code(new_node_id, code, description, convertable_to_code=convertable_to_code,
+                                  method_name="select", polars_expr = exprs)
             return self._create_child_frame(new_node_id)
 
     def filter(self, *predicates: Expr | Any, flowfile_formula: str = None, description: str = None, **constraints):
@@ -688,17 +717,18 @@ class FlowFrame:
             for pred in predicates:
                 if isinstance(pred, Expr):
                     predicate_exprs.append(pred)
-                elif isinstance(pred, Iterable):
+                elif isinstance(pred, (tuple, list, Iterator)):
                     predicate_exprs.append(list(pred))
                 else:
                     predicate_exprs.append(f'"{pred}"')
             str_predicate = " & ".join(str(p) for p in predicate_exprs)
             # str_predicate = str(final_predicate)
-
             str_constraints = ", ".join(f"{k}={stringify_values(v)}" for k, v in constraints.items())
-            full_filter = ", ".join([v for v in (str_predicate, str_constraints) if v !=""])
+            full_filter = ", ".join([v for v in (str_predicate, str_constraints) if v != ""])
             code = f"input_df.filter({full_filter})"
-            self._add_polars_code(new_node_id, code, description)
+            convertable_to_code = _check_if_convertible_to_code(predicate_exprs)
+            self._add_polars_code(new_node_id, code, description, method_name="filter",
+                                  convertable_to_code=convertable_to_code)
 
         elif flowfile_formula:
             # Create node settings
@@ -1496,24 +1526,25 @@ class FlowFrame:
         if exprs is not None:
             new_node_id = generate_node_id()
             exprs_iterable = _parse_inputs_as_iterable((exprs,))
-
             if len(exprs_iterable) == 1:
                 detected, result = self._detect_cum_count_record_id(
                     exprs_iterable[0], new_node_id, description
                 )
                 if detected:
                     return result
-            all_expressions = []
+            all_expressions: List[Expr | Column] = []
             for expression in exprs_iterable:
                 if not isinstance(expression, (Expr, Column)):
                     all_expressions.append(lit(expression))
                 else:
                     all_expressions.append(expression)
-
             code = (
                 f"input_df.with_columns({', '.join(str(e) for e in all_expressions)})"
             )
-            self._add_polars_code(new_node_id, code, description)
+            convertable_to_code = _check_if_convertible_to_code(exprs_iterable)
+            self._add_polars_code(new_node_id, code, description, method_name='with_columns',
+                                  convertable_to_code=convertable_to_code,
+                                  polars_expr=[e.expr for e in all_expressions])
             return self._create_child_frame(new_node_id)
 
         elif flowfile_formulas is not None and output_column_names is not None:

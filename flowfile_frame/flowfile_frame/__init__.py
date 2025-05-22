@@ -23,6 +23,8 @@ from flowfile_frame.selectors import (  # noqa: F401
     by_dtype, contains, starts_with, ends_with, matches
 )
 
+from flowfile_frame.series import Series
+
 # File I/O
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
     read_csv, read_parquet, from_dict, concat,  scan_csv, scan_parquet)

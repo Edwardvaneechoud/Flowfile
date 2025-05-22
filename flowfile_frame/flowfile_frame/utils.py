@@ -16,6 +16,15 @@ def _is_iterable(obj: Any) -> bool:
     return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))
 
 
+def _check_if_convertible_to_code(expressions: List[Any]) -> bool:
+    from flowfile_frame.expr import Expr
+    for expr in expressions:
+        if isinstance(expr, Expr):
+            if not expr.convertable_to_code:
+                return False
+    return True
+
+
 def _parse_inputs_as_iterable(
         inputs: tuple[Any, ...] | tuple[Iterable[Any]],
 ) -> List[Any]:

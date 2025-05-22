@@ -20,7 +20,6 @@ PASSTHROUGH_METHODS = {
 }
 
 
-
 def format_type_annotation(annotation_obj) -> str:
     """
     Properly format a type annotation object to a string representation.

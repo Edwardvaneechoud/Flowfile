@@ -1119,7 +1119,7 @@ def column(name: str) -> Column:
 def lit(value: Any) -> Expr:
     """Creates a Literal expression."""
     # Literals don't have an agg_func
-    return Expr(pl.lit(value), repr_str=f"pl.lit({repr(value)})", agg_func=None)
+    return Expr(pl.lit(value, allow_object=True), repr_str=f"pl.lit({repr(value)})", agg_func=None)
 
 
 def len() -> Expr:

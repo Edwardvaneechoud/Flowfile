@@ -118,16 +118,15 @@ def test_lazyframe_membership_operator() -> None:
     with pytest.raises(TypeError, match="ambiguous"):
         not ldf
 
+
 def test_apply() -> None:
-    breakpoint()
     ldf = FlowFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
-    new = ldf.select(
-        fl.col("a").map_batches(lambda s: s * 2, return_dtype=pl.Int64).alias("foo")
+    new = ldf.with_columns(
+        fl.col("a").map_batches(lambda s: s * 2, return_dtype=pl.Int64).alias("foo"),
     )
     expected = ldf.data.clone().with_columns((pl.col("a") * 2).alias("foo"))
     assert_frame_equal(new.data, expected)
     assert_frame_equal(new.collect(), expected.collect())
-
     with pytest.warns(PolarsInefficientMapWarning, match="with this one instead"):
         for strategy in ["thread_local", "threading"]:
             ldf = FlowFrame({"a": [1, 2, 3] * 20, "b": [1.0, 2.0, 3.0] * 20})
@@ -136,7 +135,7 @@ def test_apply() -> None:
                 .map_elements(lambda s: s * 2, strategy=strategy, return_dtype=pl.Int64)  # type: ignore[arg-type]
                 .alias("foo")
             )
-            expected = ldf.clone().with_columns((pl.col("a") * 2).alias("foo"))
+            expected = ldf.data.clone().with_columns((pl.col("a") * 2).alias("foo"))
             assert_frame_equal(new.collect(), expected.collect())
 
 
@@ -144,7 +143,7 @@ def test_add_eager_column() -> None:
     lf = FlowFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
     assert lf.collect_schema().len() == 2
 
-    out = lf.with_columns(fl.lit(pl.Series("c", [1, 2, 3]))).collect()
+    out = lf.with_columns(fl.lit(fl.Series("c", [1, 2, 3]))).collect()
     assert out["c"].sum() == 6
     assert out.collect_schema().len() == 3
 
@@ -285,19 +284,19 @@ def test_apply_custom_function() -> None:
             "cars": ["beetle", "audi", "beetle", "beetle", "beetle"],
         }
     )
-
+    breakpoint()
     # two ways to determine the length groups.
     df = (
         ldf.group_by("fruits")
         .agg(
             [
-                pl.col("cars")
+                fl.col("cars")
                 .map_elements(lambda groups: groups.len(), return_dtype=pl.Int64)
                 .alias("custom_1"),
-                pl.col("cars")
+                fl.col("cars")
                 .map_elements(lambda groups: groups.len(), return_dtype=pl.Int64)
                 .alias("custom_2"),
-                pl.count("cars").alias("cars_count"),
+                fl.count("cars").alias("cars_count"),
             ]
         )
         .sort("custom_1", descending=True)

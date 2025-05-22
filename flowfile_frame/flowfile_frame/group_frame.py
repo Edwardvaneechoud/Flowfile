@@ -4,6 +4,7 @@ from flowfile_frame.selectors import Selector
 from flowfile_frame.utils import _parse_inputs_as_iterable
 from flowfile_core.schemas import transform_schema, input_schema
 from typing import TYPE_CHECKING
+from flowfile_frame.utils import _check_if_convertible_to_code
 
 # Corrected TYPE_CHECKING block as provided by user
 if TYPE_CHECKING:
@@ -51,7 +52,10 @@ class GroupByFrame:
         """
         Apply EXPLICIT aggregations to grouped data using expressions.
         """
+        breakpoint()
         agg_expressions = _parse_inputs_as_iterable(agg_exprs)
+        breakpoint()
+        convertable_to_code = _check_if_convertible_to_code(agg_expressions)
         can_be_converted: bool = not self.maintain_order
         agg_cols: list[transform_schema.AggColl] = []
         if can_be_converted:
@@ -61,7 +65,9 @@ class GroupByFrame:
         if can_be_converted:
             can_be_converted = self._process_named_agg_expressions(agg_cols, named_agg_exprs)
         node_desc = self.description or f"Aggregate after grouping by {self.readable_group()}"
-        return self._create_agg_node(self.node_id, can_be_converted, agg_cols, agg_expressions, named_agg_exprs, node_desc)
+        breakpoint()
+        return self._create_agg_node(self.node_id, can_be_converted, agg_cols, agg_expressions, named_agg_exprs,
+                                     convertable_to_code=convertable_to_code, description=node_desc)
 
     def _process_group_columns(self, agg_cols: list[transform_schema.AggColl]) -> bool:
         # (Implementation unchanged from user input)
@@ -126,9 +132,12 @@ class GroupByFrame:
                 return False
         return True
 
-    def _create_agg_node(self, node_id_to_use: int, can_be_converted: bool, agg_cols: list, agg_expressions, named_agg_exprs, description: str):
+    def _create_agg_node(self, node_id_to_use: int, can_be_converted: bool, agg_cols: list, agg_expressions,
+                         named_agg_exprs,
+                         convertable_to_code: bool, description: str):
         """Creates node for explicit aggregations via self.agg()"""
         # (Implementation unchanged from user input, passes description)
+        breakpoint()
         if can_be_converted:
             group_by_settings = input_schema.NodeGroupBy(
                 flow_id=self.parent.flow_graph.flow_id,
@@ -140,8 +149,10 @@ class GroupByFrame:
             )
             self.parent.flow_graph.add_group_by(group_by_settings)
         else:
+            named_agg_exprs
             code = self._generate_polars_agg_code(agg_expressions, named_agg_exprs)
-            self.parent._add_polars_code(new_node_id=node_id_to_use, code=code, description=description)
+            self.parent._add_polars_code(new_node_id=node_id_to_use, code=code, description=description,
+                                         method_name='group_by', convertable_to_code=convertable_to_code, polars_expr=agg_expressions)
         return self.parent._create_child_frame(node_id_to_use)
 
     def _generate_direct_polars_code(self, method_name: str, *args, **kwargs) -> "FlowFrame":
