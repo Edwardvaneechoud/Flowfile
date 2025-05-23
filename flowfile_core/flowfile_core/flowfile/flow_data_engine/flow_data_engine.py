@@ -1532,4 +1532,7 @@ def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowD
         kwargs = {'input_df': flowfile_tables[0].data_frame}
     else:
         kwargs = {f'input_df_{i+1}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
-    return FlowDataEngine(polars_executable(**kwargs))
+    df = polars_executable(**kwargs)
+    if isinstance(df, pl.DataFrame):
+        logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
+    return FlowDataEngine(df)

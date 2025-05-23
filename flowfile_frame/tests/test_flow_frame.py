@@ -2,10 +2,19 @@ import os
 import pytest
 import polars as pl
 from polars.testing import assert_frame_equal
-from flowfile_frame.flow_frame import FlowFrame, read_parquet, from_dict, concat
-import flowfile_frame as ff
+from flowfile_frame.flow_frame_methods import read_parquet, from_dict, concat
+from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.expr import col, lit, cum_count
 from flowfile_frame import selectors as sc
+
+import os
+import io
+import pytest
+import tempfile
+import polars as pl
+from polars.testing import assert_frame_equal
+from flowfile_frame.flow_frame_methods import read_csv
+from flowfile_frame.expr import col
 
 
 def test_create_empty_flow_frame():
@@ -524,16 +533,6 @@ def test_schema():
     assert str(schema["id"]) == "Int64"
     assert str(schema["name"]) == "String"
     assert str(schema["active"]) == "Boolean"
-
-
-import os
-import io
-import pytest
-import tempfile
-import polars as pl
-from polars.testing import assert_frame_equal
-from flowfile_frame.flow_frame import FlowFrame, read_csv
-from flowfile_frame.expr import col
 
 
 def test_read_csv_basic():

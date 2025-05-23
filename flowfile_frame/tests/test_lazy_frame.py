@@ -326,8 +326,8 @@ def test_group_by() -> None:
     expected_a_b = pl.DataFrame({"grp": ["a", "b"], "a": [1.0, 3.5], "b": [3.75, -0.5]})
     #
     for out in (
-        ldf.group_by("grp").agg(pl.mean("a")).collect(),
-        ldf.group_by(fl.col("grp")).agg(pl.mean("a")).collect(),
+        ldf.group_by("grp").agg(fl.mean("a")).collect(),
+        ldf.group_by(fl.col("grp")).agg(fl.mean("a")).collect(),
     ):
         assert_frame_equal(out.sort(by="grp"), expected_a)
 
@@ -356,17 +356,16 @@ def test_window_function() -> None:
         }
     )
     assert lf.collect_schema().len() == 4
-
     q = lf.with_columns(
-        pl.sum("A").over("fruits").alias("fruit_sum_A"),
-        pl.first("B").over("fruits").alias("fruit_first_B"),
-        pl.max("B").over("cars").alias("cars_max_B"),
+        fl.sum("A").over("fruits").alias("fruit_sum_A"),
+        fl.first("B").over("fruits").alias("fruit_first_B"),
+        fl.max("B").over("cars").alias("cars_max_B"),
     )
     assert q.collect_schema().len() == 7
 
     assert q.collect()["cars_max_B"].to_list() == [5, 4, 5, 5, 5]
 
-    out = lf.select([pl.first("B").over(["fruits", "cars"]).alias("B_first")])
+    out = lf.select([fl.first("B").over(["fruits", "cars"]).alias("B_first")])
     assert out.collect()["B_first"].to_list() == [5, 4, 3, 3, 5]
 
 
@@ -1410,12 +1409,12 @@ def test_compare_aggregation_between_lazy_and_eager_6904(
 @pytest.mark.parametrize(
     "comparators",
     [
-        ("==", pl.LazyFrame.__eq__),
-        ("!=", pl.LazyFrame.__ne__),
-        (">", pl.LazyFrame.__gt__),
-        ("<", pl.LazyFrame.__lt__),
-        (">=", pl.LazyFrame.__ge__),
-        ("<=", pl.LazyFrame.__le__),
+        ("==", fl.FlowFrame.__eq__),
+        ("!=", fl.FlowFrame.__ne__),
+        (">", fl.FlowFrame.__gt__),
+        ("<", fl.FlowFrame.__lt__),
+        (">=", fl.FlowFrame.__ge__),
+        ("<=", fl.FlowFrame.__le__),
     ],
 )
 def test_lazy_comparison_operators(

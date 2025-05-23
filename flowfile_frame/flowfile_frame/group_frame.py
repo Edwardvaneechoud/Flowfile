@@ -98,7 +98,7 @@ class GroupByFrame:
                 old_name = getattr(expr, "_initial_column_name", expr.column_name) or expr.column_name
                 if agg_func:
                     agg_cols.append(
-                        transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=expr.column_name)
+                        transform_schema.AggColl(old_name=old_name, agg=agg_func, new_name=expr.column_name or old_name)
                     )
                 else:
                     agg_cols.append(transform_schema.AggColl(old_name=expr.column_name, agg="first"))
