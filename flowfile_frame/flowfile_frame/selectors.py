@@ -51,6 +51,9 @@ class Selector:
         # Expr init will handle creating the 'pl.sum(selector)' repr
         return Expr(expr=None, selector=self, agg_func="sum")
 
+    def expr(self):
+        return eval(self.repr_str)
+
     def mean(self) -> 'Expr':
         """Create an expression to average columns selected by this selector."""
         return Expr(expr=None, selector=self, agg_func="mean")

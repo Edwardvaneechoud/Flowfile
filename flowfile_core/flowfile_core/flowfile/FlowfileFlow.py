@@ -15,7 +15,8 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import type_to_polars_str, FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (type_to_polars_str, FlowfileColumn,
+                                                                           convert_pl_schema_to_raw_data_format)
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                        pre_calculate_pivot_schema)
 from flowfile_core.utils.arrow_reader import get_read_top_n
@@ -68,6 +69,19 @@ def skip_node_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
     if len(nodes) > 0:
         msg = "\n".join(str(node) for node in nodes)
         flow_logger.warning(f'skipping nodes:\n{msg}')
+
+
+def _handle_raw_data(node_manual_input: input_schema.NodeManualInput):
+    if (not (hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
+            and (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
+        _columns = [input_schema.MinimalFieldInfo(name=c, data_type="String") for c in node_manual_input.raw_data[0].keys()]
+        values = [[str(vv) for vv in c]for c in zip(*(r.values() for r in node_manual_input.raw_data))]
+        node_manual_input.raw_data_format = input_schema.RawData(columns=_columns, data=values)
+    elif ((hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
+          and not (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
+        node_manual_input.raw_data = [{c.name: node_manual_input.raw_data_format.data[ci][ri] for ci, c in
+                                       enumerate(node_manual_input.raw_data_format.columns)}
+                                      for ri in range(len(node_manual_input.raw_data_format.data[0]))]
 
 
 def execution_order_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
@@ -1044,11 +1058,10 @@ class FlowGraph:
         return self
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
-
         if isinstance(input_file, input_schema.NodeManualInput):
-            input_data = FlowDataEngine(input_file.raw_data)
+            _handle_raw_data(input_file)
+            input_data = FlowDataEngine(input_file.raw_data_format)
             ref = 'manual_input'
-
         else:
             input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = 'datasource'
@@ -1061,7 +1074,9 @@ class FlowGraph:
 
             if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
+
         else:
+            input_data.collect()
             node = FlowNode(input_file.node_id, function=input_data,
                             setting_input=input_file,
                             name=ref, node_type=ref, parent_uuid=self.uuid)
