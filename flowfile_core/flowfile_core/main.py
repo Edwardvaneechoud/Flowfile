@@ -120,7 +120,6 @@ def run(host: str = None, port: int = None):
         host=host,
         port=port,
         loop="asyncio",
-        log_level="warning",
     )
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally

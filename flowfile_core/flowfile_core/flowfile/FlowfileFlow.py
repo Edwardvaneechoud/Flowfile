@@ -418,7 +418,6 @@ class FlowGraph:
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
-
         self.add_node_step(node_id=node_polars_code.node_id,
                            function=_func,
                            node_type='polars_code',
