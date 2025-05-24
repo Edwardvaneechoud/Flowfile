@@ -173,6 +173,7 @@ class TestExpressions:
     def test_string_methods(self):
         """Test string methods on expressions."""
         # Contains
+        breakpoint()
         expr = col("name").str.contains("a")
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('name').str.contains('a', literal=False)"

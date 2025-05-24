@@ -505,7 +505,6 @@ def generate_improved_type_stub(
 
             # Add description parameter if not already present
             if not any(p.startswith('description') for p in processed_params) and param_name != 'collect_schema':
-                breakpoint()
                 processed_params.append("description: Optional[str] = None")
 
             # If we have a description param that was saved, add it before var_keyword

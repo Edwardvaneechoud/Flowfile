@@ -6,7 +6,6 @@ from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.expr import col
-import flowfile_frame as ff
 
 
 class TestGroupByFrame:
