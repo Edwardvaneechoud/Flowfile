@@ -74,7 +74,7 @@ def skip_node_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
 def _handle_raw_data(node_manual_input: input_schema.NodeManualInput):
     if (not (hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
             and (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
-        _columns = [input_schema.MinimalFieldInfo(name=c, data_type="String") for c in node_manual_input.raw_data[0].keys()]
+        _columns = [input_schema.MinimalFieldInfo(name=c, data_type=None) for c in node_manual_input.raw_data[0].keys()]
         values = [[str(vv) for vv in c]for c in zip(*(r.values() for r in node_manual_input.raw_data))]
         node_manual_input.raw_data_format = input_schema.RawData(columns=_columns, data=values)
     elif ((hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
@@ -1059,6 +1059,7 @@ class FlowGraph:
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
         if isinstance(input_file, input_schema.NodeManualInput):
             _handle_raw_data(input_file)
+            breakpoint()
             input_data = FlowDataEngine(input_file.raw_data_format)
             ref = 'manual_input'
         else:

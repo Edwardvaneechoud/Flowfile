@@ -205,6 +205,7 @@ class FlowDataEngine:
             df = pl.DataFrame(raw_data.data)
         self.number_of_records = len(df)
         self.data_frame = df.lazy()
+        self.lazy = True
 
     def _handle_list_input(self, data: List):
         """Handle list input."""
@@ -318,7 +319,6 @@ class FlowDataEngine:
         Collect data from the DataFrame, optionally limiting the number of records.
         Handles streaming and error cases appropriately.
         """
-        breakpoint()
         if n_records is None:
             logger.info(f'Fetching all data for Table object "{id(self)}". Settings: streaming={self._streamable}')
         else:

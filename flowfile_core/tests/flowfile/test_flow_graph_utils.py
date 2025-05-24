@@ -100,7 +100,6 @@ def test_combine_flow_graphs_basic():
 
     graph2 = create_graph(flow_id=2)
     add_manual_input(graph2, [{"name": "jane"}], node_id=1)
-    breakpoint()
     # Combine the graphs
     combined = combine_flow_graphs(graph1, graph2)
 
@@ -124,6 +123,7 @@ def test_combine_flow_graphs_basic():
 def test_combine_flow_graphs_with_filter():
     """Test combining graphs with both manual input and filter nodes."""
     # Create first graph with manual input
+    breakpoint()
     graph1 = create_graph(flow_id=1)
     add_manual_input(graph1, [{"name": "john", "age": 30}], node_id=1)
 
@@ -162,7 +162,7 @@ def test_combine_flow_graphs_with_filter():
     graph2.add_filter(filter_settings2)
     connection2 = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph2, connection2)
-
+    breakpoint()
     # Combine the graphs
     combined = combine_flow_graphs(graph1, graph2)
 
