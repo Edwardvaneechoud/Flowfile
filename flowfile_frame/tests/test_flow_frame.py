@@ -140,7 +140,7 @@ def test_with_columns():
     }
     df = FlowFrame(data)
 
-    # Add a constant column
+    # # # Add a constant column
     result = df.with_columns(lit(True).alias("is_active")).collect()
     assert "is_active" in result.columns
     assert result["is_active"].to_list() == [True, True, True]
@@ -148,8 +148,8 @@ def test_with_columns():
     # Add a derived column
     result = df.with_columns(col("age").cast(pl.Float32).alias("age_float")).collect()
     assert "age_float" in result.columns
-
-    # Add multiple columns
+    #
+    # Add multiple columns with list
     result = df.with_columns([
         col("id").alias("user_id"),
         (col("age") * 2).alias("double_age")
@@ -158,6 +158,14 @@ def test_with_columns():
     assert "double_age" in result.columns
     assert result["double_age"].to_list() == [50, 60, 70]
 
+    result = df.with_columns(
+        col("id").alias("user_id"),
+        (col("age") * 2).alias("double_age")
+    ).collect()
+
+    assert "user_id" in result.columns
+    assert "double_age" in result.columns
+    assert result["double_age"].to_list() == [50, 60, 70]
     # Add with flowfile formula
     result = df.with_columns(
         flowfile_formulas=["[age] * 2"],
@@ -276,7 +284,6 @@ def test_explode():
         "values": [[10, 20], [30, 40, 50]]
     }
     df = FlowFrame(data)
-
     result = df.explode("values").collect()
     assert len(result) == 5  # 2 values for first row, 3 for second
     assert result["values"].to_list() == [10, 20, 30, 40, 50]

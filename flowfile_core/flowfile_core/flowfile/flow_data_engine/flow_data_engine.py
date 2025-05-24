@@ -29,7 +29,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
     convert_stats_to_column_info
 )
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
@@ -196,8 +196,13 @@ class FlowDataEngine:
     def _handle_raw_data_format(self, raw_data: input_schema.RawData):
         """Create a FlowDataEngine from a RawData object."""
         flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in raw_data.columns)
-        polars_schema = pl.Schema([(flowfile_column.column_name, flowfile_column.get_polars_type().pl_datatype) for flowfile_column in flowfile_schema])
-        df = pl.DataFrame(raw_data.data, polars_schema)
+        polars_schema = pl.Schema([(flowfile_column.column_name, flowfile_column.get_polars_type().pl_datatype)
+                                   for flowfile_column in flowfile_schema])
+        try:
+            df = pl.DataFrame(raw_data.data, polars_schema)
+        except TypeError as e:
+            logger.warning(f"Could not parse the data with the schema:\n{e}")
+            df = pl.DataFrame(raw_data.data)
         self.number_of_records = len(df)
         self.data_frame = df.lazy()
 
@@ -313,6 +318,7 @@ class FlowDataEngine:
         Collect data from the DataFrame, optionally limiting the number of records.
         Handles streaming and error cases appropriately.
         """
+        breakpoint()
         if n_records is None:
             logger.info(f'Fetching all data for Table object "{id(self)}". Settings: streaming={self._streamable}')
         else:
@@ -498,7 +504,7 @@ class FlowDataEngine:
         """Create a FlowDataEngine from a schema definition."""
         pl_schema = []
         for i, flow_file_column in enumerate(schema):
-            pl_schema.append((flow_file_column.name, type_to_polars(flow_file_column.data_type)))
+            pl_schema.append((flow_file_column.name, cast_str_to_polars_type(flow_file_column.data_type)))
             schema[i].col_index = i
         df = pl.LazyFrame(schema=pl_schema)
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)

@@ -15,7 +15,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (type_to_polars_str, FlowfileColumn,
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (cast_str_to_polars_type, FlowfileColumn,
                                                                            convert_pl_schema_to_raw_data_format)
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                        pre_calculate_pivot_schema)
@@ -454,7 +454,7 @@ class FlowGraph:
     def add_formula(self, function_settings: input_schema.NodeFormula):
         error = ""
         if function_settings.function.field.data_type not in (None, "Auto"):
-            output_type = type_to_polars_str(function_settings.function.field.data_type)
+            output_type = cast_str_to_polars_type(function_settings.function.field.data_type)
         else:
             output_type = None
         if output_type not in (None, "Auto"):

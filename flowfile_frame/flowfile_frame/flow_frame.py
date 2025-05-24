@@ -133,7 +133,6 @@ class FlowFrame:
         # Extract flow-specific parameters
         node_id = node_id or generate_node_id()
         description = "Data imported from Python object"
-
         # Create a new flow graph if none is provided
         if flow_graph is None:
             flow_graph = create_flow_graph()
@@ -153,10 +152,11 @@ class FlowFrame:
             )
             pl_data = pl_df.lazy()
         except Exception as e:
-            raise ValueError(f"Could not convert data to a polars DataFrame: {e}")
+            raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}")
         # Create a FlowDataEngine to get data in the right format for manual input
         flow_table = FlowDataEngine(raw_data=pl_data)
-        raw_data_format = input_schema.RawData(data=list(flow_table.to_dict().values()), columns=[c.get_minimal_field_info() for c in flow_table.schema])
+        raw_data_format = input_schema.RawData(data=list(flow_table.to_dict().values()),
+                                               columns=[c.get_minimal_field_info() for c in flow_table.schema])
         # Create a manual input node
         input_node = input_schema.NodeManualInput(
             flow_id=flow_id,
@@ -167,7 +167,6 @@ class FlowFrame:
             is_setup=True,
             description=description,
         )
-
         # Add to graph
         flow_graph.add_manual_input(input_node)
         # Return new frame
@@ -1548,9 +1547,9 @@ class FlowFrame:
             If neither exprs nor flowfile_formulas with output_column_names are provided,
             or if the lengths of flowfile_formulas and output_column_names don't match
         """
-        if exprs is not None:
+        if exprs is not None and len(exprs) > 0:
             new_node_id = generate_node_id()
-            exprs_iterable = _parse_inputs_as_iterable((exprs,))
+            exprs_iterable = _parse_inputs_as_iterable(exprs)
             if len(exprs_iterable) == 1:
                 detected, result = self._detect_cum_count_record_id(
                     exprs_iterable[0], new_node_id, description

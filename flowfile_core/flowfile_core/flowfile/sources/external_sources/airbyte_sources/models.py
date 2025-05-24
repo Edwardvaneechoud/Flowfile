@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel, field_validator, ConfigDict
 import polars as pl
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars_str
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas.input_schema import MinimalFieldInfo
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
@@ -56,7 +56,7 @@ class JsonSchema(BaseModel):
                 dtype = 'string'
             else:
                 dtype = type_mapping.get(self.type[0] if isinstance(self.type, list) else self.type, 'string')
-        return type_to_polars_str(dtype)
+        return cast_str_to_polars_type(dtype)
 
 
 class AirbyteProperty(BaseModel):

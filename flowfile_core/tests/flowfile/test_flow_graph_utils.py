@@ -100,7 +100,7 @@ def test_combine_flow_graphs_basic():
 
     graph2 = create_graph(flow_id=2)
     add_manual_input(graph2, [{"name": "jane"}], node_id=1)
-
+    breakpoint()
     # Combine the graphs
     combined = combine_flow_graphs(graph1, graph2)
 
