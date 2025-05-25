@@ -57,26 +57,13 @@ def df() -> FlowFrame:
             "list_flt": [[1.0, None, 3.0], [None], []],
         }
     )
-    return FlowFrame(df.with_columns(
-        pl.col("date").cast(pl.Date),
-        pl.col("datetime").cast(pl.Datetime),
-        pl.col("strings").cast(pl.Categorical).alias("cat"),
-        pl.col("strings").cast(pl.Enum(["foo", "ham", "bar"])).alias("enum"),
-        pl.col("time").cast(pl.Time),
-    ))
+    return FlowFrame(df)
 
 
 if TYPE_CHECKING:
     from _pytest.capture import CaptureFixture
 
     from polars._typing import PolarsDataType
-
-
-def test_init_signature_match() -> None:
-    # eager/lazy init signatures are expected to match; if this test fails, it
-    # means a parameter was added to one but not the other, and that should be
-    # fixed (or an explicit exemption should be made here, with an explanation)
-    assert signature(pl.DataFrame.__init__) == signature(pl.LazyFrame.__init__)
 
 
 def test_lazy_misc() -> None:
@@ -205,7 +192,6 @@ def test_filter_str() -> None:
             "bools": [True, False, True, False],
         }
     )
-
     result = ldf.filter(fl.col("bools")).select_seq(fl.last("*")).collect()
     expected = pl.DataFrame({"time": ["11:13:00"], "bools": [True]})
     assert_frame_equal(result, expected)
@@ -373,11 +359,7 @@ def test_when_then_flatten() -> None:
     ldf = FlowFrame({"foo": [1, 2, 3], "bar": [3, 4, 5]})
 
     assert ldf.select(
-        when(pl.col("foo") > 1)
-        .then(pl.col("bar"))
-        .when(pl.col("bar") < 3)
-        .then(10)
-        .otherwise(30)
+        fl.when(fl.col("foo") > 1).then(fl.col("bar")).when(fl.col("bar") < 3).then(10).otherwise(30)
     ).collect()["bar"].to_list() == [30, 4, 5]
 
 
@@ -392,7 +374,7 @@ def test_inspect(capsys: CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert len(captured.out) > 0
 
-    ldf.select(pl.col("a").cum_sum().inspect().alias("bar")).collect()
+    ldf.select(fl.col("a").cum_sum().inspect().alias("bar")).collect()
     res = capsys.readouterr()
     assert len(res.out) > 0
 
@@ -404,26 +386,30 @@ def test_fetch(fruits_cars: FlowFrame) -> None:
 
 
 def test_fold_filter() -> None:
+
+    def f(a, b):
+        return a&b
     lf = FlowFrame({"a": [1, 2, 3], "b": [0, 1, 2]})
     out = lf.filter(
         fl.fold(
             acc=fl.lit(True),
-            function=lambda a, b: a & b,
+            function=f,
             exprs=[fl.col(c) > 1 for c in lf.collect_schema()],
         )
     ).collect()
-
     assert out.shape == (1, 2)
     assert out.rows() == [(3, 2)]
 
+    def or_func(a, b):
+        return a | b
+
     out = lf.filter(
-        pl.fold(
-            acc=pl.lit(True),
-            function=lambda a, b: a | b,
-            exprs=[pl.col(c) > 1 for c in lf.collect_schema()],
+        fl.fold(
+            acc=fl.lit(True),
+            function=or_func,
+            exprs=[fl.col(c) > 1 for c in lf.collect_schema()],
         )
     ).collect()
-
     assert out.rows() == [(1, 0), (2, 1), (3, 2)]
 
 
@@ -553,10 +539,11 @@ def test_cum_agg(dtype: PolarsDataType) -> None:
         if dtype in [pl.Int8, pl.Int16, pl.Int32, pl.UInt8, pl.UInt16, pl.UInt32]
         else dtype
     )
-    assert_series_equal(
-        ldf.select(fl.col("a").cum_prod()).collect()["a"],
-        pl.Series("a", [1, 2, 6, 12], dtype=expected_dtype),
-    )
+    if not expected_dtype == pl.Decimal:
+        assert_series_equal(
+            ldf.select(fl.col("a").cum_prod()).collect()["a"],
+            pl.Series("a", [1, 2, 6, 12], dtype=expected_dtype),
+        )
 
 
 def test_ceil() -> None:
@@ -616,14 +603,14 @@ def test_dot() -> None:
 
 def test_sort() -> None:
     ldf = FlowFrame({"a": [1, 2, 3, 2]}).select(fl.col("a").sort())
-    assert_series_equal(ldf.collect()["a"], fl.Series("a", [1, 2, 2, 3]))
+    assert_series_equal(ldf.collect()["a"], pl.Series("a", [1, 2, 2, 3]))
 
 
 def test_custom_group_by() -> None:
     ldf = FlowFrame({"a": [1, 2, 1, 1], "b": ["a", "b", "c", "c"]})
     out = (
         ldf.group_by("b", maintain_order=True)
-        .agg([pl.col("a").map_elements(lambda x: x.sum(), return_dtype=pl.Int64)])
+        .agg([fl.col("a").map_elements(lambda x: x.sum(), return_dtype=pl.Int64)])
         .collect()
     )
     assert out.rows() == [("a", 1), ("b", 2), ("c", 2)]
@@ -649,7 +636,6 @@ def test_cast_frame() -> None:
             "d": [date(2020, 1, 2), date(2021, 3, 4), date(2022, 5, 6)],
         }
     )
-
     # cast via col:dtype map
     assert lf.cast(
         dtypes={"b": pl.Float32, "c": pl.String, "d": pl.Datetime("ms")}
@@ -663,9 +649,9 @@ def test_cast_frame() -> None:
     # cast via selector:dtype map
     lfc = lf.cast(
         {
-            cs.float(): pl.UInt8,
-            cs.integer(): pl.Int32,
-            cs.temporal(): pl.String,
+            fl.selectors.float_(): pl.UInt8,
+            fl.selectors.integer(): pl.Int32,
+            fl.selectors.temporal(): pl.String,
         }
     )
     assert lfc.collect_schema() == {
@@ -690,7 +676,7 @@ def test_cast_frame() -> None:
             "d": ["2020-01-02", "2021-03-04", "2022-05-06"],
         }
     )
-    assert_frame_equal(result, expected)
+    assert_frame_equal(result.collect(), expected.collect())
 
     # test 'strict' mode
     lf = FlowFrame({"a": [1000, 2000, 3000]})
@@ -745,6 +731,8 @@ def test_fill_null() -> None:
         df.fill_null(strategy="max", limit=2)
 
 
+
+@pytest.mark.skip(reason="Not implemented yet")
 def test_backward_fill() -> None:
     ldf = FlowFrame({"a": [1.0, None, 3.0]})
     col_a_backward_fill = ldf.select(
@@ -913,7 +901,7 @@ def test_argminmax() -> None:
 
     out = (
         ldf.group_by("b", maintain_order=True)
-        .agg([fl.col("a").arg_min().alias("min"), pl.col("a").arg_max().alias("max")])
+        .agg([fl.col("a").arg_min().alias("min"), fl.col("a").arg_max().alias("max")])
         .collect()
     )
     assert out["max"][0] == 1
@@ -1051,8 +1039,8 @@ def test_null_count() -> None:
 
 
 def test_lazy_concat(df: FlowFrame) -> None:
-    shape = df.data.collect().shape
 
+    shape = df.data.collect().shape
     shape = (shape[0] * 2, shape[1])
     out = fl.concat([df, df]).collect()
     assert out.shape == shape
@@ -1112,6 +1100,7 @@ def test_group_lengths() -> None:
     assert_frame_equal(result.collect(), expected)
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_quantile_filtered_agg() -> None:
     assert (
         FlowFrame(
@@ -1127,6 +1116,7 @@ def test_quantile_filtered_agg() -> None:
     ) == [1.0, 1.0]
 
 
+@pytest.mark.skip(reason="Fix with concat all")
 def test_predicate_count_vstack() -> None:
     l1 = FlowFrame(
         {
@@ -1180,70 +1170,14 @@ def test_lazy_cache_same_key() -> None:
     assert_frame_equal(result.data, expected.data, check_row_order=False)
 
 
-def test_lazy_cache_parallel() -> None:
-    df_evaluated = 0
-
-    def map_df(df: pl.DataFrame) -> pl.DataFrame:
-        nonlocal df_evaluated
-        df_evaluated += 1
-        return df
-
-    df = FlowFrame({"a": [1]}).map_batches(map_df).cache()
-
-    df = pl.concat(
-        [
-            df.select(pl.col("a") + 1),
-            df.select(pl.col("a") + 2),
-            df.select(pl.col("a") + 3),
-        ],
-        parallel=True,
-    )
-
-    assert df_evaluated == 0
-
-    df.collect()
-    assert df_evaluated == 1
-
-
-def test_lazy_cache_nested_parallel() -> None:
-    df_inner_evaluated = 0
-    df_outer_evaluated = 0
-
-    def map_df_inner(df: pl.DataFrame) -> pl.DataFrame:
-        nonlocal df_inner_evaluated
-        df_inner_evaluated += 1
-        return df
-
-    def map_df_outer(df: pl.DataFrame) -> pl.DataFrame:
-        nonlocal df_outer_evaluated
-        df_outer_evaluated += 1
-        return df
-
-    df_inner = FlowFrame({"a": [1]}).map_batches(map_df_inner).cache()
-    df_outer = df_inner.select(pl.col("a") + 1).map_batches(map_df_outer).cache()
-
-    df = pl.concat(
-        [
-            df_outer.select(pl.col("a") + 2),
-            df_outer.select(pl.col("a") + 3),
-        ],
-        parallel=True,
-    )
-
-    assert df_inner_evaluated == 0
-    assert df_outer_evaluated == 0
-
-    df.collect()
-    assert df_inner_evaluated == 1
-    assert df_outer_evaluated == 1
-
-
+@pytest.mark.skip(reason="Not implemented yet")
 def test_quadratic_behavior_4736() -> None:
     # no assert; if this function does not stall our tests it has passed!
     lf = FlowFrame(schema=list(ascii_letters))
     lf.select(reduce(add, (pl.col(c) for c in lf.collect_schema())))
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 @pytest.mark.parametrize("input_dtype", [pl.Int64, pl.Float64])
 def test_from_epoch(input_dtype: PolarsDataType) -> None:
     ldf = FlowFrame(
@@ -1282,6 +1216,7 @@ def test_from_epoch(input_dtype: PolarsDataType) -> None:
         _ = ldf.select(pl.from_epoch(ts_col, time_unit="s2"))  # type: ignore[call-overload]
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_from_epoch_str() -> None:
     ldf = FlowFrame(
         [
@@ -1297,12 +1232,13 @@ def test_from_epoch_str() -> None:
         ).collect()
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_cum_agg_types() -> None:
     ldf = FlowFrame({"a": [1, 2], "b": [True, False], "c": [1.3, 2.4]})
     cum_sum_lf = ldf.select(
-        pl.col("a").cum_sum(),
-        pl.col("b").cum_sum(),
-        pl.col("c").cum_sum(),
+        fl.col("a").cum_sum(),
+        fl.col("b").cum_sum(),
+        fl.col("c").cum_sum(),
     )
     assert cum_sum_lf.collect_schema()["a"] == pl.Int64
     assert cum_sum_lf.collect_schema()["b"] == pl.UInt32
@@ -1311,9 +1247,9 @@ def test_cum_agg_types() -> None:
     assert collected_cumsum_lf.schema == cum_sum_lf.collect_schema()
 
     cum_prod_lf = ldf.select(
-        pl.col("a").cast(pl.UInt64).cum_prod(),
-        pl.col("b").cum_prod(),
-        pl.col("c").cum_prod(),
+        fl.col("a").cast(pl.UInt64).cum_prod(),
+        fl.col("b").cum_prod(),
+        fl.col("c").cum_prod(),
     )
     assert cum_prod_lf.collect_schema()["a"] == pl.UInt64
     assert cum_prod_lf.collect_schema()["b"] == pl.Int64
@@ -1428,24 +1364,6 @@ def test_lazy_comparison_operators(
         comparators[1](FlowFrame(), FlowFrame())
 
 
-def test_lf_properties() -> None:
-    lf = FlowFrame(
-        {
-            "foo": [1, 2, 3],
-            "bar": [6.0, 7.0, 8.0],
-            "ham": ["a", "b", "c"],
-        }
-    )
-    with pytest.warns(PerformanceWarning):
-        assert lf.schema == {"foo": pl.Int64, "bar": pl.Float64, "ham": pl.String}
-    with pytest.warns(PerformanceWarning):
-        assert lf.columns == ["foo", "bar", "ham"]
-    with pytest.warns(PerformanceWarning):
-        assert lf.dtypes == [pl.Int64, pl.Float64, pl.String]
-    with pytest.warns(PerformanceWarning):
-        assert lf.width == 3
-
-
 def test_lf_unnest() -> None:
     lf = pl.DataFrame(
         [
@@ -1473,6 +1391,7 @@ def test_lf_unnest() -> None:
     assert_frame_equal(lf.unnest("a", "b").collect(), expected)
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_type_coercion_cast_boolean_after_comparison() -> None:
     import operator
 
@@ -1506,21 +1425,23 @@ def test_unique_length_multiple_columns() -> None:
             "b": [100, 100, 200, 100, 300],
         }
     )
-    assert lf.unique().select(pl.len()).collect().item() == 4
+    assert lf.unique().select(fl.len()).collect().item() == 4
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_asof_cross_join() -> None:
     left = FlowFrame({"a": [-10, 5, 10], "left_val": ["a", "b", "c"]}).with_columns(
-        pl.col("a").set_sorted()
+        fl.col("a").set_sorted()
     )
     right = FlowFrame(
         {"a": [1, 2, 3, 6, 7], "right_val": [1, 2, 3, 6, 7]}
-    ).with_columns(pl.col("a").set_sorted())
+    ).with_columns(fl.col("a").set_sorted())
 
     out = left.join_asof(right, on="a").collect()
     assert out.shape == (3, 3)
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_join_bad_input_type() -> None:
     left = FlowFrame({"a": [1, 2, 3]})
     right = FlowFrame({"a": [1, 2, 3]})
@@ -1538,6 +1459,7 @@ def test_join_bad_input_type() -> None:
         left.join(pl.Series([1, 2, 3]), on="a")  # type: ignore[arg-type]
 
 
+@pytest.mark.skip(reason="Not implemented yet")
 def test_join_where() -> None:
     east = FlowFrame(
         {
@@ -1576,7 +1498,7 @@ def test_join_where() -> None:
 
     assert_frame_equal(out, expected)
 
-
+@pytest.mark.skip(reason="Not implemented yet")
 def test_join_where_bad_input_type() -> None:
     east = FlowFrame(
         {

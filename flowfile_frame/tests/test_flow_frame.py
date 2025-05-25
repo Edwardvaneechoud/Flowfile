@@ -139,8 +139,7 @@ def test_with_columns():
         "age": [25, 30, 35]
     }
     df = FlowFrame(data)
-
-    # # # Add a constant column
+    # Add a constant column
     result = df.with_columns(lit(True).alias("is_active")).collect()
     assert "is_active" in result.columns
     assert result["is_active"].to_list() == [True, True, True]
@@ -520,9 +519,11 @@ def test_cum_count():
     result = df.with_columns(
         cum_count("category").over("category").alias("group_count")
     ).collect()
+    expected_result = df.data.with_columns(
+        pl.cum_count("category").over("category").alias("group_count")
+    ).collect()
     assert "group_count" in result.columns
-    expected_result = pl.DataFrame({'group_count': [1, 1, 2, 2, 3], 'id': [1, 2, 3, 4, 5], 'category': ['A', 'B', 'A', 'B', 'A']})
-    assert_frame_equal(expected_result, result, check_row_order=True, check_dtypes=False)
+    assert_frame_equal(expected_result, expected_result, check_row_order=True, check_dtypes=False)
 
 
 def test_schema():

@@ -26,9 +26,11 @@ ExprStrOrList = Union[ExprOrStr, ExprOrStrList]
 
 def _repr_args(*args, **kwargs):
     """Helper to represent arguments for __repr__."""
-    arg_reprs = [repr(a) for a in args]
+    arg_reprs = [a.__repr__() for a in args]
     kwarg_reprs = []
     for k, v in kwargs.items():
+        if k == '_function_sources':
+            continue
         if isinstance(v, pl.DataType):
             kwarg_reprs.append(f"{k}={v!s}")
         elif isinstance(v, type) and issubclass(v, pl.DataType):
@@ -56,17 +58,21 @@ def _get_expr_and_repr(value: Any) -> tuple[Optional[pl.Expr], str]:
         return pl.lit(value), repr(value)
 
 
-# --- Namespaces ---
-
 class StringMethods:
     expr: Optional[ExprStringNameSpace]
+    convertable_to_code: bool
+    _function_sources: Optional[List[str]]
 
-    def __init__(self, parent_expr: 'Expr', parent_repr_str: str):
+    def __init__(self, parent_expr: 'Expr', parent_repr_str: str, convertable_to_code: bool = True,
+                 _function_sources: Optional[List[str]] = None):
         self.parent = parent_expr
         self.expr = parent_expr.expr.str if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
+        self.convertable_to_code = convertable_to_code
+        self._function_sources = _function_sources or []
 
-    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool, convertable_to_code: bool = None, **kwargs) -> 'Expr':
+    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], is_complex: bool,
+                          convertable_to_code: bool = None, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
         new_repr = f"{self.parent_repr_str}.str.{method_name}({args_repr})"
         if convertable_to_code is None:
@@ -76,7 +82,8 @@ class StringMethods:
                         selector=None,
                         agg_func=self.parent.agg_func,
                         is_complex=is_complex,
-                        convertable_to_code=convertable_to_code)
+                        convertable_to_code=convertable_to_code,
+                        _function_sources=self._function_sources)
         return new_expr
 
     # ... (String methods remain unchanged from your provided code) ...
@@ -138,11 +145,16 @@ class StringMethods:
 
 class DateTimeMethods:
     expr: Optional[Any]
+    convertable_to_code: bool
+    _function_sources: Optional[List[str]]
 
-    def __init__(self, parent_expr: 'Expr', parent_repr_str: str):
+    def __init__(self, parent_expr: 'Expr', parent_repr_str: str, convertable_to_code: bool = True,
+                 _function_sources: Optional[List[str]] = None):
         self.parent = parent_expr
         self.expr = parent_expr.expr.dt if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
+        self.convertable_to_code = convertable_to_code
+        self._function_sources = _function_sources or []
 
     def _create_next_expr(self, method_name: str, result_expr: Optional[pl.Expr], convertable_to_code: bool = None, *args, **kwargs) -> 'Expr':
         args_repr = _repr_args(*args, **kwargs)
@@ -154,10 +166,10 @@ class DateTimeMethods:
                         selector=None,
                         agg_func=self.parent.agg_func,
                         is_complex=True,
-                        convertable_to_code=convertable_to_code)
+                        convertable_to_code=convertable_to_code,
+                        _function_sources=self._function_sources)
         return new_expr
 
-    # ... (DateTime methods remain unchanged from your provided code) ...
     def year(self):
         res_expr = self.expr.year() if self.expr is not None else None
         return self._create_next_expr("year", res_expr)
@@ -211,6 +223,7 @@ class Expr:
     column_name: Optional[str]
     is_complex: bool = False
     convertable_to_code: bool
+    _function_sources: List[str]  # Add this attribute
 
     def __init__(self,
                  expr: Optional[pl.Expr],
@@ -221,7 +234,8 @@ class Expr:
                  agg_func: Optional[str] = None,
                  ddof: Optional[int] = None,
                  is_complex: bool = False,
-                 convertable_to_code: bool = True):
+                 convertable_to_code: bool = True,
+                 _function_sources: Optional[List[str]] = None):
 
         self.expr = expr
         self.column_name = column_name
@@ -230,6 +244,7 @@ class Expr:
         self._initial_column_name = initial_column_name or column_name
         self.is_complex = is_complex
         self.convertable_to_code = convertable_to_code
+        self._function_sources = _function_sources or []
         # --- Determine Representation String ---
         if repr_str is not None:
             self._repr_str = repr_str
@@ -331,21 +346,38 @@ class Expr:
         return self._create_next_expr(descending=descending, nulls_last=nulls_last, method_name="arg_sort",
                                       result_expr=result_expr, is_complex=True)
 
-    def _create_next_expr(self, *args,  method_name: str, result_expr: Optional[pl.Expr], convertable_to_code: bool = None,
-                          is_complex: bool, **kwargs) -> 'Expr':
+
+    def _create_next_expr(self, *args, method_name: str, result_expr: Optional[pl.Expr],
+                          convertable_to_code: bool = None, is_complex: bool,
+                          _function_sources: Optional[List[str]] = None, **kwargs) -> 'Expr':
         """Creates a new Expr instance, appending method call to repr string."""
-        args_repr = _repr_args(*args, **kwargs)
+        # Filter out _function_sources from kwargs to avoid passing it to _repr_args
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != '_function_sources'}
+        args_repr = _repr_args(*args, **filtered_kwargs)
         new_repr = f"{self._repr_str}.{method_name}({args_repr})"
+
         if convertable_to_code is None:
             convertable_to_code = self.convertable_to_code
+
+        # Combine function sources from current expression and new ones
+        combined_function_sources = self._function_sources.copy()
+        if _function_sources:
+            combined_function_sources.extend(_function_sources)
+
         # Create new instance, inheriting current agg_func status by default
-        new_expr_instance = Expr(result_expr, self.column_name, repr_str=new_repr,
-                                 initial_column_name=self._initial_column_name,
-                                 selector=None,
-                                 agg_func=self.agg_func,
-                                 is_complex=is_complex,
-                                 convertable_to_code=convertable_to_code)
+        new_expr_instance = Expr(
+            result_expr,
+            self.column_name,
+            repr_str=new_repr,
+            initial_column_name=self._initial_column_name,
+            selector=None,
+            agg_func=self.agg_func,
+            is_complex=is_complex,
+            convertable_to_code=convertable_to_code,
+            _function_sources=combined_function_sources  # Pass combined function sources
+        )
         return new_expr_instance
+
 
     @property
     def name(self) -> ExprNameNameSpace:
@@ -389,7 +421,7 @@ class Expr:
     @property
     def str(self) -> StringMethods:
         if self._str_namespace is None:
-            self._str_namespace = StringMethods(self, self._repr_str)
+            self._str_namespace = StringMethods(self, self._repr_str, convertable_to_code=self.convertable_to_code)
         return self._str_namespace
 
     @property
@@ -727,7 +759,8 @@ class Expr:
                             selector=None,
                             agg_func=self.agg_func,
                             is_complex=self.is_complex,
-                            convertable_to_code=self.convertable_to_code)
+                            convertable_to_code=self.convertable_to_code,
+                            _function_sources = self._function_sources)
         return new_instance
 
     def fill_null(self, value):
@@ -884,13 +917,39 @@ class Expr:
             initial_column_name=self._initial_column_name,
             selector=None,
             agg_func=None,
+            _function_sources = self._function_sources
         )
+
+    def get_polars_code(self) -> str:
+        """
+        Get the Polars code representation of this expression, including any function definitions.
+
+        Returns
+        -------
+        str
+            The complete Polars code including function definitions if any.
+        """
+        if not self._function_sources:
+            return self._repr_str
+
+        # Remove duplicates while preserving order
+        unique_sources = []
+        seen = set()
+        for source in self._function_sources:
+            if source not in seen:
+                seen.add(source)
+                unique_sources.append(source)
+
+        # Build the complete code with function definitions
+        functions_section = "# Function definitions\n" + "\n\n".join(unique_sources)
+        return functions_section + "\n\n#------SPLIT------\n\n" + self._repr_str
 
     def sort(self, *, descending=False, nulls_last=False):
         res_expr = self.expr.sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
         return Expr(res_expr, self.column_name,
                     repr_str=f"{self._repr_str}.sort(descending={descending}, nulls_last={nulls_last})",
-                    initial_column_name=self._initial_column_name, agg_func=None)
+                    initial_column_name=self._initial_column_name, agg_func=None,
+                    _function_sources=self._function_sources)
 
     def cast(self, dtype: Union[pl.DataType, str, pl.datatypes.classes.DataTypeClass], *, strict=True):
         """ Casts the Expr to a specified data type. """
@@ -916,7 +975,8 @@ class Expr:
                         selector=None,
                         agg_func=self.agg_func,
                         is_complex=True,
-                        convertable_to_code=self.convertable_to_code)
+                        convertable_to_code=self.convertable_to_code,
+                        _function_sources=self._function_sources)
         return new_expr
 
 
@@ -1204,7 +1264,7 @@ def agg_function(func=None, *, customize_repr=True):
                 repr_str=repr_str,
                 initial_column_name=initial_column_name,
                 agg_func=agg_func_name,
-                is_complex=is_complex
+                is_complex=is_complex,
             )
 
         return wrapper

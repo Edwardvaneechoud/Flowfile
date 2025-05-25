@@ -10,7 +10,8 @@ from typing import Iterable, Any, List, Optional
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph
 from flowfile_core.schemas import schemas
 from tempfile import TemporaryDirectory
-
+import inspect
+import textwrap
 
 def _is_iterable(obj: Any) -> bool:
     # Avoid treating strings as iterables in this context
@@ -40,6 +41,35 @@ def _parse_inputs_as_iterable(inputs: tuple[Any, ...] | tuple[Iterable[Any]],) -
 def get_pl_expr_from_expr(expr: Any) -> pl.Expr:
     """Get the polars expression from the given expression."""
     return expr.expr
+
+
+def _get_function_source(func):
+    """
+    Get the source code of a function if possible.
+
+    Returns:
+        tuple: (source_code, is_module_level)
+    """
+    try:
+        # Try to get the source code
+        source = inspect.getsource(func)
+
+        # Check if it's a lambda
+        if func.__name__ == '<lambda>':
+            # Extract just the lambda expression
+            # This is tricky as getsource returns the entire line
+            return None, False
+
+        # Check if it's a module-level function
+        is_module_level = func.__code__.co_flags & 0x10 == 0
+
+        # Dedent the source to remove any indentation
+        source = textwrap.dedent(source)
+
+        return source, is_module_level
+    except (OSError, TypeError):
+        # Can't get source (e.g., built-in function, C extension)
+        return None, False
 
 
 def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> List[Any]:

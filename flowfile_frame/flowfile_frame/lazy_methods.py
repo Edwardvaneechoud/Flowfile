@@ -3,11 +3,11 @@ import inspect
 from functools import wraps
 from typing import Any, List, Dict, Optional, TypeVar, Type, Union, Callable, ClassVar, Set, get_type_hints
 import types
+from flowfile_frame.utils import _get_function_source
 
 # Type variables for proper type hinting
 T = TypeVar('T')
 FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')
-
 
 PASSTHROUGH_METHODS = {
     'collect', 'collect_async', 'profile', 'describe', 'explain',
@@ -57,12 +57,55 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         # Import here to avoid circular imports
         from flowfile_frame.flow_frame import generate_node_id
         new_node_id = generate_node_id()
-        if not all([True if not hasattr(arg, "convertable_to_code") else getattr(arg, 'convertable_to_code') for arg in args]):
+
+        if not all([True if not hasattr(arg, "convertable_to_code") else getattr(arg, 'convertable_to_code') for arg in
+                    args]):
             print("Warning, could not create a good node")
             return self.__class__(getattr(self.data, method_name)(arg.expr for arg in args), flow_graph=self.flow_graph)
-        # Generate code representation
-        args_str = ", ".join([repr(arg) for arg in args])
-        kwargs_str = ", ".join([f"{k}={repr(v)}" for k, v in kwargs.items()])
+
+        # Collect function sources and build representations
+        function_sources = []
+        args_representations = []
+        kwargs_representations = []
+
+        # Process positional arguments
+        for arg in args:
+            if callable(arg) and not isinstance(arg, type):
+                # Try to get function source
+                try:
+                    source, is_module_level = _get_function_source(arg)
+                    if source and hasattr(arg, '__name__') and arg.__name__ != '<lambda>':
+                        function_sources.append(source)
+                        # Use the function name in the representation
+                        args_representations.append(arg.__name__)
+                    else:
+                        # Fallback to repr if we can't get the source
+                        args_representations.append(repr(arg))
+                except:
+                    args_representations.append(repr(arg))
+            else:
+                args_representations.append(repr(arg))
+        # Process keyword arguments
+        for key, value in kwargs.items():
+            if callable(value) and not isinstance(value, type):
+                # Try to get function source
+                try:
+                    source, is_module_level = _get_function_source(value)
+                    if source and hasattr(value, '__name__') and value.__name__ != '<lambda>':
+                        function_sources.append(source)
+                        # Use the function name in the representation
+                        kwargs_representations.append(f"{key}={value.__name__}")
+                    else:
+                        # Fallback to repr if we can't get the source
+                        kwargs_representations.append(f"{key}={repr(value)}")
+                except:
+                    kwargs_representations.append(f"{key}={repr(value)}")
+            else:
+                kwargs_representations.append(f"{key}={repr(value)}")
+
+        # Build parameter string
+        args_str = ", ".join(args_representations)
+        kwargs_str = ", ".join(kwargs_representations)
 
         if args_str and kwargs_str:
             params_str = f"{args_str}, {kwargs_str}"
@@ -73,7 +116,23 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         else:
             params_str = ""
 
-        code = f"input_df.{method_name}({params_str})"
+        # Build the code
+        operation_code = f"input_df.{method_name}({params_str})"
+
+        # If we have function sources, include them before the operation
+        if function_sources:
+            # Remove duplicates while preserving order
+            unique_sources = []
+            seen = set()
+            for source in function_sources:
+                if source not in seen:
+                    seen.add(source)
+                    unique_sources.append(source)
+
+            functions_section = "# Function definitions\n" + "\n\n".join(unique_sources)
+            code = functions_section + "\n\n#------SPLIT------\n\noutput_df = " + operation_code
+        else:
+            code = "output_df = " + operation_code
 
         # Use provided description or generate a default one
         if description is None:
@@ -128,6 +187,7 @@ def add_lazyframe_methods(cls):
                 @wraps(method_attr)
                 def passthrough_method(self, *args, **kwargs):
                     return getattr(self.data, method_name)(*args, **kwargs)
+
                 return passthrough_method
 
             setattr(cls, name, create_passthrough_method(name, attr))

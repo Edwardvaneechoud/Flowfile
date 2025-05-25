@@ -160,7 +160,8 @@ class GroupByFrame:
             self.parent._add_polars_code(new_node_id=node_id_to_use, code=code, description=description,
                                          method_name='group_by', convertable_to_code=convertable_to_code,
                                          polars_expr=pl_agg_expressions, group_expr=pl_group_expr,
-                                         kwargs_expr=pl_kwargs_expr)
+                                         kwargs_expr=pl_kwargs_expr,
+                                         group_kwargs={'maintain_order': self.maintain_order})
         return self.parent._create_child_frame(node_id_to_use)
 
     def _generate_direct_polars_code(self, method_name: str, *args, **kwargs) -> "FlowFrame":

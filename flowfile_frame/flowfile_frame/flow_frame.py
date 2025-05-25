@@ -22,9 +22,9 @@ from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph, stringify_values, ensure_inputs_as_iterable
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 from flowfile_frame.utils import _check_if_convertible_to_code
-
+from flowfile_frame.config import logger
 from functools import wraps
-
+import textwrap
 
 node_id_counter = 0
 
@@ -54,6 +54,49 @@ def _to_string_val(v) -> str:
         return f"'{v}'"
     else:
         return v
+
+
+def _extract_expr_parts(expr_obj) -> tuple[str, str]:
+    """
+    Extract the pure expression string and any raw definitions (including function sources) from an Expr object.
+
+    Parameters
+    ----------
+    expr_obj : Expr
+        The expression object to extract parts from
+
+    Returns
+    -------
+    tuple[str, str]
+        A tuple of (pure_expr_str, raw_definitions_str)
+    """
+    if not isinstance(expr_obj, Expr):
+        # If it's not an Expr, just return its string representation
+        return str(expr_obj), ""
+
+    # Get the basic representation
+    pure_expr_str = expr_obj._repr_str
+
+    # Collect all definitions (function sources)
+    raw_definitions = []
+
+    # Add function sources if any
+    if hasattr(expr_obj, '_function_sources') and expr_obj._function_sources:
+        # Remove duplicates while preserving order
+        unique_sources = []
+        seen = set()
+        for source in expr_obj._function_sources:
+            if source not in seen:
+                seen.add(source)
+                unique_sources.append(source)
+
+        if unique_sources:
+            raw_definitions.extend(unique_sources)
+
+    # Join all definitions
+    raw_defs_str = "\n\n".join(raw_definitions) if raw_definitions else ""
+
+    return pure_expr_str, raw_defs_str
 
 
 def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None,
@@ -263,216 +306,225 @@ class FlowFrame:
             parent_node_id=self.node_id,
         )
 
+    def _generate_sort_polars_code(
+            self,
+            pure_sort_expr_strs: List[str],
+            descending_values: List[bool],
+            nulls_last_values: List[bool],
+            multithreaded: bool,
+            maintain_order: bool,
+    ) -> str:
+        """
+        Generates the `input_df.sort(...)` Polars code string using pure expression strings.
+        """
+        kwargs_for_code: Dict[str, Any] = {}
+        if any(descending_values):
+            kwargs_for_code["descending"] = descending_values[0] if len(descending_values) == 1 else descending_values
+        if any(nulls_last_values):
+            kwargs_for_code["nulls_last"] = nulls_last_values[0] if len(nulls_last_values) == 1 else nulls_last_values
+        if not multithreaded:
+            kwargs_for_code["multithreaded"] = multithreaded
+        if maintain_order:
+            kwargs_for_code["maintain_order"] = maintain_order
+
+        kwargs_str_for_code = ", ".join(f"{k}={repr(v)}" for k, v in kwargs_for_code.items())
+
+        by_arg_for_code = pure_sort_expr_strs[0] if len(
+            pure_sort_expr_strs) == 1 else f"[{', '.join(pure_sort_expr_strs)}]"
+        return f"input_df.sort({by_arg_for_code}{', ' + kwargs_str_for_code if kwargs_str_for_code else ''})"
+
     def sort(
-        self,
-        by: List[Expr | str] | Expr | str,
-        *more_by,
-        descending: bool | List[bool] = False,
-        nulls_last: bool = False,
-        multithreaded: bool = True,
-        maintain_order: bool = False,
-        description: str = None,
-    ):
+            self,
+            by: Union[List[Union[Expr, str]], Expr, str],
+            *more_by: Union[Expr, str],
+            descending: Union[bool, List[bool]] = False,
+            nulls_last: Union[bool, List[bool]] = False,
+            multithreaded: bool = True,
+            maintain_order: bool = False,
+            description: Optional[str] = None,
+    ) -> "FlowFrame":
         """
         Sort the dataframe by the given columns.
-
-        Parameters:
-        -----------
-        by : Expr, str, or list of Expr/str
-            Column(s) to sort by. Accepts expression input. Strings are parsed as column names.
-        *more_by : Expr or str
-            Additional columns to sort by, specified as positional arguments.
-        descending : bool or list of bool, default False
-            Sort in descending order. When sorting by multiple columns, can be specified per column.
-        nulls_last : bool or list of bool, default False
-            Place null values last; can specify a single boolean or a sequence for per-column control.
-        multithreaded : bool, default True
-            Sort using multiple threads.
-        maintain_order : bool, default False
-            Whether the order should be maintained if elements are equal.
-        description : str, optional
-            Description of this operation for the ETL graph.
-
-        Returns:
-        --------
-        FlowFrame
-            A new FlowFrame with sorted data.
         """
-        by = list(_parse_inputs_as_iterable((by,)))
+        initial_by_args = list(_parse_inputs_as_iterable((by,)))
         new_node_id = generate_node_id()
-        sort_expressions = by
+
+        sort_expressions_input: list = initial_by_args
         if more_by:
-            sort_expressions.extend(more_by)
+            sort_expressions_input.extend(list(_parse_inputs_as_iterable(more_by)))
 
-        # Determine if we need to use polars code fallback
-        needs_polars_code = False
+        all_processed_expr_objects: List[Expr] = []
+        pure_polars_expr_strings_for_sort: List[str] = []
+        collected_raw_definitions: List[str] = []
+        column_names_for_native_node: List[str] = []
 
-        # Check for any expressions that are not simple columns
-        for expr in sort_expressions:
-            if not isinstance(expr, (str, Column)) or (
-                isinstance(expr, Column) and expr._select_input.is_altered
-            ):
-                needs_polars_code = True
-                break
+        use_polars_code_path = False
 
-        # Also need polars code if we're using maintain_order or multithreaded params
         if maintain_order or not multithreaded:
-            needs_polars_code = True
+            use_polars_code_path = True
 
-        # Standardize descending parameter
-        if isinstance(descending, (list, tuple)):
-            # Ensure descending list has the same length as sort_expressions
-            if len(descending) != len(sort_expressions):
-                raise ValueError(
-                    f"Length of descending ({len(descending)}) must match number of sort columns ({len(sort_expressions)})"
-                )
-            descending_values = descending
-        else:
-            descending_values = [descending] * len(sort_expressions)
+        is_nulls_last_list = isinstance(nulls_last, (list, tuple))
+        if is_nulls_last_list and any(val for val in nulls_last if val is not False):
+            use_polars_code_path = True
+        elif not is_nulls_last_list and nulls_last is not False:
+            use_polars_code_path = True
 
-        # Standardize nulls_last parameter
-        if isinstance(nulls_last, (list, tuple)):
-            if len(nulls_last) != len(sort_expressions):
-                raise ValueError(
-                    f"Length of nulls_last ({len(nulls_last)}) must match number of sort columns ({len(sort_expressions)})"
-                )
-            nulls_last_values = nulls_last
-            # Any non-default nulls_last needs polars code
-            if any(val is not False for val in nulls_last_values):
-                needs_polars_code = True
-        else:
-            nulls_last_values = [nulls_last] * len(sort_expressions)
-            # Non-default nulls_last needs polars code
-            if nulls_last:
-                needs_polars_code = True
+        for expr_input in sort_expressions_input:
+            current_expr_obj: Expr
+            is_simple_col_for_native = False
 
-        if needs_polars_code:
-            # Generate polars code for complex cases
-            code = self._generate_sort_polars_code(
-                sort_expressions,
-                descending_values,
-                nulls_last_values,
-                multithreaded,
-                maintain_order,
-            )
-            self._add_polars_code(new_node_id, code, description)
-        else:
-            # Use native implementation for simple cases
-            sort_inputs = []
-            for i, expr in enumerate(sort_expressions):
-                # Convert expr to column name
-                if isinstance(expr, Column):
-                    column_name = expr.column_name
-                elif isinstance(expr, str):
-                    column_name = expr
+            if isinstance(expr_input, str):
+                current_expr_obj = col(expr_input)
+                column_names_for_native_node.append(expr_input)
+                is_simple_col_for_native = True
+            elif isinstance(expr_input, Column):
+                current_expr_obj = expr_input
+                # Type ignore below due to simplified Column stub
+                if not expr_input._select_input.is_altered:  # type: ignore
+                    column_names_for_native_node.append(expr_input.column_name)  # type: ignore
+                    is_simple_col_for_native = True
                 else:
-                    column_name = str(expr)
+                    use_polars_code_path = True  # Altered Column implies complex expression
+            elif isinstance(expr_input, Expr):
+                current_expr_obj = expr_input
+                use_polars_code_path = True  # General Expr implies complex expression
+            else:  # Convert other types to lit
+                current_expr_obj = lit(expr_input)
+                use_polars_code_path = True  # Literal might be part of a complex sort for Polars code
 
-                # Create SortByInput with appropriate settings
-                sort_inputs.append(
-                    transform_schema.SortByInput(
-                        column=column_name,
-                        how="desc" if descending_values[i] else "asc",
-                    )
-                )
+            all_processed_expr_objects.append(current_expr_obj)
 
-            sort_settings = input_schema.NodeSort(
-                flow_id=self.flow_graph.flow_id,
-                node_id=new_node_id,
-                sort_input=sort_inputs,
-                pos_x=200,
-                pos_y=150,
-                is_setup=True,
-                depending_on_id=self.node_id,
-                description=description
-                or f"Sort by {', '.join(str(e) for e in sort_expressions)}",
+            pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
+            pure_polars_expr_strings_for_sort.append(pure_expr_str)
+
+            if raw_defs_str:
+                if raw_defs_str not in collected_raw_definitions:
+                    collected_raw_definitions.append(raw_defs_str)
+                use_polars_code_path = True
+
+            if not is_simple_col_for_native:  # If it wasn't a simple string or unaltered Column
+                use_polars_code_path = True
+
+        desc_values = list(descending) if isinstance(descending, list) else [descending] * len(
+            all_processed_expr_objects)
+        null_last_values = list(nulls_last) if isinstance(nulls_last, list) else [nulls_last] * len(
+            all_processed_expr_objects)
+
+        if len(desc_values) != len(all_processed_expr_objects):
+            raise ValueError("Length of 'descending' does not match the number of sort expressions.")
+        if len(null_last_values) != len(all_processed_expr_objects):
+            raise ValueError("Length of 'nulls_last' does not match the number of sort expressions.")
+
+        if use_polars_code_path:
+            polars_operation_code = self._generate_sort_polars_code(
+                pure_polars_expr_strings_for_sort, desc_values, null_last_values, multithreaded, maintain_order
             )
+
+            final_code_for_node: str
+            if collected_raw_definitions:
+                unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
+                definitions_section = "\n\n".join(unique_raw_definitions)
+                final_code_for_node = definitions_section + \
+                                      "\n\n#------SPLIT------\n\n" + \
+                                      f"output_df = {polars_operation_code}"
+            else:
+                final_code_for_node = polars_operation_code
+
+            pl_expressions_for_fallback = [e.expr for e in all_processed_expr_objects if
+                                           hasattr(e, 'expr') and e.expr is not None]
+            kwargs_for_fallback = {
+                "descending": desc_values[0] if len(desc_values) == 1 else desc_values,
+                "nulls_last": null_last_values[0] if len(null_last_values) == 1 else null_last_values,
+                "multithreaded": multithreaded, "maintain_order": maintain_order}
+
+            self._add_polars_code(new_node_id, final_code_for_node, description, method_name="sort",
+                                  convertable_to_code=_check_if_convertible_to_code(all_processed_expr_objects),
+                                  polars_expr=pl_expressions_for_fallback,
+                                  kwargs_expr=kwargs_for_fallback)
+        else:
+            sort_inputs_for_node = []
+            for i, col_name_for_native in enumerate(column_names_for_native_node):
+                sort_inputs_for_node.append(
+                    transform_schema.SortByInput(column=col_name_for_native, how="desc" if desc_values[i] else "asc")
+                    # type: ignore
+                )
+            sort_settings = input_schema.NodeSort(
+                flow_id=self.flow_graph.flow_id, node_id=new_node_id, sort_input=sort_inputs_for_node,  # type: ignore
+                pos_x=200, pos_y=150, is_setup=True, depending_on_id=self.node_id,
+                description=description or f"Sort by {', '.join(column_names_for_native_node)}")
             self.flow_graph.add_sort(sort_settings)
+
         return self._create_child_frame(new_node_id)
-
-    def _generate_sort_polars_code(
-        self,
-        sort_expressions: list,
-        descending_values: list,
-        nulls_last_values: list,
-        multithreaded: bool,
-        maintain_order: bool,
-    ) -> str:
-        """Generate Polars code for sort operations that need fallback."""
-        # Format expressions for code
-        expr_strs = []
-        for expr in sort_expressions:
-            if isinstance(expr, (Expr, Column)):
-                expr_strs.append(str(expr))
-            elif isinstance(expr, str):
-                expr_strs.append(f"'{expr}'")
-            else:
-                expr_strs.append(str(expr))
-
-        # Format parameters
-        if len(sort_expressions) == 1:
-            by_arg = expr_strs[0]
-        else:
-            by_arg = f"[{', '.join(expr_strs)}]"
-
-        # Build kwargs
-        kwargs = {}
-
-        # Only add descending if it's non-default
-        if any(d for d in descending_values):
-            if len(descending_values) == 1:
-                kwargs["descending"] = descending_values[0]
-            else:
-                kwargs["descending"] = descending_values
-
-        # Only add nulls_last if it's non-default
-        if any(nl for nl in nulls_last_values):
-            if len(nulls_last_values) == 1:
-                kwargs["nulls_last"] = nulls_last_values[0]
-            else:
-                kwargs["nulls_last"] = nulls_last_values
-
-        # Add other parameters if they're non-default
-        if not multithreaded:
-            kwargs["multithreaded"] = multithreaded
-
-        if maintain_order:
-            kwargs["maintain_order"] = maintain_order
-
-        # Build kwargs string
-        kwargs_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
-
-        # Build final code
-        if kwargs_str:
-            return f"input_df.sort({by_arg}, {kwargs_str})"
-        else:
-            return f"input_df.sort({by_arg})"
 
     def _add_polars_code(self, new_node_id: int, code: str, description: str = None,
                          depending_on_ids: List[str] | None = None, convertable_to_code: bool = True,
-                         method_name: str = None, polars_expr: pl.Expr | List[pl.Expr] | None = None,
-                         group_expr: pl.Expr | List[pl.Expr] | None = None, kwargs_expr: Dict | None = None):
+                         method_name: str = None, polars_expr: Expr | List[Expr] | None = None,
+                         group_expr: Expr | List[Expr] | None = None,
+                         kwargs_expr: Dict | None = None,
+                         group_kwargs: Dict | None = None, ):
+        polars_code_for_node: str
         if not convertable_to_code or _contains_lambda_pattern(code):
-            method_name = get_method_name_from_code(code) if method_name else method_name
-            _check_ok_for_serialization(polars_expr=polars_expr, method_name=method_name, group_expr=group_expr)
-            group_exprs = ensure_inputs_as_iterable(group_expr)
-            if kwargs_expr is None:
-                kwargs_expr = {}
-            if method_name == "group_by":
-                result = getattr(self.data, method_name)(*group_exprs).agg(*polars_expr, **kwargs_expr)
+
+            effective_method_name = get_method_name_from_code(
+                code) if method_name is None and "input_df." in code else method_name
+
+            pl_expr_list = ensure_inputs_as_iterable(polars_expr) if polars_expr is not None else []
+            group_expr_list = ensure_inputs_as_iterable(group_expr) if group_expr is not None else []
+
+            _check_ok_for_serialization(polars_expr=pl_expr_list, method_name=effective_method_name,
+                                        group_expr=group_expr_list)
+
+            current_kwargs_expr = kwargs_expr if kwargs_expr is not None else {}
+            result_lazyframe_or_expr: Any
+
+            if effective_method_name == "group_by":
+                group_kwargs = {} if group_kwargs is None else group_kwargs
+                if not group_expr_list:
+                    raise ValueError("group_expr is required for group_by method in serialization fallback.")
+                target_obj = getattr(self.data, effective_method_name)(*group_expr_list, **group_kwargs)
+                if not pl_expr_list:
+                    raise ValueError(
+                        "Aggregation expressions (polars_expr) are required for group_by().agg() in serialization fallback.")
+                result_lazyframe_or_expr = target_obj.agg(*pl_expr_list, **current_kwargs_expr)
+            elif effective_method_name:
+                result_lazyframe_or_expr = getattr(self.data, effective_method_name)(*pl_expr_list,
+                                                                                     **current_kwargs_expr)
             else:
-                result = getattr(self.data, method_name)(*polars_expr, **kwargs_expr)
-            polars_code = "\n".join([
-                    f"serialized_value = '{result.serialize(format='json')}'",
-                    "buffer = BytesIO(serialized_value.encode('utf-8'))",
-                    "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
+                raise ValueError(
+                    "Cannot execute Polars operation: method_name is missing and could not be inferred for serialization fallback.")
+            try:
+                if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
+                    serialized_value_for_code = result_lazyframe_or_expr.serialize(format='json')
+                    polars_code_for_node = "\n".join([
+                        f"serialized_value = r'''{serialized_value_for_code}'''",
+                        "buffer = BytesIO(serialized_value.encode('utf-8'))",
+                        "output_df = pl.LazyFrame.deserialize(buffer, format='json')",
                     ])
+                    logger.warning(
+                        f"Transformation '{effective_method_name}' uses non-serializable elements. "
+                        "Falling back to serializing the resulting Polars LazyFrame object."
+                        "This will result in a breaking graph when using the the ui."
+                    )
+                else:
+                    logger.error(
+                        f"Fallback for non-convertible code for method '{effective_method_name}' "
+                        f"resulted in a '{type(result_lazyframe_or_expr).__name__}' instead of a Polars LazyFrame. "
+                        "This type cannot be persisted as a LazyFrame node via this fallback."
+                    )
+                    return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
+            except Exception as e:
+                logger.warning(
+                    f"Critical error: Could not serialize the result of operation '{effective_method_name}' "
+                    f"during fallback for non-convertible code. Error: {e}.",
+                    "When using a lambda function, consider defining the function first"
+                )
+                return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
         else:
-            polars_code = code
+            polars_code_for_node = code
         polars_code_settings = input_schema.NodePolarsCode(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code=polars_code),
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code=polars_code_for_node),
             is_setup=True,
             depending_on_ids=depending_on_ids if depending_on_ids is not None else [self.node_id],
             description=description,
@@ -644,40 +696,69 @@ class FlowFrame:
         self.flow_graph.add_record_count(node_number_of_records)
         return self._create_child_frame(new_node_id)
 
-    def select(self, *columns, description: str = None):
+    def select(self, *columns: Union[str, Expr, Selector], description: Optional[str] = None) -> "FlowFrame":
         """
         Select columns from the frame.
-
-        Args:
-            *columns: Column names or expressions
-            description: Description of the step, this will be shown in the flowfile file
-
-        Returns:
-            A new FlowFrame with selected columns
         """
-        # Create new node ID
-        columns = _parse_inputs_as_iterable(columns)
+        columns_iterable = list(_parse_inputs_as_iterable(columns))
         new_node_id = generate_node_id()
-        existing_columns = self.columns
-        if (len(columns) == 1 and isinstance(columns[0], Expr)
-                and str(columns[0]) == "pl.Expr(len()).alias('number_of_records')"):
+
+        if (len(columns_iterable) == 1 and isinstance(columns_iterable[0], Expr)
+                and str(columns_iterable[0]) == "pl.Expr(len()).alias('number_of_records')"):
             return self._add_number_of_records(new_node_id, description)
 
-        if all(isinstance(col_, (str, Column)) for col_ in columns):
-            if len(columns) == 1 and isinstance(columns[0], str) and columns[0] == '*':
-                columns = existing_columns
+        all_input_expr_objects: List[Expr] = []
+        pure_polars_expr_strings_for_select: List[str] = []
+        collected_raw_definitions: List[str] = []
+        selected_col_names_for_native: List[str] = []  # For native node
 
-            select_inputs = [
-                transform_schema.SelectInput(old_name=col_) if isinstance(col_, str) else col_.to_select_input()
-                for col_ in columns
-            ]
-            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_columns if
-                               c not in [s.old_name for s in select_inputs]]
-            select_inputs.extend(dropped_columns)
+        can_use_native_node = True
+
+        effective_columns_iterable = []
+        if len(columns_iterable) == 1 and isinstance(columns_iterable[0], str) and columns_iterable[0] == '*':
+            effective_columns_iterable = [col(c_name) for c_name in self.columns]
+        else:
+            effective_columns_iterable = columns_iterable
+        for expr_input in effective_columns_iterable:
+            current_expr_obj = expr_input
+            is_simple_col_for_native = False
+
+            if isinstance(expr_input, str):
+                current_expr_obj = col(expr_input)
+                selected_col_names_for_native.append(expr_input)
+                is_simple_col_for_native = True
+            elif isinstance(expr_input, Column) and not expr_input._select_input.is_altered:  # type: ignore
+                selected_col_names_for_native.append(expr_input.column_name)  # type: ignore
+                is_simple_col_for_native = True
+            elif isinstance(expr_input, Selector):  # Selectors imply Polars code path
+                can_use_native_node = False
+                # current_expr_obj = expr_input # Already an Expr-like via selector
+            elif not isinstance(expr_input, Expr):  # Includes Column
+                current_expr_obj = lit(expr_input)
+
+            all_input_expr_objects.append(current_expr_obj)  # type: ignore
+
+            pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
+
+            pure_polars_expr_strings_for_select.append(pure_expr_str)
+            if raw_defs_str and raw_defs_str not in collected_raw_definitions:
+                collected_raw_definitions.append(raw_defs_str)
+
+            if not is_simple_col_for_native and not isinstance(expr_input, Selector):
+                can_use_native_node = False  # Complex expressions require Polars code
+        if collected_raw_definitions:  # Has to use Polars code if there are definitions
+            can_use_native_node = False
+        if can_use_native_node:
+            select_inputs_for_node = [transform_schema.SelectInput(old_name=name) for name in
+                                      selected_col_names_for_native]
+            existing_cols = self.columns
+            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_cols if
+                               c not in selected_col_names_for_native]
+            select_inputs_for_node.extend(dropped_columns)
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
-                select_input=select_inputs,
+                select_input=select_inputs_for_node,
                 keep_missing=False,
                 pos_x=200,
                 pos_y=100,
@@ -685,77 +766,97 @@ class FlowFrame:
                 depending_on_id=self.node_id,
                 description=description
             )
-
-            # Add to graph
             self.flow_graph.add_select(select_settings)
-            return self._create_child_frame(new_node_id)
-
         else:
-            readable_exprs = []
-            is_readable: bool = True
-            convertable_to_code = _check_if_convertible_to_code(columns)
-            exprs = []
-            for col_ in columns:
-                if isinstance(col_, Expr):
-                    readable_exprs.append(col_)
-                    exprs.append(col_.expr)
-                elif isinstance(col_, Selector):
-                    readable_exprs.append(col_)
-                    exprs.append(col_.expr)
-                elif isinstance(col_, pl.expr.Expr):
-                    raise NotImplementedError('warning this cannot be converted to flowfile frontend. Make sure you use the flowfile expr')
-                elif isinstance(col_, str) and col_ in self.columns:
-                    col_expr = Column(col_)
-                    readable_exprs.append(col_expr)
-                    exprs.append(col_expr.expr)
-                else:
-                    lit_expr = lit(col_)
-                    exprs.append(lit_expr.expr)
-                    readable_exprs.append(lit_expr)
-            if is_readable:
-                code = f"input_df.select([{', '.join(str(e) for e in readable_exprs)}])"
+            polars_operation_code = f"input_df.select([{', '.join(pure_polars_expr_strings_for_select)}])"
+            final_code_for_node: str
+            if collected_raw_definitions:
+                unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))
+                definitions_section = "\n\n".join(unique_raw_definitions)
+                final_code_for_node = definitions_section + \
+                                      "\n\n#------SPLIT------\n\n" + \
+                                      f"output_df = {polars_operation_code}"
             else:
-                raise ValueError('Not supported')
-            self._add_polars_code(new_node_id, code, description, convertable_to_code=convertable_to_code,
-                                  method_name="select", polars_expr = exprs)
-            return self._create_child_frame(new_node_id)
+                final_code_for_node = polars_operation_code
 
-    def filter(self, *predicates: Expr | Any, flowfile_formula: str = None, description: str = None, **constraints):
+            pl_expressions_for_fallback = [e.expr for e in all_input_expr_objects if
+                                           isinstance(e, Expr) and hasattr(e, 'expr') and e.expr is not None]
+            self._add_polars_code(new_node_id, final_code_for_node, description,
+                                  method_name="select",
+                                  convertable_to_code=_check_if_convertible_to_code(all_input_expr_objects),
+                                  polars_expr=pl_expressions_for_fallback)
+
+        return self._create_child_frame(new_node_id)
+
+    def filter(self, *predicates: Union[Expr, Any], flowfile_formula: Optional[str] = None,
+               description: Optional[str] = None, **constraints: Any) -> "FlowFrame":
         """
         Filter rows based on a predicate.
-
-        Args:
-            predicate: Filter condition
-            flowfile_formula: Native support in frontend
-            description: Description of the step that is performed
-        Returns:
-            A new FlowFrame with filtered rows
         """
-        if (len(predicates) > 0 or len(constraints)) > 0 and flowfile_formula:
-            raise ValueError(
-                "You can only use one of the following: predicates, constraints or flowfile_formula"
-            )
+        if (len(predicates) > 0 or len(constraints) > 0) and flowfile_formula:
+            raise ValueError("You can only use one of the following: predicates, constraints or flowfile_formula")
+        available_columns = self.columns
         new_node_id = generate_node_id()
         if len(predicates) > 0 or len(constraints) > 0:
-            predicate_exprs = []
-            for pred in predicates:
-                if isinstance(pred, Expr):
-                    predicate_exprs.append(pred)
-                elif isinstance(pred, (tuple, list, Iterator)):
-                    predicate_exprs.append(list(pred))
-                else:
-                    predicate_exprs.append(f'"{pred}"')
-            str_predicate = " & ".join(str(p) for p in predicate_exprs)
-            # str_predicate = str(final_predicate)
-            str_constraints = ", ".join(f"{k}={stringify_values(v)}" for k, v in constraints.items())
-            full_filter = ", ".join([v for v in (str_predicate, str_constraints) if v != ""])
-            code = f"input_df.filter({full_filter})"
-            convertable_to_code = _check_if_convertible_to_code(predicate_exprs)
-            self._add_polars_code(new_node_id, code, description, method_name="filter",
-                                  convertable_to_code=convertable_to_code)
+            all_input_expr_objects: List[Expr] = []
+            pure_polars_expr_strings: List[str] = []
+            collected_raw_definitions: List[str] = []
 
+            processed_predicates = []
+            for pred_item in predicates:
+                if isinstance(pred_item, (tuple, list, Iterator)):
+                    # If it's a sequence, extend the processed_predicates with its elements
+                    processed_predicates.extend(list(pred_item))
+                else:
+                    # Otherwise, just add the item
+                    processed_predicates.append(pred_item)
+
+            for pred_input in processed_predicates:  # Loop over the processed_predicates
+                # End of the new/modified section
+                current_expr_obj = None  # Initialize current_expr_obj
+                if isinstance(pred_input, Expr):
+                    current_expr_obj = pred_input
+                elif isinstance(pred_input, str) and pred_input in available_columns:
+                    current_expr_obj = col(pred_input)
+                else:
+                    current_expr_obj = lit(pred_input)
+
+                all_input_expr_objects.append(current_expr_obj)
+
+                pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
+                pure_polars_expr_strings.append(f"({pure_expr_str})")
+                if raw_defs_str and raw_defs_str not in collected_raw_definitions:
+                    collected_raw_definitions.append(raw_defs_str)
+
+            for k, v_val in constraints.items():
+                constraint_expr_obj = (col(k) == lit(v_val))
+                all_input_expr_objects.append(constraint_expr_obj)
+                pure_expr_str, raw_defs_str = _extract_expr_parts(
+                    constraint_expr_obj)  # Constraint exprs are unlikely to have defs
+                pure_polars_expr_strings.append(f"({pure_expr_str})")
+                if raw_defs_str and raw_defs_str not in collected_raw_definitions:  # Should be rare here
+                    collected_raw_definitions.append(raw_defs_str)
+
+            filter_conditions_str = " & ".join(pure_polars_expr_strings) if pure_polars_expr_strings else "pl.lit(True)"
+            polars_operation_code = f"input_df.filter({filter_conditions_str})"
+
+            final_code_for_node: str
+            if collected_raw_definitions:
+                unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
+                definitions_section = "\n\n".join(unique_raw_definitions)
+                final_code_for_node = definitions_section + \
+                                      "\n\n#------SPLIT------\n\n" + \
+                                      f"output_df = {polars_operation_code}"
+            else:
+                final_code_for_node = polars_operation_code
+
+            convertable_to_code = _check_if_convertible_to_code(all_input_expr_objects)
+            pl_expressions_for_fallback = [e.expr for e in all_input_expr_objects if
+                                           isinstance(e, Expr) and hasattr(e, 'expr') and e.expr is not None]
+            self._add_polars_code(new_node_id, final_code_for_node, description, method_name="filter",
+                                  convertable_to_code=convertable_to_code,
+                                  polars_expr=pl_expressions_for_fallback)
         elif flowfile_formula:
-            # Create node settings
             filter_settings = input_schema.NodeFilter(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
@@ -769,8 +870,10 @@ class FlowFrame:
                 depending_on_id=self.node_id,
                 description=description
             )
-
             self.flow_graph.add_filter(filter_settings)
+        else:
+            logger.info("Filter called with no arguments; creating a pass-through Polars code node.")
+            self._add_polars_code(new_node_id, "output_df = input_df", description or "No-op filter", method_name=None)
 
         return self._create_child_frame(new_node_id)
 
@@ -1516,62 +1619,69 @@ class FlowFrame:
 
     def with_columns(
             self,
-            *exprs: Expr | Iterable[Expr],
+            *exprs: Union[Expr, Iterable[Expr], Any],  # Allow Any for implicit lit conversion
             flowfile_formulas: Optional[List[str]] = None,
             output_column_names: Optional[List[str]] = None,
             description: Optional[str] = None,
-            **named_exprs: Expr,
+            **named_exprs: Union[Expr, Any],  # Allow Any for implicit lit conversion
     ) -> "FlowFrame":
         """
-        Add multiple columns to the DataFrame.
-
-        Parameters
-        ----------
-        exprs : Expr or List[Expr], optional
-            Expressions to evaluate as new columns
-        flowfile_formulas : List[str], optional
-            Alternative approach using flowfile formula syntax
-        output_column_names : List[str], optional
-            Column names for the flowfile formulas
-        description : str, optional
-            Description of this operation for the ETL graph
-
-        Returns
-        -------
-        FlowFrame
-            A new FlowFrame with the columns added
-
-        Raises
-        ------
-        ValueError
-            If neither exprs nor flowfile_formulas with output_column_names are provided,
-            or if the lengths of flowfile_formulas and output_column_names don't match
+        Add or replace columns in the DataFrame.
         """
-        if exprs is not None and len(exprs) > 0:
-            new_node_id = generate_node_id()
-            exprs_iterable = _parse_inputs_as_iterable(exprs)
-            if len(exprs_iterable) == 1:
-                detected, result = self._detect_cum_count_record_id(
-                    exprs_iterable[0], new_node_id, description
-                )
-                if detected:
-                    return result
-            all_expressions: List[Expr | Column] = []
-            for expression in exprs_iterable:
-                if not isinstance(expression, (Expr, Column)):
-                    all_expressions.append(lit(expression))
-                else:
-                    all_expressions.append(expression)
-            code = (
-                f"input_df.with_columns({', '.join(str(e) for e in all_expressions)})"
-            )
-            convertable_to_code = _check_if_convertible_to_code(exprs_iterable)
-            self._add_polars_code(new_node_id, code, description, method_name='with_columns',
-                                  convertable_to_code=convertable_to_code,
-                                  polars_expr=[e.expr for e in all_expressions])
+        new_node_id = generate_node_id()
+
+        all_input_expr_objects: List[Expr] = []
+        pure_polars_expr_strings_for_wc: List[str] = []
+        collected_raw_definitions: List[str] = []
+
+        has_exprs_or_named_exprs = bool(exprs or named_exprs)
+        if has_exprs_or_named_exprs:
+            actual_exprs_to_process: List[Expr] = []
+            temp_exprs_iterable = list(_parse_inputs_as_iterable(exprs))
+
+            for item in temp_exprs_iterable:
+                if isinstance(item, Expr):
+                    actual_exprs_to_process.append(item)
+                else:  # auto-lit for non-Expr positional args
+                    actual_exprs_to_process.append(lit(item))
+
+            for name, val_expr in named_exprs.items():
+                if isinstance(val_expr, Expr):
+                    actual_exprs_to_process.append(val_expr.alias(name))  # type: ignore # Assuming Expr has alias
+                else:  # auto-lit for named args and then alias
+                    actual_exprs_to_process.append(lit(val_expr).alias(name))  # type: ignore
+
+            if len(actual_exprs_to_process) == 1 and isinstance(actual_exprs_to_process[0], Expr):
+                pass
+
+            for current_expr_obj in actual_exprs_to_process:
+                all_input_expr_objects.append(current_expr_obj)
+                pure_expr_str, raw_defs_str = _extract_expr_parts(current_expr_obj)
+                pure_polars_expr_strings_for_wc.append(pure_expr_str)  # with_columns takes individual expressions
+                if raw_defs_str and raw_defs_str not in collected_raw_definitions:
+                    collected_raw_definitions.append(raw_defs_str)
+
+            polars_operation_code = f"input_df.with_columns([{', '.join(pure_polars_expr_strings_for_wc)}])"
+
+            final_code_for_node: str
+            if collected_raw_definitions:
+                unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))
+                definitions_section = "\n\n".join(unique_raw_definitions)
+                final_code_for_node = definitions_section + \
+                                      "\n\n# ------SPLIT------\n\n" + \
+                                      f"output_df = {polars_operation_code}"
+            else:
+                final_code_for_node = polars_operation_code
+
+            pl_expressions_for_fallback = [e.expr for e in all_input_expr_objects if
+                                           isinstance(e, Expr) and hasattr(e, 'expr') and e.expr is not None]
+            self._add_polars_code(new_node_id, final_code_for_node, description, method_name='with_columns',
+                                  convertable_to_code=_check_if_convertible_to_code(all_input_expr_objects),
+                                  polars_expr=pl_expressions_for_fallback)
             return self._create_child_frame(new_node_id)
 
         elif flowfile_formulas is not None and output_column_names is not None:
+
             if len(output_column_names) != len(flowfile_formulas):
                 raise ValueError(
                     "Length of both the formulas and the output columns names must be identical"
@@ -1584,9 +1694,7 @@ class FlowFrame:
                 ff = ff._with_flowfile_formula(flowfile_formula, output_column_name, f"{i}: {description}")
             return ff
         else:
-            raise ValueError(
-                "Either exprs or flowfile_formulas with output_column_names must be provided"
-            )
+            raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
 
     def with_row_index(
         self, name: str = "index", offset: int = 0, description: str = None

@@ -17,15 +17,7 @@ from flowfile_frame.expr import Expr, Column, lit, col
 
 from flowfile_frame.utils import create_flow_graph
 from flowfile_frame.flow_frame import generate_node_id, FlowFrame
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(levelname)s] %(message)s'
-)
-
-# Create and export the logger
-logger = logging.getLogger('flow_frame')
-
+from flowfile_frame.config import logger
 
 def sum(expr):
     """Sum aggregation function."""
