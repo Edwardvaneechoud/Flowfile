@@ -253,8 +253,8 @@ class RawData(BaseModel):
 
 
 class NodeManualInput(NodeBase):
-    raw_data: List = None
-    raw_data_format: RawData = None
+    raw_data: Optional[List] = None
+    raw_data_format: Optional[RawData] = None
 
 
 class NodeRead(NodeBase):

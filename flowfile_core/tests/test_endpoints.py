@@ -164,7 +164,7 @@ def create_flow_with_manual_input() -> FlowId:
                                                         {'name': 'Jane', 'city': 'Los Angeles'},
                                                         {'name': 'Edward', 'city': 'Chicago'},
                                                         {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
-    client.post("/update_settings/", json=input_file, params={"node_type": "manual_input"})
+    r = client.post("/update_settings/", json=input_file, params={"node_type": "manual_input"})
     return flow_id
 
 
@@ -451,6 +451,7 @@ def test_instant_function_result_after_run():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
     flow = flow_file_handler.get_flow(flow_id)
+    flow._flow_starts
     flow.flow_settings.execution_mode = "Development"
     flow.run_graph()
     response = client.get("/custom_functions/instant_result",
