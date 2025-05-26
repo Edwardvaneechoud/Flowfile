@@ -285,7 +285,7 @@ def _build_repr_string(polars_func_name: str, args_repr: List[str], kwargs_repr:
                 unique_sources.append(source)
 
         functions = "# Function definitions\n" + "\n\n".join(unique_sources)
-        return functions + "\n\n------SPLIT------\n\noutput_df = " + call_repr
+        return functions + "\n\n─────SPLIT─────\n\noutput_df = " + call_repr
     else:
         return call_repr
 
@@ -310,7 +310,7 @@ def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: 
         flow_graph = create_flow_graph()
 
     # Check if we have function definitions (indicated by SPLIT separator)
-    if "------SPLIT------" in full_repr:
+    if "─────SPLIT─────" in full_repr:
         polars_code = full_repr
     else:
         polars_code = f"output_df = {full_repr}"
@@ -465,9 +465,9 @@ def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Di
         )
 
     # Extract just the expression part without function definitions for repr_str
-    if function_sources and "------SPLIT------" in full_repr:
+    if function_sources and "─────SPLIT─────" in full_repr:
         # Get the part after the split
-        repr_str = full_repr.split("------SPLIT------")[-1].strip()
+        repr_str = full_repr.split("─────SPLIT─────")[-1].strip()
         if repr_str.startswith("output_df = "):
             repr_str = repr_str[len("output_df = "):]
     else:

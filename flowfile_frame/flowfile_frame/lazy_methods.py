@@ -123,7 +123,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
                     unique_sources.append(source)
 
             functions_section = "# Function definitions\n" + "\n\n".join(unique_sources)
-            code = functions_section + "\n\n#------SPLIT------\n\noutput_df = " + operation_code
+            code = functions_section + "\n#─────SPLIT─────\n\noutput_df = " + operation_code
         else:
             code = "output_df = " + operation_code
 

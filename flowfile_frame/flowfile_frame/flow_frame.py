@@ -425,7 +425,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\n\n#------SPLIT------\n\n" + \
+                                      "\#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code
@@ -777,7 +777,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\n\n#------SPLIT------\n\n" + \
+                                      "\#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code
@@ -848,7 +848,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\n\n#------SPLIT------\n\n" + \
+                                      "\#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code
@@ -1671,7 +1671,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\n\n# ------SPLIT------\n\n" + \
+                                      "\n#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code

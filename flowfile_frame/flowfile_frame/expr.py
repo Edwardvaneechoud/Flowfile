@@ -942,7 +942,7 @@ class Expr:
 
         # Build the complete code with function definitions
         functions_section = "# Function definitions\n" + "\n\n".join(unique_sources)
-        return functions_section + "\n\n#------SPLIT------\n\n" + self._repr_str
+        return functions_section + "\n#─────SPLIT─────\n\n" + self._repr_str
 
     def sort(self, *, descending=False, nulls_last=False):
         res_expr = self.expr.sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
