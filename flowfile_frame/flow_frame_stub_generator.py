@@ -3,7 +3,7 @@ Improved utility to generate comprehensive type stubs for FlowFrame.
 
 This script generates a complete type stub file (.pyi) for the FlowFrame class
 that includes both native FlowFrame methods and LazyFrame methods that are
-added by the @add_lazyframe_methods decorator.
+added by the @add_lazyframe_methods decorator, plus module-level functions.
 """
 import os
 import inspect
@@ -80,7 +80,8 @@ def generate_improved_type_stub(
     output_file: Optional[str] = None,
     include_constructors: bool = True,
     include_inherited: bool = True,
-    include_lazyframe: bool = True
+    include_lazyframe: bool = True,
+    include_module_functions: bool = True
 ) -> str:
     """
     Generate a comprehensive type stub file for FlowFrame.
@@ -89,6 +90,7 @@ def generate_improved_type_stub(
     1. All methods from the FlowFrame class itself (with proper signatures)
     2. All methods from LazyFrame that would be added by the decorator
     3. Proper handling of the __init__ method
+    4. Module-level functions
 
     Parameters
     ----------
@@ -103,6 +105,8 @@ def generate_improved_type_stub(
         Whether to include methods inherited from parent classes
     include_lazyframe : bool, default True
         Whether to include methods from LazyFrame
+    include_module_functions : bool, default True
+        Whether to include module-level functions
 
     Returns
     -------
@@ -172,13 +176,13 @@ def generate_improved_type_stub(
     if output_file is None:
         output_file = os.path.join(os.path.dirname(__file__), "flowfile_frame", "flow_frame.pyi")
 
-
     # Start building the stub file content
     content = [
         "# This file was auto-generated to provide type information for FlowFrame",
         "# DO NOT MODIFY THIS FILE MANUALLY",
         "import collections",
         "import typing",
+        "import inspect",
         "from typing import Any, List, Dict, Optional, Union, Callable, TypeVar, overload, Literal, Sequence, Tuple, Set, Iterable, ForwardRef, Collection",
         "import polars as pl",
         "from polars.lazyframe.frame import *",  # Import all from LazyFrame
@@ -198,6 +202,20 @@ def generate_improved_type_stub(
         "NoneType = type(None)",
         ""
     ]
+
+    # Add module-level functions if requested
+    if include_module_functions:
+        content.extend([
+            "# Module-level functions",
+            "def can_be_expr(param: inspect.Parameter) -> bool: ...",
+            "def generate_node_id() -> int: ...",
+            "def get_method_name_from_code(code: str) -> str | None: ...",
+            "def _contains_lambda_pattern(text: str) -> bool: ...",
+            "def _to_string_val(v) -> str: ...",
+            "def _extract_expr_parts(expr_obj) -> tuple[str, str]: ...",
+            "def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None, group_expr: pl.Expr | None = None) -> None: ...",
+            ""
+        ])
 
     # Store the class declaration
     class_name = flowframe_class.__name__
@@ -238,6 +256,7 @@ def generate_improved_type_stub(
                 continue
 
             lazyframe_methods[name] = method
+
     # Helper function for handling special methods
     def handle_special_methods(name: str, sig: inspect.Signature) -> Optional[str]:
         """Handle methods that need special formatting in the stub file."""
@@ -546,6 +565,7 @@ if __name__ == "__main__":
     parser.add_argument('--output', '-o', help='Output file path for the stub file')
     parser.add_argument('--module', '-m', default='flowfile_frame.flow_frame', help='Module containing FlowFrame class')
     parser.add_argument('--class-name', '-c', default='FlowFrame', help='Name of the FlowFrame class')
+    parser.add_argument('--no-module-functions', action='store_true', help='Skip module-level functions')
     args = parser.parse_args()
 
     # Import the FlowFrame class
@@ -556,7 +576,8 @@ if __name__ == "__main__":
         # Generate the type stub
         output_file = generate_improved_type_stub(
             flowframe_class=flowframe_class,
-            output_file=args.output
+            output_file=args.output,
+            include_module_functions=not args.no_module_functions
         )
 
         print(f"Type stub file generated successfully: {output_file}")

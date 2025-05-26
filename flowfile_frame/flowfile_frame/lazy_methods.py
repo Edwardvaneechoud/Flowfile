@@ -1,11 +1,8 @@
 import polars as pl
-import inspect
 from functools import wraps
-from typing import Any, List, Dict, Optional, TypeVar, Type, Union, Callable, ClassVar, Set, get_type_hints
-import types
+from typing import Optional, TypeVar, Type, Callable
 from flowfile_frame.utils import _get_function_source
 
-# Type variables for proper type hinting
 T = TypeVar('T')
 FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')
 
@@ -93,10 +90,8 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
                     source, is_module_level = _get_function_source(value)
                     if source and hasattr(value, '__name__') and value.__name__ != '<lambda>':
                         function_sources.append(source)
-                        # Use the function name in the representation
                         kwargs_representations.append(f"{key}={value.__name__}")
                     else:
-                        # Fallback to repr if we can't get the source
                         kwargs_representations.append(f"{key}={repr(value)}")
                 except:
                     kwargs_representations.append(f"{key}={repr(value)}")
@@ -119,9 +114,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
         # Build the code
         operation_code = f"input_df.{method_name}({params_str})"
 
-        # If we have function sources, include them before the operation
         if function_sources:
-            # Remove duplicates while preserving order
             unique_sources = []
             seen = set()
             for source in function_sources:

@@ -1,11 +1,11 @@
 import inspect
 import os
 from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, Callable, get_args, get_origin
-from pathlib import Path
 
-import io
 import re
+
 import polars as pl
+
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 
 from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
@@ -19,12 +19,12 @@ from flowfile_core.schemas import input_schema, transform_schema
 from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import _parse_inputs_as_iterable, create_flow_graph, stringify_values, ensure_inputs_as_iterable
+from flowfile_frame.utils import (_parse_inputs_as_iterable, create_flow_graph, stringify_values,
+                                  ensure_inputs_as_iterable)
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 from flowfile_frame.utils import _check_if_convertible_to_code
 from flowfile_frame.config import logger
-from functools import wraps
-import textwrap
+
 
 node_id_counter = 0
 
@@ -565,14 +565,17 @@ class FlowFrame:
         validate : {"1:1", "1:m", "m:1", "m:m"}, optional
             Validate join relationship.
         nulls_equal:
-            Join on null values. By default null values will never produce matches.
+            Join on null values. By default, null values will never produce matches.
         coalesce:
             None: -> join specific.
             True: -> Always coalesce join columns.
             False: -> Never coalesce join columns.
         maintain_order:
-            Which DataFrame row order to preserve, if any. Do not rely on any observed ordering without explicitly setting this parameter, as your code may break in a future release. Not specifying any ordering can improve performance Supported for inner, left, right and full joins
-            None: No specific ordering is desired. The ordering might differ across Polars versions or even between different runs.
+            Which DataFrame row order to preserve, if any. Do not rely on any observed ordering without explicitly
+            setting this parameter, as your code may break in a future release.
+            Not specifying any ordering can improve performance Supported for inner, left, right and full joins
+            None: No specific ordering is desired. The ordering might differ across Polars versions or even between
+            different runs.
             left: Preserves the order of the left DataFrame.
             right: Preserves the order of the right DataFrame.
             left_right: First preserves the order of the left DataFrame, then the right.
@@ -2026,7 +2029,8 @@ class FlowFrame:
         Returns True if the FlowFrame contains any data, False otherwise."""
         return bool(self.data)
 
-    def _comparison_error(self, operator: str) -> pl.lazyframe.frame.NoReturn:
+    @staticmethod
+    def _comparison_error(operator: str) -> pl.lazyframe.frame.NoReturn:
         msg = f'"{operator!r}" comparison not supported for LazyFrame objects'
         raise TypeError(msg)
 
