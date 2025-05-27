@@ -486,7 +486,8 @@ class FlowGraph:
                            function=_func,
                            input_columns=[],
                            node_type='cross_join',
-                           setting_input=cross_join_settings)
+                           setting_input=cross_join_settings,
+                           input_node_ids=cross_join_settings.depending_on_ids)
         return self
 
     def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":

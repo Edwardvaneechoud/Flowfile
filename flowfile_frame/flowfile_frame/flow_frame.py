@@ -299,15 +299,18 @@ class FlowFrame:
     def _create_child_frame(self, new_node_id):
         """Helper method to create a new FlowFrame that's a child of this one"""
         self._add_connection(self.node_id, new_node_id)
-        return FlowFrame(
-            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-            flow_graph=self.flow_graph,
-            node_id=new_node_id,
-            parent_node_id=self.node_id,
-        )
+        try:
+            return FlowFrame(
+                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+                flow_graph=self.flow_graph,
+                node_id=new_node_id,
+                parent_node_id=self.node_id,
+            )
+        except AttributeError:
+            raise ValueError('Could not execute the function')
 
+    @staticmethod
     def _generate_sort_polars_code(
-            self,
             pure_sort_expr_strs: List[str],
             descending_values: List[bool],
             nulls_last_values: List[bool],
@@ -593,6 +596,7 @@ class FlowFrame:
                               nulls_equal is False and
                               validate is None and
                               suffix == '_right')
+
         join_mappings = None
         if self.flow_graph.flow_id != other.flow_graph.flow_id:
             combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
@@ -607,6 +611,7 @@ class FlowFrame:
             global node_id_counter
             node_id_counter += len(combined_graph.nodes)
         new_node_id = generate_node_id()
+
         if on is not None:
             left_columns = right_columns = _normalize_columns_to_list(on)
         elif left_on is not None and right_on is not None:
@@ -625,10 +630,11 @@ class FlowFrame:
             )
         if not use_polars_code:
             join_mappings, use_polars_code = _create_join_mappings(
-                left_columns, right_columns
+                left_columns or [], right_columns or []
             )
 
         if use_polars_code or suffix != '_right':
+
             _on = "["+', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in _normalize_columns_to_list(on)) + "]" if on else None
             _left = "["+', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in left_columns) + "]" if left_on else None
             _right = "["+', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in right_columns) + "]" if right_on else None
@@ -648,31 +654,50 @@ class FlowFrame:
                 parent_node_id=self.node_id,
             )
 
-        elif join_mappings:
+        elif join_mappings or how == 'cross':
+
             left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
             right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
 
-            join_input = transform_schema.JoinInput(
-                join_mapping=join_mappings,
-                left_select=left_select.renames,
-                right_select=right_select.renames,
-                how=how,
-            )
+            if how == 'cross':
+                join_input = transform_schema.CrossJoinInput(left_select=left_select.renames,
+                                                             right_select=right_select.renames,)
+            else:
+                join_input = transform_schema.JoinInput(
+                    join_mapping=join_mappings,
+                    left_select=left_select.renames,
+                    right_select=right_select.renames,
+                    how=how,
+                )
+
             join_input.auto_rename()
-            # Create node settings
-            join_settings = input_schema.NodeJoin(
-                flow_id=self.flow_graph.flow_id,
-                node_id=new_node_id,
-                join_input=join_input,
-                auto_generate_selection=True,
-                verify_integrity=True,
-                pos_x=200,
-                pos_y=150,
-                is_setup=True,
-                depending_on_ids=[self.node_id, other.node_id],
-                description=description or f"Join with {how} strategy",
-            )
-            self.flow_graph.add_join(join_settings)
+            if how == 'cross':
+                cross_join_settings = input_schema.NodeCrossJoin(
+                    flow_id=self.flow_graph.flow_id,
+                    node_id=new_node_id,
+                    cross_join_input=join_input,
+                    is_setup=True,
+                    depending_on_ids=[self.node_id, other.node_id],
+                    description=description or f"Join with {how} strategy",
+                    auto_generate_selection=True,
+                    verify_integrity=True,
+                )
+
+                self.flow_graph.add_cross_join(cross_join_settings)
+            else:
+                join_settings = input_schema.NodeJoin(
+                    flow_id=self.flow_graph.flow_id,
+                    node_id=new_node_id,
+                    join_input=join_input,
+                    auto_generate_selection=True,
+                    verify_integrity=True,
+                    pos_x=200,
+                    pos_y=150,
+                    is_setup=True,
+                    depending_on_ids=[self.node_id, other.node_id],
+                    description=description or f"Join with {how} strategy",
+                )
+                self.flow_graph.add_join(join_settings)
             self._add_connection(self.node_id, new_node_id, "main")
             other._add_connection(other.node_id, new_node_id, "right")
             result_frame = FlowFrame(
