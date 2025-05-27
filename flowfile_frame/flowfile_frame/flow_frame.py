@@ -770,7 +770,6 @@ class FlowFrame:
             )
             self.flow_graph.add_select(select_settings)
         else:
-            breakpoint()
             polars_operation_code = f"input_df.select([{', '.join(pure_polars_expr_strings_for_select)}])"
             final_code_for_node: str
             if collected_raw_definitions:
