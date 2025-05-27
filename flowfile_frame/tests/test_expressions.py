@@ -221,7 +221,7 @@ class TestExpressions:
         assert expr.convertable_to_code
         assert str(expr) == "pl.col('name').str.len_chars().alias('name_length')"
 
-        expr = col("name").map_elements(lambda x: x.upper()).str
+        expr = col("name").map_elements(lambda x: x.upper()).convertable_to_code
         assert not expr.convertable_to_code
 
     def test_datetime_methods(self):

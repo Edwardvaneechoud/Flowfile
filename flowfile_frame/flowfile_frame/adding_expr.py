@@ -194,17 +194,19 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                                 try:
                                     source, is_module_level = _get_function_source(arg)
                                     if source and hasattr(arg, '__name__') and arg.__name__ != '<lambda>':
+
                                         function_sources.append(source)
                                         # Use the function name in the representation
                                         args_representations.append(arg.__name__)
                                         arg.__repr__ = lambda: arg.__name__
 
                                     else:
+
                                         # Lambda or unnamed function - not convertible
                                         logger.warning(
                                             f"Warning: Using anonymous functions in {method_name} is not convertable to UI code")
-                                        logger.warning(f"Consider using defined functions (def abc(a, b, c): return ...)",
-                                                       "In a separate script")
+                                        logger.warning(f"Consider using defined functions (def abc(a, b, c): return ...), "
+                                                       f"In a separate script")
                                         convertable_to_code = False
                                         args_representations.append(repr(arg))
                                 except:
@@ -245,7 +247,6 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                             params_repr = kwargs_repr
                         else:
                             params_repr = ""
-
                         # Create a representation string
                         new_repr = f"{self._repr_str}.{method_name}({params_repr})"
                         # self._repr_str = new_repr

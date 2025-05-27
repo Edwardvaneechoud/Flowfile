@@ -518,7 +518,7 @@ class FlowFrame:
             except Exception as e:
                 logger.warning(
                     f"Critical error: Could not serialize the result of operation '{effective_method_name}' "
-                    f"during fallback for non-convertible code. Error: {e}.",
+                    f"during fallback for non-convertible code. Error: {e}."
                     "When using a lambda function, consider defining the function first"
                 )
                 return FlowFrame(result_lazyframe_or_expr, flow_graph=self.flow_graph, node_id=new_node_id)
