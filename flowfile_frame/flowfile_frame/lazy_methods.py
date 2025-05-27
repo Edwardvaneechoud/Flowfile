@@ -2,6 +2,7 @@ import polars as pl
 from functools import wraps
 from typing import Optional, TypeVar, Type, Callable
 from flowfile_frame.utils import _get_function_source
+from flowfile_frame.config import logger
 
 T = TypeVar('T')
 FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')
@@ -57,7 +58,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
 
         if not all([True if not hasattr(arg, "convertable_to_code") else getattr(arg, 'convertable_to_code') for arg in
                     args]):
-            print("Warning, could not create a good node")
+            logger.debug("Warning, could not create a good node")
             return self.__class__(getattr(self.data, method_name)(arg.expr for arg in args), flow_graph=self.flow_graph)
 
         # Collect function sources and build representations
@@ -196,5 +197,5 @@ def add_lazyframe_methods(cls):
         if name in dir(pl.LazyFrame) and not name.startswith('_') and callable(getattr(pl.LazyFrame, name))
     }
     if overlap:
-        print(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")
+        logger.debug(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")
     return cls

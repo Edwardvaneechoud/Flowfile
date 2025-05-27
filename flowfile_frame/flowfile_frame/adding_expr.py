@@ -1,7 +1,8 @@
 import polars as pl
 from functools import wraps
-from typing import Any, Callable, Optional, TypeVar, Type, TYPE_CHECKING, List
+from typing import Callable, TypeVar, Type
 from flowfile_frame.utils import _get_function_source
+from flowfile_frame.config import logger
 
 T = TypeVar('T')
 ExprT = TypeVar('ExprT', bound='Expr')
@@ -80,7 +81,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
         try:
             result_expr = getattr(self.expr, method_name)(*args, **kwargs)
         except Exception as e:
-            print(f"Warning: Error in {method_name}() call: {e}")
+            logger.debug(f"Warning: Error in {method_name}() call: {e}")
             result_expr = None
 
         # Format arguments for repr string
@@ -200,10 +201,10 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
 
                                     else:
                                         # Lambda or unnamed function - not convertible
-                                        print(
+                                        logger.warning(
                                             f"Warning: Using anonymous functions in {method_name} is not convertable to UI code")
-                                        print(f"Consider using defined functions (def abc(a, b, c): return ...)",
-                                              "In a separate script")
+                                        logger.warning(f"Consider using defined functions (def abc(a, b, c): return ...)",
+                                                       "In a separate script")
                                         convertable_to_code = False
                                         args_representations.append(repr(arg))
                                 except:
@@ -273,6 +274,6 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
         if name in dir(pl.Expr) and not name.startswith('_') and callable(getattr(pl.Expr, name))
     }
     if overlap:
-        print(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")
+        logger.debug(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")
 
     return cls

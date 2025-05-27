@@ -9,6 +9,8 @@ from flowfile_core.schemas import transform_schema
 from functools import wraps
 
 from builtins import len as built_in_len
+
+from flowfile_frame.config import logger
 from flowfile_frame.expr_name import ExprNameNameSpace
 from flowfile_frame.adding_expr import add_expr_methods
 from flowfile_frame.list_name_space import ExprListNameSpace
@@ -723,7 +725,7 @@ class Expr:
             try:
                 res_expr = self.expr.filter(*processed_predicates)
             except Exception as e:
-                print(f"Warning: Could not create polars expression for filter(): {e}")
+                logger.warning("Could not create polars expression for filter(): {e}")
                 pass  # res_expr will remain None
 
         return Expr(
@@ -907,7 +909,7 @@ class Expr:
 
             except Exception as e:
 
-                print(f"Warning: Could not create polars expression for over(): {e}")
+                logger.warning("Could not create polars expression for over(): {e}")
                 pass
 
         return Expr(
@@ -1127,7 +1129,7 @@ class When(Expr):
         try:
             self._branch_expr = pl.when(self.condition).then(value_expr)
         except Exception as e:
-            print(f"Warning: Error in then() creation: {e}")
+            logger.warning(f"Error in then() creation: {e}")
 
         return self
 
@@ -1142,14 +1144,14 @@ class When(Expr):
             if self._branch_expr is not None:
                 pl_expr = self._branch_expr.otherwise(value_expr)
         except Exception as e:
-            print(f"Warning: Could not create when-then-otherwise expression: {e}")
+            logger.warning(f"Could not create when-then-otherwise expression: {e}")
 
         return Expr(pl_expr, repr_str=final_repr)
 
     def when(self, condition):
         """Create a new branch in the chain."""
         if self._branch_expr is None:
-            print("Warning: Cannot add new branch without a then() first")
+            logger.warning("Cannot add new branch without a then() first")
             return self
 
         condition_expr, condition_repr = self._get_expr_and_repr(condition)
@@ -1159,7 +1161,7 @@ class When(Expr):
         try:
             self._branch_expr = self._branch_expr.when(condition_expr)
         except Exception as e:
-            print(f"Warning: Error adding new when() branch: {e}")
+            logger.warning(f"Error adding new when() branch: {e}")
 
         # Return self for chaining
         return self

@@ -4,16 +4,15 @@ from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, C
 from pathlib import Path
 
 import io
-import logging
 import polars as pl
-from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation, IO, Mapping, PolarsDataType,
+from polars._typing import (SchemaDict, IO,PolarsDataType,
                             Sequence, CsvEncoding)
 
 from flowfile_core.flowfile.FlowfileFlow import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import input_schema, transform_schema
 
-from flowfile_frame.expr import Expr, Column, lit, col
+from flowfile_frame.expr import col
 
 from flowfile_frame.utils import create_flow_graph
 from flowfile_frame.flow_frame import generate_node_id, FlowFrame
@@ -204,7 +203,7 @@ def read_csv(
                 received_table.set_absolute_filepath()
                 received_table.path = received_table.abs_file_path
             except Exception as e:
-                print(f"Warning: Could not determine absolute path for {current_source_path_for_native}: {e}")
+                logger.warning(f"Could not determine absolute path for {current_source_path_for_native}: {e}")
 
         read_node_description = description or f"Read CSV from {Path(current_source_path_for_native).name}"
         read_node = input_schema.NodeRead(

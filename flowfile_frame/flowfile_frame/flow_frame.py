@@ -985,7 +985,7 @@ class FlowFrame:
                 if convert_to_absolute_path:
                     output_settings.directory = output_settings.abs_file_path
             except Exception as e:
-                print(f"Warning: Could not determine absolute path for {file_str}: {e}")
+                logger.warning(f"Could not determine absolute path for {file_str}: {e}")
 
         if not use_polars_code:
             node_output = input_schema.NodeOutput(
@@ -1013,7 +1013,7 @@ class FlowFrame:
 
             # Use sink_parquet for LazyFrames
             code = f"input_df.sink_parquet({args_str})"
-            print(f"Generated Polars Code: {code}")
+            logger.debug(f"Generated Polars Code: {code}")
             self._add_polars_code(new_node_id, code, description)
 
         return self._create_child_frame(new_node_id)
@@ -1061,7 +1061,7 @@ class FlowFrame:
                 if convert_to_absolute_path:
                     output_settings.directory = output_settings.abs_file_path
             except Exception as e:
-                print(f"Warning: Could not determine absolute path for {file_str}: {e}")
+                logger.warning(f"Could not determine absolute path for {file_str}: {e}")
 
         if not use_polars_code:
             node_output = input_schema.NodeOutput(
@@ -1094,7 +1094,7 @@ class FlowFrame:
                 args_str += f", {kwargs_repr}"
 
             code = f"input_df.collect().write_csv({args_str})"
-            print(f"Generated Polars Code: {code}")
+            logger.debug(f"Generated Polars Code: {code}")
             self._add_polars_code(new_node_id, code, description)
 
         return self._create_child_frame(new_node_id)
