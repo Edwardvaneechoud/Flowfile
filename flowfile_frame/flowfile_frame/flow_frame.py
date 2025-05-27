@@ -717,7 +717,6 @@ class FlowFrame:
 
         can_use_native_node = True
 
-        effective_columns_iterable = []
         if len(columns_iterable) == 1 and isinstance(columns_iterable[0], str) and columns_iterable[0] == '*':
             effective_columns_iterable = [col(c_name) for c_name in self.columns]
         else:
@@ -771,6 +770,7 @@ class FlowFrame:
             )
             self.flow_graph.add_select(select_settings)
         else:
+            breakpoint()
             polars_operation_code = f"input_df.select([{', '.join(pure_polars_expr_strings_for_select)}])"
             final_code_for_node: str
             if collected_raw_definitions:
@@ -1447,6 +1447,8 @@ class FlowFrame:
                 f.node_id = node_mappings.get((f.flow_graph.flow_id, f.node_id), None)
             global node_id_counter
             node_id_counter += len(combined_graph.nodes)
+        else:
+            combined_graph = self.flow_graph
         new_node_id = generate_node_id()
         use_native = how == "diagonal_relaxed" and parallel and not rechunk
         if use_native:
@@ -1482,7 +1484,6 @@ class FlowFrame:
                 input_vars.append(f"input_df_{i+2}")
 
             frames_list = f"[{', '.join(input_vars)}]"
-
             code = f"""
             # Perform concat operation
             output_df = pl.concat(
@@ -1492,15 +1493,19 @@ class FlowFrame:
                 parallel={parallel}
             )
             """
+            self.flow_graph = combined_graph
+
             # Add polars code node with dependencies on all input frames
             depending_on_ids = [self.node_id] + [frame.node_id for frame in others]
             self._add_polars_code(
                 new_node_id, code, description, depending_on_ids=depending_on_ids
             )
-
             # Add connections to ensure all frames are available
             self._add_connection(self.node_id, new_node_id, "main")
+
             for other_frame in others:
+
+                other_frame.flow_graph = combined_graph
                 other_frame._add_connection(other_frame.node_id, new_node_id, "main")
         # Create and return the new frame
         return FlowFrame(

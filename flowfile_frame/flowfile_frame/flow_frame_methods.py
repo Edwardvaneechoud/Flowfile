@@ -496,7 +496,6 @@ def concat(frames: List['FlowFrame'],
     """
     if not frames:
         raise ValueError("No frames provided to concat_frames")
-
     if len(frames) == 1:
         return frames[0]
     # Use first frame's concat method with remaining frames

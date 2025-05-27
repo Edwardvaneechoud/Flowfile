@@ -1183,7 +1183,7 @@ def lit(value: Any) -> Expr:
 
 
 def len() -> Expr:
-    return Expr(pl.len()).alias('number_of_records')
+    return Expr(pl.len(), repr_str="pl.len()")
 
 
 def agg_function(func=None, *, customize_repr=True):

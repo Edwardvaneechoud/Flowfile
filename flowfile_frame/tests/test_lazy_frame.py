@@ -1116,7 +1116,6 @@ def test_quantile_filtered_agg() -> None:
     ) == [1.0, 1.0]
 
 
-@pytest.mark.skip(reason="Fix with concat all")
 def test_predicate_count_vstack() -> None:
     l1 = FlowFrame(
         {
@@ -1130,9 +1129,7 @@ def test_predicate_count_vstack() -> None:
             "v": [5, 7],
         }
     )
-    assert fl.concat([l1, l2]).filter(fl.len().over("k") == 2).collect()[
-        "v"
-    ].to_list() == [3, 2, 5, 7]
+    assert fl.concat([l1, l2]).filter(fl.len().over("k") == 2).collect()["v"].to_list() == [3, 2, 5, 7]
 
 
 def test_lazy_method() -> None:
