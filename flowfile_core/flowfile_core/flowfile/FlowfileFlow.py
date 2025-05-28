@@ -218,7 +218,6 @@ class FlowGraph:
                 node_id=node.node_id,
                 flow_id=self.flow_id,
             )
-
             node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref)
             return flowfile_table
 

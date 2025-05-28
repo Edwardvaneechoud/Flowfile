@@ -17,6 +17,7 @@ from pyarrow.parquet import ParquetFile
 # Local imports - Core
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
     input_schema,
     transform_schema as transform_schemas
@@ -1205,7 +1206,7 @@ class FlowDataEngine:
         """
         if self.is_future and not self.is_collected:
             return -1
-
+        calculate_in_worker_process = False if not OFFLOAD_TO_WORKER.value else calculate_in_worker_process
         if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:
                 self._number_of_records_callback(self)

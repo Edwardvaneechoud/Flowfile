@@ -285,7 +285,7 @@ class ExternalDfFetcher(BaseFetcher):
 
     def __init__(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None,
                  wait_on_completion: bool = True,
-                 operation_type: OperationType = 'store'):
+                 operation_type: OperationType = 'store', offload_to_worker: bool = True):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_df_operation(lf=lf, file_ref=self.file_ref, operation_type=operation_type,

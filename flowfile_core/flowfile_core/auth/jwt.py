@@ -28,6 +28,7 @@ def get_jwt_secret():
     if os.environ.get("FLOWFILE_MODE") == "electron":
         key = get_password("flowfile", "jwt_secret")
         if not key:
+            breakpoint()
             key = secrets.token_hex(32)
             set_password("flowfile", "jwt_secret", key)
         return key

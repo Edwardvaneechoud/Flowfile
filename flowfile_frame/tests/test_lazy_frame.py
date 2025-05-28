@@ -909,7 +909,15 @@ def test_argminmax() -> None:
 
 
 def test_limit(fruits_cars: FlowFrame) -> None:
+    breakpoint()
+    from flowfile_core.configs import settings
+    try:
+        assert_frame_equal(fruits_cars.lazy().limit(1).collect(), fruits_cars.data.collect()[0, :])
+    except:
+        ...
+    settings.OFFLOAD_TO_WORKER.indicator
     assert_frame_equal(fruits_cars.lazy().limit(1).collect(), fruits_cars.data.collect()[0, :])
+
 
 
 def test_head(fruits_cars: FlowFrame) -> None:
