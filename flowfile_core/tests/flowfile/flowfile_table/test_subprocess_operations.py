@@ -8,7 +8,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (trigg
                                                                            ExternalDatabaseWriter)
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (ExtDatabaseConnection,
                                                                                DatabaseExternalWriteSettings)
-from flowfile_core.secrets.secrets import encrypt_secret
+from flowfile_core.secret_manager.secret_manager import encrypt_secret
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 except ModuleNotFoundError:

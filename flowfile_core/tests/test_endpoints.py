@@ -15,7 +15,7 @@ from flowfile_core.routes.routes import (add_node,
                                          connect_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
-from flowfile_core.secrets.secrets import get_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_database_connection,
                                                                                delete_database_connection,

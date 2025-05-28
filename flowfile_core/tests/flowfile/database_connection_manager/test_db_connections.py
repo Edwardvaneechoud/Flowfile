@@ -6,7 +6,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (s
                                                                                get_database_connection_schema,
                                                                                get_all_database_connections_interface)
 from flowfile_core.database.connection import get_db_context, SessionLocal
-from flowfile_core.secrets.secrets import get_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 
 
 def test_database_connection():

@@ -108,7 +108,6 @@ def run(host: str = None, port: int = None):
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
-    print(OFFLOAD_TO_WORKER.value)
     print(f"Starting server on {host}:{port}")
     print(f"Worker configured at {WORKER_URL} (host: {WORKER_HOST}, port: {WORKER_PORT})")
 

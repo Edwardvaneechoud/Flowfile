@@ -34,7 +34,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
                                                                                                  ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
                                                                                                  ExternalDfFetcher)
-from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
@@ -214,7 +214,7 @@ class FlowGraph:
             external_sampler = ExternalDfFetcher(
                 lf=flowfile_table.data_frame,
                 file_ref="__gf_walker"+node.hash,
-                wait_on_completion=False,
+                wait_on_completion=True,
                 node_id=node.node_id,
                 flow_id=self.flow_id,
             )

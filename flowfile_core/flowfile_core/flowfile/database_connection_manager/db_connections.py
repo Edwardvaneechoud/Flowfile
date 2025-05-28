@@ -1,7 +1,7 @@
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
 from sqlalchemy.orm import Session
 from flowfile_core.database.models import DatabaseConnection as DBConnectionModel, Secret
-from flowfile_core.secrets.secrets import store_secret, SecretInput, decrypt_secret
+from flowfile_core.secret_manager.secret_manager import store_secret, SecretInput, decrypt_secret
 from flowfile_core.database.connection import get_db_context
 
 

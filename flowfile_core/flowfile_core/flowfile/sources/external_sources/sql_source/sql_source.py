@@ -4,7 +4,7 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas.input_schema import MinimalFieldInfo, DatabaseSettings
 from sqlalchemy import Engine, inspect, create_engine, text
-from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
 
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 from flowfile_core.flowfile.sources.external_sources.sql_source.utils import get_polars_type, construct_sql_uri
