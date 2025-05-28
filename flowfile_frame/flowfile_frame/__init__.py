@@ -1,6 +1,10 @@
 # flowframe/__init__.py
 """A Polars-like API for building ETL graphs."""
 
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+OFFLOAD_TO_WORKER.value = False
+
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
 
@@ -10,8 +14,10 @@ from flowfile_frame.utils import create_flow_graph  # noqa: F401
 from flowfile_frame.expr import (  # noqa: F401
     col, lit, column,
     cum_count, len,
-    sum, min, max, mean, count, when
+    sum, min, max, mean, count, when, implode, last, corr, cov, first
 )
+
+from flowfile_frame.lazy import (fold)
 
 # Selector utilities
 from flowfile_frame.selectors import (  # noqa: F401
@@ -21,10 +27,11 @@ from flowfile_frame.selectors import (  # noqa: F401
     by_dtype, contains, starts_with, ends_with, matches
 )
 
+from flowfile_frame.series import Series
+
 # File I/O
-from flowfile_frame.flow_frame import (  # noqa: F401
-    read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet
-)
+from flowfile_frame.flow_frame_methods import (  # noqa: F401
+    read_csv, read_parquet, from_dict, concat,  scan_csv, scan_parquet)
 
 from polars.datatypes import (  # noqa: F401
     # Integer types

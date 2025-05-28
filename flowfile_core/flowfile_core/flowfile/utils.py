@@ -1,9 +1,15 @@
-from typing import List
 import os
-import shutil
 import hashlib
-from datetime import datetime
 import json
+import polars as pl
+import shutil
+
+from datetime import datetime, date, time
+from typing import List
+from decimal import Decimal
+
+from flowfile_core.flowfile.flow_data_engine.utils import standardize_col_dtype
+from flowfile_core.schemas import input_schema
 
 
 def generate_sha256_hash(data: bytes):
@@ -26,8 +32,16 @@ def snake_case_to_camel_case(text: str) -> str:
 def json_default(val):
     if isinstance(val, datetime):
         return val.isoformat(timespec='microseconds')
+    elif isinstance(val, date):
+        return val.isoformat()
+    elif isinstance(val, time):
+        return val.isoformat()
     elif hasattr(val, '__dict__'):
         return val.__dict__
+    elif isinstance(val, Decimal):
+        if val.as_integer_ratio()[1] == 1:
+            return int(val)
+        return float(val)
     else:
         raise Exception('Value is not serializable')
 
@@ -104,3 +118,20 @@ def batch_generator(input_list: List, batch_size: int = 10000):
             input_list = []
             run = False
 
+
+def _handle_raw_data(node_manual_input: input_schema.NodeManualInput):
+    """Ensure compatibility with the new typed raw data and the old dict form data type"""
+    if (not (hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
+            and (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
+        values = [standardize_col_dtype([vv for vv in c]) for c in zip(*(r.values()
+                                                                         for r in node_manual_input.raw_data))]
+        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
+        _columns = [input_schema.MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in
+                    node_manual_input.raw_data[0].keys()]
+
+        node_manual_input.raw_data_format = input_schema.RawData(columns=_columns, data=values)
+    elif ((hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
+          and not (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
+        node_manual_input.raw_data = [{c.name: node_manual_input.raw_data_format.data[ci][ri] for ci, c in
+                                       enumerate(node_manual_input.raw_data_format.columns)}
+                                      for ri in range(len(node_manual_input.raw_data_format.data[0]))]

@@ -1,5 +1,5 @@
 import pytest
-from flowfile_frame import FlowFrame, col, lit, create_flow_graph, when
+from flowfile_frame import FlowFrame, col, lit, create_flow_graph, when, len as fl_len
 import polars as pl
 
 
@@ -114,6 +114,11 @@ class TestJoins:
         order_107 = result.filter(pl.col("order_id") == 107)
         assert len(order_107) == 1
         assert order_107["name"][0] is None
+
+    def test_cross_join(self, customers, orders):
+        result = customers.join(orders, how='cross')
+        assert result.collect().shape[0] == 35
+        assert result.get_node_settings().node_type == 'cross_join', 'Should use native cross join method'
 
     def test_outer_join(self, customers, orders):
         """Test outer join operation."""

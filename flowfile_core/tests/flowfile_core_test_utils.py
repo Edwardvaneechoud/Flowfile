@@ -2,7 +2,7 @@
 
 import subprocess
 import platform
-from flowfile_core.secrets.secrets import store_secret, get_encrypted_secret
+from flowfile_core.secret_manager.secret_manager import store_secret, get_encrypted_secret
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.auth.models import SecretInput
 

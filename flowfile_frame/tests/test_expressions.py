@@ -1,8 +1,10 @@
 import pytest
 import polars as pl
+
 from flowfile_frame.expr import col, lit, Column, Expr, cum_count, sum, mean, max, min, count
 from flowfile_frame import selectors as sc, FlowFrame
 
+from polars.testing import assert_frame_equal
 
 class TestExpressions:
     """Tests focusing specifically on expression functionality."""
@@ -24,13 +26,13 @@ class TestExpressions:
         # Basic column expression
         c = col("age")
         assert isinstance(c, Column)
-        assert c.name == "age"
+        assert c.column_name == "age"
         assert str(c) == "pl.col('age')"
 
         # Column with alias
         c_alias = col("age").alias("user_age")
         assert isinstance(c_alias, Column)
-        assert c_alias.name == "user_age"
+        assert c_alias.column_name == "user_age"
         assert str(c_alias) == "pl.col('age').alias('user_age')"
 
         # Column with cast
@@ -40,7 +42,7 @@ class TestExpressions:
 
         # Cast with custom name
         c_cast_named = col("score").cast(pl.Int32).alias("score_int")
-        assert c_cast_named.name == "score_int"
+        assert c_cast_named.column_name == "score_int"
 
     def test_literal_expr_creation(self):
         """Test literal expression creation."""
@@ -176,65 +178,80 @@ class TestExpressions:
         expr = col("name").str.contains("a")
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('name').str.contains('a', literal=False)"
+        assert expr.convertable_to_code
 
         expr = col("name").str.starts_with("A")
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('name').str.starts_with('A')"
+        assert expr.convertable_to_code
 
         # Ends with
         expr = col("name").str.ends_with("e")
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('name').str.ends_with('e')"
+        assert expr.convertable_to_code
 
         # Replace
         expr = col("name").str.replace("a", "X")
         assert isinstance(expr, Expr)
+        assert expr.convertable_to_code
         assert str(expr) == "pl.col('name').str.replace('a', 'X', literal=False)"
 
         # To uppercase
         expr = col("name").str.to_uppercase()
         assert isinstance(expr, Expr)
+        assert expr.convertable_to_code
         assert str(expr) == "pl.col('name').str.to_uppercase()"
 
         # To lowercase
         expr = col("name").str.to_lowercase()
         assert isinstance(expr, Expr)
+        assert expr.convertable_to_code
         assert str(expr) == "pl.col('name').str.to_lowercase()"
 
         # Length functions
         expr = col("name").str.len_chars()
         assert isinstance(expr, Expr)
+        assert expr.convertable_to_code
         assert str(expr) == "pl.col('name').str.len_chars()"
 
         # Length with alias
         expr = col("name").str.len_chars().alias("name_length")
         assert isinstance(expr, Expr)
+        assert expr.convertable_to_code
         assert str(expr) == "pl.col('name').str.len_chars().alias('name_length')"
 
+        expr = col("name").map_elements(lambda x: x.upper()).str
+        assert not expr.convertable_to_code
 
     def test_datetime_methods(self):
         """Test datetime methods on expressions."""
         date_col = col("date").cast(pl.Date)
-
         # Year
         expr = date_col.dt.year()
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('date').cast(pl.Date, strict=True).dt.year()"
-
+        assert expr.convertable_to_code
         # Month
         expr = date_col.dt.month()
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('date').cast(pl.Date, strict=True).dt.month()"
+        assert expr.convertable_to_code
 
         # Day
         expr = date_col.dt.day()
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('date').cast(pl.Date, strict=True).dt.day()"
+        assert expr.convertable_to_code
 
         # Date extraction with alias
         expr = date_col.dt.year().alias("year")
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('date').cast(pl.Date, strict=True).dt.year().alias('year')"
+        assert expr.convertable_to_code
+
+        expr = date_col.dt.day().map_elements(lambda x: x.upper())
+        assert not expr.convertable_to_code
 
     def test_null_related_methods(self):
         """Test null-related methods on expressions."""
@@ -382,27 +399,27 @@ class TestExpressions:
         # Sum function
         expr = sum("age")
         assert isinstance(expr, Expr)
-        assert str(expr) == 'pl.col("age").sum()'
+        assert str(expr) == "pl.sum('age')"
 
         # Mean function
         expr = mean("age")
         assert isinstance(expr, Expr)
-        assert str(expr) == 'pl.col("age").mean()'
+        assert str(expr) == "pl.mean('age')"
 
         # Min function
         expr = min("age")
         assert isinstance(expr, Expr)
-        assert str(expr) == 'pl.col("age").min()'
+        assert str(expr) == "pl.min('age')"
 
         # Max function
         expr = max("age")
         assert isinstance(expr, Expr)
-        assert str(expr) == 'pl.col("age").max()'
+        assert str(expr) == "pl.max('age')"
 
         # Count function
         expr = count("age")
         assert isinstance(expr, Expr)
-        assert str(expr) == 'pl.col("age").count()'
+        assert str(expr) == "pl.count('age')"
 
         # Cum count function
         expr = cum_count("age")
@@ -440,7 +457,7 @@ class TestExpressions:
         """Test expressions actually work in a FlowFrame."""
         df = FlowFrame(sample_data)
 
-        # Test arithmetic operations
+        # # Test arithmetic operations
         result = df.select(
             (col("age") + 5).alias("age_plus_5")
         ).collect()
@@ -590,6 +607,62 @@ class TestAdvancedExpressions:
 
         assert len(result) == 1
         assert result["id"][0] == 3
+
+    def test_select_lambda_expression(self, sample_df):
+        res = sample_df.select(col("nested").map_elements(lambda x: x[0])).collect()
+        expected = sample_df.data.select(pl.col("nested").map_elements(lambda x: x[0])).collect()
+        assert_frame_equal(res, expected)
+
+    def test_with_columns_named_expressions_lambda(self, sample_df):
+        res = sample_df.with_columns(output_col=col("nested").map_elements(lambda x: x[0])).collect()
+        expected = sample_df.data.with_columns(output_col=pl.col("nested").map_elements(lambda x: x[0])).collect()
+        assert_frame_equal(res, expected)
+
+    def test_with_columns_lambda_expression(self, sample_df):
+        res = sample_df.with_columns(col("nested").map_elements(lambda x: x[0])).collect()
+        expected = sample_df.data.with_columns(pl.col("nested").map_elements(lambda x: x[0])).collect()
+        assert_frame_equal(res, expected)
+
+    def test_filter_lambda_expression(self, sample_df):
+        res = sample_df.filter(col("nested").map_elements(lambda x: x[0] == 1)).collect()
+        expected = sample_df.data.filter(pl.col("nested").map_elements(lambda x: x[0] == 1)).collect()
+        assert_frame_equal(res, expected)
+
+    def test_filter_constraint(self, sample_df):
+        expected = sample_df.filter(category="A").collect()
+        res = sample_df.data.filter(category="A").collect()
+        assert_frame_equal(res, expected)
+
+    def test_with_columns_with_custom_defined_function(self, sample_df):
+        def first_element(x):
+            return str(x)[-1]
+        res = sample_df.with_columns(col("value_1").map_batches(first_element))
+        res.get_node_settings().setting_input
+
+    def test_sort_with_custom_defined_function(self, sample_df):
+        def first_element(x):
+            return -(x)
+        res = sample_df.sort(col("value_1").map_batches(first_element).alias('test'))
+        assert 'first_element' in res.get_node_settings().setting_input.polars_code_input.polars_code
+        # ensure the actual function ref is used
+        result_collected = res.collect()
+        expected_collected = sample_df.data.sort(pl.col("value_1").map_batches(first_element).alias('test')).collect()
+        assert_frame_equal(result_collected, expected_collected)
+
+    def test_select_with_custom_defined_function(self, sample_df):
+        def first_element(x):
+            return x*2
+        res = sample_df.select(col("value_1").map_batches(first_element))
+        expected = sample_df.data.select(pl.col("value_1").map_elements(first_element))
+        assert_frame_equal(res.collect(), expected.collect())
+        node_settings = res.get_node_settings()
+        assert node_settings.node_type == 'polars_code'
+        assert node_settings.setting_input
+
+    def test_sort_lambda_expression(self, sample_df):
+        res = sample_df.sort(col("nested").map_elements(lambda x: x[0]).sort(descending=True)).collect()
+        expected = sample_df.data.sort(pl.col("nested").map_elements(lambda x: x[0]).sort(descending=True)).collect()
+        assert_frame_equal(res, expected)
 
     def test_conditional_expressions(self, sample_df):
         """Test expressions with conditional logic."""

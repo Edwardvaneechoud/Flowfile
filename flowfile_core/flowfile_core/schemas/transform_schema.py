@@ -166,10 +166,8 @@ class FuzzyMap(JoinMap):
             self.output_column_name = f'fuzzy_score_{self.left_col}_{self.right_col}'
 
 
-@dataclass
-class CrossJoinInput:
-    left_select: SelectInputs = None
-    right_select: SelectInputs = None
+class JoinSelectMixin:
+    """Mixin for common join selection functionality"""
 
     @staticmethod
     def parse_select(select: List[SelectInput] | List[str] | List[Dict]) -> SelectInputs:
@@ -183,6 +181,26 @@ class CrossJoinInput:
                 return SelectInputs([SelectInput(**c) for c in renames])
         elif all(isinstance(c, str) for c in select):
             return SelectInputs([SelectInput(s, s) for s in select])
+
+    def auto_generate_new_col_name(self, old_col_name: str, side: str) -> str:
+        current_names = self.left_select.new_cols & self.right_select.new_cols
+        if old_col_name not in current_names:
+            return old_col_name
+        while True:
+            if old_col_name not in current_names:
+                return old_col_name
+            old_col_name = f'{side}_{old_col_name}'
+
+    def add_new_select_column(self, select_input: SelectInput, side: str):
+        selects = self.right_select if side == 'right' else self.left_select
+        select_input.new_name = self.auto_generate_new_col_name(select_input.old_name, side=side)
+        selects.__add__(select_input)
+
+
+@dataclass
+class CrossJoinInput(JoinSelectMixin):
+    left_select: SelectInputs = None
+    right_select: SelectInputs = None
 
     def __init__(self, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str]):
@@ -201,23 +219,9 @@ class CrossJoinInput:
                     right_col.new_name = 'right_' + right_col.new_name
             overlapping_records = self.overlapping_records
 
-    def auto_generate_new_col_name(self, old_col_name: str, side: str) -> str:
-        current_names = self.left_select.new_cols & self.right_select.new_cols
-        if old_col_name not in current_names:
-            return old_col_name
-        while True:
-            if old_col_name not in current_names:
-                return old_col_name
-            old_col_name = f'{side}_{old_col_name}'
-
-    def add_new_select_column(self, select_input: SelectInput, side: str):
-        selects = self.right_select if side == 'right' else self.left_select
-        select_input.new_name = self.auto_generate_new_col_name(select_input.old_name, side=side)
-        selects.__add__(select_input)
-
 
 @dataclass
-class JoinInput:
+class JoinInput(JoinSelectMixin):
     join_mapping: List[JoinMap]
     left_select: SelectInputs = None
     right_select: SelectInputs = None
@@ -243,20 +247,8 @@ class JoinInput:
             raise Exception('No valid join mapping as input')
         return join_mapping
 
-    @staticmethod
-    def parse_select(select: List[SelectInput] | List[str] | List[Dict]) -> SelectInputs:
-        if all(isinstance(c, SelectInput) for c in select):
-            return SelectInputs(select)
-        elif all(isinstance(c, dict) for c in select):
-            return SelectInputs([SelectInput(**c) for c in select])
-        elif isinstance(select, dict):
-            renames = select.get('renames')
-            if renames:
-                return SelectInputs([SelectInput(**c) for c in renames])
-        elif all(isinstance(c, str) for c in select):
-            return SelectInputs([SelectInput(s, s) for s in select])
-
-    def __init__(self, join_mapping: List[JoinMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
+    def __init__(self, join_mapping: List[JoinMap] | Tuple[str, str] | str,
+                 left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str],
                  how: JoinStrategy = 'inner'):
         self.join_mapping = self.parse_join_mapping(join_mapping)
@@ -310,20 +302,6 @@ class JoinInput:
                                         )
                                 )
         return new_mappings
-
-    def auto_generate_new_col_name(self, old_col_name: str, side: str) -> str:
-        current_names = self.left_select.new_cols & self.right_select.new_cols
-        if old_col_name not in current_names:
-            return old_col_name
-        while True:
-            if old_col_name not in current_names:
-                return old_col_name
-            old_col_name = f'{side}_{old_col_name}'
-
-    def add_new_select_column(self, select_input: SelectInput, side: str):
-        selects = self.right_select if side == 'right' else self.left_select
-        select_input.new_name = self.auto_generate_new_col_name(select_input.old_name, side=side)
-        selects.__add__(select_input)
 
 
 @dataclass

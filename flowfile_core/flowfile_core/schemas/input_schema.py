@@ -1,4 +1,4 @@
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Iterator
 from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
@@ -61,7 +61,7 @@ class ReceivedTableBase(BaseModel):
             return self.path
 
     def set_absolute_filepath(self):
-        base_path = Path(self.path)
+        base_path = Path(self.path).expanduser()
         # Check if the path is relative, resolve it with the current working directory
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -97,7 +97,7 @@ class ReceivedJsonTable(ReceivedCsvTable):
     pass
 
 
-class ReceivedParquetTable(BaseModel):
+class ReceivedParquetTable(ReceivedTableBase):
     file_type: str = 'parquet'
 
 
@@ -247,8 +247,14 @@ class NodeDatasource(NodeBase):
     file_ref: str = None
 
 
+class RawData(BaseModel):
+    columns: List[MinimalFieldInfo] = None
+    data: List[List]  # List of list where each inner list is a column of data. This ensures more efficient storage
+
+
 class NodeManualInput(NodeBase):
-    raw_data: List = None
+    raw_data: Optional[List] = None
+    raw_data_format: Optional[RawData] = None
 
 
 class NodeRead(NodeBase):

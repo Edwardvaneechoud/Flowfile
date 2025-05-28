@@ -135,6 +135,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
 
     # Import core app
     from flowfile_core.main import run, app as core_app
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    OFFLOAD_TO_WORKER.value = True
 
     # Extend the core app with web UI routes and worker functionality
     extend_app(core_app)

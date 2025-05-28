@@ -190,7 +190,7 @@ class BaseFetcher:
                 logger.info('Already running the fetching')
                 return
 
-            sleep_time = 1
+            sleep_time = .5
             self.running = True
             while not self.stop_event.is_set():
                 try:
@@ -205,7 +205,8 @@ class BaseFetcher:
                             break
                         elif status.status == 'Unknown Error':
                             self._handle_error(-1,
-                                               'There was an unknown error with the process, and the process got killed by the server')
+                                               'There was an unknown error with the process, '
+                                               'and the process got killed by the server')
                             break
                     else:
                         self._handle_error(2, r.text)
@@ -284,7 +285,7 @@ class ExternalDfFetcher(BaseFetcher):
 
     def __init__(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None,
                  wait_on_completion: bool = True,
-                 operation_type: OperationType = 'store'):
+                 operation_type: OperationType = 'store', offload_to_worker: bool = True):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
         r = trigger_df_operation(lf=lf, file_ref=self.file_ref, operation_type=operation_type,

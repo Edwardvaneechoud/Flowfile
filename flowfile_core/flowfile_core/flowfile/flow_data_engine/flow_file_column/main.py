@@ -1,12 +1,43 @@
 from dataclasses import dataclass
 from typing import Optional, Any, List, Dict, Literal
 from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars_str
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
 from polars import datatypes
 import polars as pl
 
 DataTypeGroup = Literal['numeric', 'str', 'date']
+
+
+def convert_pl_type_to_string(pl_type: pl.DataType, inner: bool = False) -> str:
+    if isinstance(pl_type, pl.List):
+        inner_str = convert_pl_type_to_string(pl_type.inner, inner=True)
+        return f"pl.List({inner_str})"
+    elif isinstance(pl_type, pl.Array):
+        inner_str = convert_pl_type_to_string(pl_type.inner, inner=True)
+        return f"pl.Array({inner_str})"
+    elif isinstance(pl_type, pl.Decimal):
+        precision = pl_type.precision if hasattr(pl_type, 'precision') else None
+        scale = pl_type.scale if hasattr(pl_type, 'scale') else None
+        if precision is not None and scale is not None:
+            return f"pl.Decimal({precision}, {scale})"
+        elif precision is not None:
+            return f"pl.Decimal({precision})"
+        else:
+            return "pl.Decimal()"
+    elif isinstance(pl_type, pl.Struct):
+        # Handle Struct with field definitions
+        fields = []
+        if hasattr(pl_type, 'fields'):
+            for field in pl_type.fields:
+                field_name = field.name
+                field_type = convert_pl_type_to_string(field.dtype, inner=True)
+                fields.append(f'pl.Field("{field_name}", {field_type})')
+        field_str = ", ".join(fields)
+        return f"pl.Struct([{field_str}])"
+    else:
+        # For base types, we want the full pl.TypeName format
+        return str(pl_type.base_type()) if not inner else f"pl.{pl_type}"
 
 
 @dataclass
@@ -28,7 +59,7 @@ class FlowfileColumn:
     __perc_unique: Optional[float]
 
     def __init__(self, polars_type: PlType):
-        self.data_type = str(polars_type.pl_datatype.base_type())
+        self.data_type = convert_pl_type_to_string(polars_type.pl_datatype)
         self.size = polars_type.count - polars_type.null_count
         self.max_value = polars_type.max
         self.min_value = polars_type.min
@@ -53,7 +84,7 @@ class FlowfileColumn:
 
     @classmethod
     def from_input(cls, column_name: str, data_type: str, **kwargs) -> "FlowfileColumn":
-        pl_type = type_to_polars_str(data_type)
+        pl_type = cast_str_to_polars_type(data_type)
         if pl_type is not None:
             data_type = pl_type
         return cls(PlType(column_name=column_name, pl_datatype=data_type, **kwargs))
@@ -129,12 +160,9 @@ class FlowfileColumn:
             return 'date'
 
     def get_polars_type(self) -> PlType:
-        if hasattr(datatypes, self.data_type):
-            pl_datatype = getattr(datatypes, self.data_type)
-        else:
-            pl_datatype = None
-
-        return PlType(pl_datatype=pl_datatype, **self.__dict__)
+        pl_datatype = cast_str_to_polars_type(self.data_type)
+        pl_type = PlType(pl_datatype=pl_datatype, **self.__dict__)
+        return pl_type
 
     def update_type_from_polars_type(self, pl_type: PlType):
         self.data_type = str(pl_type.pl_datatype.base_type())
@@ -142,3 +170,8 @@ class FlowfileColumn:
 
 def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowfileColumn]:
     return [FlowfileColumn.create_from_polars_type(PlType(**c)) for c in stats]
+
+
+def convert_pl_schema_to_raw_data_format(pl_schema: pl.Schema) -> List[input_schema.MinimalFieldInfo]:
+    return [FlowfileColumn.create_from_polars_type(PlType(column_name=k, pl_datatype=v)).get_minimal_field_info()
+            for k, v in pl_schema.items()]

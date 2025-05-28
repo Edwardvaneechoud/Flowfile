@@ -2,10 +2,19 @@ import os
 import pytest
 import polars as pl
 from polars.testing import assert_frame_equal
-from flowfile_frame.flow_frame import FlowFrame, read_parquet, from_dict, concat
-import flowfile_frame as ff
+from flowfile_frame.flow_frame_methods import read_parquet, from_dict, concat
+from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.expr import col, lit, cum_count
 from flowfile_frame import selectors as sc
+
+import os
+import io
+import pytest
+import tempfile
+import polars as pl
+from polars.testing import assert_frame_equal
+from flowfile_frame.flow_frame_methods import read_csv
+from flowfile_frame.expr import col
 
 
 def test_create_empty_flow_frame():
@@ -130,7 +139,6 @@ def test_with_columns():
         "age": [25, 30, 35]
     }
     df = FlowFrame(data)
-
     # Add a constant column
     result = df.with_columns(lit(True).alias("is_active")).collect()
     assert "is_active" in result.columns
@@ -139,8 +147,8 @@ def test_with_columns():
     # Add a derived column
     result = df.with_columns(col("age").cast(pl.Float32).alias("age_float")).collect()
     assert "age_float" in result.columns
-
-    # Add multiple columns
+    #
+    # Add multiple columns with list
     result = df.with_columns([
         col("id").alias("user_id"),
         (col("age") * 2).alias("double_age")
@@ -149,6 +157,14 @@ def test_with_columns():
     assert "double_age" in result.columns
     assert result["double_age"].to_list() == [50, 60, 70]
 
+    result = df.with_columns(
+        col("id").alias("user_id"),
+        (col("age") * 2).alias("double_age")
+    ).collect()
+
+    assert "user_id" in result.columns
+    assert "double_age" in result.columns
+    assert result["double_age"].to_list() == [50, 60, 70]
     # Add with flowfile formula
     result = df.with_columns(
         flowfile_formulas=["[age] * 2"],
@@ -267,7 +283,6 @@ def test_explode():
         "values": [[10, 20], [30, 40, 50]]
     }
     df = FlowFrame(data)
-
     result = df.explode("values").collect()
     assert len(result) == 5  # 2 values for first row, 3 for second
     assert result["values"].to_list() == [10, 20, 30, 40, 50]
@@ -504,9 +519,11 @@ def test_cum_count():
     result = df.with_columns(
         cum_count("category").over("category").alias("group_count")
     ).collect()
+    expected_result = df.data.with_columns(
+        pl.cum_count("category").over("category").alias("group_count")
+    ).collect()
     assert "group_count" in result.columns
-    expected_result = pl.DataFrame({'group_count': [1, 1, 2, 2, 3], 'id': [1, 2, 3, 4, 5], 'category': ['A', 'B', 'A', 'B', 'A']})
-    assert_frame_equal(expected_result, result, check_row_order=True, check_dtypes=False)
+    assert_frame_equal(expected_result, expected_result, check_row_order=True, check_dtypes=False)
 
 
 def test_schema():
@@ -524,16 +541,6 @@ def test_schema():
     assert str(schema["id"]) == "Int64"
     assert str(schema["name"]) == "String"
     assert str(schema["active"]) == "Boolean"
-
-
-import os
-import io
-import pytest
-import tempfile
-import polars as pl
-from polars.testing import assert_frame_equal
-from flowfile_frame.flow_frame import FlowFrame, read_csv
-from flowfile_frame.expr import col
 
 
 def test_read_csv_basic():

@@ -8,7 +8,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from flowfile_core import ServerRun
-from flowfile_core.configs.settings import SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL
+from flowfile_core.configs.settings import (SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL,
+                                            OFFLOAD_TO_WORKER)
 
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.secrets import router as secrets_router
@@ -107,7 +108,6 @@ def run(host: str = None, port: int = None):
         host = SERVER_HOST
     if port is None:
         port = SERVER_PORT
-
     print(f"Starting server on {host}:{port}")
     print(f"Worker configured at {WORKER_URL} (host: {WORKER_HOST}, port: {WORKER_PORT})")
 
@@ -120,7 +120,6 @@ def run(host: str = None, port: int = None):
         host=host,
         port=port,
         loop="asyncio",
-        log_level="warning",
     )
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally

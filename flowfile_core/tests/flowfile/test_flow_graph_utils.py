@@ -100,7 +100,6 @@ def test_combine_flow_graphs_basic():
 
     graph2 = create_graph(flow_id=2)
     add_manual_input(graph2, [{"name": "jane"}], node_id=1)
-
     # Combine the graphs
     combined = combine_flow_graphs(graph1, graph2)
 
@@ -162,7 +161,6 @@ def test_combine_flow_graphs_with_filter():
     graph2.add_filter(filter_settings2)
     connection2 = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph2, connection2)
-
     # Combine the graphs
     combined = combine_flow_graphs(graph1, graph2)
 

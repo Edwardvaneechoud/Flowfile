@@ -39,11 +39,10 @@ def _extract_column_name(col_expr):
     if isinstance(col_expr, Column):
         # If it's a simple unaltered column, use its name
         if not col_expr._select_input.is_altered:
-            return col_expr.name, False
+            return col_expr.column_name, False
         # Otherwise, this requires polars code
         return col_expr, True
 
-    # Any other expression type needs polars code
     return col_expr, True
 
 

@@ -5,10 +5,10 @@ import os
 import tempfile
 import argparse
 
-from databases import DatabaseURL
 from passlib.context import CryptContext
 from starlette.config import Config
-from starlette.datastructures import Secret
+
+from flowfile_core.configs.utils import MutableBool
 
 
 # Constants for server and worker configuration
@@ -16,6 +16,9 @@ DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
 SINGLE_FILE_MODE: bool = os.environ.get("SINGLE_FILE_MODE", "0") == "1"
+
+
+OFFLOAD_TO_WORKER = MutableBool(True)
 
 
 def parse_args():
@@ -79,7 +82,6 @@ args = parse_args()
 SERVER_HOST = args.host if args.host is not None else DEFAULT_SERVER_HOST
 SERVER_PORT = args.port if args.port is not None else DEFAULT_SERVER_PORT
 WORKER_PORT = args.worker_port if args.worker_port is not None else int(os.getenv("WORKER_PORT", DEFAULT_WORKER_PORT))
-# Worker configuration
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
 config = Config(".env")

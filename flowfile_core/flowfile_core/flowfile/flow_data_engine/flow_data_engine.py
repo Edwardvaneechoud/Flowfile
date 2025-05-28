@@ -17,6 +17,7 @@ from pyarrow.parquet import ParquetFile
 # Local imports - Core
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
     input_schema,
     transform_schema as transform_schemas
@@ -29,7 +30,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
     convert_stats_to_column_info
 )
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import type_to_polars
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
@@ -109,7 +110,7 @@ class FlowDataEngine:
     # flow_id: int = None  # TODO: Implement flow_id
 
     def __init__(self,
-                 raw_data: Union[List[Dict], List[Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame] = None,
+                 raw_data: Union[List[Dict], List[Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
                  path_ref: str = None,
                  name: str = None,
                  optimize_memory: bool = True,
@@ -147,7 +148,10 @@ class FlowDataEngine:
 
     def _handle_raw_data(self, raw_data, number_of_records, optimize_memory):
         """Process different types of input data."""
-        if isinstance(raw_data, pl.DataFrame):
+
+        if isinstance(raw_data, input_schema.RawData):
+            self._handle_raw_data_format(raw_data)
+        elif isinstance(raw_data, pl.DataFrame):
             self._handle_polars_dataframe(raw_data, number_of_records)
         elif isinstance(raw_data, pl.LazyFrame):
             self._handle_polars_lazy_frame(raw_data, number_of_records, optimize_memory)
@@ -189,6 +193,20 @@ class FlowDataEngine:
         else:
             self.number_of_records = 1
             self.data_frame = pl.DataFrame([data])
+
+    def _handle_raw_data_format(self, raw_data: input_schema.RawData):
+        """Create a FlowDataEngine from a RawData object."""
+        flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in raw_data.columns)
+        polars_schema = pl.Schema([(flowfile_column.column_name, flowfile_column.get_polars_type().pl_datatype)
+                                   for flowfile_column in flowfile_schema])
+        try:
+            df = pl.DataFrame(raw_data.data, polars_schema)
+        except TypeError as e:
+            logger.warning(f"Could not parse the data with the schema:\n{e}")
+            df = pl.DataFrame(raw_data.data)
+        self.number_of_records = len(df)
+        self.data_frame = df.lazy()
+        self.lazy = True
 
     def _handle_list_input(self, data: List):
         """Handle list input."""
@@ -462,6 +480,9 @@ class FlowDataEngine:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
+    def to_dict(self) -> Dict[str, List]:
+        return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
+
     @classmethod
     def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowDataEngine":
         """Create a FlowDataEngine from an external data source."""
@@ -484,7 +505,7 @@ class FlowDataEngine:
         """Create a FlowDataEngine from a schema definition."""
         pl_schema = []
         for i, flow_file_column in enumerate(schema):
-            pl_schema.append((flow_file_column.name, type_to_polars(flow_file_column.data_type)))
+            pl_schema.append((flow_file_column.name, cast_str_to_polars_type(flow_file_column.data_type)))
             schema[i].col_index = i
         df = pl.LazyFrame(schema=pl_schema)
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
@@ -824,7 +845,7 @@ class FlowDataEngine:
         Returns:
             FlowDataEngine: New instance with sampled data
         """
-        n_records = min(n_rows, self.number_of_records)
+        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=True))
         logging.info(f'Getting sample of {n_rows} rows')
 
         if random:
@@ -1158,14 +1179,25 @@ class FlowDataEngine:
         self.number_of_records = 0
         self._lazy = True
 
-    def get_number_of_records(self, warn: bool = False, force_calculate: bool = False) -> int:
+    def _calculate_number_of_records_in_worker(self) -> int:
+        number_of_records = ExternalDfFetcher(
+            lf=self.data_frame,
+            operation_type="calculate_number_of_records",
+            flow_id=-1,
+            node_id=-1,
+            wait_on_completion=True
+        ).result
+        return number_of_records
+
+    def get_number_of_records(self, warn: bool = False, force_calculate: bool = False,
+                              calculate_in_worker_process: bool = False) -> int:
         """
         Get the total number of records in the DataFrame.
 
         Args:
             warn: Whether to warn about expensive operations
             force_calculate: Whether to force recalculation
-
+            calculate_in_worker_process: Whether to offload compute to the worker process
         Returns:
             int: Number of records
 
@@ -1174,22 +1206,24 @@ class FlowDataEngine:
         """
         if self.is_future and not self.is_collected:
             return -1
-
+        calculate_in_worker_process = False if not OFFLOAD_TO_WORKER.value else calculate_in_worker_process
         if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:
                 self._number_of_records_callback(self)
 
             if self.lazy:
-                if warn:
-                    logger.warning('Calculating the number of records this can be expensive on a lazy frame')
-                try:
-                    self.number_of_records = self.data_frame.select(pl.len()).collect(
-                        engine="streaming" if self._streamable else "auto")[0, 0]
-                except Exception:
-                    raise Exception('Could not get number of records')
+                if calculate_in_worker_process:
+                    self.number_of_records = self._calculate_number_of_records_in_worker()
+                else:
+                    if warn:
+                        logger.warning('Calculating the number of records this can be expensive on a lazy frame')
+                    try:
+                        self.number_of_records = self.data_frame.select(pl.len()).collect(
+                            engine="streaming" if self._streamable else "auto")[0, 0]
+                    except Exception:
+                        raise ValueError('Could not get number of records')
             else:
                 self.number_of_records = self.data_frame.__len__()
-
         return self.number_of_records
 
     # Properties
@@ -1518,4 +1552,7 @@ def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowD
         kwargs = {'input_df': flowfile_tables[0].data_frame}
     else:
         kwargs = {f'input_df_{i+1}': flowfile_table.data_frame for i, flowfile_table in enumerate(flowfile_tables)}
-    return FlowDataEngine(polars_executable(**kwargs))
+    df = polars_executable(**kwargs)
+    if isinstance(df, pl.DataFrame):
+        logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
+    return FlowDataEngine(df)

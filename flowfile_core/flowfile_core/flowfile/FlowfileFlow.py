@@ -15,7 +15,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import type_to_polars_str, FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                        pre_calculate_pivot_schema)
 from flowfile_core.utils.arrow_reader import get_read_top_n
@@ -25,7 +25,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.flowfile.utils import snake_case_to_camel_case, _handle_raw_data
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
@@ -34,7 +34,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
                                                                                                  ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
                                                                                                  ExternalDfFetcher)
-from flowfile_core.secrets.secrets import get_encrypted_secret, decrypt_secret
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
@@ -205,19 +205,12 @@ class FlowGraph:
         sample_size: int = 10000
 
         def analysis_preparation(flowfile_table: FlowDataEngine):
-            if flowfile_table.number_of_records < 0:
-
-                number_of_records = ExternalDfFetcher(
-                    lf=flowfile_table.data_frame,
-                    operation_type="calculate_number_of_records",
-                    flow_id=self.flow_id,
-                    node_id=node.node_id,
-                ).result
+            if flowfile_table.number_of_records <= 0:
+                number_of_records = flowfile_table.get_number_of_records(calculate_in_worker_process=True)
             else:
                 number_of_records = flowfile_table.number_of_records
             if number_of_records > sample_size:
                 flowfile_table = flowfile_table.get_sample(sample_size, random=True)
-
             external_sampler = ExternalDfFetcher(
                 lf=flowfile_table.data_frame,
                 file_ref="__gf_walker"+node.hash,
@@ -225,7 +218,7 @@ class FlowGraph:
                 node_id=node.node_id,
                 flow_id=self.flow_id,
             )
-            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref, 10000)
+            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref)
             return flowfile_table
 
         def schema_callback():
@@ -441,7 +434,7 @@ class FlowGraph:
     def add_formula(self, function_settings: input_schema.NodeFormula):
         error = ""
         if function_settings.function.field.data_type not in (None, "Auto"):
-            output_type = type_to_polars_str(function_settings.function.field.data_type)
+            output_type = cast_str_to_polars_type(function_settings.function.field.data_type)
         else:
             output_type = None
         if output_type not in (None, "Auto"):
@@ -486,7 +479,8 @@ class FlowGraph:
                            function=_func,
                            input_columns=[],
                            node_type='cross_join',
-                           setting_input=cross_join_settings)
+                           setting_input=cross_join_settings,
+                           input_node_ids=cross_join_settings.depending_on_ids)
         return self
 
     def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":
@@ -1044,11 +1038,10 @@ class FlowGraph:
         return self
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
-
         if isinstance(input_file, input_schema.NodeManualInput):
-            input_data = FlowDataEngine(input_file.raw_data)
+            _handle_raw_data(input_file)
+            input_data = FlowDataEngine(input_file.raw_data_format)
             ref = 'manual_input'
-
         else:
             input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = 'datasource'
@@ -1061,7 +1054,9 @@ class FlowGraph:
 
             if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
+
         else:
+            input_data.collect()
             node = FlowNode(input_file.node_id, function=input_data,
                             setting_input=input_file,
                             name=ref, node_type=ref, parent_uuid=self.uuid)
