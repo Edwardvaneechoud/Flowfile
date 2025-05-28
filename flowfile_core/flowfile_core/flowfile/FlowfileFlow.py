@@ -1047,7 +1047,6 @@ class FlowGraph:
             input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = 'datasource'
         node = self.get_node(input_file.node_id)
-        breakpoint()
         if node:
             node.node_type = ref
             node.name = ref
