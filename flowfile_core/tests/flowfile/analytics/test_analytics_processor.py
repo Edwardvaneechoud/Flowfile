@@ -509,3 +509,19 @@ def test_analytics_processor_from_parquet_file_run_performance():
     node_step = graph.get_node(2)
     assert node_step.results.analysis_data_generator, 'The node should have to run'
     assert node_step.results.analysis_data_generator().__len__() == 1000, 'There should be 1000 rows in the data'
+
+
+def test_analytics_processor_1m_rows_development_mode():
+    graph = create_graph()
+
+    add_node_promise_on_type(graph, 'read', 1, 1)
+    received_table = input_schema.ReceivedTable(file_type='parquet', name='Flights 1m.parquet',
+                                                path='~/Downloads/Flights 1m.parquet')
+    node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
+    graph.add_read(node_read)
+
+    add_node_promise_on_type(graph, 'explore_data', 2, 1)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    r = graph.run_graph()
+    assert r.success

@@ -844,7 +844,7 @@ class FlowDataEngine:
         Returns:
             FlowDataEngine: New instance with sampled data
         """
-        n_records = min(n_rows, self.number_of_records)
+        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=True))
         logging.info(f'Getting sample of {n_rows} rows')
 
         if random:
@@ -1178,14 +1178,25 @@ class FlowDataEngine:
         self.number_of_records = 0
         self._lazy = True
 
-    def get_number_of_records(self, warn: bool = False, force_calculate: bool = False) -> int:
+    def _calculate_number_of_records_in_worker(self) -> int:
+        number_of_records = ExternalDfFetcher(
+            lf=self.data_frame,
+            operation_type="calculate_number_of_records",
+            flow_id=-1,
+            node_id=-1,
+            wait_on_completion=True
+        ).result
+        return number_of_records
+
+    def get_number_of_records(self, warn: bool = False, force_calculate: bool = False,
+                              calculate_in_worker_process: bool = False) -> int:
         """
         Get the total number of records in the DataFrame.
 
         Args:
             warn: Whether to warn about expensive operations
             force_calculate: Whether to force recalculation
-
+            calculate_in_worker_process: Whether to offload compute to the worker process
         Returns:
             int: Number of records
 
@@ -1200,16 +1211,18 @@ class FlowDataEngine:
                 self._number_of_records_callback(self)
 
             if self.lazy:
-                if warn:
-                    logger.warning('Calculating the number of records this can be expensive on a lazy frame')
-                try:
-                    self.number_of_records = self.data_frame.select(pl.len()).collect(
-                        engine="streaming" if self._streamable else "auto")[0, 0]
-                except Exception:
-                    raise Exception('Could not get number of records')
+                if calculate_in_worker_process:
+                    self.number_of_records = self._calculate_number_of_records_in_worker()
+                else:
+                    if warn:
+                        logger.warning('Calculating the number of records this can be expensive on a lazy frame')
+                    try:
+                        self.number_of_records = self.data_frame.select(pl.len()).collect(
+                            engine="streaming" if self._streamable else "auto")[0, 0]
+                    except Exception:
+                        raise ValueError('Could not get number of records')
             else:
                 self.number_of_records = self.data_frame.__len__()
-
         return self.number_of_records
 
     # Properties

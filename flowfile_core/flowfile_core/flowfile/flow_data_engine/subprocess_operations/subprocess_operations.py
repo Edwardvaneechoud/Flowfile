@@ -190,7 +190,7 @@ class BaseFetcher:
                 logger.info('Already running the fetching')
                 return
 
-            sleep_time = 1
+            sleep_time = .5
             self.running = True
             while not self.stop_event.is_set():
                 try:
@@ -205,7 +205,8 @@ class BaseFetcher:
                             break
                         elif status.status == 'Unknown Error':
                             self._handle_error(-1,
-                                               'There was an unknown error with the process, and the process got killed by the server')
+                                               'There was an unknown error with the process, '
+                                               'and the process got killed by the server')
                             break
                     else:
                         self._handle_error(2, r.text)

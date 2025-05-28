@@ -61,7 +61,7 @@ class ReceivedTableBase(BaseModel):
             return self.path
 
     def set_absolute_filepath(self):
-        base_path = Path(self.path)
+        base_path = Path(self.path).expanduser()
         # Check if the path is relative, resolve it with the current working directory
         if not base_path.is_absolute():
             base_path = Path.cwd() / base_path
@@ -97,7 +97,7 @@ class ReceivedJsonTable(ReceivedCsvTable):
     pass
 
 
-class ReceivedParquetTable(BaseModel):
+class ReceivedParquetTable(ReceivedTableBase):
     file_type: str = 'parquet'
 
 

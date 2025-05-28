@@ -43,7 +43,6 @@ def json_default(val):
             return int(val)
         return float(val)
     else:
-        # breakpoint()
         raise Exception('Value is not serializable')
 
 

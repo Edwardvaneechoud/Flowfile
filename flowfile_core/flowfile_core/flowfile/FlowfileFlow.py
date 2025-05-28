@@ -205,27 +205,21 @@ class FlowGraph:
         sample_size: int = 10000
 
         def analysis_preparation(flowfile_table: FlowDataEngine):
-            if flowfile_table.number_of_records < 0:
-
-                number_of_records = ExternalDfFetcher(
-                    lf=flowfile_table.data_frame,
-                    operation_type="calculate_number_of_records",
-                    flow_id=self.flow_id,
-                    node_id=node.node_id,
-                ).result
+            if flowfile_table.number_of_records <= 0:
+                number_of_records = flowfile_table.get_number_of_records(calculate_in_worker_process=True)
             else:
                 number_of_records = flowfile_table.number_of_records
             if number_of_records > sample_size:
                 flowfile_table = flowfile_table.get_sample(sample_size, random=True)
-
             external_sampler = ExternalDfFetcher(
                 lf=flowfile_table.data_frame,
                 file_ref="__gf_walker"+node.hash,
-                wait_on_completion=True,
+                wait_on_completion=False,
                 node_id=node.node_id,
                 flow_id=self.flow_id,
             )
-            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref, 10000)
+
+            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref)
             return flowfile_table
 
         def schema_callback():
@@ -1053,6 +1047,7 @@ class FlowGraph:
             input_data = FlowDataEngine(path_ref=input_file.file_ref)
             ref = 'datasource'
         node = self.get_node(input_file.node_id)
+        breakpoint()
         if node:
             node.node_type = ref
             node.name = ref
