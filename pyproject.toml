@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.3.3.1"
+version = "0.3.3.2"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]

@@ -180,6 +180,11 @@ class TestExpressions:
         assert str(expr) == "pl.col('name').str.contains('a', literal=False)"
         assert expr.convertable_to_code
 
+        expr = col("order_date").str.to_date("%d/%m/%Y")
+        assert isinstance(expr, Expr)
+        assert str(expr) == "pl.col('order_date').str.to_date(format='%d/%m/%Y', strict=True, exact=True, cache=True)"
+        assert expr.convertable_to_code
+
         expr = col("name").str.starts_with("A")
         assert isinstance(expr, Expr)
         assert str(expr) == "pl.col('name').str.starts_with('A')"
