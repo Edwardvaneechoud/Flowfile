@@ -738,10 +738,9 @@ class FlowFrame:
         all_input_expr_objects: List[Expr] = []
         pure_polars_expr_strings_for_select: List[str] = []
         collected_raw_definitions: List[str] = []
-        selected_col_names_for_native: List[str] = []  # For native node
+        selected_col_names_for_native: List[transform_schema.SelectInput] = []  # For native node
 
         can_use_native_node = True
-
         if len(columns_iterable) == 1 and isinstance(columns_iterable[0], str) and columns_iterable[0] == '*':
             effective_columns_iterable = [col(c_name) for c_name in self.columns]
         else:
@@ -752,15 +751,14 @@ class FlowFrame:
 
             if isinstance(expr_input, str):
                 current_expr_obj = col(expr_input)
-                selected_col_names_for_native.append(expr_input)
+                selected_col_names_for_native.append(transform_schema.SelectInput(old_name=expr_input))
                 is_simple_col_for_native = True
-            elif isinstance(expr_input, Column) and not expr_input._select_input.is_altered:  # type: ignore
-                selected_col_names_for_native.append(expr_input.column_name)  # type: ignore
+            elif isinstance(expr_input, Column):
+                selected_col_names_for_native.append(expr_input.to_select_input())
                 is_simple_col_for_native = True
-            elif isinstance(expr_input, Selector):  # Selectors imply Polars code path
+            elif isinstance(expr_input, Selector):
                 can_use_native_node = False
-                # current_expr_obj = expr_input # Already an Expr-like via selector
-            elif not isinstance(expr_input, Expr):  # Includes Column
+            elif not isinstance(expr_input, Expr):
                 current_expr_obj = lit(expr_input)
 
             all_input_expr_objects.append(current_expr_obj)  # type: ignore
@@ -772,20 +770,19 @@ class FlowFrame:
                 collected_raw_definitions.append(raw_defs_str)
 
             if not is_simple_col_for_native and not isinstance(expr_input, Selector):
-                can_use_native_node = False  # Complex expressions require Polars code
+                can_use_native_node = False
         if collected_raw_definitions:  # Has to use Polars code if there are definitions
             can_use_native_node = False
         if can_use_native_node:
-            select_inputs_for_node = [transform_schema.SelectInput(old_name=name) for name in
-                                      selected_col_names_for_native]
             existing_cols = self.columns
+            selected_col_names = {select_col.old_name for select_col in selected_col_names_for_native}
             dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_cols if
-                               c not in selected_col_names_for_native]
-            select_inputs_for_node.extend(dropped_columns)
+                               c not in selected_col_names]
+            selected_col_names_for_native.extend(dropped_columns)
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
-                select_input=select_inputs_for_node,
+                select_input=selected_col_names_for_native,
                 keep_missing=False,
                 pos_x=200,
                 pos_y=100,

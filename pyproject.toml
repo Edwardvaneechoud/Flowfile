@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.3.3"
+version = "0.3.3.1"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -27,7 +27,10 @@ databases = "~0.9.0"
 passlib = "~1.7.4"
 pyarrow = "^18.0.0"
 python-multipart = "~0.0.12"
-polars = ">1.8.2,<=1.25.2"
+polars = [
+    { version = ">=1.8.2, <=1.25.2", markers = "sys_platform == 'win32'" }, # For Windows, max version 1.25.2 due to failing issues in greater versions
+    { version = ">=1.8.2, <2.0.0", markers = "sys_platform != 'win32'" }
+]
 methodtools = "~0.4.7"
 faker = "~23.1.0"
 XlsxWriter = "~3.2.0"
@@ -35,7 +38,7 @@ loky = "~3.4.1"
 fastexcel = "~0.12.0"
 openpyxl = "~3.1.2"
 polars-distance = "~0.4.3"
-polars-expr-transformer = ">0.4.7.0"
+polars-expr-transformer = ">=0.4.9.0"
 polars-grouper = "~0.3.0"
 polars-ds = ">=0.6.0"
 pyairbyte-flowfile = "0.20.2"
