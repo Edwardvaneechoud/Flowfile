@@ -126,6 +126,25 @@ class StringMethods:
         res_expr = self.expr.to_titlecase() if self.expr is not None else None
         return self._create_next_expr(method_name="to_titlecase", result_expr=res_expr, is_complex=True)
 
+    def to_date(self, format: str, *, strict: bool = True, exact: bool = True, cache: bool = True):
+        res_expr = self.expr.to_date(format, strict=strict, exact=exact, cache=cache) if self.expr is not None else None
+        return self._create_next_expr(method_name="to_date", result_expr=res_expr, is_complex=True,
+                                      format=format, strict=strict, exact=exact, cache=cache)
+
+    def to_datetime(self, format: str | None = None,
+                    *,
+                    time_unit: Literal["ns", "us", "ms"] | None = None,
+                    time_zone: str | None = None,
+                    strict: bool = True,
+                    exact: bool = True,
+                    cache: bool = True,
+                    ambiguous: Literal["earliest", "latest", "raise", "null"] | Expr = "raise",):
+        res_expr = self.expr.to_datetime(format, time_unit=time_unit, time_zone=time_zone, strict=strict,
+                                         exact=exact, cache=cache, ambiguous=ambiguous)
+        return self._create_next_expr(method_name="to_datetime", result_expr=res_expr, is_complex=True,
+                                      format=format, time_unit=time_unit, time_zone=time_zone, strict=strict,
+                                      exact=exact, cache=cache, ambiguous=ambiguous)
+
     def __getattr__(self, name):
         if self.expr is None or not hasattr(self.expr, name):
             if self.expr is None:
