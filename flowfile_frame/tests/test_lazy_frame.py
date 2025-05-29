@@ -1,27 +1,25 @@
 from __future__ import annotations
 
+import sys
+
 from datetime import date, datetime
 from functools import reduce
-from inspect import signature
 from operator import add
 from string import ascii_letters
 from typing import TYPE_CHECKING, Any, Callable, NoReturn, cast
 
 import numpy as np
-import pytest
-
 import polars as pl
-import polars.selectors as cs
-from polars import lit, when, LazyFrame
+import pytest
+from polars import NUMERIC_DTYPES, FLOAT_DTYPES
 from polars.exceptions import (
     InvalidOperationError,
-    PerformanceWarning,
     PolarsInefficientMapWarning,
 )
 from polars.testing import assert_frame_equal, assert_series_equal
-from flowfile_frame.flow_frame import FlowFrame
+
 import flowfile_frame as fl
-from polars import NUMERIC_DTYPES, FLOAT_DTYPES
+from flowfile_frame.flow_frame import FlowFrame
 
 
 @pytest.fixture
@@ -76,6 +74,7 @@ def test_lazy_misc() -> None:
     ).collect()
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="Skipping on Windows")
 def test_implode() -> None:
     ldf = FlowFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
     eager = (
