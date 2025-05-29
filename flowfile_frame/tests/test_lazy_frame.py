@@ -922,7 +922,7 @@ def test_tail(fruits_cars: FlowFrame) -> None:
 
 def test_last(fruits_cars: FlowFrame) -> None:
     result = fruits_cars.lazy().last().collect()
-    expected = fruits_cars.data.collect()[(len(fruits_cars.data.collect()) - 1) :, :]
+    expected = fruits_cars.data.collect()[(len(fruits_cars.data.collect()) - 1):, :]
     assert_frame_equal(result, expected)
 
 

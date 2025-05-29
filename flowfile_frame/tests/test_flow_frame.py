@@ -1,7 +1,3 @@
-import os
-import pytest
-import polars as pl
-from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame_methods import read_parquet, from_dict, concat
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.expr import col, lit, cum_count
@@ -16,6 +12,16 @@ from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame_methods import read_csv
 from flowfile_frame.expr import col
 
+@pytest.fixture
+def df():
+    data = {
+        "id": [1, 2, 3],
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [25, 30, 35],
+        "city": ["New York", "Los Angeles", "Chicago"]
+    }
+    return FlowFrame(data)
+
 
 def test_create_empty_flow_frame():
     """Test creating an empty FlowFrame."""
@@ -25,15 +31,8 @@ def test_create_empty_flow_frame():
     assert len(df.data.collect()) == 0
 
 
-def test_create_flow_frame_from_dict():
+def test_create_flow_frame_from_dict(df):
     """Test creating a FlowFrame from a dictionary."""
-    data = {
-        "id": [1, 2, 3],
-        "name": ["Alice", "Bob", "Charlie"],
-        "age": [25, 30, 35]
-    }
-    df = FlowFrame(data)
-
     # Check the instance
     assert isinstance(df, FlowFrame)
     assert isinstance(df.data, pl.LazyFrame)
@@ -41,7 +40,7 @@ def test_create_flow_frame_from_dict():
     # Check the data
     result = df.collect()
     assert len(result) == 3
-    assert result.columns == ["id", "name", "age"]
+    assert result.columns == ["id", "name", "age", "city"]
     assert result["name"][1] == "Bob"
 
 
@@ -66,26 +65,28 @@ def test_from_dict_factory():
     assert "Test data" in df.get_node_settings().setting_input.description
 
 
+def test_select_columns_with_node_conversion(df):
+    """
+    Test selecting columns from a FlowFrame. All these select statements should result in a node select, so no custom
+    polars code."""
 
-
-def test_select_columns():
-    """Test selecting columns from a FlowFrame."""
-    data = {
-        "id": [1, 2, 3],
-        "name": ["Alice", "Bob", "Charlie"],
-        "age": [25, 30, 35],
-        "city": ["New York", "Los Angeles", "Chicago"]
-    }
-    df = FlowFrame(data)
     result = df.select("id", "name")
     assert result.columns == ["id", "name"]
+    assert result.get_node_settings().node_type == 'select'
 
-    # Select with expressions
-    result = df.select(col("id"), col("name").alias("username")).collect()
+    result = df.select(col("id"), col("name").alias("username"))
     assert result.columns == ["id", "username"]
+    assert result.get_node_settings().node_type == 'select'
 
+    result = df.select("*")
+    assert result.columns  == df.columns
+    assert result.get_node_settings().node_type == 'select'
+
+
+def test_select_with_non_native_conversion(df):
     # Select with selector
-    result = df.select(sc.numeric()).collect()
+    result = df.select(sc.numeric())
+    assert result.get_node_settings().node_type != 'select'
     assert result.columns == ["id", "age"]
 
 
@@ -181,7 +182,6 @@ def test_with_row_index():
         "age": [25, 30, 35]
     }
     df = FlowFrame(data)
-
     # Add default index
     result = df.with_row_index().collect()
     assert "index" in result.columns
