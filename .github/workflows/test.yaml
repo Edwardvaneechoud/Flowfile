@@ -53,7 +53,6 @@ jobs:
           
           # Create the static directory if it doesn't exist
           mkdir -p ../flowfile/flowfile/web/static
-          touch ../flowfile/flowfile/web/__init__.py
 
           # Copy the built files to the Python package
           cp -r build/renderer/* ../flowfile/flowfile/web/static/
@@ -110,7 +109,6 @@ jobs:
           
           # Create the static directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path ../flowfile/flowfile/web/static | Out-Null
-          New-Item -ItemType File -Force -Path ../flowfile/flowfile/web/__init__.py | Out-Null
 
           # Copy the built files to the Python package
           Copy-Item -Path build/renderer/* -Destination ../flowfile/flowfile/web/static/ -Recurse -Force
