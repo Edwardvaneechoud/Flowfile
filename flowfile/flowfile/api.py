@@ -122,7 +122,6 @@ def build_server_command(module_name: str) -> List[str]:
                 "run",
                 "ui",
                 "--no-browser",
-                f"--port={FLOWFILE_PORT}",
             ]
             return command
         else:
@@ -137,7 +136,6 @@ def build_server_command(module_name: str) -> List[str]:
         "run",
         "ui",
         "--no-browser",
-        f"--port={FLOWFILE_PORT}",
     ]
 
     return command
@@ -166,7 +164,6 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
     if _server_process and _server_process.poll() is None:
         logger.warning("Server process object exists but API not responding. Attempting to restart.")
         stop_flowfile_server_process()
-
     # Build command automatically based on environment detection
     command = build_server_command(module_name)
     logger.info(f"Starting server with command: {' '.join(command)}")
@@ -349,7 +346,7 @@ def _cleanup_temporary_storage(temp_dir_obj: Optional[TemporaryDirectory]) -> No
 
 
 def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] = None,
-                         module_name: str = DEFAULT_MODULE_NAME) -> bool:
+                         module_name: str = DEFAULT_MODULE_NAME, automatically_open_browser: bool = True) -> bool:
     """
     Save the ETL graph, ensure the Flowfile server is running (starting it
     if necessary), import the graph via API, and open it in a new browser
@@ -361,7 +358,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
                           a temporary file is used.
         module_name: The module name to run if server needs to be started.
                     Use your Poetry package name if not using "flowfile".
-
+        automatically_open_browser: If True, attempts to open the flow in a browser tab
     Returns:
         True if the graph was successfully imported, False otherwise.
     """
@@ -385,7 +382,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
         flow_id = import_flow_to_editor(flow_file_path, auth_token)
 
         if flow_id is not None:
-            if flow_in_single_mode:
+            if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)
             return True
         else:

@@ -10,11 +10,11 @@ packages = [
     { include = "build_backends", from = "build_backends" },
     { include = "flowfile_frame", from = "flowfile_frame" },
     { include = "test_utils" },
-    { include = "flowfile" },
+    { include = "flowfile", from = "flowfile"},
 ]
 include = [
-    { path = "flowfile/web/static/**/*", format = "sdist" },
-    { path = "flowfile/web/static/**/*", format = "wheel" }
+    { path = "flowfile/flowfile/web/static/**/*", format = "sdist" },
+    { path = "flowfile/flowfile/web/static/**/*", format = "wheel" }
 ]
 
 [tool.poetry.dependencies]

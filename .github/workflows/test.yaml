@@ -60,6 +60,27 @@ jobs:
       - name: Stop Mock Database
         run: poetry run stop_postgres
 
+      - name: Build Vue app for web
+        run: |
+          cd flowfile_frontend
+          npm install
+          npm run build:web
+          
+          # Create the static directory if it doesn't exist
+          mkdir -p ../flowfile/flowfile/web/static
+          touch ../flowfile/flowfile/web/__init__.py
+
+          # Copy the built files to the Python package
+          cp -r build/renderer/* ../flowfile/flowfile/web/static/
+          echo "Contents of web/static directory:"
+          ls -la ../flowfile/flowfile/web/static/
+
+      - name: Run pytest for flowfile
+        shell: pwsh
+        run: poetry run pytest flowfile/tests --disable-warnings
+
+
+
   backend-tests-windows:
     runs-on: windows-latest
     steps:
@@ -101,6 +122,28 @@ jobs:
       - name: Stop Mock Database
         shell: pwsh
         run: poetry run stop_postgres
+
+      - name: Build Vue app for web
+        shell: pwsh
+        run: |
+          cd flowfile_frontend
+          npm install
+          npm run build:web
+          
+          # Create the static directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path ../flowfile/flowfile/web/static | Out-Null
+          New-Item -ItemType File -Force -Path ../flowfile/flowfile/web/__init__.py | Out-Null
+
+          # Copy the built files to the Python package
+          Copy-Item -Path build/renderer/* -Destination ../flowfile/flowfile/web/static/ -Recurse -Force
+          Write-Host "Contents of web/static directory:"
+          Get-ChildItem -Path ../flowfile/flowfile/web/static/
+
+      - name: Run pytest for flowfile
+        shell: pwsh
+        run: poetry run pytest flowfile/tests --disable-warnings
+
+
 
   test-web:
     runs-on: ubuntu-latest
