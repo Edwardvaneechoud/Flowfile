@@ -232,6 +232,8 @@ class TestFlowfileAPI:
         if execution_complete:
             assert output_path.exists()
 
+        ensure_folder_empty('supporting_files')
+
 
 if __name__ == "__main__":
     # Run tests with pytest
