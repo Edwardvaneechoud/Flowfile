@@ -1,4 +1,5 @@
 # flowfile/api.py
+
 import uuid
 import time
 import os
@@ -9,6 +10,7 @@ import atexit
 import logging
 import webbrowser
 import shutil
+import platform
 
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, Tuple, List
@@ -47,19 +49,53 @@ def stop_flowfile_server_process() -> None:
     global _server_process
     if _server_process and _server_process.poll() is None:
         logger.info(f"Stopping managed Flowfile server process (PID: {_server_process.pid})...")
-        _server_process.terminate()
-        try:
-            _server_process.wait(timeout=5)
-            logger.info("Server process terminated gracefully.")
-        except subprocess.TimeoutExpired:
-            logger.warning("Server process did not terminate gracefully, killing...")
-            _server_process.kill()
-            _server_process.wait()
-            logger.info("Server process killed.")
-        except Exception as e:
-            logger.error(f"Error during server process termination: {e}")
-        finally:
-            _server_process = None
+
+        # Windows-specific handling
+        if platform.system() == "Windows":
+            try:
+                # On Windows, use subprocess to kill the process tree
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(_server_process.pid)],
+                    capture_output=True,
+                    check=False
+                )
+                logger.info("Server process terminated (Windows).")
+            except Exception as e:
+                logger.error(f"Error during Windows process termination: {e}")
+                # Fallback to standard terminate/kill
+                try:
+                    _server_process.terminate()
+                    _server_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    _server_process.kill()
+                    _server_process.wait()
+        else:
+            # Unix-like systems
+            try:
+                # Try SIGTERM first
+                _server_process.terminate()
+                _server_process.wait(timeout=5)
+                logger.info("Server process terminated gracefully.")
+            except subprocess.TimeoutExpired:
+                logger.warning("Server process did not terminate gracefully, killing...")
+                _server_process.kill()
+                _server_process.wait()
+                logger.info("Server process killed.")
+            except Exception as e:
+                logger.error(f"Error during server process termination: {e}")
+
+        _server_process = None
+
+        # Wait for the port to be released
+        max_wait = 10
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            if not is_flowfile_running():
+                break
+            time.sleep(0.5)
+
+        if is_flowfile_running():
+            logger.warning("Server may still be running after termination attempt")
 
 
 def is_poetry_environment() -> bool:
@@ -90,10 +126,13 @@ def is_poetry_environment() -> bool:
     for parent in [cwd, *cwd.parents]:
         pyproject = parent / "pyproject.toml"
         if pyproject.exists():
-            with open(pyproject, "r") as f:
-                content = f.read()
-                if "[tool.poetry]" in content:
-                    return True
+            try:
+                with open(pyproject, "r") as f:
+                    content = f.read()
+                    if "[tool.poetry]" in content:
+                        return True
+            except Exception:
+                pass
 
     return False
 
@@ -142,9 +181,12 @@ def build_server_command(module_name: str) -> List[str]:
 
 
 def check_if_in_single_mode() -> bool:
-    response: requests.Response = requests.get(f"{FLOWFILE_BASE_URL}/single_mode", timeout=1)
-    if response.ok:
-        return response.json() == "1"
+    try:
+        response: requests.Response = requests.get(f"{FLOWFILE_BASE_URL}/single_mode", timeout=1)
+        if response.ok:
+            return response.json() == "1"
+    except Exception:
+        pass
     return False
 
 
@@ -154,8 +196,8 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
     Automatically detects and uses Poetry if in a Poetry environment.
 
     Parameters:
-        module_name: The module name to run. Defaults to the value from environment
-                    variable or "flowfile".
+    module_name: The module name to run. Defaults to the value from environment
+                 variable or "flowfile".
     """
     global _server_process
     if is_flowfile_running():
@@ -164,16 +206,28 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
     if _server_process and _server_process.poll() is None:
         logger.warning("Server process object exists but API not responding. Attempting to restart.")
         stop_flowfile_server_process()
+
     # Build command automatically based on environment detection
     command = build_server_command(module_name)
     logger.info(f"Starting server with command: {' '.join(command)}")
 
     try:
-        _server_process = Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        # Windows-specific subprocess creation
+        if platform.system() == "Windows":
+            # Use CREATE_NEW_PROCESS_GROUP flag on Windows
+            _server_process = Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            _server_process = Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+
         logger.info(f"Started server process with PID: {_server_process.pid}")
 
         atexit.register(stop_flowfile_server_process)
@@ -198,11 +252,8 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
                     logger.error(f"Server process stderr:\n{stderr_output[:1000]}...")
                 except Exception as read_err:
                     logger.error(f"Could not read stderr from server process: {read_err}")
-                    stop_flowfile_server_process()
-                    return False, check_if_in_single_mode()
-            else:
-                stop_flowfile_server_process()
-                return False, check_if_in_single_mode()
+            stop_flowfile_server_process()
+            return False, check_if_in_single_mode()
 
     except FileNotFoundError:
         logger.error(f"Error: Could not execute command: '{' '.join(command)}'.")
@@ -283,7 +334,7 @@ def import_flow_to_editor(flow_path: Path, auth_token: str) -> Optional[int]:
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to import flow: {e}")
-        if e.response is not None:
+        if hasattr(e, 'response') and e.response is not None:
             logger.error(f"Server response: {e.response.status_code} - {e.response.text[:500]}")
         return None
     except Exception as e:
@@ -353,14 +404,14 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
     tab if running in unified mode.
 
     Parameters:
-        flow_graph: The FlowGraph object to save and open.
-        storage_location: Optional path to save the .flowfile. If None,
-                          a temporary file is used.
-        module_name: The module name to run if server needs to be started.
-                    Use your Poetry package name if not using "flowfile".
-        automatically_open_browser: If True, attempts to open the flow in a browser tab
+    flow_graph: The FlowGraph object to save and open.
+    storage_location: Optional path to save the .flowfile. If None,
+                     a temporary file is used.
+    module_name: The module name to run if server needs to be started.
+                Use your Poetry package name if not using "flowfile".
+    automatically_open_browser: If True, attempts to open the flow in a browser tab
     Returns:
-        True if the graph was successfully imported, False otherwise.
+    True if the graph was successfully imported, False otherwise.
     """
     temp_dir_obj: Optional[TemporaryDirectory] = None
     try:
