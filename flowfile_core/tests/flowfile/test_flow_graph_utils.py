@@ -3,7 +3,7 @@ from pathlib import Path
 from copy import deepcopy
 
 from flowfile_core.schemas import input_schema, transform_schema, schemas
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import (
     combine_flow_graphs,
     _validate_input,
@@ -42,7 +42,7 @@ def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flo
 
 
 def handle_run_info(run_info):
-    from flowfile_core.flowfile.FlowfileFlow import RunInformation
+    from flowfile_core.flowfile.flow_graph import RunInformation
     if not run_info.success:
         errors = 'errors:'
         for node_step in run_info.node_step_result:

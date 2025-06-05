@@ -10,7 +10,7 @@ from flowfile_frame.lazy_methods import add_lazyframe_methods
 
 from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
 from collections.abc import Iterator
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode

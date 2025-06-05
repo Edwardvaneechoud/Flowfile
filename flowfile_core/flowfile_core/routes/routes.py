@@ -22,7 +22,7 @@ from flowfile_core.fileExplorer.funcs import (
     FileInfo,
     get_files_from_directory
 )
-from flowfile_core.flowfile.FlowfileFlow import add_connection, delete_connection
+from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.extensions import get_instant_func_results
 # Flow handling

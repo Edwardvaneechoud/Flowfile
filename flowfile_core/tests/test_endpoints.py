@@ -8,7 +8,7 @@ from time import sleep
 from typing import Dict
 
 from flowfile_core import main
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.routes.routes import (add_node,
                                          flow_file_handler,
                                          input_schema,
