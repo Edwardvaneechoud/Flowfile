@@ -16,7 +16,7 @@ os.environ['WORKER_PORT'] = "63578"
 os.environ['SINGLE_FILE_MODE'] = "1"
 
 from flowfile.web import start_server as start_web_ui
-from flowfile.api import open_graph_in_editor
+from flowfile.api import (open_graph_in_editor)
 from flowfile_frame.flow_frame import (
     FlowFrame
 )

@@ -60,7 +60,7 @@ import flowfile
 flowfile.start_web_ui()
 
 # Or customize
-flowfile.start_web_ui(host="0.0.0.0", port=8080, open_browser=False)
+flowfile.start_web_ui(open_browser=False)
 ```
 
 ### Using the FlowFrame API

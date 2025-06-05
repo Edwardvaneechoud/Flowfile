@@ -136,7 +136,10 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     # Import core app
     from flowfile_core.main import run, app as core_app
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
+    if host != '127.0.0.1':
+        raise NotImplementedError("Other then local host is not supported")
+    if port != 63578:
+        raise NotImplementedError("Service must run on port 63578")
     OFFLOAD_TO_WORKER.value = True
 
     # Extend the core app with web UI routes and worker functionality
