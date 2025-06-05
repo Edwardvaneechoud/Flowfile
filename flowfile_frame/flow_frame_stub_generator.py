@@ -214,7 +214,7 @@ def generate_improved_type_stub(
         "",
         "# Local application/library specific imports",
         "import flowfile_frame",
-        "from flowfile_core.flowfile.FlowfileFlow import FlowGraph",
+        "from flowfile_core.flowfile.flow_graph import FlowGraph",
         "from flowfile_core.flowfile.flow_node.flow_node import FlowNode",
         "from flowfile_frame import group_frame",
         "from flowfile_frame.expr import Expr",
