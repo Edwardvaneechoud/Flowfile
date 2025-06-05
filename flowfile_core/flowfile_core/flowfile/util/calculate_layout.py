@@ -5,7 +5,7 @@ from typing import List, Dict, Set, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     # Make sure this import path is correct for your project structure
-    from flowfile_core.flowfile.FlowfileFlow import FlowGraph
+    from flowfile_core.flowfile.flow_graph import FlowGraph
 
 
 def calculate_layered_layout(
