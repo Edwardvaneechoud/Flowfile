@@ -3,7 +3,6 @@ import pickle
 import polars as pl
 import fastexcel
 import copy
-
 from fastapi.exceptions import HTTPException
 from time import time
 from functools import partial
