@@ -29,7 +29,6 @@ def find_parent_directory(target_dir_name, start_path=None):
     while current_path != current_path.parent:
         if current_path.name == target_dir_name:
             return current_path
-
         if current_path.name == target_dir_name:
             return current_path
         current_path = current_path.parent
@@ -1402,9 +1401,9 @@ def test_parquet_read():
     """Test reading parquet files"""
     flow = create_basic_flow()
     os.getcwd()
-    flowfile_core_path = find_parent_directory('flowfile_core')
+    flowfile_core_path = find_parent_directory('Flowfile')
 
-    file_path = str((Path(flowfile_core_path) / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'))
+    file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'))
     # Add parquet read node
     read_node = input_schema.NodeRead(
         flow_id=1,
@@ -1428,9 +1427,9 @@ def test_parquet_read():
 def test_excel_read():
     """Test reading Excel files"""
     flow = create_basic_flow()
-    flowfile_core_path = find_parent_directory('flowfile_core')
+    flowfile_core_path = find_parent_directory('Flowfile')
 
-    file_path = str((Path(flowfile_core_path) / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx'))
+    file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx'))
 
     # Add Excel read node
     read_node = input_schema.NodeRead(
