@@ -61,17 +61,16 @@ class FlowGraphToPolarsConverter:
         """Generate Polars code for a specific node."""
         node_type = node.node_type
         settings = node.setting_input
-        breakpoint()
         # Skip placeholder nodes
         if isinstance(settings, input_schema.NodePromise):
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
             return
-
         # Create variable name for this node's output
         var_name = f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
         self.handle_output_node(node, var_name)
-        self.last_node_var = var_name
+        if node.node_template.output>0:
+            self.last_node_var = var_name
         # Get input variable names
         input_vars = self._get_input_vars(node)
         # Route to appropriate handler based on node type
@@ -80,7 +79,7 @@ class FlowGraphToPolarsConverter:
             handler(settings, var_name, input_vars)
         else:
             self._add_comment(f"# TODO: Implement handler for node type: {node_type}")
-            logger.warning(f"No handler implemented for node type: {node_type}")
+            raise Exception(f"No handler implemented for node type: {node_type}")
 
     def _get_input_vars(self, node: FlowNode) -> Dict[str, str]:
         """Get input variable names for a node."""
@@ -115,7 +114,7 @@ class FlowGraphToPolarsConverter:
 
         if file_settings.file_type == 'csv':
             self._add_code(f"{var_name} = pl.read_csv(")
-            self._add_code(f'    "{file_settings.file_path}",')
+            self._add_code(f'    "{file_settings.abs_file_path}",')
             self._add_code(f'    separator="{file_settings.delimiter}",')
             self._add_code(f'    has_header={file_settings.has_headers},')
             if file_settings.encoding:
@@ -124,11 +123,11 @@ class FlowGraphToPolarsConverter:
             self._add_code(")")
 
         elif file_settings.file_type == 'parquet':
-            self._add_code(f'{var_name} = pl.read_parquet("{file_settings.file_path}")')
+            self._add_code(f'{var_name} = pl.read_parquet("{file_settings.abs_file_path}")')
 
         elif file_settings.file_type in ('xlsx', 'excel'):
             self._add_code(f"{var_name} = pl.read_excel(")
-            self._add_code(f'    "{file_settings.file_path}",')
+            self._add_code(f'    "{file_settings.abs_file_path}",')
             if file_settings.sheet_name:
                 self._add_code(f'    sheet_name="{file_settings.sheet_name}",')
             self._add_code(")")
@@ -184,6 +183,21 @@ class FlowGraphToPolarsConverter:
             filter_expr = self._create_basic_filter_expr(basic)
             self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
         self._add_code("")
+
+    def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: Dict[str, str]):
+        input_df = input_vars.get('main', 'df')
+        self._add_code(f"{var_name} = {input_df}.select(pl.len().alias('number_of_records'))")
+
+    def _handle_graph_solver(self, settings: input_schema.NodeGraphSolver, var_name: str, input_vars: Dict[str, str]):
+        input_df = input_vars.get('main', 'df')
+        from_col_name = settings.graph_solver_input.col_from
+        to_col_name = settings.graph_solver_input.col_to
+        output_col_name = settings.graph_solver_input.output_column_name
+        self._add_code(f'{var_name} = {input_df}.with_columns(graph_solver(pl.col("{from_col_name}"), '
+                       f'pl.col("{to_col_name}"))'
+                       f'.alias("{output_col_name}"))')
+        self._add_code("")
+        self.imports.add("from polars_grouper import graph_solver")
 
     def _handle_select(self, settings: input_schema.NodeSelect, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle select/rename nodes."""
@@ -267,25 +281,44 @@ class FlowGraphToPolarsConverter:
         self._add_code("])")
         self._add_code("")
 
+    def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
+        pivot_input = settings.pivot_input
+
+        self._add_code(f'{var_name} = ({input_df}')
+        self._add_code('    .with_columns(pl.lit(1).alias("__temp_index__"))')
+        self._add_code('    .pivot(')
+        self._add_code(f'        values="{pivot_input.value_col}",')
+        self._add_code(f'        index=["__temp_index__"],')
+        self._add_code(f'        columns="{pivot_input.pivot_column}",')
+        self._add_code(f'        aggregate_function="{agg_func}"')
+        self._add_code("    )")
+        self._add_code('    .drop("__temp_index__")')
+        self._add_code(")")
+        self._add_code("")
+
     def _handle_pivot(self, settings: input_schema.NodePivot, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle pivot nodes."""
         input_df = input_vars.get('main', 'df')
         pivot_input = settings.pivot_input
-
-        # Generate pivot code
-        self._add_code(f"{var_name} = {input_df}.pivot(")
-        self._add_code(f"    values='{pivot_input.value_col}',")
-        self._add_code(f"    index={pivot_input.index_columns},")
-        self._add_code(f"    columns='{pivot_input.pivot_column}',")
-
         if len(pivot_input.aggregations) > 1:
             logger.error("Multiple aggregations are not convertable to polars code. "
                          "Taking the first value")
         if len(pivot_input.aggregations) > 0:
             agg_func = pivot_input.aggregations[0]
+        else:
+            agg_func = 'first'
+        if len(settings.pivot_input.index_columns) == 0:
+            self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
+        else:
+            # Generate pivot code
+            self._add_code(f"{var_name} = {input_df}.pivot(")
+            self._add_code(f"    values='{pivot_input.value_col}',")
+            self._add_code(f"    index={pivot_input.index_columns},")
+            self._add_code(f"    columns='{pivot_input.pivot_column}',")
+
             self._add_code(f"    aggregate_function='{agg_func}'")
-        self._add_code(")")
-        self._add_code("")
+            self._add_code(")")
+            self._add_code("")
 
     def _handle_unpivot(self, settings: input_schema.NodeUnpivot, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle unpivot nodes."""
@@ -345,7 +378,7 @@ class FlowGraphToPolarsConverter:
     def _handle_sample(self, settings: input_schema.NodeSample, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle sample nodes."""
         input_df = input_vars.get('main', 'df')
-        self._add_code(f"{var_name} = {input_df}.sample(n={settings.sample_size})")
+        self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
         self._add_code("")
 
     def _handle_unique(self, settings: input_schema.NodeUnique, var_name: str, input_vars: Dict[str, str]) -> None:
@@ -373,18 +406,26 @@ class FlowGraphToPolarsConverter:
 
         self._add_code(f"{var_name} = {input_df}.with_columns({split_expr}).explode('{explode_col}')")
         self._add_code("")
-
+    # .with_columns(
+    #     (pl.cum_count(record_id_settings.output_column_name)
+    #      .over(record_id_settings.group_by_columns) + record_id_settings.offset - 1)
+    #     .alias(record_id_settings.output_column_name)
+    # )
     def _handle_record_id(self, settings: input_schema.NodeRecordId, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle record ID nodes."""
         input_df = input_vars.get('main', 'df')
         record_input = settings.record_id_input
-
         if record_input.group_by and record_input.group_by_columns:
+
             # Row number within groups
-            self._add_code(f"{var_name} = {input_df}.with_columns([")
-            self._add_code(f"    pl.col('*').cumcount().over({record_input.group_by_columns}) + {record_input.offset}")
+            self._add_code(f"{var_name} = ({input_df}")
+            self._add_code(f"    .with_columns(pl.lit(1).alias('{record_input.output_column_name}'))")
+            self._add_code(f"    .with_columns([")
+            self._add_code(f"    (pl.cum_count('{record_input.output_column_name}').over({record_input.group_by_columns}) + {record_input.offset} - 1)")
             self._add_code(f"    .alias('{record_input.output_column_name}')")
             self._add_code("])")
+            self._add_code(f".select(['{record_input.output_column_name}'] + [col for col in {input_df}.columns if col != '{record_input.output_column_name}'])")
+            self._add_code(")")
         else:
             # Simple row number
             self._add_code(f"{var_name} = {input_df}.with_row_count(name='{record_input.output_column_name}', offset={record_input.offset})")
