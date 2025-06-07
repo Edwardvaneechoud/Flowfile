@@ -5,7 +5,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
 from polars import datatypes
 import polars as pl
-
+# TODO: rename flow_file_column to flowfile_column
 DataTypeGroup = Literal['numeric', 'str', 'date']
 
 

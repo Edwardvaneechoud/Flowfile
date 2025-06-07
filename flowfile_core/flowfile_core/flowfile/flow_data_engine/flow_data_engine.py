@@ -200,7 +200,7 @@ class FlowDataEngine:
         polars_schema = pl.Schema([(flowfile_column.column_name, flowfile_column.get_polars_type().pl_datatype)
                                    for flowfile_column in flowfile_schema])
         try:
-            df = pl.DataFrame(raw_data.data, polars_schema)
+            df = pl.DataFrame(raw_data.data, polars_schema, strict=False)
         except TypeError as e:
             logger.warning(f"Could not parse the data with the schema:\n{e}")
             df = pl.DataFrame(raw_data.data)
