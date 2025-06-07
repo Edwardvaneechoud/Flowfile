@@ -23,6 +23,7 @@ from flowfile_core.fileExplorer.funcs import (
     get_files_from_directory
 )
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
+from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.extensions import get_instant_func_results
 # Flow handling
@@ -360,6 +361,15 @@ def get_flow(flow_id: int):
     flow_id = int(flow_id)
     result = get_flow_settings(flow_id)
     return result
+
+
+@router.get("/editor/code_to_polars", tags=[], response_model=str)
+def get_generated_code(flow_id: int) -> str:
+    flow_id = int(flow_id)
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'could not find the flow')
+    return export_flow_to_polars(flow)
 
 
 @router.post('/editor/create_flow/', tags=['editor'])

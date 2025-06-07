@@ -701,6 +701,17 @@ def test_remove_secret():
     assert created_secret is None, 'Secret not deleted'
 
 
+def test_editor_code_to_polars():
+    flow_id = create_flow_with_manual_input_and_select()
+    v = client.get('/editor/code_to_polars', params={"flow_id": flow_id})
+    assert v.status_code == 200, "Request should be successful"
+    exec_globals = {}
+    exec(v.json(), exec_globals)
+    result = exec_globals['run_etl_pipeline']()
+    assert len(result) == 4, "Length of result should be 4"
+    assert result.columns == ['name'], "Colum name should name"
+
+
 def test_copy_node_not_run():
     flow_id = create_flow_with_manual_input_and_select()
     flow = flow_file_handler.get_flow(flow_id)
