@@ -98,7 +98,7 @@ def test_filter():
         "age": [25, 30, 35, 40, 45]
     }
     df = FlowFrame(data)
-
+    breakpoint()
     # Filter with expression
     result = df.filter(col("age") > 30).collect()
     assert len(result) == 3
