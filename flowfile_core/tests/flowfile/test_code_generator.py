@@ -25,9 +25,11 @@ def create_flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
 def find_parent_directory(target_dir_name, start_path=None):
     """Navigate up directories until finding the target directory"""
     current_path = Path(start_path) if start_path else Path.cwd()
-    raise Exception(start_path)
 
-    while current_path != current_path.parent:  # Stop at root
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+
         if current_path.name == target_dir_name:
             return current_path
         current_path = current_path.parent
