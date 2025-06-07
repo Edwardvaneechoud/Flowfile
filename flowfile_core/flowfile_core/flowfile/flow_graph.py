@@ -702,6 +702,8 @@ class FlowGraph:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
+        if len(input_node_ids) == 1:
+            add_connection(self, input_schema.NodeConnection.create_from_simple_input(input_node_ids[0], node_id))
 
     def add_include_cols(self, include_columns: List[str]):
         for column in include_columns:

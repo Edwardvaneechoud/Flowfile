@@ -2,7 +2,8 @@ from typing import List, Dict, Optional, Set, Tuple, Any
 from collections import defaultdict
 import polars as pl
 
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.schemas import input_schema, transform_schema
@@ -16,12 +17,20 @@ class FlowGraphToPolarsConverter:
     This class takes a FlowGraph instance and generates standalone Python code
     that uses only Polars, without any Flowfile dependencies.
     """
+    flow_graph: FlowGraph
+    node_var_mapping: Dict[int, str]
+    imports: Set[str]
+    code_lines: List[str]
+    output_nodes: List[Tuple[int, str]] = []
+    last_node_var: Optional[str] = None
 
     def __init__(self, flow_graph: FlowGraph):
         self.flow_graph = flow_graph
         self.node_var_mapping: Dict[int, str] = {}  # Maps node_id to variable name
         self.imports: Set[str] = {"import polars as pl"}
         self.code_lines: List[str] = []
+        self.output_nodes = []
+        self.last_node_var = None
 
     def convert(self) -> str:
         """
@@ -43,11 +52,16 @@ class FlowGraphToPolarsConverter:
         # Combine everything
         return self._build_final_code()
 
+    def handle_output_node(self, node: FlowNode, var_name: str) -> None:
+        settings = node.setting_input
+        if hasattr(settings, 'is_flow_output') and settings.is_flow_output:
+            self.output_nodes.append((node.node_id, var_name))
+
     def _generate_node_code(self, node: FlowNode) -> None:
         """Generate Polars code for a specific node."""
         node_type = node.node_type
         settings = node.setting_input
-
+        breakpoint()
         # Skip placeholder nodes
         if isinstance(settings, input_schema.NodePromise):
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
@@ -56,10 +70,10 @@ class FlowGraphToPolarsConverter:
         # Create variable name for this node's output
         var_name = f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
-
+        self.handle_output_node(node, var_name)
+        self.last_node_var = var_name
         # Get input variable names
         input_vars = self._get_input_vars(node)
-
         # Route to appropriate handler based on node type
         handler = getattr(self, f"_handle_{node_type}", None)
         if handler:
@@ -121,16 +135,37 @@ class FlowGraphToPolarsConverter:
 
         self._add_code("")
 
+    @staticmethod
+    def _generate_pl_schema_with_typing(flowfile_schema: List[FlowfileColumn]) -> str:
+        polars_schema_str = "pl.Schema([" + ", ".join(f'("{flowfile_column.column_name}", pl.{flowfile_column.data_type})'
+                                   for flowfile_column in flowfile_schema) + "])"
+        return polars_schema_str
+
+    def get_manual_schema_input(self, flowfile_schema: List[FlowfileColumn]) -> str:
+        polars_schema_str = self._generate_pl_schema_with_typing(flowfile_schema)
+        is_valid_pl_schema = self._validate_pl_schema(polars_schema_str)
+        if is_valid_pl_schema:
+            return polars_schema_str
+        else:
+            return "[" + ", ".join([f'"{c.name}"' for c in flowfile_schema]) + "]"
+
+    @staticmethod
+    def _validate_pl_schema(pl_schema_str: str) -> bool:
+        try:
+            _globals = {"pl": pl}
+            eval(pl_schema_str, _globals)
+            return True
+        except Exception as e:
+            logger.error(f"Invalid Polars schema: {e}")
+            return False
+
     def _handle_manual_input(self, settings: input_schema.NodeManualInput, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle manual data input nodes."""
         if settings.raw_data_format:
             data = settings.raw_data_format.data
-            columns = [col.name for col in settings.raw_data_format.columns]
-
-            self._add_code(f"{var_name} = pl.DataFrame({{")
-            for i, col in enumerate(columns):
-                self._add_code(f'    "{col}": {data[i]},')
-            self._add_code("})")
+            flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns)
+            schema = self.get_manual_schema_input(flowfile_schema)
+            self._add_code(f"{var_name} = pl.DataFrame({data}, schema={schema}, strict=False)")
         else:
             self._add_code(f"{var_name} = pl.DataFrame({settings.raw_data})")
         self._add_code("")
@@ -153,7 +188,6 @@ class FlowGraphToPolarsConverter:
     def _handle_select(self, settings: input_schema.NodeSelect, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle select/rename nodes."""
         input_df = input_vars.get('main', 'df')
-
         # Get columns to keep and renames
         select_exprs = []
         for select_input in settings.select_input:
@@ -163,7 +197,7 @@ class FlowGraphToPolarsConverter:
                 else:
                     expr = f'pl.col("{select_input.old_name}")'
 
-                if select_input.data_type_change and select_input.data_type:
+                if (select_input.data_type_change or select_input.is_altered) and select_input.data_type:
                     polars_dtype = self._get_polars_dtype(select_input.data_type)
                     expr = f'{expr}.cast({polars_dtype})'
 
@@ -220,16 +254,16 @@ class FlowGraphToPolarsConverter:
     def _handle_formula(self, settings: input_schema.NodeFormula, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle formula/expression nodes."""
         input_df = input_vars.get('main', 'df')
+        self.imports.add("from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr")
 
         # Convert SQL-like formula to Polars expression
         formula = settings.function.function
         col_name = settings.function.field.name
-
         # This is a simplified version - you'd need more sophisticated parsing
-        polars_expr = self._sql_to_polars_expr(formula)
+        from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr
 
         self._add_code(f"{var_name} = {input_df}.with_columns([")
-        self._add_code(f'    ({polars_expr}).alias("{col_name}")')
+        self._add_code(f'simple_function_to_expr("{formula}").alias("{col_name}")')
         self._add_code("])")
         self._add_code("")
 
@@ -244,11 +278,12 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"    index={pivot_input.index_columns},")
         self._add_code(f"    columns='{pivot_input.pivot_column}',")
 
-        # Add aggregation function
-        if pivot_input.aggregations:
-            agg_func = pivot_input.aggregations[0]  # Use first aggregation
+        if len(pivot_input.aggregations) > 1:
+            logger.error("Multiple aggregations are not convertable to polars code. "
+                         "Taking the first value")
+        if len(pivot_input.aggregations) > 0:
+            agg_func = pivot_input.aggregations[0]
             self._add_code(f"    aggregate_function='{agg_func}'")
-
         self._add_code(")")
         self._add_code("")
 
@@ -388,7 +423,6 @@ class FlowGraphToPolarsConverter:
     def _handle_polars_code(self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle custom Polars code nodes."""
         code = settings.polars_code_input.polars_code.strip()
-
         # Determine function parameters based on number of inputs
         if len(input_vars) == 0:
             params = ""
@@ -558,6 +592,24 @@ class FlowGraphToPolarsConverter:
 
         return result
 
+    def add_return_code(self, lines: List[str]) -> None:
+        if self.output_nodes:
+            # Return marked output nodes
+            if len(self.output_nodes) == 1:
+                # Single output
+                _, var_name = self.output_nodes[0]
+                lines.append(f"    return {var_name}")
+            else:
+                # Multiple outputs - return as dictionary
+                lines.append("    return {")
+                for node_id, var_name in self.output_nodes:
+                    lines.append(f'        "node_{node_id}": {var_name},')
+                lines.append("    }")
+        elif self.last_node_var:
+            lines.append(f"    return {self.last_node_var}")
+        else:
+            lines.append("    return None")
+
     def _build_final_code(self) -> str:
         """Build the final Python code."""
         lines = []
@@ -581,12 +633,13 @@ class FlowGraphToPolarsConverter:
                 lines.append(f"    {line}")
             else:
                 lines.append("")
-
         # Add main block
+        lines.append("")
+        self.add_return_code(lines)
         lines.append("")
         lines.append("")
         lines.append('if __name__ == "__main__":')
-        lines.append("    run_etl_pipeline()")
+        lines.append("    pipeline_output = run_etl_pipeline()")
 
         return "\n".join(lines)
 
