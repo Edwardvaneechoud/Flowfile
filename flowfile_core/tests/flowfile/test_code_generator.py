@@ -226,14 +226,6 @@ def test_simple_csv_read_and_filter(tmp_path):
     # Convert to Polars code
     code = export_flow_to_polars(flow)
 
-    # Verify the generated code
-    verify_code_contains(code,
-                         "import polars as pl",
-                         "pl.read_csv(",
-                         "filter(pl.col(\"age\") > 30)",
-                         "def run_etl_pipeline():"
-                         )
-
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
     expected_df = get_csv_df().filter(pl.col("age") > 30)

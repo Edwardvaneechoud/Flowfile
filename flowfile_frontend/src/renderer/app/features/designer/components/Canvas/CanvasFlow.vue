@@ -266,6 +266,11 @@ const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       emit("run", nodeStore.flow_id);
     }
+  } else if (eventKeyClicked && event.key == "g") {
+    if (nodeStore.flow_id) {
+      event.preventDefault();
+      nodeStore.toggleCodeGenerator();
+    }
   }
 };
 
@@ -282,6 +287,7 @@ const handleContextMenu = (event: Event) => {
 
 const closeContextMenu = () => {
   showContextMenu.value = false;
+  nodeStore.setCodeGeneratorVisibility(false);
 };
 
 onMounted(async () => {
@@ -394,13 +400,14 @@ defineExpose({
       <div id="nodesettings" class="content"></div>
     </draggable-item>
     <draggable-item
+      v-if="nodeStore.showCodeGenerator"
       id="generatedCode"
       :show-left="true"
-      :initial-width="1000"
-      initial-position="left"
-      title="Generated code"
+      :initial-width="800"
+      initial-position="right"
       :allow-free-move="true"
       :allow-full-screen="true"
+      :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
     >
       <CodeGenerator />
     </draggable-item>

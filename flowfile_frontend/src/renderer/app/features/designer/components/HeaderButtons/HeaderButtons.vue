@@ -17,6 +17,15 @@
       <span class="btn-text">Settings</span>
     </button>
     <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
+    <button
+      class="action-btn"
+      :class="{ active: nodeStore.showCodeGenerator }"
+      title="Generate Python Code (Ctrl+G)"
+      @click="toggleCodeGenerator"
+    >
+      <span class="material-icons btn-icon">code</span>
+      <span class="btn-text">Generate code</span>
+    </button>
   </div>
 
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
@@ -167,6 +176,10 @@ const runFlow = () => {
   if (runButton.value) {
     runButton.value?.runFlow();
   }
+};
+
+const toggleCodeGenerator = () => {
+  nodeStore.toggleCodeGenerator();
 };
 
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
