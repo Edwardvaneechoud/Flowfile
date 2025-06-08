@@ -179,6 +179,7 @@ class NodeBase(BaseModel):
     is_setup: Optional[bool] = True
     description: Optional[str] = ''
     user_id: Optional[int] = None
+    is_flow_output: Optional[bool] = False
 
     @classmethod
     def overridden_hash(cls):

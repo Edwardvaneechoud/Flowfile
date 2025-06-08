@@ -3,7 +3,6 @@ import pickle
 import polars as pl
 import fastexcel
 import copy
-
 from fastapi.exceptions import HTTPException
 from time import time
 from functools import partial
@@ -420,7 +419,7 @@ class FlowGraph:
                            input_columns=[],
                            node_type='unique',
                            setting_input=unique_settings,
-                           input_node_ids=[unique_settings.node_id])
+                           input_node_ids=[unique_settings.depending_on_id])
 
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
         def _func(fl: FlowDataEngine) -> FlowDataEngine:
@@ -429,7 +428,8 @@ class FlowGraph:
         self.add_node_step(node_id=graph_solver_settings.node_id,
                            function=_func,
                            node_type='graph_solver',
-                           setting_input=graph_solver_settings)
+                           setting_input=graph_solver_settings,
+                           input_node_ids=[graph_solver_settings.depending_on_id])
 
     def add_formula(self, function_settings: input_schema.NodeFormula):
         error = ""

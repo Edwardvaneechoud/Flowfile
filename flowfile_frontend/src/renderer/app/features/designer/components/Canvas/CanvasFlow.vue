@@ -12,6 +12,7 @@ import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "./CustomNode.vue";
 import useDragAndDrop from "./useDnD";
+import CodeGenerator from "./codeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import {
@@ -265,6 +266,11 @@ const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       emit("run", nodeStore.flow_id);
     }
+  } else if (eventKeyClicked && event.key == "g") {
+    if (nodeStore.flow_id) {
+      event.preventDefault();
+      nodeStore.toggleCodeGenerator();
+    }
   }
 };
 
@@ -281,6 +287,7 @@ const handleContextMenu = (event: Event) => {
 
 const closeContextMenu = () => {
   showContextMenu.value = false;
+  nodeStore.setCodeGeneratorVisibility(false);
 };
 
 onMounted(async () => {
@@ -391,6 +398,18 @@ defineExpose({
       :allow-full-screen="true"
     >
       <div id="nodesettings" class="content"></div>
+    </draggable-item>
+    <draggable-item
+      v-if="nodeStore.showCodeGenerator"
+      id="generatedCode"
+      :show-left="true"
+      :initial-width="800"
+      initial-position="right"
+      :allow-free-move="true"
+      :allow-full-screen="true"
+      :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
+    >
+      <CodeGenerator />
     </draggable-item>
   </div>
 </template>
