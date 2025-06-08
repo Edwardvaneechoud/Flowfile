@@ -5,7 +5,7 @@ from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.schemas import transform_schema
 import pytest
 from typing import List, Dict
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph, add_connection, RunInformation
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, RunInformation
 
 
 try:

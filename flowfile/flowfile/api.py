@@ -15,7 +15,7 @@ import platform
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, Tuple, List
 from subprocess import Popen
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from tempfile import TemporaryDirectory
 
 # Configuration
