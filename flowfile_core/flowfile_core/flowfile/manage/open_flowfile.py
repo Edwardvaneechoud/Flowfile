@@ -2,7 +2,7 @@ from flowfile_core.schemas import schemas, input_schema
 from typing import List, Tuple
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility
 import pickle
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from pathlib import Path
 
 

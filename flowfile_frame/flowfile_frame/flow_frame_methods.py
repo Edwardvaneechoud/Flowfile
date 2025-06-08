@@ -8,7 +8,7 @@ import polars as pl
 from polars._typing import (SchemaDict, IO,PolarsDataType,
                             Sequence, CsvEncoding)
 
-from flowfile_core.flowfile.FlowfileFlow import FlowGraph
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas import input_schema, transform_schema
 
