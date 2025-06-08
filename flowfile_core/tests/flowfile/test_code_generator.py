@@ -432,7 +432,6 @@ def test_formula_node_cast():
     verify_code_contains(code,
                          "with_columns",
                          "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr",
-                         'simple_function_to_expr("[price] * [quantity]").alias("total")',
                          "df_2 = df_1.with_columns(",
                          'alias("total")',
                          'cast(pl.Int64)'
@@ -466,7 +465,6 @@ def test_formula_node():
     verify_code_contains(code,
                          "with_columns",
                          "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr",
-                         'simple_function_to_expr("[price] * [quantity]").alias("total")',
                          "df_2 = df_1.with_columns(",
                          'alias("total")',
                          )
@@ -621,6 +619,31 @@ def test_custom_polars_code():
                          "return input_df.with_columns((pl.col('age') * 2).alias('double_age'))",
                          "df_2 = _polars_code_2(df_1)"
                          )
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().collect()
+    assert_frame_equal(expected_df, result_df, check_row_order=False)
+
+
+def test_formula_with_string():
+    """Test custom Polars code node with single input"""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    # Add custom Polars code node
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="String"),
+            function='"This is a string"'
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().collect()

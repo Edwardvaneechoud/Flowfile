@@ -279,7 +279,7 @@ class FlowGraphToPolarsConverter:
         formula = settings.function.function
         col_name = settings.function.field.name
         self._add_code(f"{var_name} = {input_df}.with_columns([")
-        self._add_code(f'simple_function_to_expr("{formula}").alias("{col_name}")')
+        self._add_code(f'simple_function_to_expr({repr(formula)}).alias("{col_name}")')
         if settings.function.field.data_type not in (None, "Auto"):
             output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
             if output_type[:3] != "pl.":
