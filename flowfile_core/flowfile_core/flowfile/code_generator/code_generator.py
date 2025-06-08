@@ -278,7 +278,6 @@ class FlowGraphToPolarsConverter:
         # Convert SQL-like formula to Polars expression
         formula = settings.function.function
         col_name = settings.function.field.name
-        breakpoint()
         self._add_code(f"{var_name} = {input_df}.with_columns([")
         self._add_code(f'simple_function_to_expr("{formula}").alias("{col_name}")')
         if settings.function.field.data_type not in (None, "Auto"):
@@ -286,7 +285,6 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    .cast({output_type})')
 
         self._add_code("])")
-        breakpoint()
         self._add_code("")
 
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
