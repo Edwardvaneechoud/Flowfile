@@ -417,6 +417,40 @@ def test_group_by_aggregation():
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+def test_formula_node_cast():
+    """Test formula/expression node"""
+    flow = create_basic_flow()
+    flow = create_sales_dataframe_node(flow)
+    # Add formula node
+    formula_node = input_schema.NodeFormula(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        function=transform_schema.FunctionInput(
+            field=transform_schema.FieldInput(name="total", data_type="Integer"),
+            function="[price] * [quantity]"
+        )
+    )
+    flow.add_formula(formula_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+    # Verify formula code
+    verify_code_contains(code,
+                         "with_columns",
+                         "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr",
+                         'simple_function_to_expr("[price] * [quantity]").alias("total")',
+                         "df_2 = df_1.with_columns(",
+                         'alias("total")',
+                         'cast(pl.Int64)'
+                         )
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().collect()
+    assert_frame_equal(result_df, expected_df)
+
+
 def test_formula_node():
     """Test formula/expression node"""
     flow = create_basic_flow()
@@ -427,7 +461,7 @@ def test_formula_node():
         node_id=2,
         depending_on_id=1,
         function=transform_schema.FunctionInput(
-            field=transform_schema.FieldInput(name="total", data_type="Double"),
+            field=transform_schema.FieldInput(name="total", data_type="Auto"),
             function="[price] * [quantity]"
         )
     )
@@ -446,8 +480,7 @@ def test_formula_node():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = (flow.get_node(1).get_resulting_data().collect()
-                   .with_columns((pl.col("price")*pl.col("quantity")).alias("total")))
+    expected_df = flow.get_node(2).get_resulting_data().collect()
     assert_frame_equal(result_df, expected_df)
 
 
@@ -1395,6 +1428,33 @@ def test_data_type_conversions():
     result_df = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().collect()
     assert_frame_equal(result_df, expected_df)
+
+
+def test_csv_read_utf_8():
+    """Test reading parquet files"""
+    flow = create_basic_flow()
+    os.getcwd()
+    flowfile_core_path = find_parent_directory('Flowfile')
+
+    file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.csv'))
+    # Add parquet read node
+    read_node = input_schema.NodeRead(
+        flow_id=1,
+        node_id=1,
+        received_file=input_schema.ReceivedTable.model_validate(input_schema.ReceivedCsvTable(
+            name="fake_data.csv",
+            path=file_path,
+            file_type="csv"
+        ).__dict__)
+    )
+
+    flow.add_read(read_node)
+    flow.get_node(1).get_resulting_data()
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    df = get_result_from_generated_code(code)
+    assert len(df) > 0
 
 
 def test_parquet_read():

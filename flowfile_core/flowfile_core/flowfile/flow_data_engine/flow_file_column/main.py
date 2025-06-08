@@ -37,7 +37,7 @@ def convert_pl_type_to_string(pl_type: pl.DataType, inner: bool = False) -> str:
         return f"pl.Struct([{field_str}])"
     else:
         # For base types, we want the full pl.TypeName format
-        return str(pl_type.base_type()) if not inner else f"pl.{pl_type}"
+        return "pl." + str(pl_type.base_type()) if not inner else f"pl.{pl_type}"
 
 
 @dataclass

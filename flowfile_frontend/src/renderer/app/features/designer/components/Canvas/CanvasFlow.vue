@@ -12,6 +12,7 @@ import { MiniMap } from "@vue-flow/minimap";
 
 import CustomNode from "./CustomNode.vue";
 import useDragAndDrop from "./useDnD";
+import CodeGenerator from "./codeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import {
@@ -391,6 +392,17 @@ defineExpose({
       :allow-full-screen="true"
     >
       <div id="nodesettings" class="content"></div>
+    </draggable-item>
+    <draggable-item
+      id="generatedCode"
+      :show-left="true"
+      :initial-width="1000"
+      initial-position="left"
+      title="Generated code"
+      :allow-free-move="true"
+      :allow-full-screen="true"
+    >
+      <CodeGenerator />
     </draggable-item>
   </div>
 </template>

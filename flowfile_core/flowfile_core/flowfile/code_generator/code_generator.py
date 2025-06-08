@@ -3,7 +3,8 @@ from collections import defaultdict
 import polars as pl
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.schemas import input_schema, transform_schema
@@ -175,8 +176,12 @@ class FlowGraphToPolarsConverter:
 
         if settings.filter_input.filter_type == 'advanced':
             # Parse the advanced filter expression
-            filter_expr = self._parse_filter_expression(settings.filter_input.advanced_filter)
-            self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
+            self.imports.add(
+                "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
+            )
+            self._add_code(f"{var_name} = {input_df}.filter(")
+            self._add_code(f'simple_function_to_expr("{settings.filter_input.advanced_filter}")')
+            self._add_code(")")
         else:
             # Handle basic filter
             basic = settings.filter_input.basic_filter
@@ -273,12 +278,15 @@ class FlowGraphToPolarsConverter:
         # Convert SQL-like formula to Polars expression
         formula = settings.function.function
         col_name = settings.function.field.name
-        # This is a simplified version - you'd need more sophisticated parsing
-        from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr
-
+        breakpoint()
         self._add_code(f"{var_name} = {input_df}.with_columns([")
         self._add_code(f'simple_function_to_expr("{formula}").alias("{col_name}")')
+        if settings.function.field.data_type not in (None, "Auto"):
+            output_type = convert_pl_type_to_string(cast_str_to_polars_type(settings.function.field.data_type))
+            self._add_code(f'    .cast({output_type})')
+
         self._add_code("])")
+        breakpoint()
         self._add_code("")
 
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
