@@ -42,7 +42,7 @@ import flowfile
 flowfile.start_web_ui()
 
 # Customize host, port, and browser launch
-flowfile.start_web_ui(host="0.0.0.0", port=63578, open_browser=False)
+flowfile.start_web_ui(open_browser=False)
 ```
 
 ## Architecture Overview

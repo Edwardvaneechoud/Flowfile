@@ -22,8 +22,6 @@ def main():
         if args.component == "ui":
             try:
                 flowfile.start_web_ui(
-                    host=args.host,
-                    port=args.port,
                     open_browser=not args.no_browser
                 )
             except KeyboardInterrupt:

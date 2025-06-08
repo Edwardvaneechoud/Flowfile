@@ -1027,7 +1027,6 @@ class FlowFrame:
     ) -> "FlowFrame":
 
         new_node_id = generate_node_id()
-
         is_path_input = isinstance(file, (str, os.PathLike))
         if isinstance(file, os.PathLike):
             file_str = str(file)
@@ -1041,7 +1040,6 @@ class FlowFrame:
         file_name = file_str.split(os.sep)[-1] if is_path_input else "output.csv"
 
         use_polars_code = bool(kwargs) or not is_path_input
-
         output_settings = input_schema.OutputSettings(
             file_type='csv',
             name=file_name,
@@ -1051,7 +1049,6 @@ class FlowFrame:
             output_excel_table=input_schema.OutputExcelTable(),
             output_parquet_table=input_schema.OutputParquetTable()
         )
-
         if is_path_input:
             try:
                 output_settings.set_absolute_filepath()
