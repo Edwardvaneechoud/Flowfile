@@ -16,7 +16,7 @@
   <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
 </p>
 <p>
-Flowfile is a visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code. It also includes flowfile_frame, a Python API for defining data flows programmatically with a Polars-like syntax.
+Flowfile is a visual ETL tool and Python library suite that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, or define data flows programmatically with Python and analyze results - all with high-performance data processing. Export your visual flows as standalone Python/Polars code for production deployment.
 </p>
 
 <div align="center">
@@ -31,7 +31,7 @@ Flowfile operates as three interconnected services:
 - **Core** (FastAPI): ETL engine using Polars for data transformations (`:63578`)
 - **Worker** (FastAPI): Handles computation and caching of data operations (`:63579`)
 
-Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations.
+Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations. You can export any visual flow as standalone Python/Polars code for production use.
 
 For a deeper dive into the technical architecture, check out [this article](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c) on how Flowfile leverages Polars for efficient data processing.
 
@@ -48,6 +48,11 @@ For a deeper dive into the technical architecture, check out [this article](http
   <img src=".github/images/flowfile_demo_1.gif" alt="Flowfile Layout" width="800"/>
 </div>
 
+### **Code Generation**
+  - Export visual flows as Python/Polars scripts
+  - Deploy workflows without Flowfile dependencies
+  - Share ETL logic as readable Python code
+![img.png](.github/images/generated_code.png)
 ---
 
 - **Performance**
@@ -190,9 +195,9 @@ For more details on using the FlowFrame API, see the [flowfile_frame documentati
   - S3 integration
   - Azure Data Lake Storage (ADLS)
 - [x] Multi-flow execution support
-- [ ] Polars code reverse engineering
-  - Generate Polars code from visual flows
-  - Import existing Polars scripts
+- [x] Polars code reverse engineering
+  - Generate Polars code from visual flows (now available via the "Generate code" button in the designer)
+  - Import existing Polars scripts and convert easily to visual flows
 
 ### Documentation
 - [ ] Add comprehensive docstrings
