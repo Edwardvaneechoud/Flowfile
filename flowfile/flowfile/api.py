@@ -163,27 +163,32 @@ def build_server_command(module_name: str) -> List[str]:
         else:
             logger.warning(f"Poetry command not found at '{POETRY_PATH}'. Falling back to Python module.")
 
-    # Case 2: Fallback to direct script execution (platform-aware)
+    # Case 2: Fallback to direct script execution
     logger.info("Falling back to direct script execution.")
-
     python_parent_dir = Path(sys.executable).parent
+    command: List[str]
 
     if platform.system() == "Windows":
-        script_path = python_parent_dir / "Scripts" / f"{module_name}.exe"
-        if not script_path.exists():
-            script_path = python_parent_dir / "Scripts" / module_name
+        scripts_dir = python_parent_dir / "Scripts"
+        exe_path = scripts_dir / f"{module_name}.exe"
+
+        if exe_path.exists():
+            logger.info(f"Using .exe wrapper: {exe_path}")
+            command = [str(exe_path), "run", "ui", "--no-browser"]
+        else:
+            script_path = scripts_dir / module_name # The script file might not have an extension
+            logger.warning(f".exe wrapper not found. Prepending python interpreter for {script_path}")
+            command = [sys.executable, str(script_path), "run", "ui", "--no-browser"]
     else:
-        # On Unix-like systems, scripts are in the 'bin' directory (same as python)
-        script_path = python_parent_dir / module_name
+        # On Unix-like systems, the script in 'bin' is directly executable
+        script_path = python_parent_dir / "bin" / module_name
+        if not script_path.exists():
+            script_path = python_parent_dir / module_name # Fallback for different venv structures
 
-    logger.info(f"Using direct script execution path: {script_path}")
-    command = [
-        str(script_path),
-        "run",
-        "ui",
-        "--no-browser",
-    ]
+        logger.info(f"Using direct script execution path: {script_path}")
+        command = [str(script_path), "run", "ui", "--no-browser"]
 
+    logger.info(f"Built server command: {command}")
     return command
 
 

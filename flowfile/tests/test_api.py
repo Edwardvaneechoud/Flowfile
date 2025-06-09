@@ -250,9 +250,9 @@ class TestFlowfileAPI:
         running for both Poetry and non-Poetry environments.
         """
         print(f"\nRunning E2E test scenario: {scenario}")
-
         # Ensure the server is stopped before we begin
         stop_flowfile_server_process()
+
         flow_path = Path('supporting_files') / '_test_pipeline.flowfile'
 
         # Create a test pipeline
@@ -269,7 +269,6 @@ class TestFlowfileAPI:
                 success = open_graph_in_editor(df.flow_graph,
                                                storage_location=str(flow_path),
                                                automatically_open_browser=False)
-
         # Assertions
         assert success is True, "open_graph_in_editor should return True on success"
         assert flow_path.exists()
@@ -282,6 +281,7 @@ class TestFlowfileAPI:
         execution_complete = _poll_for_execution_completion(flow_id)
         assert execution_complete, "Flow execution did not complete successfully"
         ensure_folder_empty("supporting_files")
+        stop_flowfile_server_process()
 
 
 if __name__ == "__main__":
