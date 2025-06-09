@@ -658,7 +658,6 @@ def test_code(polars_code, test_id):
     """Test custom Polars code node with single input when the polars code only contains input_df"""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
-    breakpoint()
     # Add custom Polars code node
     polars_code_node = input_schema.NodePolarsCode(
         flow_id=1,
