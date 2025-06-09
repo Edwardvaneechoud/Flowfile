@@ -167,22 +167,28 @@ def build_server_command(module_name: str) -> List[str]:
     logger.info("Falling back to direct script execution.")
     python_parent_dir = Path(sys.executable).parent
     command: List[str]
+    scripts_dir = Path(sys.executable).parent
 
     if platform.system() == "Windows":
-        scripts_dir = python_parent_dir / "Scripts"
         exe_path = scripts_dir / f"{module_name}.exe"
+        script_py_path = scripts_dir / f"{module_name}-script.py"
+        plain_script_path = scripts_dir / module_name
 
         if exe_path.exists():
             logger.info(f"Using .exe wrapper: {exe_path}")
             command = [str(exe_path), "run", "ui", "--no-browser"]
+        elif script_py_path.exists():
+            logger.info(f"Using '-script.py' with interpreter: {script_py_path}")
+            command = [sys.executable, str(script_py_path), "run", "ui", "--no-browser"]
+        elif plain_script_path.exists():
+            logger.info(f"Using plain script with interpreter: {plain_script_path}")
+            command = [sys.executable, str(plain_script_path), "run", "ui", "--no-browser"]
         else:
-            script_path = scripts_dir / module_name # The script file might not have an extension
-            logger.warning(f".exe wrapper not found. Prepending python interpreter for {script_path}")
-            if not script_path.exists():
-                raise FileNotFoundError(
-                    f"Neither '{exe_path}' nor '{script_path}' found. Ensure '{module_name}' is installed correctly."
-                )
-            command = [sys.executable, str(script_path), "run", "ui", "--no-browser"]
+            raise FileNotFoundError(
+                f"Could not find an executable script for '{module_name}' in '{scripts_dir}'. "
+                f"Checked for '{exe_path.name}', '{script_py_path.name}', and '{plain_script_path.name}'. "
+                "Ensure the package is installed correctly."
+            )
     else:
         # On Unix-like systems, the script in 'bin' is directly executable
         script_path = python_parent_dir / "bin" / module_name
