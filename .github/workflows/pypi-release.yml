@@ -35,13 +35,12 @@ jobs:
           npm run build:web
           
           # Create the static directory if it doesn't exist
-          mkdir -p ../flowfile/web/static
-          touch ../flowfile/web/__init__.py
-
+          mkdir -p ../flowfile/flowfile/web/static
+          
           # Copy the built files to the Python package
-          cp -r build/renderer/* ../flowfile/web/static/
+          cp -r build/renderer/* ../flowfile/flowfile/web/static/
           echo "Contents of web/static directory:"
-          ls -la ../flowfile/web/static/
+          ls -la ../flowfile/flowfile/web/static/
 
       - name: Install Poetry
         run: |

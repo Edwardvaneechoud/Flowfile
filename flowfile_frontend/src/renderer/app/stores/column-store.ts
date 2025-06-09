@@ -82,10 +82,19 @@ export const useNodeStore = defineStore('node', {
       isShowingLogViewer : false,
       isStreamingLogs: false,
       displayLogViewer: true,
+      showCodeGenerator: false,
     }
   },
 
   actions: {
+
+    toggleCodeGenerator() {
+      this.showCodeGenerator = !this.showCodeGenerator;
+    },
+    
+    setCodeGeneratorVisibility(visible: boolean) {
+      this.showCodeGenerator = visible;
+    },
 
     initializeResultCache(flowId: number): void {
       if (!this.runNodeResults[flowId]) {
