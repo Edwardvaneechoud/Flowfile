@@ -24,6 +24,12 @@ Learn how to connect Flowfile to external databases:
 - *Coming soon: MySQL Integration* - Working with MySQL databases
 - *Coming soon: SQLite for Local Development* - Using SQLite for testing and development
 
+## Python API
+
+Learn how to build and visualize data pipelines programmatically.
+
+- [Flowfile Frame API](flowfile_frame_api.md) - Build data pipelines using a Polars-like Python API.
+
 ## Data Transformation
 
 Master Flowfile's data transformation capabilities:

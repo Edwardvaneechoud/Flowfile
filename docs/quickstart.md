@@ -2,6 +2,21 @@
 
 This guide will help you get Flowfile up and running quickly.
 
+## Recommended Installation
+
+### Prerequisites
+
+- Python 3.10+
+
+### Installation & Running
+
+Install and run Flowfile from PyPI using pip:
+
+```bash
+pip install flowfile
+flowfile run ui
+```
+
 ## Prerequisites
 
 - Python 3.10+
