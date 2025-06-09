@@ -52,7 +52,10 @@ For a deeper dive into the technical architecture, check out [this article](http
   - Export visual flows as Python/Polars scripts
   - Deploy workflows without Flowfile dependencies
   - Share ETL logic as readable Python code
-![img.png](.github/images/generated_code.png)
+<div align="center">
+  <img src=".github/images/generated_code.png" alt="Automatically generate polars code" width="800"/>
+</div>
+
 ---
 
 - **Performance**
