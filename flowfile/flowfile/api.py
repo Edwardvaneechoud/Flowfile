@@ -163,12 +163,22 @@ def build_server_command(module_name: str) -> List[str]:
         else:
             logger.warning(f"Poetry command not found at '{POETRY_PATH}'. Falling back to Python module.")
 
-    # Case 2: Try direct module execution
-    logger.info(f"Using Python module approach with {module_name}")
-    script_path = str(Path(sys.executable).parent / module_name)
-    logger.info(f"Using direct script execution: {script_path}")
+    # Case 2: Fallback to direct script execution (platform-aware)
+    logger.info("Falling back to direct script execution.")
+
+    python_parent_dir = Path(sys.executable).parent
+
+    if platform.system() == "Windows":
+        script_path = python_parent_dir / "Scripts" / f"{module_name}.exe"
+        if not script_path.exists():
+            script_path = python_parent_dir / "Scripts" / module_name
+    else:
+        # On Unix-like systems, scripts are in the 'bin' directory (same as python)
+        script_path = python_parent_dir / module_name
+
+    logger.info(f"Using direct script execution path: {script_path}")
     command = [
-        script_path,
+        str(script_path),
         "run",
         "ui",
         "--no-browser",
