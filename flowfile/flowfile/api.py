@@ -265,7 +265,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
             time.sleep(1)
         else:
             logger.error("Failed to start server: API did not become responsive within 60 seconds. "
-                         "Try again or try start service by running\n"
+                         "Try again or start service by running\n"
                          "flowfile run ui")
             if _server_process and _server_process.stderr:
                 try:
