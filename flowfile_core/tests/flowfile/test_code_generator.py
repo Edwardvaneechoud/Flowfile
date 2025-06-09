@@ -621,6 +621,64 @@ def test_custom_polars_code():
     assert_frame_equal(expected_df, result_df, check_row_order=False)
 
 
+polars_test_cases = [
+    (
+        "input_df.filter(pl.col('salary') >= 50001)",
+        "filter_greater_than"
+    ),
+    (
+        "output_df = input_df.filter(pl.col('salary') >= 50001)",
+        "filter_greater_than_with_output"
+    ),
+    (
+        "input_df.select(['city', 'name'])",
+        "select_columns"
+    ),
+    (
+        "output_df = input_df.select(['city', 'name'])",
+        "select_columns"
+    ),
+    (
+        "input_df.with_columns((pl.col('salary') * 1.1).alias('value_plus_10_percent'))",
+        "with_columns"
+    ),
+    (
+        "output_df = input_df.group_by('city').agg(pl.col('salary').sum().alias('total_value'))",
+        "group_by_and_aggregate"
+    ),
+    (
+        "# A multi-line example with comments\n"
+        "temp_df = input_df.sort('salary', descending=True)\noutput_df = temp_df.limit(3)",
+        "sort_and_limit_with"
+    )
+]
+
+@pytest.mark.parametrize("polars_code, test_id", polars_test_cases)
+def test_code(polars_code, test_id):
+    """Test custom Polars code node with single input when the polars code only contains input_df"""
+    flow = create_basic_flow()
+    flow = create_sample_dataframe_node(flow)
+    # Add custom Polars code node
+    polars_code_node = input_schema.NodePolarsCode(
+        flow_id=1,
+        node_id=2,
+        depending_on_ids=[1],
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code=polars_code
+        )
+    )
+    flow.add_polars_code(polars_code_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(expected_df, result_df, check_row_order=False)
+
+
 def test_formula_with_string():
     """Test custom Polars code node with single input"""
     flow = create_basic_flow()

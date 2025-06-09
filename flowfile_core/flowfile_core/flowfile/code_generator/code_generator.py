@@ -509,7 +509,7 @@ class FlowGraphToPolarsConverter:
             args = ", ".join(arg_list)
 
         # Check if the code is just an expression (no assignment)
-        is_expression = '=' not in code or code.count('=') == 1 and '==' in code
+        is_expression = "output_df" not in code
 
         # Wrap the code in a function
         self._add_code(f"# Custom Polars code")

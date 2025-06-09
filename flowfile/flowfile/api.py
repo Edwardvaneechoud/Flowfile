@@ -147,9 +147,6 @@ def build_server_command(module_name: str) -> List[str]:
     Build the appropriate command to start the server based on environment detection.
     Tries Poetry first if in a Poetry environment, falls back to direct module execution.
     """
-    command: List[str] = []
-
-    # Case 1: Check if we're in a Poetry environment
     if is_poetry_environment():
         logger.info("Poetry environment detected.")
         if is_command_available(POETRY_PATH):
@@ -166,17 +163,42 @@ def build_server_command(module_name: str) -> List[str]:
         else:
             logger.warning(f"Poetry command not found at '{POETRY_PATH}'. Falling back to Python module.")
 
-    # Case 2: Try direct module execution
-    logger.info(f"Using Python module approach with {module_name}")
-    command = [
-        sys.executable,
-        "-m",
-        module_name,
-        "run",
-        "ui",
-        "--no-browser",
-    ]
+    # Case 2: Fallback to direct script execution
+    logger.info("Falling back to direct script execution.")
+    python_parent_dir = Path(sys.executable).parent
+    command: List[str]
+    scripts_dir = Path(sys.executable).parent
 
+    if platform.system() == "Windows":
+        exe_path = scripts_dir / f"{module_name}.exe"
+        script_py_path = scripts_dir / f"{module_name}-script.py"
+        plain_script_path = scripts_dir / module_name
+
+        if exe_path.exists():
+            logger.info(f"Using .exe wrapper: {exe_path}")
+            command = [str(exe_path), "run", "ui", "--no-browser"]
+        elif script_py_path.exists():
+            logger.info(f"Using '-script.py' with interpreter: {script_py_path}")
+            command = [sys.executable, str(script_py_path), "run", "ui", "--no-browser"]
+        elif plain_script_path.exists():
+            logger.info(f"Using plain script with interpreter: {plain_script_path}")
+            command = [sys.executable, str(plain_script_path), "run", "ui", "--no-browser"]
+        else:
+            raise FileNotFoundError(
+                f"Could not find an executable script for '{module_name}' in '{scripts_dir}'. "
+                f"Checked for '{exe_path.name}', '{script_py_path.name}', and '{plain_script_path.name}'. "
+                "Ensure the package is installed correctly."
+            )
+    else:
+        # On Unix-like systems, the script in 'bin' is directly executable
+        script_path = python_parent_dir / "bin" / module_name
+        if not script_path.exists():
+            script_path = python_parent_dir / module_name # Fallback for different venv structures
+
+        logger.info(f"Using direct script execution path: {script_path}")
+        command = [str(script_path), "run", "ui", "--no-browser"]
+
+    logger.info(f"Built server command: {command}")
     return command
 
 
@@ -210,7 +232,6 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
     # Build command automatically based on environment detection
     command = build_server_command(module_name)
     logger.info(f"Starting server with command: {' '.join(command)}")
-
     try:
         # Windows-specific subprocess creation
         if platform.system() == "Windows":
@@ -244,7 +265,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
             time.sleep(1)
         else:
             logger.error("Failed to start server: API did not become responsive within 60 seconds. "
-                         "Try again or try start service by running\n"
+                         "Try again or start service by running\n"
                          "flowfile run ui")
             if _server_process and _server_process.stderr:
                 try:
