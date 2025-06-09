@@ -109,29 +109,44 @@ class FlowGraphToPolarsConverter:
 
         return input_vars
 
+    def _handle_csv_read(self, file_settings: input_schema.ReceivedTable, var_name: str):
+        if file_settings.encoding.lower() in ('utf-8', 'utf8'):
+            encoding = "utf8-lossy"
+            self._add_code(f"{var_name} = pl.scan_csv(")
+            self._add_code(f'    "{file_settings.abs_file_path}",')
+            self._add_code(f'    separator="{file_settings.delimiter}",')
+            self._add_code(f'    has_header={file_settings.has_headers},')
+            self._add_code(f'    ignore_errors={file_settings.ignore_errors},')
+            self._add_code(f'    encoding="{encoding}",')
+            self._add_code(f'    skip_rows={file_settings.starting_from_line},')
+            self._add_code(")")
+        else:
+            self._add_code(f"{var_name} = pl.read_csv(")
+            self._add_code(f'    "{file_settings.abs_file_path}",')
+            self._add_code(f'    separator="{file_settings.delimiter}",')
+            self._add_code(f'    has_header={file_settings.has_headers},')
+            self._add_code(f'    ignore_errors={file_settings.ignore_errors},')
+            if file_settings.encoding:
+                self._add_code(f'    encoding="{file_settings.encoding}",')
+            self._add_code(f'    skip_rows={file_settings.starting_from_line},')
+            self._add_code(").lazy()")
+
     def _handle_read(self, settings: input_schema.NodeRead, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle file reading nodes."""
         file_settings = settings.received_file
 
         if file_settings.file_type == 'csv':
-            self._add_code(f"{var_name} = pl.read_csv(")
-            self._add_code(f'    "{file_settings.abs_file_path}",')
-            self._add_code(f'    separator="{file_settings.delimiter}",')
-            self._add_code(f'    has_header={file_settings.has_headers},')
-            if file_settings.encoding:
-                self._add_code(f'    encoding="{file_settings.encoding}",')
-            self._add_code(f'    skip_rows={file_settings.starting_from_line},')
-            self._add_code(")")
+            self._handle_csv_read(file_settings, var_name)
 
         elif file_settings.file_type == 'parquet':
-            self._add_code(f'{var_name} = pl.read_parquet("{file_settings.abs_file_path}")')
+            self._add_code(f'{var_name} = pl.scan_parquet("{file_settings.abs_file_path}")')
 
         elif file_settings.file_type in ('xlsx', 'excel'):
             self._add_code(f"{var_name} = pl.read_excel(")
             self._add_code(f'    "{file_settings.abs_file_path}",')
             if file_settings.sheet_name:
                 self._add_code(f'    sheet_name="{file_settings.sheet_name}",')
-            self._add_code(")")
+            self._add_code(").lazy()")
 
         self._add_code("")
 
@@ -165,9 +180,9 @@ class FlowGraphToPolarsConverter:
             data = settings.raw_data_format.data
             flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns)
             schema = self.get_manual_schema_input(flowfile_schema)
-            self._add_code(f"{var_name} = pl.DataFrame({data}, schema={schema}, strict=False)")
+            self._add_code(f"{var_name} = pl.LazyFrame({data}, schema={schema}, strict=False)")
         else:
-            self._add_code(f"{var_name} = pl.DataFrame({settings.raw_data})")
+            self._add_code(f"{var_name} = pl.LazyFrame({settings.raw_data})")
         self._add_code("")
 
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: Dict[str, str]) -> None:
@@ -292,7 +307,7 @@ class FlowGraphToPolarsConverter:
     def _handle_pivot_no_index(self, settings: input_schema.NodePivot, var_name: str, input_df: str, agg_func: str):
         pivot_input = settings.pivot_input
 
-        self._add_code(f'{var_name} = ({input_df}')
+        self._add_code(f'{var_name} = ({input_df}.collect()')
         self._add_code('    .with_columns(pl.lit(1).alias("__temp_index__"))')
         self._add_code('    .pivot(')
         self._add_code(f'        values="{pivot_input.value_col}",')
@@ -301,7 +316,7 @@ class FlowGraphToPolarsConverter:
         self._add_code(f'        aggregate_function="{agg_func}"')
         self._add_code("    )")
         self._add_code('    .drop("__temp_index__")')
-        self._add_code(")")
+        self._add_code(").lazy()")
         self._add_code("")
 
     def _handle_pivot(self, settings: input_schema.NodePivot, var_name: str, input_vars: Dict[str, str]) -> None:
@@ -319,13 +334,13 @@ class FlowGraphToPolarsConverter:
             self._handle_pivot_no_index(settings, var_name, input_df, agg_func)
         else:
             # Generate pivot code
-            self._add_code(f"{var_name} = {input_df}.pivot(")
+            self._add_code(f"{var_name} = {input_df}.collect().pivot(")
             self._add_code(f"    values='{pivot_input.value_col}',")
             self._add_code(f"    index={pivot_input.index_columns},")
             self._add_code(f"    columns='{pivot_input.pivot_column}',")
 
             self._add_code(f"    aggregate_function='{agg_func}'")
-            self._add_code(")")
+            self._add_code(").lazy()")
             self._add_code("")
 
     def _handle_unpivot(self, settings: input_schema.NodeUnpivot, var_name: str, input_vars: Dict[str, str]) -> None:
@@ -348,7 +363,7 @@ class FlowGraphToPolarsConverter:
 
     def _handle_union(self, settings: input_schema.NodeUnion, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle union nodes."""
-        # Get all input DataFrames
+        # Get all input LazyFrame
         dfs = []
         if 'main' in input_vars:
             dfs.append(input_vars['main'])
@@ -453,16 +468,16 @@ class FlowGraphToPolarsConverter:
         output_settings = settings.output_settings
 
         if output_settings.file_type == 'csv':
-            self._add_code(f'{input_df}.write_csv(')
+            self._add_code(f'{input_df}.sink_csv(')
             self._add_code(f'    "{output_settings.abs_file_path}",')
             self._add_code(f'    separator="{output_settings.output_csv_table.delimiter}"')
             self._add_code(')')
 
         elif output_settings.file_type == 'parquet':
-            self._add_code(f'{input_df}.write_parquet("{output_settings.abs_file_path}")')
+            self._add_code(f'{input_df}.sink_parquet("{output_settings.abs_file_path}")')
 
         elif output_settings.file_type == 'excel':
-            self._add_code(f'{input_df}.write_excel(')
+            self._add_code(f'{input_df}.collect().write_excel(')
             self._add_code(f'    "{output_settings.abs_file_path}",')
             self._add_code(f'    worksheet="{output_settings.output_excel_table.sheet_name}"')
             self._add_code(')')
@@ -477,7 +492,7 @@ class FlowGraphToPolarsConverter:
             params = ""
             args = ""
         elif len(input_vars) == 1:
-            params = "input_df: pl.DataFrame"
+            params = "input_df: pl.LazyFrame"
             input_df = list(input_vars.values())[0]
             args = input_df
         else:
@@ -487,7 +502,7 @@ class FlowGraphToPolarsConverter:
             i = 1
             for key in sorted(input_vars.keys()):
                 if key.startswith('main'):
-                    param_list.append(f"input_df_{i}: pl.DataFrame")
+                    param_list.append(f"input_df_{i}: pl.LazyFrame")
                     arg_list.append(input_vars[key])
                     i += 1
             params = ", ".join(param_list)
