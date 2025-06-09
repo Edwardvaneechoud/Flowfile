@@ -56,8 +56,8 @@ def create_basic_flow(flow_id: int = 1, name: str = "test_flow") -> FlowGraph:
     return FlowGraph(flow_id=flow_id, flow_settings=create_flow_settings(flow_id), name=name)
 
 
-def get_reference_polars_dataframe() -> pl.DataFrame:
-    return pl.DataFrame([
+def get_reference_polars_dataframe() -> pl.LazyFrame:
+    return pl.LazyFrame([
                 [1, 2, 3, 4, 5],
                 ["Alice", "Bob", "Charlie", "David", "Eve"],
                 [25, 30, 35, 40, 28],
@@ -199,7 +199,6 @@ def verify_code_ordering(code: str, *ordered_snippets: str) -> None:
 def test_simple_manual_input():
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
-    # Convert to Polars code
     code = export_flow_to_polars(flow)
     verify_if_execute(code)
     result = get_result_from_generated_code(code)
@@ -225,10 +224,9 @@ def test_simple_csv_read_and_filter(tmp_path):
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
     # Convert to Polars code
     code = export_flow_to_polars(flow)
-
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = get_csv_df().filter(pl.col("age") > 30)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -281,7 +279,7 @@ def test_number_of_records():
 
     verify_if_execute(code)
     result = get_result_from_generated_code(code)
-    expected_result = flow.get_node(2).get_resulting_data().collect()
+    expected_result = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, expected_result)
 
 
@@ -295,7 +293,7 @@ def test_graph_solver():
 
     verify_if_execute(code)
     result = get_result_from_generated_code(code)
-    expected_result = flow.get_node(2).get_resulting_data().collect()
+    expected_result = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, expected_result)
 
 
@@ -361,8 +359,8 @@ def test_join_operation():
                          )
     verify_if_execute(code)
     result = get_result_from_generated_code(code)
-    left_df = flow.get_node(1).get_resulting_data().collect()
-    right_df = flow.get_node(2).get_resulting_data().collect()
+    left_df = flow.get_node(1).get_resulting_data().data_frame
+    right_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, left_df.join(right_df, on="id", how="left"))
 
 
@@ -401,7 +399,7 @@ def test_group_by_aggregation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = (flow.get_node(1).get_resulting_data().collect()
+    expected_df = (flow.get_node(1).get_resulting_data().data_frame
                    .group_by(['product', 'region'])
                    .agg([pl.col("quantity").sum().alias("total_quantity"),
                          pl.col("price").mean().alias("avg_price"),
@@ -438,7 +436,7 @@ def test_formula_node_cast():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -470,7 +468,7 @@ def test_formula_node():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -479,7 +477,6 @@ def test_pivot_operation():
     flow = create_basic_flow()
     flow = create_sales_dataframe_node(flow)
 
-    # Add pivot node
     pivot_node = input_schema.NodePivot(
         flow_id=1,
         node_id=2,
@@ -507,7 +504,7 @@ def test_pivot_operation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -529,7 +526,7 @@ def test_pivot_no_index_operation():
     )
     flow.add_pivot(pivot_node)
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
-    flow.get_node(2).get_resulting_data().collect()
+    flow.get_node(2).get_resulting_data().data_frame
     # Convert to Polars code
     code = export_flow_to_polars(flow)
     # Verify pivot code
@@ -542,7 +539,7 @@ def test_pivot_no_index_operation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -589,7 +586,7 @@ def test_union_multiple_dataframes():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(4).get_resulting_data().collect()
+    expected_df = flow.get_node(4).get_resulting_data().data_frame
     assert_frame_equal(expected_df, result_df, check_row_order=False)
 
 
@@ -597,7 +594,6 @@ def test_custom_polars_code():
     """Test custom Polars code node with single input"""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
-
     # Add custom Polars code node
     polars_code_node = input_schema.NodePolarsCode(
         flow_id=1,
@@ -615,13 +611,13 @@ def test_custom_polars_code():
 
     # Verify custom code handling
     verify_code_contains(code,
-                         "def _polars_code_2(input_df: pl.DataFrame):",
+                         "def _polars_code_2(input_df: pl.LazyFrame):",
                          "return input_df.with_columns((pl.col('age') * 2).alias('double_age'))",
                          "df_2 = _polars_code_2(df_1)"
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(expected_df, result_df, check_row_order=False)
 
 
@@ -646,7 +642,7 @@ def test_formula_with_string():
     code = export_flow_to_polars(flow)
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(expected_df, result_df, check_row_order=False)
 
 
@@ -682,14 +678,14 @@ def test_custom_polars_code_multiple_inputs():
 
     # Verify custom code handling
     verify_code_contains(code,
-                         "def _polars_code_3(input_df_1: pl.DataFrame, input_df_2: pl.DataFrame):",
+                         "def _polars_code_3(input_df_1: pl.LazyFrame, input_df_2: pl.LazyFrame):",
                          "output_df = input_df_1.join(input_df_2, how='cross')",
                          "return output_df",
                          "df_3 = _polars_code_3(df_1, df_2)"
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(3).get_resulting_data().collect()
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
     assert_frame_equal(expected_df, result_df, check_row_order=False)
 
 
@@ -712,8 +708,8 @@ def test_custom_polars_no_inputs():
 
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(1).get_resulting_data().collect()
-    assert_frame_equal(expected_df, result_df.collect(), check_row_order=False)  # TODO: ensure that the polars_code with
+    expected_df = flow.get_node(1).get_resulting_data().data_frame
+    assert_frame_equal(expected_df, result_df, check_row_order=False)  # TODO: ensure that the polars_code with
 
 
 def test_complex_workflow(tmp_path):
@@ -790,11 +786,11 @@ def test_complex_workflow(tmp_path):
 
     # Verify the complete workflow is represented
     verify_code_contains(code,
-                         "pl.read_csv(",
+                         "pl.scan_csv(",
                          "with_columns",
                          "filter(",
                          "group_by",
-                         "write_parquet"
+                         "sink_parquet"
                          )
 
     # Verify proper sequencing
@@ -803,11 +799,11 @@ def test_complex_workflow(tmp_path):
                          "df_2 = ",
                          "df_3 = ",
                          "df_4 = ",
-                         "write_parquet"
+                         "sink_parquet"
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(4).get_resulting_data().collect()
+    expected_df = flow.get_node(4).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -880,14 +876,13 @@ def test_complex_workflow_unordered(tmp_path):
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
 
     code = export_flow_to_polars(flow)
-
     # Verify the complete workflow is represented
     verify_code_contains(code,
-                         "pl.read_csv(",
+                         "pl.scan_csv(",
                          "with_columns",
                          "filter(",
                          "group_by",
-                         "write_parquet"
+                         "sink_parquet"
                          )
 
     # Verify proper sequencing
@@ -896,11 +891,11 @@ def test_complex_workflow_unordered(tmp_path):
                          "df_2 = ",
                          "df_3 = ",
                          "df_4 = ",
-                         "write_parquet"
+                         "sink_parquet"
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(4).get_resulting_data().collect()
+    expected_df = flow.get_node(4).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -946,7 +941,7 @@ def test_text_to_rows_operation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -990,7 +985,7 @@ def test_text_to_rows_operation_no_rename():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -1033,7 +1028,7 @@ def test_sort_operation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -1090,7 +1085,7 @@ def test_sort_and_unique_operations():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(3).get_resulting_data().collect()
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1132,7 +1127,7 @@ def test_record_id_generation_with_grouping():
 
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1171,7 +1166,7 @@ def test_record_id_generation_without_grouping():
 
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1197,7 +1192,7 @@ def test_sample_operation():
     verify_code_contains(code, "head(n=3)")
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1266,7 +1261,7 @@ def test_cross_join_operation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(3).get_resulting_data().collect()
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1315,7 +1310,7 @@ def test_unpivot_operation():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1323,7 +1318,6 @@ def test_multiple_output_formats(tmp_path):
     """Test different output formats"""
     flow = create_basic_flow()
     flow = create_sample_dataframe_node(flow)
-
     # Test CSV output
     csv_output = input_schema.NodeOutput(
         flow_id=1,
@@ -1343,7 +1337,7 @@ def test_multiple_output_formats(tmp_path):
 
     code = export_flow_to_polars(flow)
     verify_code_contains(code,
-                         "write_csv(",
+                         "sink_csv(",
                          'separator="|"'
                          )
 
@@ -1441,7 +1435,7 @@ def test_data_type_conversions():
                          )
     verify_if_execute(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df)
 
 
@@ -1462,14 +1456,13 @@ def test_csv_read_utf_8():
             file_type="csv"
         ).__dict__)
     )
-
     flow.add_read(read_node)
     flow.get_node(1).get_resulting_data()
     # Convert to Polars code
     code = export_flow_to_polars(flow)
     verify_if_execute(code)
     df = get_result_from_generated_code(code)
-    assert len(df) > 0
+    assert len(df.collect()) > 0
 
 
 def test_parquet_read():
@@ -1496,7 +1489,7 @@ def test_parquet_read():
     code = export_flow_to_polars(flow)
     verify_if_execute(code)
     df = get_result_from_generated_code(code)
-    assert len(df) > 0
+    assert len(df.collect()) > 0
 
 
 def test_excel_read():
@@ -1529,7 +1522,7 @@ def test_excel_read():
                          )
     verify_if_execute(code)
     df = get_result_from_generated_code(code)
-    assert len(df) > 0
+    assert len(df.collect()) > 0
 
 
 def test_aggregation_functions():
@@ -1573,7 +1566,7 @@ def test_aggregation_functions():
     verify_if_execute(code)
     get_result_from_generated_code(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1608,8 +1601,8 @@ def test_flow_with_disconnected_nodes():
 
     # Both dataframes should be created
     verify_code_contains(code,
-                         "df_1 = pl.DataFrame(",
-                         "df_2 = pl.DataFrame("
+                         "df_1 = pl.LazyFrame(",
+                         "df_2 = pl.LazyFrame("
                          )
 
 
@@ -1637,7 +1630,7 @@ output_df = sorted.select(['name', 'salary'])"""
 
     # Verify the code structure
     verify_code_contains(code,
-                         "def _polars_code_2(input_df: pl.DataFrame):",
+                         "def _polars_code_2(input_df: pl.LazyFrame):",
                          "filtered = input_df.filter(pl.col('age') > 25)",
                          "sorted = filtered.sort('salary', descending=True)",
                          "output_df = sorted.select(['name', 'salary'])",
@@ -1646,7 +1639,7 @@ output_df = sorted.select(['name', 'salary'])"""
     verify_if_execute(code)
     get_result_from_generated_code(code)
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
@@ -1689,5 +1682,5 @@ def test_text_to_rows_without_output_name():
                          "explode('items')"
                          )
     result_df = get_result_from_generated_code(code)
-    expected_df = flow.get_node(2).get_resulting_data().collect()
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)

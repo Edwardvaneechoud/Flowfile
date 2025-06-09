@@ -15,7 +15,7 @@
 </p>
 
 <p>
-Flowfile is a visual ETL tool and Python library suite that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, or define data flows programmatically with Python and analyze results - all with high-performance data processing.
+Flowfile is a visual ETL tool and Python library suite that combines drag-and-drop workflow building with the speed of Polars dataframes. Build data pipelines visually, transform data using powerful nodes, or define data flows programmatically with Python and analyze results - all with high-performance data processing. Export your visual flows as standalone Python/Polars code for production deployment.
 </p>
 
 ## 🚀 Getting Started
@@ -104,6 +104,7 @@ The `Flowfile` PyPI package includes:
 - **Drag-and-Drop Interface**: Build data pipelines visually
 - **Integrated Services**: Combined core and worker services
 - **Browser-Based**: Access from any device on your network
+- **Code Generation**: Export visual flows as Python/Polars scripts
 
 ### FlowFrame API
 
@@ -170,6 +171,18 @@ joined.flow_graph.flow_settings.execution_mode = "Development"
 ff.open_graph_in_editor(joined.flow_graph)  # opens the graph in the UI!
 
 ```
+
+## 📝 Code Generation
+
+Export your visual flows as standalone Python/Polars code for production use:
+
+![Code Generation](.github/images/generated_code.png)
+
+Simply click the "Generate code" button in the visual editor to:
+- Generate clean, readable Python/Polars code
+- Export flows without Flowfile dependencies
+- Deploy workflows in any Python environment
+- Share ETL logic with team members
 
 ## 🧰 Command-Line Interface
 

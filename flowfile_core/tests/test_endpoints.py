@@ -708,7 +708,7 @@ def test_editor_code_to_polars():
     exec_globals = {}
     exec(v.json(), exec_globals)
     result = exec_globals['run_etl_pipeline']()
-    assert len(result) == 4, "Length of result should be 4"
+    assert len(result.collect()) == 4, "Length of result should be 4"
     assert result.columns == ['name'], "Colum name should name"
 
 
