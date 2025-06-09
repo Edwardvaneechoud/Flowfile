@@ -167,12 +167,15 @@ class TestFlowfileAPI:
                 assert "flowfile" in cmd
                 assert "--no-browser" in cmd
 
-        # Test without Poetry
         with patch('flowfile.api.is_poetry_environment', return_value=False):
             cmd = build_server_command("flowfile")
-            assert cmd[0] == sys.executable
-            assert "-m" in cmd
-            assert "flowfile" in cmd
+            # Assert that the command is now the direct path to the script
+            expected_script_path = str(Path(sys.executable).parent / "flowfile")
+            assert cmd[0] == expected_script_path
+            # The '-m' is no longer used in this command
+            assert "-m" not in cmd
+            assert "run" in cmd
+            assert "ui" in cmd
             assert "--no-browser" in cmd
 
     def test_get_auth_token_integration(self):
