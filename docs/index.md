@@ -9,7 +9,7 @@
   ![Flowfile Interface](assets/images/generic_screenshot.png){ width="800px" }
 </figure>
 
-## ⚡ Technical Design
+## Technical Design
 
 Flowfile operates as three interconnected services:
 
@@ -19,7 +19,9 @@ Flowfile operates as three interconnected services:
 
 Each flow is represented as a directed acyclic graph (DAG), where nodes represent data operations and edges represent data flow between operations.
 
-## 🔥 Example Use Cases
+For a deeper dive into the technical architecture, check out [this article](https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c) on how Flowfile leverages Polars for efficient data processing.
+
+## Example use cases
 
 ### Data Cleaning & Transformation
 - Complex joins (fuzzy matching)
@@ -38,7 +40,13 @@ Each flow is represented as a directed acyclic graph (DAG), where nodes represen
 - Excel to database pipelines
 - Data quality checks
 
-## 🚀 Getting Started
+### Code Generation & Conversion
+- **Flow to Code:** Convert your visual flows into Python scripts.
+- **Code to Flow:** Automatically generate a visual flow from your existing Python code.
+
+Learn how to build pipelines programmatically with the [Flowfile Frame API](guides/flowfile_frame_api.md).
+
+## Getting Started
 
 ### Building Your First Flow
 
@@ -60,6 +68,12 @@ Flowfile allows you to create data pipelines visually:
 - Make (optional, for build automation)
 
 ### Installation & Running
+
+#### From PyPI
+```bash
+pip install flowfile
+flowfile run ui
+````
 
 Using Make:
 ```bash
@@ -87,3 +101,4 @@ npm run dev               # Starts Electron app (frontend on :3000)
 - [Building Flows](flows/building.md)
 - [Node Overview](nodes/index.md)
 - [Guides](guides/index.md)
+- [Flowfile Frame API](guides/flowfile_frame_api.md)
