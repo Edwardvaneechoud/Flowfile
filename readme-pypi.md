@@ -176,7 +176,7 @@ ff.open_graph_in_editor(joined.flow_graph)  # opens the graph in the UI!
 
 Export your visual flows as standalone Python/Polars code for production use:
 
-![Code Generation](.github/images/generated_code.png)
+![Code Generation](https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/refs/heads/main/.github/images/generated_code.png)
 
 Simply click the "Generate code" button in the visual editor to:
 - Generate clean, readable Python/Polars code
