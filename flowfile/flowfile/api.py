@@ -178,6 +178,10 @@ def build_server_command(module_name: str) -> List[str]:
         else:
             script_path = scripts_dir / module_name # The script file might not have an extension
             logger.warning(f".exe wrapper not found. Prepending python interpreter for {script_path}")
+            if not script_path.exists():
+                raise FileNotFoundError(
+                    f"Neither '{exe_path}' nor '{script_path}' found. Ensure '{module_name}' is installed correctly."
+                )
             command = [sys.executable, str(script_path), "run", "ui", "--no-browser"]
     else:
         # On Unix-like systems, the script in 'bin' is directly executable

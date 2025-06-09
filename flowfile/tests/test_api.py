@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 from typing import Optional
+import platform
 
 # Assuming the api module is importable as flowfile.api
 from flowfile.api import (
@@ -170,7 +171,12 @@ class TestFlowfileAPI:
         with patch('flowfile.api.is_poetry_environment', return_value=False):
             cmd = build_server_command("flowfile")
             # Assert that the command is now the direct path to the script
-            expected_script_path = str(Path(sys.executable).parent / "flowfile")
+            if platform.system() == "Windows":
+                expected_script_path = str(Path(sys.executable).parent / "python.exe")
+                executable_path = Path(sys.executable).parent / "Scripts" / "flowfile"
+                assert cmd[1] == str(executable_path)
+            else:
+                expected_script_path = str(Path(sys.executable).parent / "flowfile")
             assert cmd[0] == expected_script_path
             # The '-m' is no longer used in this command
             assert "-m" not in cmd
