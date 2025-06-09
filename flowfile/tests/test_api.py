@@ -234,6 +234,52 @@ class TestFlowfileAPI:
 
         ensure_folder_empty('supporting_files')
 
+    @pytest.mark.parametrize(
+        "poetry_env_mock, poetry_cmd_mock, scenario",
+        [
+            (True, True, "Poetry Available"),
+            (False, False, "Poetry Not Available (Fallback)"),
+        ]
+    )
+    def test_end_to_end_pipeline_integration_start(self, poetry_env_mock, poetry_cmd_mock, scenario):
+        """
+        Test the complete pipeline from graph creation to UI opening,
+        running for both Poetry and non-Poetry environments.
+        """
+        print(f"\nRunning E2E test scenario: {scenario}")
+
+        # Ensure the server is stopped before we begin
+        stop_flowfile_server_process()
+        flow_path = Path('supporting_files') / '_test_pipeline.flowfile'
+
+        # Create a test pipeline
+        df = ff.from_dict({
+            "id": [1, 2, 3, 4, 5],
+            "category": ["A", "B", "A", "C", "B"],
+            "value": [100, 200, 150, 300, 250]
+        })
+
+        # Use patch to simulate the environment for this test run
+        with patch('flowfile.api.is_poetry_environment', return_value=poetry_env_mock):
+            with patch('flowfile.api.is_command_available', return_value=poetry_cmd_mock):
+                # This call will now use the mocked environment to start the server
+                success = open_graph_in_editor(df.flow_graph,
+                                               storage_location=str(flow_path),
+                                               automatically_open_browser=False)
+
+        # Assertions
+        assert success is True, "open_graph_in_editor should return True on success"
+        assert flow_path.exists()
+
+        # The rest of your test logic to verify execution
+        flow_id = _get_flow_id_on_flow_location()
+        assert flow_id is not None, "Could not find the active flow ID"
+
+        _trigger_flow_execution(flow_id)
+        execution_complete = _poll_for_execution_completion(flow_id)
+        assert execution_complete, "Flow execution did not complete successfully"
+        ensure_folder_empty("supporting_files")
+
 
 if __name__ == "__main__":
     # Run tests with pytest

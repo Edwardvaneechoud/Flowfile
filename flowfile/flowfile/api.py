@@ -147,9 +147,6 @@ def build_server_command(module_name: str) -> List[str]:
     Build the appropriate command to start the server based on environment detection.
     Tries Poetry first if in a Poetry environment, falls back to direct module execution.
     """
-    command: List[str] = []
-
-    # Case 1: Check if we're in a Poetry environment
     if is_poetry_environment():
         logger.info("Poetry environment detected.")
         if is_command_available(POETRY_PATH):
@@ -168,10 +165,10 @@ def build_server_command(module_name: str) -> List[str]:
 
     # Case 2: Try direct module execution
     logger.info(f"Using Python module approach with {module_name}")
+    script_path = str(Path(sys.executable).parent / module_name)
+    logger.info(f"Using direct script execution: {script_path}")
     command = [
-        sys.executable,
-        "-m",
-        module_name,
+        script_path,
         "run",
         "ui",
         "--no-browser",
@@ -210,7 +207,6 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
     # Build command automatically based on environment detection
     command = build_server_command(module_name)
     logger.info(f"Starting server with command: {' '.join(command)}")
-
     try:
         # Windows-specific subprocess creation
         if platform.system() == "Windows":
