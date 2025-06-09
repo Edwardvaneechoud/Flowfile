@@ -174,6 +174,9 @@ class TestFlowfileAPI:
             if platform.system() != "Windows":
                 expected_script_path = str(Path(sys.executable).parent / "flowfile")
                 assert cmd[0] == expected_script_path
+                assert "run" in cmd
+                assert "ui" in cmd
+                assert "--no-browser" in cmd
 
     def test_get_auth_token_integration(self):
         """Test getting auth token from running server."""
