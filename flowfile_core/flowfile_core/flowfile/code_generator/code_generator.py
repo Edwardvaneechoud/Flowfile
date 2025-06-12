@@ -481,7 +481,6 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    "{output_settings.abs_file_path}",')
             self._add_code(f'    worksheet="{output_settings.output_excel_table.sheet_name}"')
             self._add_code(')')
-
         self._add_code("")
 
     def _handle_polars_code(self, settings: input_schema.NodePolarsCode, var_name: str, input_vars: Dict[str, str]) -> None:

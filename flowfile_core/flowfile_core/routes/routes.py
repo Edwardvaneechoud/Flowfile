@@ -48,7 +48,6 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (s
 from flowfile_core.database.connection import get_db
 
 
-
 # Router setup
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -138,8 +137,12 @@ def register_flow(flow_data: schemas.FlowSettings):
 
 
 @router.get('/active_flowfile_sessions/', response_model=List[schemas.FlowSettings])
-async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
-    return [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
+async def get_active_flow_file_sessions(create_empty_flow: bool = True) -> List[schemas.FlowSettings]:
+    active_flow_sessions = [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
+    if not active_flow_sessions and create_empty_flow:
+        new_flow_id = flow_file_handler.add_flow('flow_1.flowfile')
+        active_flow_sessions = [flow_file_handler.get_flow(new_flow_id).flow_settings]
+    return active_flow_sessions
 
 
 @router.post('/flow/run/', tags=['editor'])
@@ -454,15 +457,10 @@ def get_list_of_saved_flows(path: str):
     except:
         return []
 
+
 @router.get('/node_list', response_model=List[nodes.NodeTemplate])
 def get_node_list() -> List[nodes.NodeTemplate]:
     return nodes.nodes_list
-
-
-# @router.post('/reset')
-# def reset():
-#     flow_file_handler.delete_flow(1)
-#     register_flow(schemas.FlowSettings(flow_id=1))
 
 
 @router.post('/files/remove_items', tags=['file manager'])

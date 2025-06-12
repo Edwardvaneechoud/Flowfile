@@ -5,14 +5,14 @@ import socket
 import hashlib
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional
+from tempfile import TemporaryDirectory
 import os
 from pathlib import Path
 
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.schemas import FlowSettings
-from flowfile_core.configs import logger
 
 
 def create_unique_id() -> int:
@@ -88,7 +88,7 @@ class FlowfileHandler:
         else:
             raise Exception('Flow not found')
 
-    def add_flow(self, name: str, flow_path: str) -> int:
+    def add_flow(self, name: str, flow_path: Optional[str] = None) -> int:
         """
         Creates a new flow with a reference to the flow path
         Args:
@@ -99,6 +99,12 @@ class FlowfileHandler:
             int: The flow id
 
         """
+        if '.flowfile' not in name:
+            name += '.flowfile'
+        if flow_path is None:
+            temp_dir_obj = TemporaryDirectory(prefix="flowfile_graph_")
+            flow_path = str(Path(temp_dir_obj.name) / name)
+
         next_id = create_unique_id()
         flow_info = FlowSettings(name=name, flow_id=next_id, save_location='', path=flow_path)
         _ = self.register_flow(flow_info)
