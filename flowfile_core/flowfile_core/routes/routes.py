@@ -137,7 +137,7 @@ def register_flow(flow_data: schemas.FlowSettings):
 
 
 @router.get('/active_flowfile_sessions/', response_model=List[schemas.FlowSettings])
-async def get_active_flow_file_sessions(create_empty_flow: bool = True) -> List[schemas.FlowSettings]:
+async def get_active_flow_file_sessions(create_empty_flow: bool = False) -> List[schemas.FlowSettings]:
     active_flow_sessions = [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
     if not active_flow_sessions and create_empty_flow:
         new_flow_id = flow_file_handler.add_flow('flow_1.flowfile')
@@ -528,6 +528,8 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
+    if ".flowfile" not in flow_path:
+        flow_path += ".flowfile"
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 

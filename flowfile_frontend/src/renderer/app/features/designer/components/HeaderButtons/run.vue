@@ -15,10 +15,12 @@ import { defineProps, ref, onUnmounted } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import { RunInformation } from "../../baseNode/nodeInterfaces";
 import { ElNotification } from "element-plus";
-import { updateRunStatus } from "../../nodes/nodeLogic";
+import { updateRunStatus, getFlowSettings, FlowSettings, ExecutionMode} from "../../nodes/nodeLogic";
 import { VueFlowStore } from "@vue-flow/core";
 
 const nodeStore = useNodeStore();
+const flowSettings = ref<FlowSettings | null>(null);
+
 const pollingInterval = ref<number | null>(null);
 
 const props = defineProps({
@@ -116,10 +118,23 @@ const checkRunStatus = async () => {
   }
 };
 
+const createMessageForStart = (executionMode: ExecutionMode): string => {
+  let message = "The flow started flowing"
+  
+  if (executionMode == "Development") {
+    return  message + "\n" + "Running in development mode. \n Every node will be executed seperately and optimizations will be limited. \nYou can change this in settings"  
+  }
+  else {
+    return message + "\n" + "Running in performance mode. \n Only writes and cached nodes will be executed. \nYou can change this in settings" 
+  }
+}
+
 const runFlow = async () => {
   freezeFlow();
   nodeStore.resetNodeResult();
-  showNotification("Run started", "The flow started flowing");
+  let flowSettings = await getFlowSettings(nodeStore.flow_id);
+  let executionMode: ExecutionMode = flowSettings?.execution_mode || "Development"
+  showNotification("Run started", createMessageForStart(executionMode));
 
   try {
     await axios.post("/flow/run/", null, {

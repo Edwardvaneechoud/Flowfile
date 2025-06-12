@@ -164,6 +164,9 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
         headers: {
           accept: "application/json",
         },
+        params: {
+          create_empty_flow: true,
+        }
       });
       
       return response.data;
