@@ -1,4 +1,4 @@
-# Using the Flowfile Frame API
+# Building Flows with code
 
 The `flowfile_frame` module provides a powerful, Polars-like API that allows you to define and execute data transformation pipelines in Python while automatically generating a visual ETL graph.  
 <sub><sup>[Source: readme.md]</sup></sub>
@@ -13,7 +13,6 @@ The `flowfile_frame` module provides a powerful, Polars-like API that allows you
 - Automatic generation of an ETL graph from your Python code.  
 - The ability to visualize, save, and share your data pipelines in the Flowfile Designer UI.  
 - The performance benefits of the Polars engine.  
-<sub><sup>[Source: readme.md]</sup></sub>
 
 ---
 
@@ -28,25 +27,28 @@ pip install flowfile
 ### Quick Start
 You can create a data pipeline programmatically and see the results:
 
+
 ```python
 import flowfile as ff
+from flowfile import col, open_graph_in_editor
 
-# Create a dataframe from a dictionary
 df = ff.from_dict({
-    "name": ["Alice", "Bob", "Charlie", "David", "Eve"],
-    "age": [25, 35, 28, 42, 31],
-    "salary": [50000, 60000, 55000, 75000, 65000]
+    "id": [1, 2, 2],
+    "value": [10, 20, 15]
 })
 
-# Apply transformations
-filtered_df = df.filter(ff.col("age") > 30)
-result_df = filtered_df.with_columns(
-    (ff.col("salary") * 1.1).alias("new_salary")
-)
-
-# The result can be used like a normal Polars DataFrame
-print(result_df.collect())
+result = df.filter(col("value") > 12, description="filter value > 12").with_columns(
+    (col("value") * 10).alias("scaled_value"), description="get a scaled value"
+).group_by(col("id")).agg(col("value").sum().alias("sum_value"),
+                        col("value").max().alias("max_value"),
+                        col("value").min().alias("min_value"))
+df = result.collect()  # provides a polars dataframe
 ```
+<details markdown="1">
+<summary>Generated Flow in Flowfile UI</summary>
+
+![Created flow](../assets/images/guides/code_to_flow/code_to_flow.png)
+</details>
 
 ## Visualizing Your Pipeline
 
@@ -67,13 +69,13 @@ df = ff.from_dict({
 
 aggregated_df = (
     df
-    .filter(ff.col("value") > 120)
+    .filter(ff.col("value") > 120, description='Filter on value greater then 120')
     .with_columns([
         (ff.col("value") * 1.1).alias("adjusted_value"),
         ff.when(ff.col("category") == "A").then(ff.lit("Premium"))
           .when(ff.col("category") == "B").then(ff.lit("Standard"))
           .otherwise(ff.lit("Basic")).alias("tier")
-    ])
+    ], description='Calculate the thier')
     .group_by("tier")
     .agg([
         ff.col("adjusted_value").sum().alias("total_value"),
@@ -84,6 +86,11 @@ aggregated_df = (
 # This will launch the Flowfile Designer UI and render your pipeline
 open_graph_in_editor(aggregated_df.flow_graph)
 ```
+<details markdown="1">
+<summary>Generated Flow in Flowfile UI</summary>
+
+![Created flow](../assets/images/guides/code_to_flow/code_to_flow_2.png)
+</details>
 
 When you run `open_graph_in_editor(...)`, the Flowfile Designer UI will open and display a visual graph of your pipeline. You can:
 
