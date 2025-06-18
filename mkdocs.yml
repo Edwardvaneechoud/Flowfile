@@ -40,12 +40,15 @@ markdown_extensions:
   - pymdownx.superfences
 
 nav:
-  - Home: index.md
+  - Home: index.html
   - Quickstart: quickstart.md
   - Building Flows: flows/building.md
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md
+    - Technical architecture: guides/technical_architecture.md
+    - Using Code to Flow: guides/flowfile_frame_api.md
+    - Using Flow to Code: guides/code_generator.md
   - Nodes:
     - Overview: nodes/index.md
     - Input Nodes: nodes/input.md

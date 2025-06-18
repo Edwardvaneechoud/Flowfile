@@ -24,17 +24,20 @@ Learn how to connect Flowfile to external databases:
 - *Coming soon: MySQL Integration* - Working with MySQL databases
 - *Coming soon: SQLite for Local Development* - Using SQLite for testing and development
 
-## Python API
+## Technical Architecture
+
+Explore the inner workings and design philosophy of Flowfile:
+
+- [Technical Architecture](technical_architecture.md) - Understand Flowfile's three-service architecture, key features, and lazy evaluation with Polars.
+
+## Code to Flow (Python API)
 
 Learn how to build and visualize data pipelines programmatically.
 
 - [Flowfile Frame API](flowfile_frame_api.md) - Build data pipelines using a Polars-like Python API.
 
-## Data Transformation
+## Flow to Code
 
-Master Flowfile's data transformation capabilities:
+Understand how Flowfile translates visual pipelines into executable code:
 
-- *Coming soon: Advanced Data Cleaning* - Techniques for handling messy data
-- *Coming soon: Text Processing* - Working with text and string data
-- *Coming soon: Date and Time Operations* - Effective datetime handling
-
+- [Flow to code](code_generator.md) - Learn about how you can export your flow to python code

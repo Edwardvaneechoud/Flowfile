@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flowfile - Visual ETL Tool</title>
+
+    <!-- Material Design Web Components -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <!-- Base styles that work with MkDocs Material theme -->
+    <style>
+        :root {
+            --md-primary-fg-color: #00CED1;
+            --md-primary-fg-color--light: #20E3E6;
+            --md-primary-fg-color--dark: #008B8B;
+            --md-accent-fg-color: #6B46C1;
+            --md-accent-fg-color--light: #8B5CF6;
+            --md-accent-fg-color--dark: #4C1D95;
+            --md-default-fg-color: #000000de;
+            --md-default-fg-color--light: #0000008a;
+            --md-default-bg-color: #ffffff;
+            --md-code-bg-color: #f5f5f5;
+            --md-code-fg-color: #000000de;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --md-primary-fg-color: #00CED1;
+                --md-primary-fg-color--light: #20E3E6;
+                --md-primary-fg-color--dark: #008B8B;
+                --md-accent-fg-color: #8B5CF6;
+                --md-accent-fg-color--light: #A78BFA;
+                --md-accent-fg-color--dark: #6B46C1;
+                --md-default-fg-color: #ffffffde;
+                --md-default-fg-color--light: #ffffff8a;
+                --md-default-bg-color: #121212;
+                --md-code-bg-color: #1e1e1e;
+                --md-code-fg-color: #ffffffde;
+            }
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: var(--md-default-fg-color);
+            background-color: var(--md-default-bg-color);
+            line-height: 1.6;
+        }
+
+        pre {
+            background: var(--md-code-bg-color);
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        code {
+            font-family: 'Source Code Pro', 'Roboto Mono', monospace;
+            color: var(--md-code-fg-color);
+        }
+    </style>
+
+    <style>
+        /* Hero Section */
+        .hero-section {
+            min-height: 70vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, var(--md-primary-fg-color) 0%, var(--md-accent-fg-color) 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(circle at 20% 50%, rgba(255,255,255,0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(255,255,255,0.05) 0%, transparent 50%),
+                radial-gradient(circle at 40% 20%, rgba(255,255,255,0.08) 0%, transparent 50%);
+            animation: float 20s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-20px) rotate(2deg); }
+        }
+
+        .hero-content {
+            text-align: center;
+            color: white;
+            z-index: 1;
+            max-width: 900px;
+            padding: 2rem;
+        }
+
+        .hero-logo {
+            width: 120px;
+            height: 120px;
+            margin-bottom: 2rem;
+            filter: drop-shadow(0 10px 30px rgba(0,0,0,0.2));
+            animation: pulse 3s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .hero-title {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        .hero-subtitle {
+            font-size: 1.3rem;
+            margin-bottom: 2rem;
+            opacity: 0.95;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .hero-button {
+            padding: 0.8rem 2rem;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .hero-button-primary {
+            background: white;
+            color: var(--md-primary-fg-color);
+        }
+
+        .hero-button-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .hero-button-secondary {
+            border: 2px solid white;
+            color: white;
+            background: transparent;
+        }
+
+        .hero-button-secondary:hover {
+            background: rgba(255,255,255,0.1);
+            transform: translateY(-2px);
+        }
+
+        /* Feature Cards */
+        .features-section {
+            padding: 4rem 2rem;
+            background: var(--md-default-bg-color);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .feature-card {
+            background: var(--md-code-bg-color);
+            border-radius: 16px;
+            padding: 2rem;
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
+            text-decoration: none;
+            display: block;
+            color: inherit;
+        }
+
+        .feature-link {
+            cursor: pointer;
+        }
+
+        .feature-arrow {
+            position: absolute;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            font-size: 1.5rem;
+            color: var(--md-primary-fg-color);
+            opacity: 0;
+            transform: translateX(-10px);
+            transition: all 0.3s ease;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+            transform: translateX(-100%);
+            transition: transform 0.5s ease;
+        }
+
+        .feature-card:hover::before {
+            transform: translateX(0);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            border-color: var(--md-primary-fg-color--light);
+        }
+
+        .feature-card:hover .feature-arrow {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .feature-card:active {
+            transform: translateY(-3px);
+            transition: transform 0.1s ease;
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+        }
+
+        .feature-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--md-default-fg-color);
+        }
+
+        .feature-description {
+            color: var(--md-default-fg-color--light);
+            line-height: 1.6;
+        }
+
+        /* Code Preview */
+        .code-preview {
+            background: var(--md-code-bg-color);
+            border-radius: 16px;
+            padding: 2rem;
+            margin: 2rem auto;
+            max-width: 800px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+
+        .code-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .code-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff5f57;
+        }
+
+        .code-dot:nth-child(2) { background: #ffbd2e; }
+        .code-dot:nth-child(3) { background: #28ca42; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero-title {
+                font-size: 2.5rem;
+            }
+
+            .hero-subtitle {
+                font-size: 1.1rem;
+            }
+
+            .hero-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+
+        /* Animations */
+        .fade-in {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeIn 0.8s ease forwards;
+        }
+
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-in:nth-child(1) { animation-delay: 0.1s; }
+        .fade-in:nth-child(2) { animation-delay: 0.2s; }
+        .fade-in:nth-child(3) { animation-delay: 0.3s; }
+        .fade-in:nth-child(4) { animation-delay: 0.4s; }
+
+        /* Interface Screenshot */
+        .interface-preview {
+            max-width: 1000px;
+            margin: 3rem auto;
+            padding: 0 2rem;
+        }
+
+        .interface-preview img {
+            width: 100%;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .interface-preview img:hover {
+            transform: scale(1.02);
+        }
+
+        /* Section Titles */
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--md-default-fg-color);
+        }
+
+        .section-subtitle {
+            text-align: center;
+            font-size: 1.2rem;
+            color: var(--md-default-fg-color--light);
+            max-width: 700px;
+            margin: 0 auto 3rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero-section">
+        <div class="hero-content">
+            <img src="assets/images/logo.png" alt="Flowfile Logo" class="hero-logo fade-in">
+            <h1 class="hero-title fade-in">Flowfile</h1>
+            <p class="hero-subtitle fade-in">
+                A visual ETL tool that combines drag-and-drop workflow building with the speed of Polars dataframes.
+                Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
+            </p>
+            <div class="hero-buttons fade-in">
+                <a href="quickstart/" class="hero-button hero-button-primary">
+                    <span>Get Started</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                    </svg>
+                </a>
+                <a href="https://github.com/edwardvaneechoud/Flowfile" class="hero-button hero-button-secondary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+                    </svg>
+                    <span>View on GitHub</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interface Preview -->
+    <div class="interface-preview">
+        <img src="assets/images/generic_screenshot.png" alt="Flowfile Interface" loading="lazy">
+    </div>
+
+    <!-- Features Section -->
+    <section class="features-section">
+        <h2 class="section-title">Why Flowfile?</h2>
+        <p class="section-subtitle">Build powerful data pipelines without writing code, powered by the speed of Polars</p>
+
+        <div class="features-grid">
+            <a href="flows/building/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">🎨</div>
+                <h3 class="feature-title">Visual Pipeline Design</h3>
+                <p class="feature-description">
+                    Drag and drop nodes to create complex data transformations.
+                    See your data flow in real-time with instant previews at each step.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="guides/technical_architecture.md" target="_blank" class="feature-card fade-in feature-link">
+                <div class="feature-icon">⚡</div>
+                <h3 class="feature-title">Blazing Fast Performance</h3>
+                <p class="feature-description">
+                    Built on Polars for lightning-fast data processing.
+                    Handle millions of rows with ease using optimized columnar operations.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="guides/code_generator/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">🔄</div>
+                <h3 class="feature-title">Flow to Code</h3>
+                <p class="feature-description">
+                    Export your visual flows as Python/Polars code.
+                    Deploy workflows anywhere without Flowfile dependencies.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="guides/database_connectivity/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">🔌</div>
+                <h3 class="feature-title">Database Integration</h3>
+                <p class="feature-description">
+                    Connect to PostgreSQL, MySQL, and more.
+                    Read, transform, and write data seamlessly between databases and files.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="guides/flowfile_frame_api/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">🐍</div>
+                <h3 class="feature-title">Code to Flow</h3>
+                <p class="feature-description">
+                    Use the FlowFrame API to build pipelines programmatically.
+                    Visualize your code as a flow graph instantly.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+
+            <a href="nodes/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">📊</div>
+                <h3 class="feature-title">Rich Transformations</h3>
+                <p class="feature-description">
+                    Fuzzy matching, pivot operations, custom formulas, and more.
+                    Handle complex data transformations with ease.
+                </p>
+                <span class="feature-arrow">→</span>
+            </a>
+        </div>
+    </section>
+
+    <!-- Code Example -->
+    <section style="padding: 2rem;">
+        <h2 class="section-title">Build Pipelines Your Way</h2>
+        <p class="section-subtitle">Use the visual designer or write code - seamlessly switch between both</p>
+
+        <div class="code-preview">
+            <div class="code-header">
+                <div class="code-dot"></div>
+                <div class="code-dot"></div>
+                <div class="code-dot"></div>
+            </div>
+            <pre><code class="language-python">import flowfile as ff
+from flowfile import col, open_graph_in_editor
+
+# Create a data pipeline
+df = ff.from_dict({
+    "id": [1, 2, 3, 4, 5],
+    "category": ["A", "B", "A", "C", "B"],
+    "value": [100, 200, 150, 300, 250]
+})
+
+# Process the data
+result = df.filter(col("value") > 150).with_columns([
+    (col("value") * 2).alias("double_value")
+])
+
+# Open the graph in the visual editor
+open_graph_in_editor(result.flow_graph)</code></pre>
+        </div>
+    </section>
+
+    <!-- Call to Action -->
+    <section style="text-align: center; padding: 4rem 2rem; background: var(--md-code-bg-color);">
+        <h2 class="section-title">Ready to Transform Your Data Workflow?</h2>
+        <div class="hero-buttons" style="margin-top: 2rem;">
+            <a href="quickstart/" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
+                Start Building
+            </a>
+            <a href="guides/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
+                View Guides
+            </a>
+        </div>
+    </section>
+
+    <!-- Scripts -->
+    <script>
+        // Add intersection observer for fade-in animations
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, { threshold: 0.1 });
+
+        // Observe all fade-in elements
+        document.querySelectorAll('.fade-in').forEach(el => {
+            observer.observe(el);
+        });
+    </script>
+</body>
+</html>

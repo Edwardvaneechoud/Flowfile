@@ -39,7 +39,7 @@ The **Join** node merges two datasets based on matching values in selected colum
 This node is useful for merging related datasets, such as **combining customer data with orders** or **linking product details with inventory**.
 
 
-### ![Fuzzy Match](../assets/images/nodes/fuzzy_match.png){ width="50" height="50" } Fuzzy Match  
+### ![Fuzzy Match](../assets/images/nodes/fuzzy_match.jpg){ width="50" height="50" } Fuzzy Match  
 
 The **Fuzzy Match** node joins datasets based on **similar values** instead of exact matches, using various matching algorithms.
 
