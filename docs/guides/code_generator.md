@@ -77,13 +77,11 @@ def run_etl_pipeline():
     df_1 = pl.LazyFrame(
         {
             "product": ["A", "B", "A", "B", "C"],
-            "quantity": [10, 20, 15, 25, 30],
-            "price": [100.0, 200.0, 100.0, 200.0, 150.0],
+            "revenue": [100.0, 200.0, 100.0, 200.0, 150.0],
         }
     )
     df_2 = df_1.group_by(["product"]).agg([
-        pl.col("quantity").sum().alias("total_quantity"),
-        pl.col("price").mean().alias("avg_price"),
+        pl.col("revenue").sum().alias("total_revenue"),
     ])
     return df_2
 
