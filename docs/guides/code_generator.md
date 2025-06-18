@@ -23,6 +23,7 @@ Here are some simplified examples illustrating what the generated Polars code lo
 This example shows how a pipeline that reads a CSV file and then selects/renames specific columns translates into Polars code.
 
 **Flowfile Pipeline:**
+
 1.  **Read CSV** (e.g., `customers.csv`)
 2.  **Select** (e.g., keep `name` as `customer_name`, `age`)
 
@@ -56,6 +57,7 @@ if __name__ == "__main__":
 This example demonstrates the code generated for a pipeline that processes a dataset and performs a group by operation with aggregations.
 
 **Flowfile Pipeline:**
+
 1.  **Manual Input** (sample sales data with `product` and `revenue`)
 2.  **Group By** (e.g., group by `product`, sum `revenue` as `total_revenue`)
 
@@ -96,6 +98,7 @@ if __name__ == "__main__":
 For advanced users, Flowfile offers a "Polars Code" node where you can write custom Polars expressions. Here's how that custom code is integrated into the generated script.
 
 **Flowfile Pipeline:**
+
 1.  **Manual Input** (a basic DataFrame)
 2.  **Polars Code** (a node containing custom Polars logic, e.g., adding a new column)
 

@@ -230,6 +230,7 @@ By building on Polars' lazy evaluation, Flowfile achieves:
 ## Summary
 
 This design enables Flowfile to:
+
 -   Provide instant feedback without processing data.
 -   Handle datasets of any size efficiently.
 -   Keep the UI responsive during heavy computations.
