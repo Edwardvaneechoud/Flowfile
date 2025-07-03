@@ -110,7 +110,7 @@ class FlowDataEngine:
     # flow_id: int = None  # TODO: Implement flow_id
 
     def __init__(self,
-                 raw_data: Union[List[Dict], List[Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
+                 raw_data: Union[List[Dict], List[Any], Dict[str, Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
                  path_ref: str = None,
                  name: str = None,
                  optimize_memory: bool = True,
@@ -187,12 +187,13 @@ class FlowDataEngine:
             self.initialize_empty_fl()
         lengths = [len(v) if isinstance(v, (list, tuple)) else 1 for v in data.values()]
 
-        if len(set(lengths)) == 1 and lengths[0]>1:
+        if len(set(lengths)) == 1 and lengths[0] > 1:
             self.number_of_records = lengths[0]
             self.data_frame = pl.DataFrame(data)
         else:
             self.number_of_records = 1
             self.data_frame = pl.DataFrame([data])
+        self.lazy = True
 
     def _handle_raw_data_format(self, raw_data: input_schema.RawData):
         """Create a FlowDataEngine from a RawData object."""
@@ -481,7 +482,10 @@ class FlowDataEngine:
         return self.data_frame.to_dicts()
 
     def to_dict(self) -> Dict[str, List]:
-        return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
+        if self.lazy:
+            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
+        else:
+            return self.data_frame.to_dict(as_series=False)
 
     @classmethod
     def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowDataEngine":

@@ -126,6 +126,11 @@ class SelectInputs:
     def remove_select_input(self, old_key: str):
         self.renames = [rename for rename in self.renames if rename.old_name != old_key]
 
+    def unselect_field(self, old_key: str):
+        for rename in self.renames:
+            if old_key == rename.old_name:
+                rename.keep = False
+
     @classmethod
     def create_from_list(cls, col_list: str):
         return cls([SelectInput(c) for c in col_list])

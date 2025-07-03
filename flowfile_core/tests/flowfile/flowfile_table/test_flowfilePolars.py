@@ -61,6 +61,11 @@ def create_test_dataframe():
     return pl.DataFrame(data)
 
 
+@pytest.fixture
+def join_df():
+    return FlowDataEngine(create_test_dataframe().select("id", "category"))
+
+
 def test_group_by_numeric():
     data = create_test_dataframe()
     fl_table = FlowDataEngine(data)
@@ -283,6 +288,65 @@ def test_join_anti():
     expected_df = FlowDataEngine([{"name": "eduward"},
                                  {"name": "courtney"}])
     result_df.assert_equal(expected_df)
+
+
+def test_join_non_selecting_join_keys_inner(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False), transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False), transform_schema.SelectInput('category')]
+    )
+
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+    expected = FlowDataEngine([{'category': 'A', 'category_right': 'A'}])
+    result.assert_equal(expected)
+
+
+def test_join_no_selection(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[],
+        right_select=[]
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+    expected = FlowDataEngine()
+    result.assert_equal(expected)
+
+
+def test_join_non_selecting_join_keys_left(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                      transform_schema.SelectInput('category')],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None]})
+    result.assert_equal(expected)
+
+
+def test_join_non_selecting_join_keys_right(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                      transform_schema.SelectInput('category')],
+        how='right'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None]})
+    result.assert_equal(expected)
 
 
 def test_execute_polars_code_no_frame():
