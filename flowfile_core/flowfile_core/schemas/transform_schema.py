@@ -186,10 +186,9 @@ class JoinInputs(SelectInputs):
 
 @dataclass
 class JoinMap:
-    __slots__ = "left_col", "right_col"
+    # __slots__ = "left_col", "right_col"
     left_col: str
     right_col: str
-
 
 
 

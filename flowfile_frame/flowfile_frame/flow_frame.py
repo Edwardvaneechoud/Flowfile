@@ -596,7 +596,6 @@ class FlowFrame:
                               nulls_equal is False and
                               validate is None and
                               suffix == '_right')
-
         join_mappings = None
         if self.flow_graph.flow_id != other.flow_graph.flow_id:
             combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
@@ -671,6 +670,10 @@ class FlowFrame:
                 )
 
             join_input.auto_rename()
+            for right_column in right_select.renames:
+                if right_column.join_key:
+                    right_column.keep = False
+
             if how == 'cross':
                 cross_join_settings = input_schema.NodeCrossJoin(
                     flow_id=self.flow_graph.flow_id,

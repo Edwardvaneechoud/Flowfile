@@ -234,6 +234,7 @@ def test_join_not_in_graph():
         "id": [1, 2, 4],
         "age": [25, 30, 40]
     })
+
     result = df1.join(df2, on="id").collect()
     assert len(result) == 2  # Only matches for id 1 and 2
     assert result.columns == ["id", "name", "age"]
