@@ -528,7 +528,6 @@ class PivotInput:
         return pl.struct([pl.col(c) for c in self.aggregations]).alias('vals')
 
 
-
 @dataclass
 class SortByInput:
     column: str
