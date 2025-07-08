@@ -591,11 +591,11 @@ class FlowFrame:
         FlowFrame
             New FlowFrame with join operation applied.
         """
-        use_polars_code = not(maintain_order is None and
-                              coalesce is None and
-                              nulls_equal is False and
-                              validate is None and
-                              suffix == '_right')
+        use_polars_code = not (maintain_order is None and
+                               coalesce is None and
+                               nulls_equal is False and
+                               validate is None and
+                               suffix == '_right')
         join_mappings = None
         if self.flow_graph.flow_id != other.flow_graph.flow_id:
             combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)

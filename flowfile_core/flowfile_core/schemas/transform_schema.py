@@ -163,25 +163,24 @@ class SelectInputs:
 
 
 class JoinInputs(SelectInputs):
-    side: SideLit
 
-    def __init__(self, renames: List[SelectInput], side: SideLit):
+    def __init__(self, renames: List[SelectInput]):
         self.renames = renames
-        self.side = side
 
     @property
     def join_key_selects(self) -> List[SelectInput]:
         return [v for v in self.renames if v.join_key]
 
-    def get_join_key_renames(self, filter_drop: bool = False) -> JoinKeyRenameResponse:
+    def get_join_key_renames(self, side: SideLit, filter_drop: bool = False) -> JoinKeyRenameResponse:
         return JoinKeyRenameResponse(
-            self.side,
+            side,
             [JoinKeyRename(jk.new_name,
-                           construct_join_key_name(self.side, jk.new_name)) for jk in self.join_key_selects if jk.keep or not filter_drop]
+                           construct_join_key_name(side, jk.new_name))
+             for jk in self.join_key_selects if jk.keep or not filter_drop]
         )
 
-    def get_join_key_rename_mapping(self) -> Dict[str, str]:
-        return {jkr[0]: jkr[1] for jkr in self.get_join_key_renames()[1]}
+    def get_join_key_rename_mapping(self, side: SideLit) -> Dict[str, str]:
+        return {jkr[0]: jkr[1] for jkr in self.get_join_key_renames(side)[1]}
 
 
 @dataclass
@@ -223,17 +222,17 @@ class JoinSelectMixin:
     right_select: JoinInputs = None
 
     @staticmethod
-    def parse_select(select: List[SelectInput] | List[str] | List[Dict], side: SideLit) -> JoinInputs | None:
+    def parse_select(select: List[SelectInput] | List[str] | List[Dict]) -> JoinInputs | None:
         if all(isinstance(c, SelectInput) for c in select):
-            return JoinInputs(select, side)
+            return JoinInputs(select)
         elif all(isinstance(c, dict) for c in select):
-            return JoinInputs([SelectInput(**c.__dict__) for c in select], side)
+            return JoinInputs([SelectInput(**c.__dict__) for c in select])
         elif isinstance(select, dict):
             renames = select.get('renames')
             if renames:
-                return JoinInputs([SelectInput(**c) for c in renames], side)
+                return JoinInputs([SelectInput(**c) for c in renames])
         elif all(isinstance(c, str) for c in select):
-            return JoinInputs([SelectInput(s, s) for s in select], side)
+            return JoinInputs([SelectInput(s, s) for s in select])
 
     def auto_generate_new_col_name(self, old_col_name: str, side: str) -> str:
         current_names = self.left_select.new_cols & self.right_select.new_cols
@@ -312,8 +311,8 @@ class JoinInput(JoinSelectMixin):
         self.how = how
 
     def get_join_key_renames(self, filter_drop: bool = False) -> FullJoinKeyResponse:
-        return FullJoinKeyResponse(self.left_select.get_join_key_renames(filter_drop),
-                                   self.right_select.get_join_key_renames(filter_drop))
+        return FullJoinKeyResponse(self.left_select.get_join_key_renames(side="left", filter_drop=filter_drop),
+                                   self.right_select.get_join_key_renames(side="right", filter_drop=filter_drop))
 
     @property
     def _left_join_keys(self) -> Set:
@@ -350,8 +349,8 @@ class JoinInput(JoinSelectMixin):
     def used_join_mapping(self):
         new_mappings: List[JoinMap] = []
         left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table
-        left_join_rename_mapping: Dict[str, str] = self.left_select.get_join_key_rename_mapping()
-        right_join_rename_mapping: Dict[str, str] = self.right_select.get_join_key_rename_mapping()
+        left_join_rename_mapping: Dict[str, str] = self.left_select.get_join_key_rename_mapping("left")
+        right_join_rename_mapping: Dict[str, str] = self.right_select.get_join_key_rename_mapping("right")
         for join_map in self.join_mapping:
             # del self.right_select.rename_table, self.left_select.rename_table
             new_mappings.append(JoinMap(left_join_rename_mapping.get(left_rename_table.get(join_map.left_col, join_map.left_col)),

@@ -90,6 +90,33 @@ def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform
     return left_df, right_df, reverse_actions
 
 
+def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.JoinInput) -> None:
+    """
+    Updates the right columns of the join input by deselecting them.
+    Args:
+        join_input ():
+
+    Returns:
+        None
+    """
+    if join_input.how in ('semi', 'anti'):
+        for jk in join_input.right_select.renames:
+            jk.keep = False
+
+
+def get_select_columns(full_select_input: List[transform_schemas.SelectInput]) -> List[str]:
+    """
+    Gets the list of column names to select from the full select input.
+    It filters out columns that are not marked to keep or join keys, and only includes those that are available.
+    Args:
+        full_select_input (): List of SelectInput objects containing column information.
+
+    Returns:
+        List of column names to select.
+    """
+    return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
+
+
 @dataclass
 class FlowDataEngine:
     """
@@ -1090,11 +1117,7 @@ class FlowDataEngine:
         Raises:
             Exception: If join would result in too many records or is invalid
         """
-        # self.lazy = False if join_input.how == 'right' else True
-        # other.lazy = False if join_input.how == 'right' else True
-        if join_input.how in ('semi', 'anti'):
-            for jk in join_input.right_select.renames:
-                jk.keep = False
+        ensure_right_unselect_for_semi_and_anti_joins(join_input)
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
 
         if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
@@ -1102,12 +1125,8 @@ class FlowDataEngine:
 
         if auto_generate_selection:
             join_input.auto_rename()
-        right_select = [v.old_name for v in join_input.right_select.renames
-                        if (v.keep or v.join_key) and v.is_available]
-        left_select = [v.old_name for v in join_input.left_select.renames
-                       if (v.keep or v.join_key) and v.is_available]
-        left = self.data_frame.select(left_select).rename(join_input.left_select.rename_table)
-        right = other.data_frame.select(right_select).rename(join_input.right_select.rename_table)
+        left = self.data_frame.select(get_select_columns(join_input.left_select.renames)).rename(join_input.left_select.rename_table)
+        right = other.data_frame.select(get_select_columns(join_input.right_select.renames)).rename(join_input.right_select.rename_table)
 
         if verify_integrity and join_input.how != 'right':
             n_records = get_join_count(left, right, left_on_keys=join_input.left_join_keys,
