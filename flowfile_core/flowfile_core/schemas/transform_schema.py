@@ -256,8 +256,8 @@ class CrossJoinInput(JoinSelectMixin):
 
     def __init__(self, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str]):
-        self.left_select = self.parse_select(left_select, 'left')
-        self.right_select = self.parse_select(right_select, 'right')
+        self.left_select = self.parse_select(left_select)
+        self.right_select = self.parse_select(right_select)
 
     @property
     def overlapping_records(self):
@@ -304,8 +304,8 @@ class JoinInput(JoinSelectMixin):
                  right_select: List[SelectInput] | List[str],
                  how: JoinStrategy = 'inner'):
         self.join_mapping = self.parse_join_mapping(join_mapping)
-        self.left_select = self.parse_select(left_select, "left")
-        self.right_select = self.parse_select(right_select, "right")
+        self.left_select = self.parse_select(left_select)
+        self.right_select = self.parse_select(right_select)
         [setattr(v, "join_key", v.old_name in self._left_join_keys) for v in self.left_select.renames]
         [setattr(v, "join_key", v.old_name in self._right_join_keys) for v in self.right_select.renames]
         self.how = how
@@ -390,8 +390,8 @@ class FuzzyMatchInput(JoinInput):
     def __init__(self, join_mapping: List[FuzzyMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str], aggregate_output: bool = False, how: JoinStrategy = 'inner'):
         self.join_mapping = self.parse_fuzz_mapping(join_mapping)
-        self.left_select = self.parse_select(left_select, side="left")
-        self.right_select = self.parse_select(right_select, side="left")
+        self.left_select = self.parse_select(left_select)
+        self.right_select = self.parse_select(right_select)
         self.how = how
         for jm in self.join_mapping:
 

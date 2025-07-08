@@ -61,6 +61,7 @@
         </div>
       </div>
       <select-dynamic
+      v-if="showColumnSelection"
         :select-inputs="nodeJoin?.join_input.left_select.renames"
         :show-keep-option="true"
         :show-title="true"
@@ -72,6 +73,7 @@
         "
       />
       <select-dynamic
+      v-if="showColumnSelection"
         :select-inputs="nodeJoin?.join_input.right_select.renames"
         :show-keep-option="true"
         :show-headers="true"
@@ -88,7 +90,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -98,7 +100,12 @@ import DropDown from "../../../baseNode/page_objects/dropDown.vue";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
-const joinTypes = ["inner", "left", "right", "full", "semi", "anti", "cross"];
+type JoinType = "inner" | "left" | "right" | "full" | "semi" | "anti" | "cross";
+
+const joinTypes: JoinType[] = ["inner", "left", "right", "full", "semi", "anti", "cross"];
+
+const JOIN_TYPES_WITHOUT_COLUMN_SELECTION: JoinType[] = ['anti', 'semi'];
+
 
 const handleJoinTypeError = (error: string) => {
   console.error("Join type error:", error);
@@ -135,6 +142,11 @@ const addJoinCondition = () => {
     });
   }
 };
+
+const showColumnSelection = computed(() => {
+  const joinType = nodeJoin.value?.join_input.how;
+  return joinType && !JOIN_TYPES_WITHOUT_COLUMN_SELECTION.includes(joinType);
+});
 
 const removeJoinCondition = (index: number) => {
   if (nodeJoin.value && index >= 0) {
