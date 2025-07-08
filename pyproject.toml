@@ -42,7 +42,7 @@ polars-expr-transformer = ">=0.4.9.0"
 polars-grouper = "~0.3.0"
 polars-ds = ">=0.6.0"
 pyairbyte-flowfile = "0.20.2"
-airbyte-cdk = "6.47.2"
+airbyte-cdk = ">=6.47.0"
 pytest = "^8.3.4"
 aiofiles = "^24.1.0"
 python-jose = "^3.4.0"
@@ -78,3 +78,4 @@ markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package"
 ]
+
