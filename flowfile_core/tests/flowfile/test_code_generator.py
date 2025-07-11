@@ -1,14 +1,15 @@
 import pytest
 import os
-from typing import Any, List
+from typing import Any, List, Tuple
 import polars as pl
 from polars.testing import assert_frame_equal
 from pathlib import Path
 
-
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter, export_flow_to_polars
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+import itertools
 
 
 # Helper functions to create standard test data and flows
@@ -45,7 +46,7 @@ def verify_if_execute(code: str):
         raise Exception(f"Code execution should not raise an exception:\n {e}")
 
 
-def get_result_from_generated_code(code: str) -> pl.DataFrame | pl.LazyFrame | List[pl.DataFrame|pl.LazyFrame] | None:
+def get_result_from_generated_code(code: str) -> pl.DataFrame | pl.LazyFrame | List[pl.DataFrame | pl.LazyFrame] | None:
     exec_globals = {}
     exec(code, exec_globals)
     return exec_globals['run_etl_pipeline']()
@@ -56,14 +57,148 @@ def create_basic_flow(flow_id: int = 1, name: str = "test_flow") -> FlowGraph:
     return FlowGraph(flow_id=flow_id, flow_settings=create_flow_settings(flow_id), name=name)
 
 
+def generate_parameterized_tests():
+    """Generate parameterized test cases with descriptive names"""
+
+    test_cases = []
+
+    join_types = ["inner", "left", "right", "outer"]
+    rename_configs = [
+        ("no_rename", False, False),
+        ("left_rename", True, False),
+        ("right_rename", False, True),
+        ("both_rename", True, True)
+    ]
+    keep_configs = [
+        ("all_keep", True, True),
+        ("left_no_keep", False, True),
+        ("right_no_keep", True, False),
+        ("both_no_keep", False, False)
+    ]
+
+    for join_type in join_types:
+        for rename_name, left_rename, right_rename in rename_configs:
+            for keep_name, left_keep, right_keep in keep_configs:
+                test_name = f"{join_type}_{rename_name}_{keep_name}"
+
+                scenario = input_schema.NodeJoin(
+                    flow_id=1,
+                    node_id=3,
+                    depending_on_ids=[1, 2],
+                    join_input=transform_schema.JoinInput(
+                        join_mapping=[transform_schema.JoinMap("id", "id")],
+                        left_select=[
+                            transform_schema.SelectInput(
+                                "id",
+                                "left_id" if left_rename else "id",
+                                keep=left_keep
+                            ),
+                            transform_schema.SelectInput(
+                                "name",
+                                "left_name" if left_rename else "name"
+                            )
+                        ],
+                        right_select=[
+                            transform_schema.SelectInput(
+                                "id",
+                                "right_id" if right_rename else "id",
+                                keep=right_keep
+                            ),
+                            transform_schema.SelectInput(
+                                "city",
+                                "right_city" if right_rename else "city"
+                            )
+                        ],
+                        how=join_type
+                    )
+                )
+
+                test_cases.append((test_name, scenario))
+
+    return test_cases
+
+
+@pytest.fixture
+def join_input_dataset() -> tuple[input_schema.NodeManualInput, input_schema.NodeManualInput]:
+    left_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String")
+            ],
+            data=[[1, 2, 3], ["Alice", "Bob", "Charlie"]]
+        )
+    )
+
+    # Add second dataset
+    right_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="city", data_type="String")
+            ],
+            data=[[1, 2, 4], ["NYC", "LA", "Chicago"]]
+        )
+    )
+    return left_data, right_data
+
+
+@pytest.fixture
+def join_input_large_dataset() -> tuple[input_schema.NodeManualInput, input_schema.NodeManualInput]:
+    data_engine = FlowDataEngine.create_random(100)
+    data_engine_2 = FlowDataEngine.create_random(10)
+    left_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=data_engine.select_columns(['ID', "Name", "Address", "Zipcode"]).to_raw_data()
+    )
+
+    right_data = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=data_engine.get_sample(50, random=True).concat(data_engine_2).select_columns(["ID", "Name", "City"]).to_raw_data()
+        )
+    return left_data, right_data
+
+
+@pytest.mark.parametrize("test_name,join_scenario",  generate_parameterized_tests())
+def test_join_operation(test_name, join_scenario, join_input_dataset):
+    """Parameterized test for all join operation combinations"""
+    flow = create_basic_flow()
+    left_data, right_data = join_input_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+    # Add join node
+    flow.add_join(join_scenario)
+    # breakpoint()
+    # Add connections
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code and verify
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+
+
 def get_reference_polars_dataframe() -> pl.LazyFrame:
     return pl.LazyFrame([
-                [1, 2, 3, 4, 5],
-                ["Alice", "Bob", "Charlie", "David", "Eve"],
-                [25, 30, 35, 40, 28],
-                ["NYC", "LA", "Chicago", "Houston", "NYC"],
-                [50000, 75000, 90000, 85000, 65000]
-            ], schema=['id', 'name', 'age', 'city', 'salary'])
+        [1, 2, 3, 4, 5],
+        ["Alice", "Bob", "Charlie", "David", "Eve"],
+        [25, 30, 35, 40, 28],
+        ["NYC", "LA", "Chicago", "Houston", "NYC"],
+        [50000, 75000, 90000, 85000, 65000]
+    ], schema=['id', 'name', 'age', 'city', 'salary'])
 
 
 def create_sample_dataframe_node(flow: FlowGraph, node_id: int = 1) -> FlowGraph:
@@ -193,7 +328,7 @@ def verify_code_ordering(code: str, *ordered_snippets: str) -> None:
         indices.append(found_index)
 
     for i in range(1, len(indices)):
-        assert indices[i-1] < indices[i], f"'{ordered_snippets[i-1]}' should appear before '{ordered_snippets[i]}'"
+        assert indices[i - 1] < indices[i], f"'{ordered_snippets[i - 1]}' should appear before '{ordered_snippets[i]}'"
 
 
 def test_simple_manual_input():
@@ -297,35 +432,12 @@ def test_graph_solver():
     assert_frame_equal(result, expected_result)
 
 
-def test_join_operation():
+def test_join_operation_left(join_input_dataset):
     """Test join operation between two datasets"""
     flow = create_basic_flow()
-    # Add first dataset
-    left_data = input_schema.NodeManualInput(
-        flow_id=1,
-        node_id=1,
-        raw_data_format=input_schema.RawData(
-            columns=[
-                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
-                input_schema.MinimalFieldInfo(name="name", data_type="String")
-            ],
-            data=[[1, 2, 3], ["Alice", "Bob", "Charlie"]]
-        )
-    )
-    flow.add_manual_input(left_data)
+    left_data, right_data = join_input_dataset
 
-    # Add second dataset
-    right_data = input_schema.NodeManualInput(
-        flow_id=1,
-        node_id=2,
-        raw_data_format=input_schema.RawData(
-            columns=[
-                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
-                input_schema.MinimalFieldInfo(name="city", data_type="String")
-            ],
-            data=[[1, 2, 4], ["NYC", "LA", "Chicago"]]
-        )
-    )
+    flow.add_manual_input(left_data)
     flow.add_manual_input(right_data)
 
     # Add join node
@@ -359,9 +471,488 @@ def test_join_operation():
                          )
     verify_if_execute(code)
     result = get_result_from_generated_code(code)
-    left_df = flow.get_node(1).get_resulting_data().data_frame
-    right_df = flow.get_node(2).get_resulting_data().data_frame
-    assert_frame_equal(result, left_df.join(right_df, on="id", how="left"))
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df)
+
+
+def test_join_operation_right(join_input_dataset):
+    """Test join operation between two datasets"""
+    flow = create_basic_flow()
+    left_data, right_data = join_input_dataset
+
+    flow.add_manual_input(left_data)
+
+    flow.add_manual_input(right_data)
+    # Add join node
+    join_node = input_schema.NodeJoin(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("id", "id")],
+            left_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("name")],
+            right_select=[transform_schema.SelectInput("id"), transform_schema.SelectInput("city")],
+            how="right"
+        )
+    )
+    flow.add_join(join_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+    # Verify join code
+    verify_code_contains(code,
+                         "df_1.join(",
+                         "df_2,",
+                         'left_on=["__jk_id"]',
+                         'right_on=["id"]',
+                         'how="right"'
+                         )
+    verify_if_execute(code)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+def create_comprehensive_join_scenarios() -> List[Tuple[str, input_schema.NodeJoin]]:
+    """Generate comprehensive join test scenarios including complex cases"""
+
+    join_scenarios: List[Tuple[str, input_schema.NodeJoin]] = []
+    how_options: List[transform_schema.JoinStrategy] = ["left", "right", "inner", "outer"]
+
+    def add_scenario(name: str, join_input: transform_schema.JoinInput) -> None:
+        join_scenarios.append((
+            name,
+            input_schema.NodeJoin(
+                flow_id=1,
+                node_id=3,
+                depending_on_ids=[1, 2],
+                join_input=join_input
+            )
+        ))
+
+    # Test data columns for reference:
+    # Left: ID, Name, Address, Zipcode
+    # Right: ID, Name, City
+
+    for how in how_options:
+        # 1. Basic single column join
+        add_scenario(
+            f"{how}_basic_single_join",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name")
+                ],
+                how=how
+            )
+        )
+        # 2. Multi-column join with unselected right overlapping columns
+        add_scenario(
+            f"{how}_unselect_all_right_overlapping_col_left",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", keep=False),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        # 3. Multi-column join with all right columns dropped
+        add_scenario(
+            f"{how}_unselect_all_right_overlapping_col_left_multi_join",
+            transform_schema.JoinInput(
+                join_mapping=[
+                    transform_schema.JoinMap("ID", "ID"),
+                    transform_schema.JoinMap("Name", "Name")
+                ],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", keep=False),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        # 4. Rename left overlapping column
+        add_scenario(
+            f"{how}_unselect_all_right_overlapping_col_left_rename",
+            transform_schema.JoinInput(
+                join_mapping=[
+                    transform_schema.JoinMap("ID", "ID"),
+                    transform_schema.JoinMap("Name", "Name")
+                ],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name", new_name="LeftName", keep=True)
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", keep=False),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        # 5. Rename right overlapping column
+        add_scenario(
+            f"{how}_rename_right_overlapping_col",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", new_name="RightID"),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name", new_name="RightName")
+                ],
+                how=how
+            )
+        )
+
+        # 6. Rename both overlapping columns
+        add_scenario(
+            f"{how}_rename_both_overlapping_cols",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID", new_name="LeftID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name", new_name="LeftName")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", new_name="RightID"),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name", new_name="RightName")
+                ],
+                how=how
+            )
+        )
+
+        # 7. Keep only join columns
+        add_scenario(
+            f"{how}_keep_only_join_cols",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address", keep=False),
+                    transform_schema.SelectInput("Zipcode", keep=False),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", keep=False),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        # 8. Drop all join columns
+        add_scenario(
+            f"{how}_drop_all_join_cols",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name", new_name="RightName")
+                ],
+                how=how
+            )
+        )
+
+        # 9. Complex multi-join with mixed strategies
+        add_scenario(
+            f"{how}_complex_multi_join_mixed_strategy",
+            transform_schema.JoinInput(
+                join_mapping=[
+                    transform_schema.JoinMap("ID", "ID"),
+                    transform_schema.JoinMap("Name", "Name")
+                ],
+                left_select=[
+                    transform_schema.SelectInput("ID", new_name="JoinID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode", keep=False),
+                    transform_schema.SelectInput("Name", new_name="JoinName")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", new_name="RightCity"),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        # 10. Minimal output (only non-join columns)
+        add_scenario(
+            f"{how}_minimal_output_non_join_cols",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode", keep=False),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        add_scenario(
+            f"{how}_complex_multi_join_mixed_rename_left_strategy",
+            transform_schema.JoinInput(
+                join_mapping=[
+                    transform_schema.JoinMap("ID", "ID"),
+                    transform_schema.JoinMap("Name", "Name")
+                ],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode", keep=False),
+                    transform_schema.SelectInput("Name", new_name="JoinName")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", new_name="RightCity"),
+                    transform_schema.SelectInput("Name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        add_scenario(
+            f"{how}_complex_multi_join_mixed_rename_right_strategy",
+            transform_schema.JoinInput(
+                join_mapping=[
+                    transform_schema.JoinMap("ID", "ID"),
+                    transform_schema.JoinMap("Name", "Name")
+                ],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode", keep=False),
+                    transform_schema.SelectInput("Name", new_name="JoinName")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", keep=False),
+                    transform_schema.SelectInput("City", new_name="RightCity"),
+                    transform_schema.SelectInput("Name", new_name="new_name", keep=False)
+                ],
+                how=how
+            )
+        )
+
+        # 12. All columns renamed
+        add_scenario(
+            f"{how}_all_columns_renamed",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID", new_name="L_ID"),
+                    transform_schema.SelectInput("Address", new_name="L_Address"),
+                    transform_schema.SelectInput("Zipcode", new_name="L_Zipcode"),
+                    transform_schema.SelectInput("Name", new_name="L_Name")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID", new_name="R_ID"),
+                    transform_schema.SelectInput("City", new_name="R_City"),
+                    transform_schema.SelectInput("Name", new_name="R_Name")
+                ],
+                how=how
+            )
+        )
+
+    return join_scenarios
+
+
+def create_comprehensive_anti_semi_join_scenarios() -> List[Tuple[str, input_schema.NodeJoin]]:
+    """Generate comprehensive join test scenarios including complex cases"""
+
+    join_scenarios: List[Tuple[str, input_schema.NodeJoin]] = []
+    how_options: List[transform_schema.JoinStrategy] = ["semi", "anti"]
+
+    def add_scenario(name: str, join_input: transform_schema.JoinInput) -> None:
+        join_scenarios.append((
+            name,
+            input_schema.NodeJoin(
+                flow_id=1,
+                node_id=3,
+                depending_on_ids=[1, 2],
+                join_input=join_input
+            )
+        ))
+
+
+    for how in how_options:
+        # 1. Basic single column join
+        add_scenario(
+            f"{how}_basic_single_join",
+            transform_schema.JoinInput(
+                join_mapping=[transform_schema.JoinMap("ID", "ID")],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name")
+                ],
+                how=how
+            )
+        )
+
+        # 3. Multi-column join with all right columns dropped
+        add_scenario(
+            f"{how}_unselect_all_right_overlapping_col_left_multi_join",
+            transform_schema.JoinInput(
+                join_mapping=[
+                    transform_schema.JoinMap("ID", "ID"),
+                    transform_schema.JoinMap("Name", "Name")
+                ],
+                left_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("Address"),
+                    transform_schema.SelectInput("Zipcode"),
+                    transform_schema.SelectInput("Name")
+                ],
+                right_select=[
+                    transform_schema.SelectInput("ID"),
+                    transform_schema.SelectInput("City"),
+                    transform_schema.SelectInput("Name")
+                ],
+                how=how
+            )
+        )
+
+    return join_scenarios
+
+
+
+@pytest.mark.parametrize("test_name, join_scenario", create_comprehensive_join_scenarios())
+def test_join_operation_complex(test_name, join_scenario, join_input_large_dataset):
+    flow = create_basic_flow()
+    # if test_name == 'right_unselect_all_right_overlapping_col_left_multi_join':
+    left_data, right_data = join_input_large_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+    flow.add_join(join_scenario)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+@pytest.mark.parametrize("test_name, join_scenario", create_comprehensive_anti_semi_join_scenarios())
+def test_semi_and_anti_join(test_name, join_scenario, join_input_large_dataset):
+    flow = create_basic_flow()
+    # if test_name == 'right_unselect_all_right_overlapping_col_left_multi_join':
+    left_data, right_data = join_input_large_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+    flow.add_join(join_scenario)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+def test_join_operation_left_rename(join_input_dataset):
+    """Test join operation between two datasets"""
+    flow = create_basic_flow()
+    left_data, right_data = join_input_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+    # Add join node
+    join_node = input_schema.NodeJoin(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        join_input=transform_schema.JoinInput(
+            join_mapping=[transform_schema.JoinMap("id", "id")],
+            left_select=[transform_schema.SelectInput("id", "left_id"),
+                         transform_schema.SelectInput("name", "left_name")],
+            right_select=[transform_schema.SelectInput("id", "right_id"),
+                          transform_schema.SelectInput("city", "right_city")],
+            how="left"
+        )
+    )
+    flow.add_join(join_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    verify_if_execute(code)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
 
 
 def test_group_by_aggregation():
@@ -526,7 +1117,6 @@ def test_pivot_no_index_operation():
     )
     flow.add_pivot(pivot_node)
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
-    flow.get_node(2).get_resulting_data().data_frame
     # Convert to Polars code
     code = export_flow_to_polars(flow)
     # Verify pivot code
@@ -557,7 +1147,7 @@ def test_union_multiple_dataframes():
                     input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
                     input_schema.MinimalFieldInfo(name="value", data_type="String")
                 ],
-                data=[[i, i+10, i+20], [f"A{i}", f"B{i}", f"C{i}"]]
+                data=[[i, i + 10, i + 20], [f"A{i}", f"B{i}", f"C{i}"]]
             )
         )
         flow.add_manual_input(data)
@@ -652,6 +1242,7 @@ polars_test_cases = [
         "sort_and_limit_with"
     )
 ]
+
 
 @pytest.mark.parametrize("polars_code, test_id", polars_test_cases)
 def test_code(polars_code, test_id):
@@ -1293,7 +1884,6 @@ def test_cross_join_operation():
         )
     )
     flow.add_manual_input(data2)
-
     # Add cross join
     cross_join_node = input_schema.NodeCrossJoin(
         flow_id=1,
@@ -1302,6 +1892,59 @@ def test_cross_join_operation():
         cross_join_input=transform_schema.CrossJoinInput(
             left_select=[transform_schema.SelectInput("x")],
             right_select=[transform_schema.SelectInput("y")]
+        )
+    )
+    flow.add_cross_join(cross_join_node)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+    # Convert to Polars code
+    code = export_flow_to_polars(flow)
+
+    # Verify cross join code
+    verify_code_contains(code,
+                         "join(",
+                         "how='cross'"
+                         )
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def test_cross_join_operation_equal_column():
+    """Test cross join with multiple inputs"""
+    flow = create_basic_flow()
+
+    # Add two manual inputs
+    data1 = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="x", data_type="Integer")],
+            data=[[1, 2, 3]]
+        )
+    )
+    flow.add_manual_input(data1)
+
+    data2 = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="x", data_type="String")],
+            data=[["A", "B"]]
+        )
+    )
+    flow.add_manual_input(data2)
+    # Add cross join
+    cross_join_node = input_schema.NodeCrossJoin(
+        flow_id=1,
+        node_id=3,
+        depending_on_ids=[1, 2],
+        cross_join_input=transform_schema.CrossJoinInput(
+            left_select=[transform_schema.SelectInput("x")],
+            right_select=[transform_schema.SelectInput("x")]
         )
     )
     flow.add_cross_join(cross_join_node)
@@ -1529,7 +2172,8 @@ def test_parquet_read():
     os.getcwd()
     flowfile_core_path = find_parent_directory('Flowfile')
 
-    file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'))
+    file_path = str(
+        (Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'))
     # Add parquet read node
     read_node = input_schema.NodeRead(
         flow_id=1,
@@ -1555,7 +2199,8 @@ def test_excel_read():
     flow = create_basic_flow()
     flowfile_core_path = find_parent_directory('Flowfile')
 
-    file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx'))
+    file_path = str(
+        (Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx'))
 
     # Add Excel read node
     read_node = input_schema.NodeRead(

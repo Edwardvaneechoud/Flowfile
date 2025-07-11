@@ -1,6 +1,6 @@
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import remove_comments_and_docstrings
-from flowfile_core.schemas import transform_schema
+from flowfile_core.schemas import transform_schema, input_schema
 import polars as pl
 import pytest
 
@@ -324,6 +324,43 @@ def test_join_non_selecting_join_keys_inner(join_df: FlowDataEngine):
     result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
     expected = FlowDataEngine([{'category': 'A', 'category_right': 'A'}])
     result.assert_equal(expected)
+
+
+def test_outer_join_rename():
+    df_1 = FlowDataEngine(pl.LazyFrame([[1, 2, 3], ['Alice', 'Bob', 'Charlie']], schema=pl.Schema([("id", pl.Int64), ("name", pl.String)])))
+    df_2 = FlowDataEngine(pl.LazyFrame([[1, 2, 4], ['NYC', 'LA', 'Chicago']], schema=pl.Schema([("id", pl.Int64), ("city", pl.String)])))
+    df_1.lazy = False; df_2.lazy = False
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[
+            transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+            transform_schema.SelectInput(old_name='name',new_name='name', keep=True)],
+        right_select=[
+            transform_schema.SelectInput(old_name='id', new_name='id', keep=False),
+            transform_schema.SelectInput(old_name='city', new_name='city', keep=True)],
+        how='outer')
+    result = df_1.join(other=df_2, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+    expected = FlowDataEngine({'id': [1, 2, None, 3], 'name': ['Alice', 'Bob', None, 'Charlie'], 'city': ['NYC', 'LA', 'Chicago', None]})
+    result.assert_equal(expected)
+
+
+def test_join_input_overlapping_columns():
+    data_engine = FlowDataEngine.create_random(500)
+    left_data = data_engine.select_columns(['ID', "Name", "Address", "Zipcode"])
+    right_data = data_engine.get_sample(100, random=True).select_columns(["ID", "Name", "City"])
+    join_input = transform_schema.JoinInput(
+        join_mapping=[transform_schema.JoinMap("ID", "ID")],
+        left_select=[transform_schema.SelectInput("ID"),
+                     transform_schema.SelectInput("Address"),
+                     transform_schema.SelectInput("Zipcode"),
+                     transform_schema.SelectInput("Name", keep=False)],
+        right_select=[transform_schema.SelectInput("ID", keep=False),
+                      transform_schema.SelectInput("City", keep=False),
+                      transform_schema.SelectInput("Name", keep=False)],
+        how="inner"
+    )
+    output = left_data.join(other=right_data, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+
 
 
 def test_join_no_selection(join_df: FlowDataEngine):

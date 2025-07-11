@@ -545,6 +545,12 @@ class FlowDataEngine:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
+    def to_raw_data(self) -> input_schema.RawData:
+        """Convert the DataFrame to a list of values."""
+        columns = [c.get_minimal_field_info() for c in self.schema]
+        data = list(self.to_dict().values())
+        return input_schema.RawData(columns=columns, data=data)
+
     def to_dict(self) -> Dict[str, List]:
         if self.lazy:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
@@ -1119,7 +1125,6 @@ class FlowDataEngine:
         """
         ensure_right_unselect_for_semi_and_anti_joins(join_input)
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
-
         if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')
 
@@ -1154,12 +1159,12 @@ class FlowDataEngine:
                 suffix="").rename(reverse_join_key_mapping)
         left_cols_to_delete_after = [get_col_name_to_delete(col, 'left') for col in join_input.left_select.renames
                                      if not col.keep
-                                     and col.is_available
+                                     and col.is_available and col.join_key
                                      ]
         right_cols_to_delete_after = [get_col_name_to_delete(col, 'right') for col in join_input.right_select.renames
                                       if not col.keep
-                                      and col.is_available
-                                      and join_input.how in ("left", "right", "inner", "cross")
+                                      and col.is_available and col.join_key
+                                      and join_input.how in ("left", "right", "inner", "cross", "outer")
                                       ]
         if len(right_cols_to_delete_after + left_cols_to_delete_after) > 0:
             joined_df = joined_df.drop(left_cols_to_delete_after + right_cols_to_delete_after)

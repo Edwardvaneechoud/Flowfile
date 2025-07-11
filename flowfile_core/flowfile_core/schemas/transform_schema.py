@@ -23,7 +23,7 @@ def string_concat(*column: str):
 
 
 SideLit = Literal["left", "right"]
-JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']
+JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross', 'outer']
 FuzzyTypeLiteral = Literal['levenshtein', 'jaro', 'jaro_winkler', 'hamming', 'damerau_levenshtein', 'indel']
 
 
@@ -160,6 +160,12 @@ class SelectInputs:
     @classmethod
     def create_from_pl_df(cls, df: pl.DataFrame | pl.LazyFrame):
         return cls([SelectInput(c) for c in df.columns])
+
+    def get_select_input_on_old_name(self, old_name: str) -> SelectInput | None:
+        return next((v for v in self.renames if v.old_name == old_name), None)
+
+    def get_select_input_on_new_name(self, old_name: str) -> SelectInput | None:
+        return next((v for v in self.renames if v.new_name == old_name), None)
 
 
 class JoinInputs(SelectInputs):
@@ -313,6 +319,16 @@ class JoinInput(JoinSelectMixin):
     def get_join_key_renames(self, filter_drop: bool = False) -> FullJoinKeyResponse:
         return FullJoinKeyResponse(self.left_select.get_join_key_renames(side="left", filter_drop=filter_drop),
                                    self.right_select.get_join_key_renames(side="right", filter_drop=filter_drop))
+
+    def get_names_for_table_rename(self) -> List[JoinMap]:
+        new_mappings: List[JoinMap] = []
+        left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table
+        for join_map in self.join_mapping:
+            new_mappings.append(JoinMap(left_rename_table.get(join_map.left_col, join_map.left_col),
+                                        right_rename_table.get(join_map.right_col, join_map.right_col)
+                                        )
+                                )
+        return new_mappings
 
     @property
     def _left_join_keys(self) -> Set:

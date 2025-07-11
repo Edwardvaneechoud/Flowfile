@@ -250,18 +250,105 @@ class FlowGraphToPolarsConverter:
         """Handle join nodes."""
         left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
         right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))
+        if settings.join_input.how not in ("semi", "anti"):
+            settings.join_input.auto_rename()
+            left_on = [jm.left_col for jm in settings.join_input.get_names_for_table_rename()]
+            right_on = [jm.right_col for jm in (settings.join_input.get_names_for_table_rename() if settings.join_input.how in ("outer", "right") else settings.join_input.join_mapping)]
 
-        # Extract join keys
-        left_on = [jm.left_col for jm in settings.join_input.join_mapping]
-        right_on = [jm.right_col for jm in settings.join_input.join_mapping]
+            right_renames = {column.old_name: column.new_name
+                             for column in settings.join_input.right_select.renames
+                             if column.old_name != column.new_name and not column.join_key or settings.join_input.how in ("outer", "right")}
+            left_renames = {column.old_name: column.new_name
+                            for column in settings.join_input.left_select.renames
+                            if column.old_name != column.new_name}
+            left_drop_columns = [column.old_name for column in settings.join_input.left_select.renames
+                                 if not column.keep and not column.join_key]
+            right_drop_columns = [column.old_name for column in settings.join_input.right_select.renames
+                                 if not column.keep and not column.join_key]
+            left_join_keys_to_keep = [jk.new_name for jk in settings.join_input.left_select.join_key_selects if jk.keep]
+            after_join_drop_cols = (
+                                     ([k.new_name for k in (settings.join_input.left_select.join_key_selects
+                                      if settings.join_input.how in ("left", "inner") else [])
+                                       if not k.keep]
+                                      ) +
+                                     ([k.new_name for k in (settings.join_input.right_select.join_key_selects
+                                      if settings.join_input.how in ("right") else [])
+                                       if
+                                       k.new_name not in left_join_keys_to_keep and
+                                       not k.keep] or
 
-        self._add_code(f"{var_name} = {left_df}.join(")
-        self._add_code(f"    {right_df},")
-        self._add_code(f"    left_on={left_on},")
-        self._add_code(f"    right_on={right_on},")
-        self._add_code(f'    how="{settings.join_input.how}"')
+                                       [k.new_name + "_right" for k in (settings.join_input.right_select.join_key_selects
+                                                            if settings.join_input.how in ("right") else [])
+                                       if
+                                       k.new_name + "_right" not in left_join_keys_to_keep and
+                                       not k.keep]
+                                     )
+                                 )
+            if right_renames:
+                self._add_code(f"{right_df} = {right_df}.rename({right_renames})")
+            if left_renames:
+                self._add_code(f"{left_df} = {left_df}.rename({left_renames})")
+            if left_drop_columns:
+                self._add_code(f"{left_df} = {left_df}.drop({left_drop_columns})")
+            if right_drop_columns:
+                self._add_code(f"{right_df} = {right_df}.drop({right_drop_columns})")
+            if settings.join_input.how in ("left", "inner"):
+                join_key_duplication_command = [f'pl.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")' for rjk in settings.join_input.right_select.join_key_selects if rjk.keep]
+                reverse_action = {f"__DROP__{rjk.new_name}__DROP__": rjk.new_name for rjk in settings.join_input.right_select.join_key_selects if rjk.keep}
+                if join_key_duplication_command:
+                    self._add_code(f"{right_df} = {right_df}.with_columns([{', '.join(join_key_duplication_command)}])")
+            elif settings.join_input.how == "right":
+                join_key_duplication_command = [f'pl.col("{ljk.new_name}").alias("__jk_{ljk.new_name}")' for ljk in settings.join_input.left_select.join_key_selects if ljk.keep]
+                for position, left_on_key in enumerate(left_on):
+                    left_on_select = settings.join_input.left_select.get_select_input_on_new_name(left_on_key)
+                    if left_on_select and left_on_select.keep:
+                        left_on[position] = f"__jk_{settings.join_input.left_select.get_select_input_on_new_name(left_on_key).new_name}"
+                if join_key_duplication_command:
+                    self._add_code(f"{left_df} = {left_df}.with_columns([{', '.join(join_key_duplication_command)}])")
+                reverse_action = None
+
+                left_join_keys_keep = {jk.new_name for jk in settings.join_input.left_select.join_key_selects if jk.keep}  # needed to determine which columns would be auto renamed by polars
+                after_join_drop_cols_left = [jk.new_name for jk in settings.join_input.left_select.join_key_selects if not jk.keep]
+                after_join_drop_cols_right = [jk.new_name if jk.new_name not in left_join_keys_keep else jk.new_name + "_right" for jk in settings.join_input.right_select.join_key_selects if not jk.keep]
+                after_join_drop_cols = list(set(after_join_drop_cols_left + after_join_drop_cols_right))
+
+            elif settings.join_input.how == "outer":
+                left_join_keys = {jk.new_name for jk in settings.join_input.left_select.join_key_selects}  # needed to determine which columns would be auto renamed by polars
+                join_keys_to_keep_and_rename = [rjk for rjk in settings.join_input.right_select.join_key_selects if rjk.keep and rjk.new_name in left_join_keys]
+                join_key_rename_command = {rjk.new_name: f"__jk_{rjk.new_name}" for rjk in join_keys_to_keep_and_rename}
+                for position, right_on_key in enumerate(right_on):
+                    right_on_select: None | transform_schema.SelectInput = settings.join_input.right_select.get_select_input_on_new_name(right_on_key)
+                    if right_on_select and right_on_select.keep and right_on_select.new_name in left_join_keys:
+                        right_on[position] = f"__jk_{settings.join_input.right_select.get_select_input_on_new_name(right_on_key).new_name}"
+                if join_key_rename_command:
+                    self._add_code(f"{right_df} = {right_df}.rename({join_key_rename_command})")
+                reverse_action = {f"__jk_{rjk.new_name}": rjk.new_name for rjk in join_keys_to_keep_and_rename}
+                after_join_drop_cols_left = [jk.new_name for jk in settings.join_input.left_select.join_key_selects if not jk.keep]
+                after_join_drop_cols_right = [jk.new_name if jk.new_name not in left_join_keys else jk.new_name + "_right" for jk in settings.join_input.right_select.join_key_selects if not jk.keep]
+                after_join_drop_cols = after_join_drop_cols_left + after_join_drop_cols_right
+            else:
+                reverse_action = None
+        else:
+            left_on = [jm.left_col for jm in settings.join_input.join_mapping]
+            right_on = [jm.right_col for jm in settings.join_input.join_mapping]
+            after_join_drop_cols = None
+            reverse_action = None
+        # breakpoint()
+        self._add_code(f"{var_name} = ({left_df}.join(")
+        self._add_code(f"        {right_df},")
+        self._add_code(f"        left_on={left_on},")
+        self._add_code(f"        right_on={right_on},")
+        self._add_code(f'        how="{settings.join_input.how}"')
+        self._add_code("    )")
+        if settings.join_input.how == 'right':
+            self._add_code(".collect()")  # Right join needs to be collected first cause of issue with rename
+        if after_join_drop_cols:
+            self._add_code(f".drop({after_join_drop_cols})")
+        if reverse_action:
+            self._add_code(f".rename({reverse_action})")
+        if settings.join_input.how == 'right':
+            self._add_code(f".lazy()")
         self._add_code(")")
-        self._add_code("")
 
     def _handle_group_by(self, settings: input_schema.NodeGroupBy, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle group by nodes."""
