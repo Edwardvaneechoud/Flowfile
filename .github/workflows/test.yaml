@@ -28,7 +28,6 @@ jobs:
 
       - name: Set up Docker on macOS
         if: runner.os == 'macOS'
-        run: | # Add any specific Docker setup commands if needed, or remove if not
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -159,6 +158,9 @@ jobs:
 
       - name: Build Web Version
         run: npm run build:web
+
+      - name: Install curl
+        run: sudo apt-get update && sudo apt-get install -y curl
 
       - name: Run Vite Preview and Check Port Availability
         run: |
