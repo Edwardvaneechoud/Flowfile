@@ -213,6 +213,7 @@ jobs:
         run: |
           npm install
           npm run build:test
+          ls -R dist
 
       - name: Run integration tests
         working-directory: flowfile_frontend
@@ -264,6 +265,7 @@ jobs:
         run: |
           npm install
           npm run build:test
+          ls -R dist
 
       - name: Run integration tests
         shell: pwsh
