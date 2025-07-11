@@ -50,7 +50,7 @@ airbyte-cdk = ">=6.47.0"
 pytest = "^8.3.4"
 aiofiles = "^24.1.0"
 python-jose = "^3.4.0"
-bcrypt = "^4.3.0"
+bcrypt = "==3.2.2"
 connectorx = "^0.4.2"
 polars_simed = "^0.3.4"
 
