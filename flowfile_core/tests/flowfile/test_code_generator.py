@@ -481,7 +481,6 @@ def test_join_operation_right(join_input_dataset):
     left_data, right_data = join_input_dataset
 
     flow.add_manual_input(left_data)
-
     flow.add_manual_input(right_data)
     # Add join node
     join_node = input_schema.NodeJoin(
@@ -508,7 +507,7 @@ def test_join_operation_right(join_input_dataset):
                          "df_1.join(",
                          "df_2,",
                          'left_on=["__jk_id"]',
-                         'right_on=["id"]',
+                         'right_on=["id_right"]',
                          'how="right"'
                          )
     verify_if_execute(code)
