@@ -252,11 +252,9 @@ class FlowGraphToPolarsConverter:
         the type of join and delegates to the appropriate handler method.
 
         Args:
-            settings: NodeJoin settings containing join configuration including:
-                - join_input: Contains join type, mappings, and column selections
+            settings: NodeJoin settings containing join configuration
             var_name: Name of the variable to store the joined DataFrame
             input_vars: Dictionary mapping input names to DataFrame variable names
-                Expected keys: 'main'/'main_0' for left DataFrame, 'right'/'main_1' for right
 
         Returns:
             None: Modifies internal state by adding generated code
@@ -417,8 +415,8 @@ class FlowGraphToPolarsConverter:
         return left_df, right_df
 
     def _handle_join_key_transformations(self, settings: input_schema.NodeJoin, left_df: str, right_df: str,
-                                         left_on: List[str], right_on: List[str]) -> Tuple[
-        List[str], List[str], Optional[Dict], List[str]]:
+                                         left_on: List[str], right_on: List[str]) \
+            -> Tuple[List[str], List[str], Optional[Dict], List[str]]:
         """Route to appropriate join-specific key transformation handler.
 
         Different join types require different strategies for handling join keys
