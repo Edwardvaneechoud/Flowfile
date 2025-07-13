@@ -34,7 +34,10 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
-    verify_join_map_integrity
+    verify_join_map_integrity,
+    rename_df_table_for_join,
+    get_undo_rename_mapping_join,
+    get_col_name_to_delete
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
@@ -53,21 +56,6 @@ from flowfile_core.flowfile.flow_data_engine.threaded_processes import (
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 
 T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
-
-
-def _rename_df_table_for_join(left_df: T, right_df: T,  join_key_rename: transform_schemas.FullJoinKeyResponse) -> Tuple[T, T]:
-    return (left_df.rename({r[0]: r[1] for r in join_key_rename.left.join_key_renames}),
-            right_df.rename({r[0]: r[1] for r in join_key_rename.right.join_key_renames}))
-
-
-def get_undo_rename_mapping_join(join_input: transform_schemas.JoinInput) -> Dict[str, str]:
-    join_key_rename = join_input.get_join_key_renames(True)
-    return {r[1]: r[0] for r in join_key_rename.right.join_key_renames + join_key_rename.left.join_key_renames}
-
-
-def get_col_name_to_delete(col: transform_schemas.SelectInput, side: transform_schemas.SideLit):
-    return col.new_name if not col.join_key else transform_schemas.construct_join_key_name(side, col.new_name)
-
 
 def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform_schemas.JoinInput) -> Tuple[T, T, Dict[str, str]]:
 
@@ -1141,7 +1129,7 @@ class FlowDataEngine:
         else:
             n_records = -1
         left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input)
-        left, right = _rename_df_table_for_join(left, right, join_input.get_join_key_renames())
+        left, right = rename_df_table_for_join(left, right, join_input.get_join_key_renames())
         if join_input.how == 'right':
 
             joined_df = right.join(
