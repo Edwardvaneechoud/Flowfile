@@ -4,6 +4,8 @@ import polars as pl
 from polars import selectors
 from copy import deepcopy
 
+from typing import NamedTuple
+
 
 def get_func_type_mapping(func: str):
     if func in ["mean", "avg", "median", "std", "var"]:
@@ -20,8 +22,28 @@ def string_concat(*column: str):
     return pl.col(column).cast(pl.Utf8).str.concat(delimiter=',')
 
 
-JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']
+SideLit = Literal["left", "right"]
+JoinStrategy = Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross', 'outer']
 FuzzyTypeLiteral = Literal['levenshtein', 'jaro', 'jaro_winkler', 'hamming', 'damerau_levenshtein', 'indel']
+
+
+def construct_join_key_name(side: SideLit, column_name: str) -> str:
+    return "_FLOWFILE_JOIN_KEY_" + side.upper() + "_" + column_name
+
+
+class JoinKeyRename(NamedTuple):
+    original_name: str
+    temp_name: str
+
+
+class JoinKeyRenameResponse(NamedTuple):
+    side: SideLit
+    join_key_renames: List[JoinKeyRename]
+
+
+class FullJoinKeyResponse(NamedTuple):
+    left: JoinKeyRenameResponse
+    right: JoinKeyRenameResponse
 
 
 @dataclass
@@ -108,11 +130,11 @@ class SelectInputs:
 
     @property
     def new_cols(self) -> Set:
-        return set(v.new_name for v in self.renames if v.keep or v.join_key)
+        return set(v.new_name for v in self.renames if v.keep)
 
     @property
     def rename_table(self):
-        return {v.old_name: v.new_name for v in self.renames if (v.keep or v.join_key) and v.is_available}
+        return {v.old_name: v.new_name for v in self.renames if v.is_available}
 
     def get_select_cols(self, include_join_key: bool = True):
         return [v.old_name for v in self.renames if v.keep or (v.join_key and include_join_key)]
@@ -126,6 +148,11 @@ class SelectInputs:
     def remove_select_input(self, old_key: str):
         self.renames = [rename for rename in self.renames if rename.old_name != old_key]
 
+    def unselect_field(self, old_key: str):
+        for rename in self.renames:
+            if old_key == rename.old_name:
+                rename.keep = False
+
     @classmethod
     def create_from_list(cls, col_list: str):
         return cls([SelectInput(c) for c in col_list])
@@ -134,11 +161,40 @@ class SelectInputs:
     def create_from_pl_df(cls, df: pl.DataFrame | pl.LazyFrame):
         return cls([SelectInput(c) for c in df.columns])
 
+    def get_select_input_on_old_name(self, old_name: str) -> SelectInput | None:
+        return next((v for v in self.renames if v.old_name == old_name), None)
+
+    def get_select_input_on_new_name(self, old_name: str) -> SelectInput | None:
+        return next((v for v in self.renames if v.new_name == old_name), None)
+
+
+class JoinInputs(SelectInputs):
+
+    def __init__(self, renames: List[SelectInput]):
+        self.renames = renames
+
+    @property
+    def join_key_selects(self) -> List[SelectInput]:
+        return [v for v in self.renames if v.join_key]
+
+    def get_join_key_renames(self, side: SideLit, filter_drop: bool = False) -> JoinKeyRenameResponse:
+        return JoinKeyRenameResponse(
+            side,
+            [JoinKeyRename(jk.new_name,
+                           construct_join_key_name(side, jk.new_name))
+             for jk in self.join_key_selects if jk.keep or not filter_drop]
+        )
+
+    def get_join_key_rename_mapping(self, side: SideLit) -> Dict[str, str]:
+        return {jkr[0]: jkr[1] for jkr in self.get_join_key_renames(side)[1]}
+
 
 @dataclass
 class JoinMap:
+    # __slots__ = "left_col", "right_col"
     left_col: str
     right_col: str
+
 
 
 @dataclass
@@ -168,19 +224,21 @@ class FuzzyMap(JoinMap):
 
 class JoinSelectMixin:
     """Mixin for common join selection functionality"""
+    left_select: JoinInputs = None
+    right_select: JoinInputs = None
 
     @staticmethod
-    def parse_select(select: List[SelectInput] | List[str] | List[Dict]) -> SelectInputs:
+    def parse_select(select: List[SelectInput] | List[str] | List[Dict]) -> JoinInputs | None:
         if all(isinstance(c, SelectInput) for c in select):
-            return SelectInputs(select)
+            return JoinInputs(select)
         elif all(isinstance(c, dict) for c in select):
-            return SelectInputs([SelectInput(**c) for c in select])
+            return JoinInputs([SelectInput(**c.__dict__) for c in select])
         elif isinstance(select, dict):
             renames = select.get('renames')
             if renames:
-                return SelectInputs([SelectInput(**c) for c in renames])
+                return JoinInputs([SelectInput(**c) for c in renames])
         elif all(isinstance(c, str) for c in select):
-            return SelectInputs([SelectInput(s, s) for s in select])
+            return JoinInputs([SelectInput(s, s) for s in select])
 
     def auto_generate_new_col_name(self, old_col_name: str, side: str) -> str:
         current_names = self.left_select.new_cols & self.right_select.new_cols
@@ -223,8 +281,8 @@ class CrossJoinInput(JoinSelectMixin):
 @dataclass
 class JoinInput(JoinSelectMixin):
     join_mapping: List[JoinMap]
-    left_select: SelectInputs = None
-    right_select: SelectInputs = None
+    left_select: JoinInputs = None
+    right_select: JoinInputs = None
     how: JoinStrategy = 'inner'
 
     @staticmethod
@@ -258,6 +316,20 @@ class JoinInput(JoinSelectMixin):
         [setattr(v, "join_key", v.old_name in self._right_join_keys) for v in self.right_select.renames]
         self.how = how
 
+    def get_join_key_renames(self, filter_drop: bool = False) -> FullJoinKeyResponse:
+        return FullJoinKeyResponse(self.left_select.get_join_key_renames(side="left", filter_drop=filter_drop),
+                                   self.right_select.get_join_key_renames(side="right", filter_drop=filter_drop))
+
+    def get_names_for_table_rename(self) -> List[JoinMap]:
+        new_mappings: List[JoinMap] = []
+        left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table
+        for join_map in self.join_mapping:
+            new_mappings.append(JoinMap(left_rename_table.get(join_map.left_col, join_map.left_col),
+                                        right_rename_table.get(join_map.right_col, join_map.right_col)
+                                        )
+                                )
+        return new_mappings
+
     @property
     def _left_join_keys(self) -> Set:
         return set(jm.left_col for jm in self.join_mapping)
@@ -268,18 +340,16 @@ class JoinInput(JoinSelectMixin):
 
     @property
     def left_join_keys(self) -> List:
-        return [self.left_select.rename_table.get(jm.left_col) for jm in self.join_mapping]
+        return [jm.left_col for jm in self.used_join_mapping]
 
     @property
     def right_join_keys(self) -> List:
-        return [self.right_select.rename_table.get(jm.right_col, jm.right_col) for jm in self.join_mapping]
+        return [jm.right_col for jm in self.used_join_mapping]
 
     @property
     def overlapping_records(self):
         if self.how in ('left', 'right', 'inner'):
-            #  Never consider join keys as overlapping records since they will be dropped after the join
-            return ((self.left_select.new_cols & self.right_select.new_cols) -
-                    (set(self.left_join_keys) & set(self.right_join_keys)))
+            return self.left_select.new_cols & self.right_select.new_cols
         else:
             return self.left_select.new_cols & self.right_select.new_cols
 
@@ -292,13 +362,15 @@ class JoinInput(JoinSelectMixin):
             overlapping_records = self.overlapping_records
 
     @property
-    def join_mappings(self):
-        new_mappings = []
+    def used_join_mapping(self):
+        new_mappings: List[JoinMap] = []
         left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table
+        left_join_rename_mapping: Dict[str, str] = self.left_select.get_join_key_rename_mapping("left")
+        right_join_rename_mapping: Dict[str, str] = self.right_select.get_join_key_rename_mapping("right")
         for join_map in self.join_mapping:
             # del self.right_select.rename_table, self.left_select.rename_table
-            new_mappings.append(JoinMap(left_rename_table.get(join_map.left_col),
-                                        right_rename_table.get(join_map.right_col)
+            new_mappings.append(JoinMap(left_join_rename_mapping.get(left_rename_table.get(join_map.left_col, join_map.left_col)),
+                                        right_join_rename_mapping.get(right_rename_table.get(join_map.right_col, join_map.right_col))
                                         )
                                 )
         return new_mappings
@@ -332,7 +404,7 @@ class FuzzyMatchInput(JoinInput):
         return fuzz_mapping
 
     def __init__(self, join_mapping: List[FuzzyMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
-                 right_select: List[SelectInput] | List[str], aggregate_output: bool = False, how: str = 'inner'):
+                 right_select: List[SelectInput] | List[str], aggregate_output: bool = False, how: JoinStrategy = 'inner'):
         self.join_mapping = self.parse_fuzz_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)
@@ -470,7 +542,6 @@ class PivotInput:
 
     def get_values_expr(self) -> pl.Expr:
         return pl.struct([pl.col(c) for c in self.aggregations]).alias('vals')
-
 
 
 @dataclass

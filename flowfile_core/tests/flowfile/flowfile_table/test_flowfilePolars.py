@@ -1,6 +1,6 @@
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import remove_comments_and_docstrings
-from flowfile_core.schemas import transform_schema
+from flowfile_core.schemas import transform_schema, input_schema
 import polars as pl
 import pytest
 
@@ -59,6 +59,11 @@ def create_test_dataframe():
         'value3': [15, 5, 20, 10, 25, 30, 10]
     }
     return pl.DataFrame(data)
+
+
+@pytest.fixture
+def join_df():
+    return FlowDataEngine(create_test_dataframe().select("id", "category"))
 
 
 def test_group_by_numeric():
@@ -214,8 +219,8 @@ def test_join_inner():
                              {"name": "courtney"}])
     right_df = FlowDataEngine([{"name": "edward"}])
     result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
-                                auto_generate_selection=True)
-    expected_df = FlowDataEngine([{"name": "edward"}])
+                             auto_generate_selection=True)
+    expected_df = FlowDataEngine([{"name": "edward", "right_name": "edward"}])
     result_df.assert_equal(expected_df)
 
 
@@ -227,9 +232,8 @@ def test_join_left():
     right_df = FlowDataEngine([{"name": "edward"}])
     result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowDataEngine([{"name": "eduward"},
-                                 {"name": "edward"},
-                                 {"name": "courtney"}])
+    result_df.to_dict()
+    expected_df = FlowDataEngine({'name': ['eduward', 'edward', 'courtney'], 'right_name': [None, 'edward', None]})
     result_df.assert_equal(expected_df)
 
 
@@ -241,7 +245,7 @@ def test_join_right():
     other = FlowDataEngine([{"name": "edward"}])
     result_df = self.join(join_input=join_input, other=other, verify_integrity=False,
                              auto_generate_selection=True)
-    expected_df = FlowDataEngine([{"right_name": "edward"}])
+    expected_df = FlowDataEngine([{"right_name": "edward", "name" :"edward"}])
     result_df.assert_equal(expected_df)
 
 
@@ -273,16 +277,227 @@ def test_join_semi():
 
 
 def test_join_anti():
-    join_input = transform_schema.JoinInput(**get_join_settings('anti'))
-    left_df = FlowDataEngine([{"name": "eduward"},
-                             {"name": "edward"},
-                             {"name": "courtney"}])
-    right_df = FlowDataEngine([{"name": "edward"}])
+    join_input = transform_schema.JoinInput(
+        join_mapping='name',
+        left_select=[transform_schema.SelectInput(old_name='name', keep=True), transform_schema.SelectInput('other')],
+        right_select=[transform_schema.SelectInput(old_name='name', keep=False)],
+        how='anti'
+    )
+    left_df = FlowDataEngine([{"name": "eduward", "other": 1},
+                             {"name": "edward", "other": 1},
+                             {"name": "courtney", "other": 1}])
+    right_df = FlowDataEngine([{"name": "edward", "other": 1}])
     result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
                                 auto_generate_selection=True)
-    expected_df = FlowDataEngine([{"name": "eduward"},
-                                 {"name": "courtney"}])
+    expected_df = FlowDataEngine([{"name": "eduward", "other": 1},
+                                 {"name": "courtney", "other": 1}])
     result_df.assert_equal(expected_df)
+
+
+def test_join_anti_not_selecting_join_key():
+    join_input = transform_schema.JoinInput(
+        join_mapping='name',
+        left_select=[transform_schema.SelectInput(old_name='name', keep=False), transform_schema.SelectInput('other')],
+        right_select=[transform_schema.SelectInput(old_name='name', keep=False)],
+        how='anti'
+    )
+    left_df = FlowDataEngine([{"name": "eduward", "other": 1},
+                              {"name": "edward", "other": 1},
+                              {"name": "courtney", "other": 1}])
+    right_df = FlowDataEngine([{"name": "edward", "other": 1}])
+    result_df = left_df.join(join_input=join_input, other=right_df, verify_integrity=False,
+                             auto_generate_selection=True)
+    expected_df = FlowDataEngine([{"other": 1},
+                                  {"other": 1}])
+    result_df.assert_equal(expected_df)
+
+
+def test_join_non_selecting_join_keys_inner(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False), transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False), transform_schema.SelectInput('category')],
+        how='inner'
+    )
+
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+    expected = FlowDataEngine([{'category': 'A', 'category_right': 'A'}])
+    result.assert_equal(expected)
+
+
+def test_outer_join_rename():
+    df_1 = FlowDataEngine(pl.LazyFrame([[1, 2, 3], ['Alice', 'Bob', 'Charlie']], schema=pl.Schema([("id", pl.Int64), ("name", pl.String)])))
+    df_2 = FlowDataEngine(pl.LazyFrame([[1, 2, 4], ['NYC', 'LA', 'Chicago']], schema=pl.Schema([("id", pl.Int64), ("city", pl.String)])))
+    df_1.lazy = False; df_2.lazy = False
+    join_input = transform_schema.JoinInput(
+        join_mapping="id",
+        left_select=[
+            transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+            transform_schema.SelectInput(old_name='name',new_name='name', keep=True)],
+        right_select=[
+            transform_schema.SelectInput(old_name='id', new_name='id', keep=False),
+            transform_schema.SelectInput(old_name='city', new_name='city', keep=True)],
+        how='outer')
+    result = df_1.join(other=df_2, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+    expected = FlowDataEngine({'id': [1, 2, None, 3], 'name': ['Alice', 'Bob', None, 'Charlie'], 'city': ['NYC', 'LA', 'Chicago', None]})
+    result.assert_equal(expected)
+
+
+def test_join_input_overlapping_columns():
+    data_engine = FlowDataEngine.create_random(500)
+    left_data = data_engine.select_columns(['ID', "Name", "Address", "Zipcode"])
+    right_data = data_engine.get_sample(100, random=True).select_columns(["ID", "Name", "City"])
+    join_input = transform_schema.JoinInput(
+        join_mapping=[transform_schema.JoinMap("ID", "ID")],
+        left_select=[transform_schema.SelectInput("ID"),
+                     transform_schema.SelectInput("Address"),
+                     transform_schema.SelectInput("Zipcode"),
+                     transform_schema.SelectInput("Name", keep=False)],
+        right_select=[transform_schema.SelectInput("ID", keep=False),
+                      transform_schema.SelectInput("City", keep=False),
+                      transform_schema.SelectInput("Name", keep=False)],
+        how="inner"
+    )
+    output = left_data.join(other=right_data, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+
+
+
+def test_join_no_selection(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[],
+        right_select=[]
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
+
+
+def test_join_non_selecting_join_keys_left(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                      transform_schema.SelectInput('category')],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None]})
+    result.assert_equal(expected)
+
+
+def test_join_non_selecting_join_keys_right(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                      transform_schema.SelectInput('category')],
+        how='right'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'category': 'A',
+                               'category_right': 'A'})
+    result.assert_equal(expected)
+
+
+def test_join_select_join_key_right(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+                      transform_schema.SelectInput('category')],
+        how='right'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'id': 1,
+                               'category': 'A',
+                               'category_right': 'A',
+                               })
+    result.assert_equal(expected)
+
+
+def test_join_select_join_key_left(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=True),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                      transform_schema.SelectInput('category')],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'id': [1, 2, 3, 4, 5, 6, 7],
+                               'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None]})
+    result.assert_equal(expected)
+
+
+def test_join_select_join_key_left_rename(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', new_name='left_id', keep=True),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                      transform_schema.SelectInput('category')],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'left_id': [1, 2, 3, 4, 5, 6, 7],
+                               'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None]})
+    result.assert_equal(expected)
+
+
+def test_join_select_join_key_right_rename(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', new_name='id', keep=True),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', new_name='right_id', keep=True),
+                      transform_schema.SelectInput('category')],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'id': [1, 2, 3, 4, 5, 6, 7],
+                               'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None],
+                               'right_id': [1, None, None, None, None, None, None]})
+    result.assert_equal(expected)
+
+
+def test_join_select_select_all(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=True),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=True),
+                      transform_schema.SelectInput('category')],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    expected = FlowDataEngine({'id': [1, 2, 3, 4, 5, 6, 7],
+                               'category': ['A', 'A', 'B', 'B', 'C', 'C', 'A'],
+                               'category_right': ['A', None, None, None, None, None, None],
+                               'id_right': [1, None, None, None, None, None, None]})
+    result.assert_equal(expected)
 
 
 def test_execute_polars_code_no_frame():

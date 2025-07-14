@@ -535,18 +535,18 @@ class FlowFrame:
         self.flow_graph.add_polars_code(polars_code_settings)
 
     def join(
-        self,
-        other,
-        on: List[str | Column] | str | Column = None,
-        how: str = "inner",
-        left_on: List[str | Column] | str | Column = None,
-        right_on: List[str | Column] | str | Column = None,
-        suffix: str = "_right",
-        validate: str = None,
-        nulls_equal: bool = False,
-        coalesce: bool = None,
-        maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
-        description: str = None,
+            self,
+            other,
+            on: List[str | Column] | str | Column = None,
+            how: str = "inner",
+            left_on: List[str | Column] | str | Column = None,
+            right_on: List[str | Column] | str | Column = None,
+            suffix: str = "_right",
+            validate: str = None,
+            nulls_equal: bool = False,
+            coalesce: bool = None,
+            maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
+            description: str = None,
     ):
         """
         Add a join operation to the Logical Plan.
@@ -591,27 +591,90 @@ class FlowFrame:
         FlowFrame
             New FlowFrame with join operation applied.
         """
-        use_polars_code = not(maintain_order is None and
-                              coalesce is None and
-                              nulls_equal is False and
-                              validate is None and
-                              suffix == '_right')
+        # Step 1: Determine if we need to use Polars code
+        use_polars_code = self._should_use_polars_code_for_join(
+            maintain_order, coalesce, nulls_equal, validate, suffix
+        )
 
+        # Step 2: Ensure both FlowFrames are in the same graph
+        self._ensure_same_graph(other)
+
+        # Step 3: Generate new node ID
+        new_node_id = generate_node_id()
+
+        # Step 4: Parse and validate join columns
+        left_columns, right_columns = self._parse_join_columns(
+            on, left_on, right_on, how
+        )
+
+        # Step 5: Validate column lists have same length (except for cross join)
+        if how != 'cross' and left_columns is not None and right_columns is not None:
+            if len(left_columns) != len(right_columns):
+                raise ValueError(
+                    f"Length mismatch: left columns ({len(left_columns)}) != right columns ({len(right_columns)})"
+                )
+
+        # Step 6: Create join mappings if not using Polars code
         join_mappings = None
+        if not use_polars_code and how != 'cross':
+            join_mappings, use_polars_code = _create_join_mappings(
+                left_columns or [], right_columns or []
+            )
+
+        # Step 7: Execute join based on approach
+        if use_polars_code or suffix != '_right':
+            return self._execute_polars_code_join(
+                other, new_node_id, on, left_on, right_on, left_columns, right_columns,
+                how, suffix, validate, nulls_equal, coalesce, maintain_order, description
+            )
+        elif join_mappings or how == 'cross':
+            return self._execute_native_join(
+                other, new_node_id, join_mappings, how, description
+            )
+        else:
+            raise ValueError("Could not execute join")
+
+    def _should_use_polars_code_for_join(
+            self, maintain_order, coalesce, nulls_equal, validate, suffix
+    ) -> bool:
+        """Determine if we should use Polars code instead of native join."""
+        return not (
+                maintain_order is None and
+                coalesce is None and
+                nulls_equal is False and
+                validate is None and
+                suffix == '_right'
+        )
+
+    def _ensure_same_graph(self, other: "FlowFrame") -> None:
+        """Ensure both FlowFrames are in the same graph, combining if necessary."""
         if self.flow_graph.flow_id != other.flow_graph.flow_id:
-            combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
+            combined_graph, node_mappings = combine_flow_graphs_with_mapping(
+                self.flow_graph, other.flow_graph
+            )
+
             new_self_node_id = node_mappings.get((self.flow_graph.flow_id, self.node_id), None)
             new_other_node_id = node_mappings.get((other.flow_graph.flow_id, other.node_id), None)
+
             if new_other_node_id is None or new_self_node_id is None:
                 raise ValueError("Cannot remap the nodes")
+
             self.node_id = new_self_node_id
             other.node_id = new_other_node_id
             self.flow_graph = combined_graph
             other.flow_graph = combined_graph
+
             global node_id_counter
             node_id_counter += len(combined_graph.nodes)
-        new_node_id = generate_node_id()
 
+    def _parse_join_columns(
+            self,
+            on: List[str | Column] | str | Column,
+            left_on: List[str | Column] | str | Column,
+            right_on: List[str | Column] | str | Column,
+            how: str
+    ) -> tuple[List[str] | None, List[str] | None]:
+        """Parse and validate join column specifications."""
         if on is not None:
             left_columns = right_columns = _normalize_columns_to_list(on)
         elif left_on is not None and right_on is not None:
@@ -623,93 +686,182 @@ class FlowFrame:
         else:
             raise ValueError("Must specify either 'on' or both 'left_on' and 'right_on'")
 
-        # Ensure left and right column lists have same length
-        if how != 'cross' and len(left_columns) != len(right_columns):
-            raise ValueError(
-                f"Length mismatch: left columns ({len(left_columns)}) != right columns ({len(right_columns)})"
-            )
-        if not use_polars_code:
-            join_mappings, use_polars_code = _create_join_mappings(
-                left_columns or [], right_columns or []
-            )
+        return left_columns, right_columns
 
-        if use_polars_code or suffix != '_right':
+    def _execute_polars_code_join(
+            self,
+            other: "FlowFrame",
+            new_node_id: int,
+            on: List[str | Column] | str | Column,
+            left_on: List[str | Column] | str | Column,
+            right_on: List[str | Column] | str | Column,
+            left_columns: List[str] | None,
+            right_columns: List[str] | None,
+            how: str,
+            suffix: str,
+            validate: str,
+            nulls_equal: bool,
+            coalesce: bool,
+            maintain_order: Literal[None, "left", "right", "left_right", "right_left"],
+            description: str,
+    ) -> "FlowFrame":
+        """Execute join using Polars code approach."""
+        # Build the code arguments
+        code_kwargs = self._build_polars_join_kwargs(
+            on, left_on, right_on, left_columns, right_columns,
+            how, suffix, validate, nulls_equal, coalesce, maintain_order
+        )
 
-            _on = "["+', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in _normalize_columns_to_list(on)) + "]" if on else None
-            _left = "["+', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in left_columns) + "]" if left_on else None
-            _right = "["+', '.join(f"'{v}'" if isinstance(v, str) else str(v) for v in right_columns) + "]" if right_on else None
-            code_kwargs = {"other": "input_df_2", "how": _to_string_val(how), "on": _on, "left_on": _left,
-                           "right_on": _right, "suffix": _to_string_val(suffix), "validate": _to_string_val(validate),
-                           "nulls_equal": nulls_equal, "coalesce": coalesce,
-                           "maintain_order": _to_string_val(maintain_order)}
-            kwargs_str = ", ".join(f"{k}={v}" for k, v in code_kwargs.items() if v is not None)
-            code = f"input_df_1.join({kwargs_str})"
-            self._add_polars_code(new_node_id, code, description, depending_on_ids=[self.node_id, other.node_id])
-            self._add_connection(self.node_id, new_node_id, "main")
-            other._add_connection(other.node_id, new_node_id, "main")
-            result_frame = FlowFrame(
-                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                flow_graph=self.flow_graph,
-                node_id=new_node_id,
-                parent_node_id=self.node_id,
-            )
+        kwargs_str = ", ".join(f"{k}={v}" for k, v in code_kwargs.items() if v is not None)
+        code = f"input_df_1.join({kwargs_str})"
 
-        elif join_mappings or how == 'cross':
+        # Add the Polars code node
+        self._add_polars_code(
+            new_node_id, code, description,
+            depending_on_ids=[self.node_id, other.node_id]
+        )
 
-            left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
-            right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
+        # Add connections
+        self._add_connection(self.node_id, new_node_id, "main")
+        other._add_connection(other.node_id, new_node_id, "main")
 
-            if how == 'cross':
-                join_input = transform_schema.CrossJoinInput(left_select=left_select.renames,
-                                                             right_select=right_select.renames,)
-            else:
-                join_input = transform_schema.JoinInput(
-                    join_mapping=join_mappings,
-                    left_select=left_select.renames,
-                    right_select=right_select.renames,
-                    how=how,
-                )
+        # Create and return result frame
+        return FlowFrame(
+            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+        )
 
-            join_input.auto_rename()
-            if how == 'cross':
-                cross_join_settings = input_schema.NodeCrossJoin(
-                    flow_id=self.flow_graph.flow_id,
-                    node_id=new_node_id,
-                    cross_join_input=join_input,
-                    is_setup=True,
-                    depending_on_ids=[self.node_id, other.node_id],
-                    description=description or f"Join with {how} strategy",
-                    auto_generate_selection=True,
-                    verify_integrity=True,
-                )
+    def _build_polars_join_kwargs(
+            self,
+            on: List[str | Column] | str | Column,
+            left_on: List[str | Column] | str | Column,
+            right_on: List[str | Column] | str | Column,
+            left_columns: List[str] | None,
+            right_columns: List[str] | None,
+            how: str,
+            suffix: str,
+            validate: str,
+            nulls_equal: bool,
+            coalesce: bool,
+            maintain_order: Literal[None, "left", "right", "left_right", "right_left"],
+    ) -> dict:
+        """Build kwargs dictionary for Polars join code."""
 
-                self.flow_graph.add_cross_join(cross_join_settings)
-            else:
-                join_settings = input_schema.NodeJoin(
-                    flow_id=self.flow_graph.flow_id,
-                    node_id=new_node_id,
-                    join_input=join_input,
-                    auto_generate_selection=True,
-                    verify_integrity=True,
-                    pos_x=200,
-                    pos_y=150,
-                    is_setup=True,
-                    depending_on_ids=[self.node_id, other.node_id],
-                    description=description or f"Join with {how} strategy",
-                )
-                self.flow_graph.add_join(join_settings)
-            self._add_connection(self.node_id, new_node_id, "main")
-            other._add_connection(other.node_id, new_node_id, "right")
-            result_frame = FlowFrame(
-                data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
-                flow_graph=self.flow_graph,
-                node_id=new_node_id,
-                parent_node_id=self.node_id,
+        def format_column_list(cols):
+            if cols is None:
+                return None
+            return "[" + ', '.join(
+                f"'{v}'" if isinstance(v, str) else str(v)
+                for v in _normalize_columns_to_list(cols)
+            ) + "]"
+
+        return {
+            "other": "input_df_2",
+            "how": _to_string_val(how),
+            "on": format_column_list(on) if on else None,
+            "left_on": format_column_list(left_columns) if left_on else None,
+            "right_on": format_column_list(right_columns) if right_on else None,
+            "suffix": _to_string_val(suffix),
+            "validate": _to_string_val(validate),
+            "nulls_equal": nulls_equal,
+            "coalesce": coalesce,
+            "maintain_order": _to_string_val(maintain_order)
+        }
+
+    def _execute_native_join(
+            self,
+            other: "FlowFrame",
+            new_node_id: int,
+            join_mappings: List | None,
+            how: str,
+            description: str,
+    ) -> "FlowFrame":
+        """Execute join using native FlowFile join nodes."""
+        # Create select inputs for both frames
+        left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
+        right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
+
+        # Create appropriate join input based on join type
+        if how == 'cross':
+            join_input = transform_schema.CrossJoinInput(
+                left_select=left_select.renames,
+                right_select=right_select.renames,
             )
         else:
-            raise ValueError("Could not execute join")
+            join_input = transform_schema.JoinInput(
+                join_mapping=join_mappings,
+                left_select=left_select.renames,
+                right_select=right_select.renames,
+                how=how,
+            )
 
-        return result_frame
+        # Configure join input
+        join_input.auto_rename()
+        for right_column in right_select.renames:
+            if right_column.join_key:
+                right_column.keep = False
+
+        # Create and add appropriate node
+        if how == 'cross':
+            self._add_cross_join_node(new_node_id, join_input, description, other)
+        else:
+            self._add_regular_join_node(new_node_id, join_input, description, other)
+
+        # Add connections
+        self._add_connection(self.node_id, new_node_id, "main")
+        other._add_connection(other.node_id, new_node_id, "right")
+
+        # Create and return result frame
+        return FlowFrame(
+            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+        )
+
+    def _add_cross_join_node(
+            self,
+            new_node_id: int,
+            join_input: "transform_schema.CrossJoinInput",
+            description: str,
+            other: "FlowFrame",
+    ) -> None:
+        """Add a cross join node to the graph."""
+        cross_join_settings = input_schema.NodeCrossJoin(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            cross_join_input=join_input,
+            is_setup=True,
+            depending_on_ids=[self.node_id, other.node_id],
+            description=description or f"Join with cross strategy",
+            auto_generate_selection=True,
+            verify_integrity=True,
+        )
+        self.flow_graph.add_cross_join(cross_join_settings)
+
+    def _add_regular_join_node(
+            self,
+            new_node_id: int,
+            join_input: "transform_schema.JoinInput",
+            description: str,
+            other: "FlowFrame",
+    ) -> None:
+        """Add a regular join node to the graph."""
+        join_settings = input_schema.NodeJoin(
+            flow_id=self.flow_graph.flow_id,
+            node_id=new_node_id,
+            join_input=join_input,
+            auto_generate_selection=True,
+            verify_integrity=True,
+            pos_x=200,
+            pos_y=150,
+            is_setup=True,
+            depending_on_ids=[self.node_id, other.node_id],
+            description=description or f"Join with {join_input.how} strategy",
+        )
+        self.flow_graph.add_join(join_settings)
 
     def _add_number_of_records(self, new_node_id: int, description: str = None) -> "FlowFrame":
         node_number_of_records = input_schema.NodeRecordCount(

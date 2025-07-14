@@ -4,7 +4,7 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union, TypeVar
 
 # Third-party imports
 from loky import Future
@@ -34,7 +34,10 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.flowfile.flow_data_engine.join import (
     verify_join_select_integrity,
-    verify_join_map_integrity
+    verify_join_map_integrity,
+    rename_df_table_for_join,
+    get_undo_rename_mapping_join,
+    get_col_name_to_delete
 )
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
@@ -51,6 +54,55 @@ from flowfile_core.flowfile.flow_data_engine.threaded_processes import (
 )
 
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
+
+T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
+
+def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform_schemas.JoinInput) -> Tuple[T, T, Dict[str, str]]:
+
+    def _construct_temp_name(column_name: str) -> str:
+        return "__FL_TEMP__"+column_name
+    if join_input.how == 'right':
+        left_df = left_df.with_columns(pl.col(jk.new_name).alias(_construct_temp_name(jk.new_name))
+                                       for jk in join_input.left_select.join_key_selects)
+        reverse_actions = {
+            _construct_temp_name(jk.new_name): transform_schemas.construct_join_key_name("left", jk.new_name)
+            for jk in join_input.left_select.join_key_selects}
+    elif join_input.how in ('left', 'inner'):
+        right_df = right_df.with_columns(pl.col(jk.new_name).alias(_construct_temp_name(jk.new_name))
+                                       for jk in join_input.right_select.join_key_selects)
+        reverse_actions = {
+            _construct_temp_name(jk.new_name): transform_schemas.construct_join_key_name("right", jk.new_name)
+            for jk in join_input.right_select.join_key_selects}
+    else:
+        reverse_actions = {}
+    return left_df, right_df, reverse_actions
+
+
+def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.JoinInput) -> None:
+    """
+    Updates the right columns of the join input by deselecting them.
+    Args:
+        join_input ():
+
+    Returns:
+        None
+    """
+    if join_input.how in ('semi', 'anti'):
+        for jk in join_input.right_select.renames:
+            jk.keep = False
+
+
+def get_select_columns(full_select_input: List[transform_schemas.SelectInput]) -> List[str]:
+    """
+    Gets the list of column names to select from the full select input.
+    It filters out columns that are not marked to keep or join keys, and only includes those that are available.
+    Args:
+        full_select_input (): List of SelectInput objects containing column information.
+
+    Returns:
+        List of column names to select.
+    """
+    return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
 
 
 @dataclass
@@ -110,7 +162,7 @@ class FlowDataEngine:
     # flow_id: int = None  # TODO: Implement flow_id
 
     def __init__(self,
-                 raw_data: Union[List[Dict], List[Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
+                 raw_data: Union[List[Dict], List[Any], Dict[str, Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
                  path_ref: str = None,
                  name: str = None,
                  optimize_memory: bool = True,
@@ -187,12 +239,13 @@ class FlowDataEngine:
             self.initialize_empty_fl()
         lengths = [len(v) if isinstance(v, (list, tuple)) else 1 for v in data.values()]
 
-        if len(set(lengths)) == 1 and lengths[0]>1:
+        if len(set(lengths)) == 1 and lengths[0] > 1:
             self.number_of_records = lengths[0]
             self.data_frame = pl.DataFrame(data)
         else:
             self.number_of_records = 1
             self.data_frame = pl.DataFrame([data])
+        self.lazy = True
 
     def _handle_raw_data_format(self, raw_data: input_schema.RawData):
         """Create a FlowDataEngine from a RawData object."""
@@ -480,8 +533,17 @@ class FlowDataEngine:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
+    def to_raw_data(self) -> input_schema.RawData:
+        """Convert the DataFrame to a list of values."""
+        columns = [c.get_minimal_field_info() for c in self.schema]
+        data = list(self.to_dict().values())
+        return input_schema.RawData(columns=columns, data=data)
+
     def to_dict(self) -> Dict[str, List]:
-        return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
+        if self.lazy:
+            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
+        else:
+            return self.data_frame.to_dict(as_series=False)
 
     @classmethod
     def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowDataEngine":
@@ -1049,21 +1111,15 @@ class FlowDataEngine:
         Raises:
             Exception: If join would result in too many records or is invalid
         """
-        # self.lazy = False if join_input.how == 'right' else True
-        # other.lazy = False if join_input.how == 'right' else True
-
+        ensure_right_unselect_for_semi_and_anti_joins(join_input)
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
         if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')
+
         if auto_generate_selection:
             join_input.auto_rename()
-
-        right_select = [v.old_name for v in join_input.right_select.renames
-                        if (v.keep or v.join_key) and v.is_available]
-        left_select = [v.old_name for v in join_input.left_select.renames
-                       if (v.keep or v.join_key) and v.is_available]
-        left = self.data_frame.select(left_select).rename(join_input.left_select.rename_table)
-        right = other.data_frame.select(right_select).rename(join_input.right_select.rename_table)
+        left = self.data_frame.select(get_select_columns(join_input.left_select.renames)).rename(join_input.left_select.rename_table)
+        right = other.data_frame.select(get_select_columns(join_input.right_select.renames)).rename(join_input.right_select.rename_table)
 
         if verify_integrity and join_input.how != 'right':
             n_records = get_join_count(left, right, left_on_keys=join_input.left_join_keys,
@@ -1072,25 +1128,43 @@ class FlowDataEngine:
                 raise Exception("Join will result in too many records, ending process")
         else:
             n_records = -1
+        left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input)
+        left, right = rename_df_table_for_join(left, right, join_input.get_join_key_renames())
         if join_input.how == 'right':
-            #  Default to left join since right join can give panic issues in execution plan downstream
-            joined_df = right.join(left, left_on=join_input.right_join_keys,
-                                   right_on=join_input.left_join_keys, how="left", suffix="")
+
+            joined_df = right.join(
+                other=left,
+                left_on=join_input.right_join_keys,
+                right_on=join_input.left_join_keys,
+                how="left",
+                suffix="").rename(reverse_join_key_mapping)
         else:
-            joined_df = left.join(right, left_on=join_input.left_join_keys,
-                                  right_on=join_input.right_join_keys,
-                                  how=join_input.how, suffix="")
-        cols_to_delete_after = [col.new_name for col in
-                                join_input.left_select.renames + join_input.left_select.renames
-                                if col.join_key and not col.keep and col.is_available]
-        if len(cols_to_delete_after) > 0:
-            joined_df = joined_df.drop(cols_to_delete_after)
+            joined_df = left.join(
+                other=right,
+                left_on=join_input.left_join_keys,
+                right_on=join_input.right_join_keys,
+                how=join_input.how,
+                suffix="").rename(reverse_join_key_mapping)
+        left_cols_to_delete_after = [get_col_name_to_delete(col, 'left') for col in join_input.left_select.renames
+                                     if not col.keep
+                                     and col.is_available and col.join_key
+                                     ]
+        right_cols_to_delete_after = [get_col_name_to_delete(col, 'right') for col in join_input.right_select.renames
+                                      if not col.keep
+                                      and col.is_available and col.join_key
+                                      and join_input.how in ("left", "right", "inner", "cross", "outer")
+                                      ]
+        if len(right_cols_to_delete_after + left_cols_to_delete_after) > 0:
+            joined_df = joined_df.drop(left_cols_to_delete_after + right_cols_to_delete_after)
+        undo_join_key_remapping = get_undo_rename_mapping_join(join_input)
+        joined_df = joined_df.rename(undo_join_key_remapping)
+
         if verify_integrity:
             return FlowDataEngine(joined_df, calculate_schema_stats=True,
-                                 number_of_records=n_records, streamable=False)
+                                  number_of_records=n_records, streamable=False)
         else:
             fl = FlowDataEngine(joined_df, calculate_schema_stats=False,
-                               number_of_records=0, streamable=False)
+                                number_of_records=0, streamable=False)
             return fl
 
     # Graph Operations
@@ -1152,6 +1226,7 @@ class FlowDataEngine:
         other.lazy = False
         self.number_of_records = -1
         other.number_of_records = -1
+        other = other.select_columns(self.columns)
 
         if self.get_number_of_records() != other.get_number_of_records():
             raise Exception('Number of records is not equal')

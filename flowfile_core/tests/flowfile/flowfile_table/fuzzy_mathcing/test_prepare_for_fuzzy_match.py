@@ -20,6 +20,6 @@ def test_prepare_for_fuzzy_match():
     assert f[0].columns == ['name'], 'Left column should still be named name'
     assert f[1].columns == ['name_right'], 'Right column should be renamed to name_right'
 
-    assert fuzzy_match_input.join_mappings[0].left_col == 'name', 'Left column should still be named name'
-    assert fuzzy_match_input.join_mappings[0].right_col == 'name_right', 'Right column should be renamed to name_right'
+    assert fuzzy_match_input.used_join_mapping[0].left_col == '_FLOWFILE_JOIN_KEY_LEFT_name', 'Left column should still be named name'
+    assert fuzzy_match_input.used_join_mapping[0].right_col == '_FLOWFILE_JOIN_KEY_RIGHT_name_right', 'Right column should be renamed to name_right'
 

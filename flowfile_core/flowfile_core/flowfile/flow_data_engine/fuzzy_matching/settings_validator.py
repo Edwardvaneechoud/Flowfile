@@ -32,7 +32,7 @@ def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
             output_schema.append(FlowfileColumn.from_input(column.new_name, column_schema.data_type,
                                                            example_values=column_schema.example_values))
 
-    for i, fm in enumerate(fm_input.join_mappings):
+    for i, fm in enumerate(fm_input.join_mapping):
         output_schema.append(FlowfileColumn.from_input(f'fuzzy_score_{i}', 'Float64'))
     return output_schema
 
