@@ -262,6 +262,11 @@ class FlowGraphToPolarsConverter:
         left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
         right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))
 
+        # Ensure left and right DataFrames are distinct
+        if left_df == right_df:
+            right_df = "df_right"
+            self._add_code(f"{right_df} = {left_df}")
+
         if settings.join_input.how in ("semi", "anti"):
             self._handle_semi_anti_join(settings, var_name, left_df, right_df)
         else:

@@ -57,7 +57,7 @@ def create_basic_flow(flow_id: int = 1, name: str = "test_flow") -> FlowGraph:
     return FlowGraph(flow_id=flow_id, flow_settings=create_flow_settings(flow_id), name=name)
 
 
-def generate_parameterized_tests():
+def generate_parameterized_join_tests():
     """Generate parameterized test cases with descriptive names"""
 
     test_cases = []
@@ -118,6 +118,75 @@ def generate_parameterized_tests():
     return test_cases
 
 
+def generate_parameterized_join_tests_same_df():
+    """Generate parameterized test cases with descriptive names"""
+
+    test_cases = []
+
+    join_types = ["inner", "left", "right", "outer"]
+    rename_configs = [
+        ("no_rename", False, False),
+        ("left_rename", True, False),
+        ("right_rename", False, True),
+        ("both_rename", True, True)
+    ]
+    keep_configs = [
+        ("all_keep", True, True),
+        ("left_no_keep", False, True),
+        ("right_no_keep", True, False),
+        ("both_no_keep", False, False)
+    ]
+
+    for join_type in join_types:
+        for rename_name, left_rename, right_rename in rename_configs:
+            for keep_name, left_keep, right_keep in keep_configs:
+                test_name = f"{join_type}_{rename_name}_{keep_name}"
+
+                scenario = input_schema.NodeJoin(
+                    flow_id=1,
+                    node_id=2,
+                    depending_on_ids=[1, 1],
+                    join_input=transform_schema.JoinInput(
+                        join_mapping=[transform_schema.JoinMap("id", "id")],
+                        left_select=[
+                            transform_schema.SelectInput(
+                                "id",
+                                "left_id" if left_rename else "id",
+                                keep=left_keep
+                            ),
+                            transform_schema.SelectInput(
+                                "category",
+                                "left_category" if left_rename else "category"
+                            ),
+                            transform_schema.SelectInput(
+                                "value",
+                                "left_value" if left_rename else "value",
+                            )
+                        ],
+                        right_select=[
+                            transform_schema.SelectInput(
+                                "id",
+                                "right_id" if right_rename else "id",
+                                keep=right_keep
+                            ),
+                            transform_schema.SelectInput(
+                                "category",
+                                "right_category" if right_rename else "category"
+                            ),
+                            transform_schema.SelectInput(
+                                "value",
+                                "right_value" if right_rename else "value"
+                            )
+                        ],
+                        how=join_type
+                    )
+                )
+
+                test_cases.append((test_name, scenario))
+
+    return test_cases
+
+
 @pytest.fixture
 def join_input_dataset() -> tuple[input_schema.NodeManualInput, input_schema.NodeManualInput]:
     left_data = input_schema.NodeManualInput(
@@ -165,30 +234,18 @@ def join_input_large_dataset() -> tuple[input_schema.NodeManualInput, input_sche
     return left_data, right_data
 
 
-@pytest.mark.parametrize("test_name,join_scenario",  generate_parameterized_tests())
-def test_join_operation(test_name, join_scenario, join_input_dataset):
-    """Parameterized test for all join operation combinations"""
-    flow = create_basic_flow()
-    left_data, right_data = join_input_dataset
-    flow.add_manual_input(left_data)
-    flow.add_manual_input(right_data)
-    # Add join node
-    flow.add_join(join_scenario)
-    # breakpoint()
-    # Add connections
-    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
-    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
-    add_connection(flow, left_connection)
-    add_connection(flow, right_connection)
+@pytest.fixture
+def join_input_same_df() -> input_schema.NodeManualInput:
+    return input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name='id', data_type='Int64'),
+                     input_schema.MinimalFieldInfo(name='category', data_type='String'),
+                     input_schema.MinimalFieldInfo(name='value', data_type='Int64')],
+            data=[[1, 2], ['A', 'B'], [100, 200]])
 
-    # Convert to Polars code and verify
-    code = export_flow_to_polars(flow)
-    verify_if_execute(code)
-    result = get_result_from_generated_code(code)
-    expected_df = flow.get_node(3).get_resulting_data().data_frame
-    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
-
-
+    )
 
 
 def get_reference_polars_dataframe() -> pl.LazyFrame:
@@ -329,6 +386,51 @@ def verify_code_ordering(code: str, *ordered_snippets: str) -> None:
 
     for i in range(1, len(indices)):
         assert indices[i - 1] < indices[i], f"'{ordered_snippets[i - 1]}' should appear before '{ordered_snippets[i]}'"
+
+
+@pytest.mark.parametrize("test_name,join_scenario",  generate_parameterized_join_tests())
+def test_join_operation(test_name, join_scenario, join_input_dataset):
+    """Parameterized test for all join operation combinations"""
+    flow = create_basic_flow()
+    left_data, right_data = join_input_dataset
+    flow.add_manual_input(left_data)
+    flow.add_manual_input(right_data)
+    # Add join node
+    flow.add_join(join_scenario)
+    # breakpoint()
+    # Add connections
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code and verify
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(3).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
+
+
+@pytest.mark.parametrize("test_name,join_scenario",  generate_parameterized_join_tests_same_df())
+def test_join_operation_same_df(test_name, join_scenario, join_input_same_df):
+    """Parameterized test for all join operation combinations"""
+    flow = create_basic_flow()
+    flow.add_manual_input(join_input_same_df)
+    # # Add join node
+    flow.add_join(join_scenario)
+    # Add connections
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2, 'main')
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2, 'right')
+    add_connection(flow, left_connection)
+    add_connection(flow, right_connection)
+
+    # Convert to Polars code and verify
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
 
 
 def test_simple_manual_input():

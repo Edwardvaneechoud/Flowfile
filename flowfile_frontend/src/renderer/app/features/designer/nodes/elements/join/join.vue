@@ -61,7 +61,7 @@
         </div>
       </div>
       <select-dynamic
-      v-if="showColumnSelection"
+        v-if="showColumnSelection"
         :select-inputs="nodeJoin?.join_input.left_select.renames"
         :show-keep-option="true"
         :show-title="true"
@@ -73,7 +73,7 @@
         "
       />
       <select-dynamic
-      v-if="showColumnSelection"
+        v-if="showColumnSelection"
         :select-inputs="nodeJoin?.join_input.right_select.renames"
         :show-keep-option="true"
         :show-headers="true"
@@ -104,8 +104,7 @@ type JoinType = "inner" | "left" | "right" | "full" | "semi" | "anti" | "cross";
 
 const joinTypes: JoinType[] = ["inner", "left", "right", "full", "semi", "anti", "cross"];
 
-const JOIN_TYPES_WITHOUT_COLUMN_SELECTION: JoinType[] = ['anti', 'semi'];
-
+const JOIN_TYPES_WITHOUT_COLUMN_SELECTION: JoinType[] = ["anti", "semi"];
 
 const handleJoinTypeError = (error: string) => {
   console.error("Join type error:", error);
