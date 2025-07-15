@@ -1050,10 +1050,8 @@ class FlowGraph:
             node.name = ref
             node.function = input_data
             node.setting_input = input_file
-
             if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
-            breakpoint()
         else:
             input_data.collect()
             node = FlowNode(input_file.node_id, function=input_data,

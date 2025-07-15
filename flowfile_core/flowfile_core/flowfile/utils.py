@@ -1,7 +1,6 @@
 import os
 import hashlib
 import json
-import polars as pl
 import shutil
 
 from datetime import datetime, date, time
@@ -58,7 +57,7 @@ def get_hash(val):
     if hasattr(val, 'overridden_hash') and val.overridden_hash():
         val = hash(val)
     elif hasattr(val, '__dict__'):
-        val = {k: v for k, v in val.__dict__.items() if k not in {'pos_x', 'pos_y'}}
+        val = {k: v for k, v in val.__dict__.items() if k not in {'pos_x', 'pos_y', 'description'}}
     elif hasattr(val, 'json'):
         pass
     return generate_sha256_hash(json_dumps(val).encode('utf-8'))

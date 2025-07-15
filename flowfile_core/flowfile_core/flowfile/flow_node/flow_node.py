@@ -171,11 +171,17 @@ class FlowNode:
 
     @setting_input.setter
     def setting_input(self, setting_input: Any):
+        is_manual_input = (self.node_type == 'manual_input' and
+                           isinstance(setting_input, input_schema.NodeManualInput) and
+                           isinstance(self._setting_input, input_schema.NodeManualInput)
+                           )
+        if is_manual_input:
+            _ = self.hash
         self._setting_input = setting_input
         self.set_node_information()
-        if self.node_type == 'manual_input' and isinstance(self._setting_input, input_schema.NodeManualInput):
+        if is_manual_input:
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run:
-                self.function = self.function.__class__(setting_input.raw_data_format)
+                self.function = FlowDataEngine(setting_input.raw_data_format)
                 self.reset()
                 self.get_predicted_schema()
         elif self._setting_input is not None:
@@ -322,10 +328,8 @@ class FlowNode:
 
     def get_resulting_data(self) -> FlowDataEngine:
         if self.is_setup:
-            breakpoint()
             if self.results.resulting_data is None and self.results.errors is None:
                 self.print('getting resulting data')
-                breakpoint()
                 try:
                     if isinstance(self.function, FlowDataEngine):
                         fl: FlowDataEngine = self.function
@@ -425,7 +429,6 @@ class FlowNode:
                   execution_location: schemas.ExecutionLocationsLiteral = "auto") -> bool:
         if execution_location == "local":
             return False
-        breakpoint()
         flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run:

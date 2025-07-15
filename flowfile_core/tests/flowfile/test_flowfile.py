@@ -146,8 +146,6 @@ def test_update_manual_input(raw_data):
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
                                               raw_data_format=input_schema.RawData.from_pylist(raw_data))
     graph.add_manual_input(input_file)
-    breakpoint()
-    flowfile_table = graph.get_node(1).get_resulting_data().to_raw_data()
     assert graph.get_node(1).get_resulting_data().columns == ["name", "city"]
     # Add a fixed column to table data and extract it in the raw data
     new_data = (graph.get_node(1).get_resulting_data().apply_flowfile_formula(func='100', col_name='new').to_raw_data())
@@ -155,7 +153,6 @@ def test_update_manual_input(raw_data):
     new_settings = deepcopy(existing_setting_inputs)
     new_settings.raw_data_format = new_data
     graph.add_manual_input(new_settings)
-    breakpoint()
     assert graph.get_node(1).get_resulting_data().columns == ["name", "city", "new"]
 
 
