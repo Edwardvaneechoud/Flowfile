@@ -281,17 +281,18 @@ def create_graph(flow_id: int = 1):
     return graph
 
 
-def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
+def add_manual_input(graph: FlowGraph, data: input_schema.RawData, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data_format=data)
     graph.add_manual_input(input_file)
     return graph
 
 
 def create_big_flow():
     graph = create_graph(1)
-    input_data_settings = input_schema.NodeManualInput.model_validate({'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 494, 'pos_y': 336, 'is_setup': True, 'description': '', 'user_id': 1, 'raw_data': [{'Column 1': 'edward', 'Column 2': '1'}, {'Column 1': 'eduward', 'Column 2': '2'}]})
+    raw_data: input_schema.RawData = input_schema.RawData.from_pylist([{'Column 1': 'edward', 'Column 2': '1'}, {'Column 1': 'eduward', 'Column 2': '2'}])
+    input_data_settings = input_schema.NodeManualInput.model_validate({'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 494, 'pos_y': 336, 'is_setup': True, 'description': '', 'user_id': 1, 'raw_data_format': raw_data})
     select_settings = input_schema.NodeSelect.model_validate({
         "flow_id": 1872601619,
         "node_id": 2,

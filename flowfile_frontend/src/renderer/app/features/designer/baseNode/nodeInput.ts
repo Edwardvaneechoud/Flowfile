@@ -221,8 +221,13 @@ export interface NodeInputData extends NodeBase {
   file_ref: string
 }
 
+export interface RawDataFormat {
+  columns?: MinimalFieldInput[] | null
+  data: unknown[][]
+}
+
 export interface NodeManualInput extends NodeBase {
-  raw_data: any
+  raw_data_format: RawDataFormat
 }
 
 export interface NodeSelect extends NodeSingleInput {

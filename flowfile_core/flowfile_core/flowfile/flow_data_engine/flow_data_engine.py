@@ -16,6 +16,7 @@ from pyarrow.parquet import ParquetFile
 
 # Local imports - Core
 from flowfile_core.configs import logger
+from flowfile_core.utils.utils import ensure_similarity_dicts
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
@@ -285,7 +286,7 @@ class FlowDataEngine:
         if not isinstance(data[0], dict):
             data = [row.__dict__ for row in data]
 
-        return utils.ensure_similarity_dicts(data)
+        return ensure_similarity_dicts(data)
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
         """Handle file path reference input."""

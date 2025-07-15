@@ -24,7 +24,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.flowfile.utils import snake_case_to_camel_case, _handle_raw_data
+from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
@@ -1039,7 +1039,6 @@ class FlowGraph:
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
         if isinstance(input_file, input_schema.NodeManualInput):
-            _handle_raw_data(input_file)
             input_data = FlowDataEngine(input_file.raw_data_format)
             ref = 'manual_input'
         else:

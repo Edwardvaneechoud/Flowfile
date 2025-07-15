@@ -12,6 +12,8 @@ from flowfile_core.database.connection import get_db_context
 import pytest
 from pathlib import Path
 from typing import List, Dict, Literal
+from copy import deepcopy
+
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
@@ -136,6 +138,24 @@ def test_add_manual_input(raw_data):
     graph.add_manual_input(input_file)
     assert len(graph.nodes) == 1, 'There should be 1 node in the graph'
     assert not graph.get_node(1).has_input, 'Node should not have input'
+
+
+def test_update_manual_input(raw_data):
+    breakpoint()
+    graph = create_graph()
+    graph = add_node_promise_for_manual_input(graph)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
+                                              raw_data=raw_data)
+    graph.add_manual_input(input_file)
+    flowfile_table = graph.get_node(1).get_resulting_data().to_raw_data()
+    assert graph.get_node(1).get_resulting_data().columns == ["name", "city"]
+    # Add a fixed column to table data and extract it in the raw data
+    new_data = (graph.get_node(1).get_resulting_data().apply_flowfile_formula(func='100', col_name='new').to_pylist())
+    existing_setting_inputs = graph.get_node(1).setting_input
+    new_settings = deepcopy(existing_setting_inputs)
+    new_settings.raw_data = new_data
+    graph.add_manual_input(new_settings)
+    assert graph.get_node(1).get_resulting_data().columns == ["name", "city", "new"]
 
 
 def test_get_schema(raw_data):
