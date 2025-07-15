@@ -269,6 +269,9 @@ class RawData(BaseModel):
         columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
         return cls(columns=columns, data=values)
 
+    def to_pylist(self):
+        return [{c.name: self.data[ci][ri] for ci, c in enumerate(self.columns)} for ri in range(len(self.data[0]))]
+
 
 class NodeManualInput(NodeBase):
     raw_data_format: Optional[RawData] = None

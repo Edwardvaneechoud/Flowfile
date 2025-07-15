@@ -322,8 +322,10 @@ class FlowNode:
 
     def get_resulting_data(self) -> FlowDataEngine:
         if self.is_setup:
+            breakpoint()
             if self.results.resulting_data is None and self.results.errors is None:
                 self.print('getting resulting data')
+                breakpoint()
                 try:
                     if isinstance(self.function, FlowDataEngine):
                         fl: FlowDataEngine = self.function
@@ -423,6 +425,7 @@ class FlowNode:
                   execution_location: schemas.ExecutionLocationsLiteral = "auto") -> bool:
         if execution_location == "local":
             return False
+        breakpoint()
         flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run:

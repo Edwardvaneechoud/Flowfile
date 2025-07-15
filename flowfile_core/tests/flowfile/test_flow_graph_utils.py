@@ -29,7 +29,8 @@ def create_graph(flow_id: int = 1, execution_mode: str = 'Development') -> FlowG
 def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=graph.flow_id, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
-    input_file = input_schema.NodeManualInput(flow_id=graph.flow_id, node_id=node_id, raw_data=data)
+    input_file = input_schema.NodeManualInput(flow_id=graph.flow_id, node_id=node_id,
+                                              raw_data_format=input_schema.RawData.from_pylist(data))
     graph.add_manual_input(input_file)
     return graph
 
@@ -324,7 +325,7 @@ def test_combine_flow_graphs_preserves_node_properties():
     input_file = input_schema.NodeManualInput(
         flow_id=1,
         node_id=1,
-        raw_data=[{"name": "john"}],
+        raw_data_format=input_schema.RawData.from_pylist([{"name": "john"}]),
         pos_x=100,
         pos_y=200
     )

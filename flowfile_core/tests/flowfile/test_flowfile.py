@@ -63,7 +63,7 @@ def create_graph(flow_id: int = 1, execution_mode: Literal['Development', 'Perfo
 def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data_format=input_schema.RawData.from_pylist(data))
     graph.add_manual_input(input_file)
     return graph
 
@@ -134,27 +134,28 @@ def test_add_manual_input(raw_data):
     graph = create_graph()
     graph = add_node_promise_for_manual_input(graph)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
-                                              raw_data=raw_data)
+                                              raw_data_format=input_schema.RawData.from_pylist(raw_data))
     graph.add_manual_input(input_file)
     assert len(graph.nodes) == 1, 'There should be 1 node in the graph'
     assert not graph.get_node(1).has_input, 'Node should not have input'
 
 
 def test_update_manual_input(raw_data):
-    breakpoint()
     graph = create_graph()
     graph = add_node_promise_for_manual_input(graph)
     input_file = input_schema.NodeManualInput(flow_id=1, node_id=1,
-                                              raw_data=raw_data)
+                                              raw_data_format=input_schema.RawData.from_pylist(raw_data))
     graph.add_manual_input(input_file)
+    breakpoint()
     flowfile_table = graph.get_node(1).get_resulting_data().to_raw_data()
     assert graph.get_node(1).get_resulting_data().columns == ["name", "city"]
     # Add a fixed column to table data and extract it in the raw data
-    new_data = (graph.get_node(1).get_resulting_data().apply_flowfile_formula(func='100', col_name='new').to_pylist())
+    new_data = (graph.get_node(1).get_resulting_data().apply_flowfile_formula(func='100', col_name='new').to_raw_data())
     existing_setting_inputs = graph.get_node(1).setting_input
     new_settings = deepcopy(existing_setting_inputs)
-    new_settings.raw_data = new_data
+    new_settings.raw_data_format = new_data
     graph.add_manual_input(new_settings)
+    breakpoint()
     assert graph.get_node(1).get_resulting_data().columns == ["name", "city", "new"]
 
 
@@ -174,7 +175,7 @@ def test_run_graph(raw_data):
     graph.run_graph()
     node = graph.get_node(1)
     assert node.node_stats.has_run, 'Node should have run'
-    assert node.results.resulting_data.collect().to_dicts() == node.setting_input.raw_data, 'Data should be the same'
+    assert node.results.resulting_data.collect().to_dicts() == node.setting_input.raw_data_format.to_pylist(), 'Data should be the same'
 
 
 def test_execute_manual_node_externally(flow_logger: FlowLogger, raw_data):
@@ -182,7 +183,7 @@ def test_execute_manual_node_externally(flow_logger: FlowLogger, raw_data):
     graph = add_manual_input(graph, data=raw_data)
     node = graph.get_node(1)
     node.execute_remote(node_logger=flow_logger.get_node_logger(1))
-    assert node.get_resulting_data().collect().to_dicts() == node.setting_input.raw_data, 'Data should be the same'
+    assert node.get_resulting_data().collect().to_dicts() == node.setting_input.raw_data_format.to_pylist(), 'Data should be the same'
 
 
 def test_add_unique(raw_data):

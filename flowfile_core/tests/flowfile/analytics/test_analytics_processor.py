@@ -349,8 +349,8 @@ def create_big_flow():
     graph.add_formula(field_with_date)
     graph.add_formula(field_with_boolean)
     graph.add_explore_data(explore_data_settings)
-    add_manual_input(graph, data=[{'Column 1': 'edward', 'Column 2': 'test'}, {'Column 1': 'eduward', 'Column 2': 'xre'}], node_id=4)  # add another manual input with different data types
-    add_manual_input(graph, data=[{'Column 3': 'edward', 'Column 4': 'test'}, {'Column 3': 'eduward', 'Column 4': 'xre'}], node_id=5)  # add another manual input with different columns
+    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 1': 'edward', 'Column 2': 'test'}, {'Column 1': 'eduward', 'Column 2': 'xre'}]), node_id=4)  # add another manual input with different data types
+    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 3': 'edward', 'Column 4': 'test'}, {'Column 3': 'eduward', 'Column 4': 'xre'}]), node_id=5)  # add another manual input with different columns
     return graph
 
 
@@ -373,7 +373,7 @@ def test_analytics_data_generator_when_run_development_no_settings():
     input_data = (FlowDataEngine.create_random(1000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
-    add_manual_input(graph, data=input_data.to_pylist())
+    add_manual_input(graph, data=input_data.to_raw_data())
     add_node_promise_on_type(graph, 'explore_data', 2)
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     graph.run_graph()
@@ -387,7 +387,7 @@ def test_analytics_processor_create_graphic_walker_input_not_run():
     input_data = (FlowDataEngine.create_random(1000)
                   .apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'Work']))
-    add_manual_input(graph, data=input_data.to_pylist())
+    add_manual_input(graph, data=input_data.to_raw_data())
     add_node_promise_on_type(graph, 'explore_data', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph, connection)
@@ -408,7 +408,7 @@ def test_analytics_processor_existing_specs_not_run():
     graph = create_graph()
     gw_node_settings = get_starting_gw_node_settings()
 
-    add_manual_input(graph, data=[{'Column 1': 'edward'}, {'Column 1': 'eduward'}, {'Column 1': 'edward'}])
+    add_manual_input(graph, data=input_schema.RawData.from_pylist([{'Column 1': 'edward'}, {'Column 1': 'eduward'}, {'Column 1': 'edward'}]))
     add_node_promise_on_type(graph, 'explore_data', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph, connection)
@@ -422,7 +422,7 @@ def test_analytics_processor_existing_specs_not_run():
 def test_analytics_processor_existing_specs_run():
     graph = create_graph()
     gw_node_settings = get_starting_gw_node_settings()
-    data = [{"Column 1": "edward"}, {"Column 1": "eduward"}]
+    data = input_schema.RawData.from_pylist([{"Column 1": "edward"}, {"Column 1": "eduward"}])
     add_manual_input(
         graph,
         data=data
@@ -435,7 +435,7 @@ def test_analytics_processor_existing_specs_run():
     graph.run_graph()
     graphic_walker_input = AnalyticsProcessor.create_graphic_walker_input(node, node.setting_input.graphic_walker_input)
     expected_data = expected_graphic_walker_data_not_run()
-    expected_data['dataModel']['data'] = data
+    expected_data['dataModel']['data'] = data.to_pylist()
     assert graphic_walker_input.model_dump() == expected_data
 
 
