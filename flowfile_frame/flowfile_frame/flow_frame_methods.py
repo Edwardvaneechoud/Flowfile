@@ -449,7 +449,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     input_node = input_schema.NodeManualInput(
         flow_id=flow_id,
         node_id=node_id,
-        raw_data=FlowDataEngine(data).to_pylist(),
+        raw_data_format=FlowDataEngine(data).to_raw_data(),
         pos_x=100,
         pos_y=100,
         is_setup=True,
