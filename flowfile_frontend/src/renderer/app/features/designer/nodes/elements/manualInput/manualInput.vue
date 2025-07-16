@@ -84,7 +84,11 @@
 import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { createManualInput } from "./manualInputLogic";
-import type { NodeManualInput, MinimalFieldInput, RawDataFormat } from "../../../baseNode/nodeInput";
+import type {
+  NodeManualInput,
+  MinimalFieldInput,
+  RawDataFormat,
+} from "../../../baseNode/nodeInput";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { ElNotification } from "element-plus";
 
@@ -111,7 +115,7 @@ const rawDataString = ref("");
 let nextColumnId = 1;
 let nextRowId = 1;
 
-const dataTypes = nodeStore.getDataTypes()
+const dataTypes = nodeStore.getDataTypes();
 const rawData = computed(() => {
   return rows.value.map((row) => {
     const obj: Record<string, string> = {};
@@ -123,18 +127,18 @@ const rawData = computed(() => {
 });
 
 const rawDataFormat = computed((): RawDataFormat => {
-  const formattedColumns: MinimalFieldInput[] = columns.value.map(col => ({
+  const formattedColumns: MinimalFieldInput[] = columns.value.map((col) => ({
     name: col.name,
-    data_type: col.dataType || "String"
+    data_type: col.dataType || "String",
   }));
 
-  const data: unknown[][] = columns.value.map(col => 
-    rows.value.map(row => row.values[col.id] || "")
+  const data: unknown[][] = columns.value.map((col) =>
+    rows.value.map((row) => row.values[col.id] || ""),
   );
 
   return {
     columns: formattedColumns,
-    data: data
+    data: data,
   };
 });
 
@@ -173,7 +177,7 @@ const populateTableFromRawDataFormat = (rawDataFormat: RawDataFormat) => {
       columns.value.push({
         id: index + 1,
         name: col.name,
-        dataType: col.data_type || "String"
+        dataType: col.data_type || "String",
       });
     });
   }
@@ -207,9 +211,11 @@ const loadNodeData = async (nodeId: number) => {
   if (nodeResult?.setting_input) {
     nodeManualInput.value = nodeResult.setting_input;
 
-    if (nodeResult.setting_input.raw_data_format && 
-        nodeResult.setting_input.raw_data_format.columns && 
-        nodeResult.setting_input.raw_data_format.data) {
+    if (
+      nodeResult.setting_input.raw_data_format &&
+      nodeResult.setting_input.raw_data_format.columns &&
+      nodeResult.setting_input.raw_data_format.data
+    ) {
       populateTableFromRawDataFormat(nodeResult.setting_input.raw_data_format);
     } else if (nodeResult.setting_input.raw_data) {
       populateTableFromData(nodeResult.setting_input.raw_data);
@@ -226,10 +232,10 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const addColumn = () => {
-  columns.value.push({ 
-    id: nextColumnId, 
+  columns.value.push({
+    id: nextColumnId,
     name: `Column ${nextColumnId}`,
-    dataType: "String"
+    dataType: "String",
   });
   nextColumnId++;
 };
@@ -293,12 +299,11 @@ const updateTableFromRawData = () => {
 const pushNodeData = async () => {
   if (nodeManualInput.value) {
     // Always save in the new format
-    nodeManualInput.value.raw_data_format = rawDataFormat.value;    
+    nodeManualInput.value.raw_data_format = rawDataFormat.value;
     await nodeStore.updateSettings(nodeManualInput);
   }
   dataLoaded.value = false;
 };
-
 
 // Watchers
 watch(rawData, (newVal) => {
