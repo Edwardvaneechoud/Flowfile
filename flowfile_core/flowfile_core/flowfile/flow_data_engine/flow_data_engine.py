@@ -577,7 +577,6 @@ class FlowDataEngine:
     def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowDataEngine":
         """Create a FlowDataEngine from a file path."""
         received_table.set_absolute_filepath()
-
         file_type_handlers = {
             'csv': create_funcs.create_from_path_csv,
             'parquet': create_funcs.create_from_path_parquet,

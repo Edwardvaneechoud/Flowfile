@@ -984,8 +984,8 @@ class FlowGraph:
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
                 input_data = FlowDataEngine.create_from_path_worker(input_file.received_file,
-                                                                   node_id=input_file.node_id,
-                                                                   flow_id=self.flow_id)
+                                                                    node_id=input_file.node_id,
+                                                                    flow_id=self.flow_id)
             input_data.name = input_file.received_file.name
             return input_data
 
