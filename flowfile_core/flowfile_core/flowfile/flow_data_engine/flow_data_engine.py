@@ -16,6 +16,7 @@ from pyarrow.parquet import ParquetFile
 
 # Local imports - Core
 from flowfile_core.configs import logger
+from flowfile_core.utils.utils import ensure_similarity_dicts
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
@@ -289,7 +290,7 @@ class FlowDataEngine:
         if not isinstance(data[0], dict):
             data = [row.__dict__ for row in data]
 
-        return utils.ensure_similarity_dicts(data)
+        return ensure_similarity_dicts(data)
 
     @classmethod
     def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal):
@@ -749,7 +750,6 @@ class FlowDataEngine:
     def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowDataEngine":
         """Create a FlowDataEngine from a file path."""
         received_table.set_absolute_filepath()
-
         file_type_handlers = {
             'csv': create_funcs.create_from_path_csv,
             'parquet': create_funcs.create_from_path_parquet,

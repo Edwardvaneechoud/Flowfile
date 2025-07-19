@@ -1,9 +1,9 @@
 import polars as pl
 import os
-
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.flow_data_engine.sample_data import create_fake_data
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import df_from_openpyxl, df_from_calamine_xlsx
+from polars._typing import CsvEncoding
 
 
 def create_from_json(received_table: input_schema.ReceivedCsvTable):
@@ -49,11 +49,21 @@ def create_from_json(received_table: input_schema.ReceivedCsvTable):
         return data
 
 
-def create_from_path_csv(received_table: input_schema.ReceivedCsvTable) -> pl.DataFrame:
+def standardize_utf8_encoding(non_standardized_encoding: str) -> CsvEncoding:
+    if non_standardized_encoding.upper() in ('UTF-8', 'UTF8'):
+        return 'utf8'
+    elif non_standardized_encoding.upper() in ('UTF-8-LOSSY', 'UTF8-LOSSY'):
+        return 'utf8-lossy'
+    else:
+        raise ValueError(f"Encoding {non_standardized_encoding} is not supported.")
+
+
+def create_from_path_csv(received_table: input_schema.ReceivedCsvTable) -> pl.LazyFrame:
     f = received_table.abs_file_path
     gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
     low_mem = gbs_to_load > 10
-    if received_table.encoding.upper() == 'UTF8' or received_table.encoding.upper() == 'UTF-8':
+    if received_table.encoding.upper() in ("UTF-8", "UTF8", 'UTF8-LOSSY', 'UTF-8-LOSSY'):
+        encoding: CsvEncoding = standardize_utf8_encoding(received_table.encoding)
         try:
             data = pl.scan_csv(f,
                                low_memory=low_mem,
@@ -61,11 +71,12 @@ def create_from_path_csv(received_table: input_schema.ReceivedCsvTable) -> pl.Da
                                separator=received_table.delimiter,
                                has_header=received_table.has_headers,
                                skip_rows=received_table.starting_from_line,
-                               encoding='utf8',
+                               encoding=encoding,
                                infer_schema_length=received_table.infer_schema_length)
             data.head(1).collect()
             return data
         except:
+
             try:
                 data = pl.scan_csv(f, low_memory=low_mem,
                                    separator=received_table.delimiter,
@@ -75,11 +86,11 @@ def create_from_path_csv(received_table: input_schema.ReceivedCsvTable) -> pl.Da
                                    ignore_errors=True)
                 return data
             except:
-                data = pl.scan_csv(f, low_memory=low_mem,
+                data = pl.scan_csv(f, low_memory=False,
                                    separator=received_table.delimiter,
                                    has_header=received_table.has_headers,
                                    skip_rows=received_table.starting_from_line,
-                                   encoding='utf8',
+                                   encoding=encoding,
                                    ignore_errors=True)
                 return data
     else:
@@ -90,14 +101,14 @@ def create_from_path_csv(received_table: input_schema.ReceivedCsvTable) -> pl.Da
                                    skip_rows=received_table.starting_from_line,
                                    encoding=received_table.encoding,
                                    ignore_errors=True, batch_size=2).next_batches(1)
-        return data[0]
+        return data[0].lazy()
 
 
 def create_random(number_of_records: int = 1000) -> pl.LazyFrame:
     return create_fake_data(number_of_records).lazy()
 
 
-def create_from_path_parquet(received_table: input_schema.ReceivedParquetTable):
+def create_from_path_parquet(received_table: input_schema.ReceivedParquetTable) -> pl.LazyFrame:
     low_mem = (os.path.getsize(received_table.abs_file_path) / 1024 / 1000 / 1000) > 2
     return pl.scan_parquet(source=received_table.abs_file_path, low_memory=low_mem)
 

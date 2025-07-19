@@ -53,9 +53,10 @@ def create_graph(execution_mode: str = 'Development'):
 
 
 def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
+    raw_data = input_schema.RawData.from_pylist(data)
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data_format=raw_data)
     graph.add_manual_input(input_file)
     return graph
 

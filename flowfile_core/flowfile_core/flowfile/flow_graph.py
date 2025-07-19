@@ -24,7 +24,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.flowfile.utils import snake_case_to_camel_case, _handle_raw_data
+from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
@@ -984,8 +984,8 @@ class FlowGraph:
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
                 input_data = FlowDataEngine.create_from_path_worker(input_file.received_file,
-                                                                   node_id=input_file.node_id,
-                                                                   flow_id=self.flow_id)
+                                                                    node_id=input_file.node_id,
+                                                                    flow_id=self.flow_id)
             input_data.name = input_file.received_file.name
             return input_data
 
@@ -1039,7 +1039,6 @@ class FlowGraph:
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
         if isinstance(input_file, input_schema.NodeManualInput):
-            _handle_raw_data(input_file)
             input_data = FlowDataEngine(input_file.raw_data_format)
             ref = 'manual_input'
         else:
@@ -1051,10 +1050,8 @@ class FlowGraph:
             node.name = ref
             node.function = input_data
             node.setting_input = input_file
-
             if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
-
         else:
             input_data.collect()
             node = FlowNode(input_file.node_id, function=input_data,

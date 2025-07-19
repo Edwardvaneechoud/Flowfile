@@ -84,7 +84,8 @@ def get_join_data(flow_id: int, how: str = 'inner'):
 def add_manual_input(graph: FlowGraph, data, node_id: int = 1):
     node_promise = input_schema.NodePromise(flow_id=1, node_id=node_id, node_type='manual_input')
     graph.add_node_promise(node_promise)
-    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id, raw_data=data)
+    input_file = input_schema.NodeManualInput(flow_id=1, node_id=node_id,
+                                              raw_data_format=input_schema.RawData.from_pylist(data))
     graph.add_manual_input(input_file)
     return graph
 
@@ -160,11 +161,13 @@ def create_flow_with_manual_input() -> FlowId:
     flow_id = ensure_clean_flow()
     add_node_placeholder('manual_input', node_id=1, flow_id=flow_id)
     input_file = input_schema.NodeManualInput(flow_id=flow_id, node_id=1,
-                                              raw_data=[{'name': 'John', 'city': 'New York'},
-                                                        {'name': 'Jane', 'city': 'Los Angeles'},
-                                                        {'name': 'Edward', 'city': 'Chicago'},
-                                                        {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
-    r = client.post("/update_settings/", json=input_file, params={"node_type": "manual_input"})
+                                              raw_data_format=input_schema.RawData.from_pylist([
+                                                  {'name': 'John', 'city': 'New York'},
+                                                  {'name': 'Jane', 'city': 'Los Angeles'},
+                                                  {'name': 'Edward', 'city': 'Chicago'},
+                                                  {'name': 'Courtney', 'city': 'Chicago'}]
+                                              ))
+    r = client.post("/update_settings/", json=input_file.model_dump(), params={"node_type": "manual_input"})
     return flow_id
 
 
@@ -202,13 +205,17 @@ def test_add_generic_settings():
     flow_id = ensure_clean_flow()
     add_node_placeholder('manual_input', flow_id=flow_id)
     input_file = input_schema.NodeManualInput(flow_id=flow_id, node_id=1,
-                                              raw_data=[{'name': 'John', 'city': 'New York'},
-                                                        {'name': 'Jane', 'city': 'Los Angeles'},
-                                                        {'name': 'Edward', 'city': 'Chicago'},
-                                                        {'name': 'Courtney', 'city': 'Chicago'}]).__dict__
-    r = client.post("/update_settings/", json=input_file, params={"node_type": "manual_input"})
+                                              raw_data_format=
+                                              input_schema.RawData.from_pylist([
+                                                  {'name': 'John', 'city': 'New York'},
+                                                  {'name': 'Jane', 'city': 'Los Angeles'},
+                                                  {'name': 'Edward', 'city': 'Chicago'},
+                                                  {'name': 'Courtney', 'city': 'Chicago'}]
+                                              )
+                                              )
+    r = client.post("/update_settings/", json=input_file.model_dump(), params={"node_type": "manual_input"})
     assert r.status_code == 200, 'Settings not added'
-    assert flow_file_handler.get_node(flow_id, 1).setting_input.raw_data == input_file['raw_data'], 'Settings not set'
+    assert flow_file_handler.get_node(flow_id, 1).setting_input.raw_data_format == input_file.raw_data_format, 'Settings not set'
 
 
 def test_connect_node():

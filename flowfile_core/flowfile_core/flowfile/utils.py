@@ -1,15 +1,11 @@
 import os
 import hashlib
 import json
-import polars as pl
 import shutil
 
 from datetime import datetime, date, time
 from typing import List
 from decimal import Decimal
-
-from flowfile_core.flowfile.flow_data_engine.utils import standardize_col_dtype
-from flowfile_core.schemas import input_schema
 
 
 def generate_sha256_hash(data: bytes):
@@ -61,7 +57,7 @@ def get_hash(val):
     if hasattr(val, 'overridden_hash') and val.overridden_hash():
         val = hash(val)
     elif hasattr(val, '__dict__'):
-        val = {k: v for k, v in val.__dict__.items() if k not in {'pos_x', 'pos_y'}}
+        val = {k: v for k, v in val.__dict__.items() if k not in {'pos_x', 'pos_y', 'description'}}
     elif hasattr(val, 'json'):
         pass
     return generate_sha256_hash(json_dumps(val).encode('utf-8'))
@@ -117,21 +113,3 @@ def batch_generator(input_list: List, batch_size: int = 10000):
             yield input_list
             input_list = []
             run = False
-
-
-def _handle_raw_data(node_manual_input: input_schema.NodeManualInput):
-    """Ensure compatibility with the new typed raw data and the old dict form data type"""
-    if (not (hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
-            and (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
-        values = [standardize_col_dtype([vv for vv in c]) for c in zip(*(r.values()
-                                                                         for r in node_manual_input.raw_data))]
-        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
-        _columns = [input_schema.MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in
-                    node_manual_input.raw_data[0].keys()]
-
-        node_manual_input.raw_data_format = input_schema.RawData(columns=_columns, data=values)
-    elif ((hasattr(node_manual_input, "raw_data_format") and node_manual_input.raw_data_format)
-          and not (hasattr(node_manual_input, 'raw_data') and node_manual_input.raw_data)):
-        node_manual_input.raw_data = [{c.name: node_manual_input.raw_data_format.data[ci][ri] for ci, c in
-                                       enumerate(node_manual_input.raw_data_format.columns)}
-                                      for ri in range(len(node_manual_input.raw_data_format.data[0]))]

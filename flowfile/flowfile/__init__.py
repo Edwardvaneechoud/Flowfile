@@ -20,7 +20,7 @@ from flowfile.api import (open_graph_in_editor)
 from flowfile_frame.flow_frame import (
     FlowFrame
 )
-from flowfile_frame import read_csv, read_parquet, from_dict, concat
+from flowfile_frame import read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet
 from flowfile_frame.expr import (
     col, lit, column, cum_count, len,
     sum, min, max, mean, count, when
@@ -50,7 +50,7 @@ __all__ = [
     'FlowFrame', 'GroupByFrame',
 
     # Main creation functions
-    'read_csv', 'read_parquet', 'from_dict', 'concat',
+    'read_csv', 'read_parquet', 'from_dict', 'concat', 'scan_csv', 'scan_parquet',
 
     # Expression API
     'col', 'lit', 'column', 'cum_count', 'len',

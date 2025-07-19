@@ -12,7 +12,17 @@
               </tr>
               <tr>
                 <th v-for="col in columns" :key="col.id">
-                  <input v-model="col.name" class="input-header" type="text" />
+                  <div class="column-header">
+                    <input v-model="col.name" class="input-header" type="text" />
+                    <el-select v-model="col.dataType" size="small" class="type-select">
+                      <el-option
+                        v-for="dtype in dataTypes"
+                        :key="dtype"
+                        :label="dtype"
+                        :value="dtype"
+                      />
+                    </el-select>
+                  </div>
                 </th>
               </tr>
             </thead>
@@ -74,14 +84,18 @@
 import { ref, computed, watch, nextTick } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { createManualInput } from "./manualInputLogic";
-import type { NodeManualInput } from "../../../baseNode/nodeInput";
+import type {
+  NodeManualInput,
+  MinimalFieldInput,
+  RawDataFormat,
+} from "../../../baseNode/nodeInput";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { ElNotification } from "element-plus";
 
-// Types
 interface Column {
   id: number;
   name: string;
+  dataType?: string;
 }
 
 interface Row {
@@ -89,15 +103,8 @@ interface Row {
   values: Record<number, string>;
 }
 
-interface Props {
-  nodeId: number;
-}
-
-// Props and Store
-const props = defineProps<Props>();
 const nodeStore = useNodeStore();
 
-// State
 const dataLoaded = ref(false);
 const nodeManualInput = ref<NodeManualInput | null>(null);
 const columns = ref<Column[]>([]);
@@ -108,7 +115,7 @@ const rawDataString = ref("");
 let nextColumnId = 1;
 let nextRowId = 1;
 
-// Computed
+const dataTypes = nodeStore.getDataTypes();
 const rawData = computed(() => {
   return rows.value.map((row) => {
     const obj: Record<string, string> = {};
@@ -119,10 +126,25 @@ const rawData = computed(() => {
   });
 });
 
-// Methods
+const rawDataFormat = computed((): RawDataFormat => {
+  const formattedColumns: MinimalFieldInput[] = columns.value.map((col) => ({
+    name: col.name,
+    data_type: col.dataType || "String",
+  }));
+
+  const data: unknown[][] = columns.value.map((col) =>
+    rows.value.map((row) => row.values[col.id] || ""),
+  );
+
+  return {
+    columns: formattedColumns,
+    data: data,
+  };
+});
+
 const initializeEmptyTable = () => {
   rows.value = [{ id: 1, values: { 1: "" } }];
-  columns.value = [{ id: 1, name: "Column 1" }];
+  columns.value = [{ id: 1, name: "Column 1", dataType: "String" }];
   nextColumnId = 2;
   nextRowId = 2;
 };
@@ -135,7 +157,7 @@ const populateTableFromData = (data: Record<string, string>[]) => {
     const row: Row = { id: rowIndex + 1, values: {} };
     Object.keys(item).forEach((key, colIndex) => {
       if (rowIndex === 0) {
-        columns.value.push({ id: colIndex + 1, name: key });
+        columns.value.push({ id: colIndex + 1, name: key, dataType: "String" });
       }
       row.values[colIndex + 1] = item[key];
     });
@@ -146,13 +168,56 @@ const populateTableFromData = (data: Record<string, string>[]) => {
   nextRowId = rows.value.length + 1;
 };
 
+const populateTableFromRawDataFormat = (rawDataFormat: RawDataFormat) => {
+  rows.value = [];
+  columns.value = [];
+
+  if (rawDataFormat.columns) {
+    rawDataFormat.columns.forEach((col, index) => {
+      columns.value.push({
+        id: index + 1,
+        name: col.name,
+        dataType: col.data_type || "String",
+      });
+    });
+  }
+
+  const numRows = rawDataFormat.data[0]?.length || 0;
+  for (let rowIndex = 0; rowIndex < numRows; rowIndex++) {
+    const row: Row = { id: rowIndex + 1, values: {} };
+    rawDataFormat.data.forEach((colData, colIndex) => {
+      row.values[colIndex + 1] = String(colData[rowIndex] || "");
+    });
+    rows.value.push(row);
+  }
+
+  if (numRows === 0 && columns.value.length > 0) {
+    const emptyRow: Row = { id: 1, values: {} };
+    columns.value.forEach((col) => {
+      emptyRow.values[col.id] = "";
+    });
+    rows.value.push(emptyRow);
+    nextRowId = 2;
+  } else {
+    nextRowId = numRows + 1;
+  }
+
+  nextColumnId = columns.value.length + 1;
+};
+
 const loadNodeData = async (nodeId: number) => {
   const nodeResult = await nodeStore.getNodeData(nodeId, false);
 
   if (nodeResult?.setting_input) {
     nodeManualInput.value = nodeResult.setting_input;
 
-    if (nodeResult.setting_input.raw_data) {
+    if (
+      nodeResult.setting_input.raw_data_format &&
+      nodeResult.setting_input.raw_data_format.columns &&
+      nodeResult.setting_input.raw_data_format.data
+    ) {
+      populateTableFromRawDataFormat(nodeResult.setting_input.raw_data_format);
+    } else if (nodeResult.setting_input.raw_data) {
       populateTableFromData(nodeResult.setting_input.raw_data);
     } else {
       initializeEmptyTable();
@@ -167,7 +232,11 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const addColumn = () => {
-  columns.value.push({ id: nextColumnId, name: `Column ${nextColumnId}` });
+  columns.value.push({
+    id: nextColumnId,
+    name: `Column ${nextColumnId}`,
+    dataType: "String",
+  });
   nextColumnId++;
 };
 
@@ -229,19 +298,11 @@ const updateTableFromRawData = () => {
 
 const pushNodeData = async () => {
   if (nodeManualInput.value) {
-    nodeManualInput.value.raw_data = rawData.value;
+    // Always save in the new format
+    nodeManualInput.value.raw_data_format = rawDataFormat.value;
     await nodeStore.updateSettings(nodeManualInput);
   }
   dataLoaded.value = false;
-};
-// In Airbyte component
-// In Manual Input component
-const handleModelUpdate = (newValue: NodeManualInput) => {
-  console.log("Manual Input received update:", newValue);
-  nodeManualInput.value = {
-    ...nodeManualInput.value,
-    ...newValue,
-  };
 };
 
 // Watchers
@@ -282,6 +343,21 @@ defineExpose({
 .modern-table td {
   padding: 0.5rem;
   border: 1px solid var(--el-border-color-lighter);
+}
+
+.column-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.type-select {
+  width: 100%;
+}
+
+.type-select :deep(.el-input__inner) {
+  font-size: 0.75rem;
+  padding: 0 0.5rem;
 }
 
 .input-header,

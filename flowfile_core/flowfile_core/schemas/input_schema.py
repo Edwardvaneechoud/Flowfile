@@ -1,4 +1,4 @@
-from typing import Annotated, List, Optional, Literal
+from typing import List, Optional, Literal, Iterator
 from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
@@ -6,7 +6,9 @@ from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
 from flowfile_core.schemas.external_sources.airbyte_schemas import AirbyteConfig
 from flowfile_core.schemas.schemas import SecretRef
+from flowfile_core.utils.utils import standardize_col_dtype
 from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
+import polars as pl
 
 
 OutputConnectionClass = Literal['output-0', 'output-1', 'output-2', 'output-3', 'output-4',
@@ -35,7 +37,7 @@ class RemoveItemsInput(BaseModel):
 
 class MinimalFieldInfo(BaseModel):
     name: str
-    data_type: str
+    data_type: str = "String"
 
 
 class ReceivedTableBase(BaseModel):
@@ -252,11 +254,28 @@ class NodeDatasource(NodeBase):
 
 class RawData(BaseModel):
     columns: List[MinimalFieldInfo] = None
-    data: List[List]  # List of list where each inner list is a column of data. This ensures more efficient storage
+    data: List[List]
+
+    @classmethod
+    def from_columns(cls, columns: List[str], data: List[List]):
+        return cls(columns=[MinimalFieldInfo(name=column) for column in columns], data=data)
+
+    @classmethod
+    def from_pylist(cls, pylist: List[dict]):
+        if len(pylist) == 0:
+            return cls(columns=[], data=[])
+
+        values = [standardize_col_dtype([vv for vv in c]) for c in
+                  zip(*(r.values() for r in pylist))]
+        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
+        columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
+        return cls(columns=columns, data=values)
+
+    def to_pylist(self):
+        return [{c.name: self.data[ci][ri] for ci, c in enumerate(self.columns)} for ri in range(len(self.data[0]))]
 
 
 class NodeManualInput(NodeBase):
-    raw_data: Optional[List] = None
     raw_data_format: Optional[RawData] = None
 
 

@@ -285,8 +285,8 @@ def create_sample_dataframe_node(flow: FlowGraph, node_id: int = 1) -> FlowGraph
 
 
 def create_sample_dataframe_for_graph_solver(flow: FlowGraph, node_id: int = 1) -> FlowGraph:
-    input_data = [{'from': 'a', 'to': 'b'}, {'from': 'b', 'to': 'c'}, {'from': 'g', 'to': 'd'}]
-    flow.add_manual_input(input_schema.NodeManualInput(flow_id=flow.flow_id, node_id=node_id, raw_data=input_data))
+    input_data = input_schema.RawData.from_pylist([{'from': 'a', 'to': 'b'}, {'from': 'b', 'to': 'c'}, {'from': 'g', 'to': 'd'}])
+    flow.add_manual_input(input_schema.NodeManualInput(flow_id=flow.flow_id, node_id=node_id, raw_data_format=input_data))
     return flow
 
 

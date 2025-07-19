@@ -175,13 +175,10 @@ class FlowGraphToPolarsConverter:
 
     def _handle_manual_input(self, settings: input_schema.NodeManualInput, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle manual data input nodes."""
-        if settings.raw_data_format:
-            data = settings.raw_data_format.data
-            flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns)
-            schema = self.get_manual_schema_input(flowfile_schema)
-            self._add_code(f"{var_name} = pl.LazyFrame({data}, schema={schema}, strict=False)")
-        else:
-            self._add_code(f"{var_name} = pl.LazyFrame({settings.raw_data})")
+        data = settings.raw_data_format.data
+        flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in settings.raw_data_format.columns)
+        schema = self.get_manual_schema_input(flowfile_schema)
+        self._add_code(f"{var_name} = pl.LazyFrame({data}, schema={schema}, strict=False)")
         self._add_code("")
 
     def _handle_filter(self, settings: input_schema.NodeFilter, var_name: str, input_vars: Dict[str, str]) -> None:

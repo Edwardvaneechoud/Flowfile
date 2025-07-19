@@ -1,6 +1,6 @@
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import remove_comments_and_docstrings
-from flowfile_core.schemas import transform_schema, input_schema
+from flowfile_core.schemas import transform_schema
 import polars as pl
 import pytest
 

@@ -1,22 +1,20 @@
-import logging
-import os
-from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, Callable
-from pathlib import Path
-
 import io
+import os
+from pathlib import Path
+from typing import Any, List, Optional, Union, Dict, Callable
+
 import polars as pl
-from polars._typing import (SchemaDict, IO,PolarsDataType,
+from polars._typing import (SchemaDict, IO, PolarsDataType,
                             Sequence, CsvEncoding)
 
-from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import input_schema, transform_schema
-
-from flowfile_frame.expr import col
-
-from flowfile_frame.utils import create_flow_graph
-from flowfile_frame.flow_frame import generate_node_id, FlowFrame
 from flowfile_frame.config import logger
+from flowfile_frame.expr import col
+from flowfile_frame.flow_frame import generate_node_id, FlowFrame
+from flowfile_frame.utils import create_flow_graph
+
 
 def sum(expr):
     """Sum aggregation function."""
@@ -140,11 +138,10 @@ def read_csv(
     Returns:
         A FlowFrame with the CSV data.
     """
-    node_id = generate_node_id() # Assuming generate_node_id is defined
+    node_id = generate_node_id()
     if flow_graph is None:
-        flow_graph = create_flow_graph() # Assuming create_flow_graph is defined
+        flow_graph = create_flow_graph()
     flow_id = flow_graph.flow_id
-
     current_source_path_for_native = None
     if isinstance(source, (str, os.PathLike)):
         current_source_path_for_native = str(source)
@@ -216,11 +213,14 @@ def read_csv(
             description=read_node_description
         )
         flow_graph.add_read(read_node)
+        flow_graph.get_node(1)
+
         result_frame = FlowFrame(
             data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
             flow_graph=flow_graph,
             node_id=node_id
         )
+        flow_graph.get_node(1)
         return result_frame
     else:
         polars_source_arg = source
@@ -449,7 +449,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     input_node = input_schema.NodeManualInput(
         flow_id=flow_id,
         node_id=node_id,
-        raw_data=FlowDataEngine(data).to_pylist(),
+        raw_data_format=FlowDataEngine(data).to_raw_data(),
         pos_x=100,
         pos_y=100,
         is_setup=True,
