@@ -171,11 +171,17 @@ class FlowNode:
 
     @setting_input.setter
     def setting_input(self, setting_input: Any):
+        is_manual_input = (self.node_type == 'manual_input' and
+                           isinstance(setting_input, input_schema.NodeManualInput) and
+                           isinstance(self._setting_input, input_schema.NodeManualInput)
+                           )
+        if is_manual_input:
+            _ = self.hash
         self._setting_input = setting_input
         self.set_node_information()
-        if self.node_type == 'manual_input' and isinstance(self._setting_input, input_schema.NodeManualInput):
+        if is_manual_input:
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run:
-                self.function = self.function.__class__(setting_input.raw_data_format)
+                self.function = FlowDataEngine(setting_input.raw_data_format)
                 self.reset()
                 self.get_predicted_schema()
         elif self._setting_input is not None:

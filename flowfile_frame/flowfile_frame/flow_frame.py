@@ -102,17 +102,17 @@ def _extract_expr_parts(expr_obj) -> tuple[str, str]:
 def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None,
                                 group_expr: pl.Expr | None = None) -> None:
     if method_name is None:
-        raise NotImplemented("Cannot create a polars lambda expression without the method")
+        raise NotImplementedError("Cannot create a polars lambda expression without the method")
     if polars_expr is None:
-        raise NotImplemented("Cannot create polars expressions with lambda function")
+        raise NotImplementedError("Cannot create polars expressions with lambda function")
     method_ref = getattr(pl.LazyFrame, method_name)
     if method_ref is None:
         raise ModuleNotFoundError(f"Could not find the method {method_name} in polars lazyframe")
     if method_name == 'group_by':
         if group_expr is None:
-            raise NotImplemented("Cannot create a polars lambda expression without the groupby expression")
+            raise NotImplementedError("Cannot create a polars lambda expression without the groupby expression")
         if not all(isinstance(ge, pl.Expr) for ge in group_expr):
-            raise NotImplemented("Cannot create a polars lambda expression without the groupby expression")
+            raise NotImplementedError("Cannot create a polars lambda expression without the groupby expression")
 
 
 def generate_node_id() -> int:
@@ -272,7 +272,6 @@ class FlowFrame:
             data = pl.LazyFrame()
         if not isinstance(data, pl.LazyFrame):
             return
-
         self.node_id = node_id or generate_node_id()
         self.parent_node_id = parent_node_id
 
