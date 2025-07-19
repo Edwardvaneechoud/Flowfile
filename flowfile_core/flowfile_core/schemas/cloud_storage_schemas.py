@@ -7,7 +7,7 @@ from pydantic import BaseModel, SecretStr, field_validator
 from flowfile_core.schemas.schemas import SecretRef
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
-AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token"]
+AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli"]
 
 
 class CloudStorageConnection(BaseModel):
@@ -107,6 +107,8 @@ class CloudStorageReadSettings(CloudStorageSettings):
     csv_has_header: bool = True
     csv_delimiter: str = ","
     csv_encoding: str = "utf-8"
+    # Deltalake specific settings
+    delta_version: Optional[int] = None
 
 
 class CloudStorageReadSettingsInternal(BaseModel):

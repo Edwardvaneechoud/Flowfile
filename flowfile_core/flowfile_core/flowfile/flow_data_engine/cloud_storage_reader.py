@@ -1,3 +1,5 @@
+import boto3
+
 from typing import Dict, Optional, Any, Callable
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
@@ -29,9 +31,13 @@ class CloudStorageReader:
     def _get_s3_storage_options(connection: 'FullCloudStorageConnection') -> Dict[str, Any]:
         """Build S3-specific storage options."""
         storage_options = {}
+        if not connection.aws_region:
+            try:
+                connection.aws_region = boto3.Session().region_name
+            except Exception:
+                pass
 
         if connection.auth_method == "access_key":
-            # Access key authentication
             if connection.aws_access_key_id:
                 storage_options["aws_access_key_id"] = connection.aws_access_key_id
             if connection.aws_secret_access_key:
@@ -45,6 +51,8 @@ class CloudStorageReader:
                 # For IAM role, we might need to use a credential provider
                 # This will be handled by the credential_provider parameter
                 pass
+        else:
+            storage_options['aws_region'] = connection.aws_region
 
         # Add endpoint URL if provided (for S3-compatible services)
         if connection.endpoint_url:

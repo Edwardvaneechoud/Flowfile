@@ -215,6 +215,7 @@ class FlowDataEngine:
 
     def _handle_polars_dataframe(self, df: pl.DataFrame, number_of_records: Optional[int]):
         """Handle Polars DataFrame input."""
+        breakpoint()
         self.data_frame = df
         self.number_of_records = number_of_records or df.select(pl.len())[0, 0]
 
@@ -227,6 +228,7 @@ class FlowDataEngine:
         elif optimize_memory:
             self.number_of_records = -1
         else:
+            # TODO: assess whether this leads to slow downs with multi remote files
             self.number_of_records = lf.select(pl.len()).collect()[0, 0]
 
     def _handle_python_data(self, data: Union[List, Dict]):
@@ -320,14 +322,19 @@ class FlowDataEngine:
 
         # Get credential provider if needed
         credential_provider = CloudStorageReader.get_credential_provider(connection)
-
-        # Handle different file formats
         if read_settings.file_format == "parquet":
             return cls._read_parquet_from_cloud(
                 read_settings.resource_path,
                 storage_options,
                 credential_provider,
                 read_settings.scan_mode == "directory"
+            )
+        elif read_settings.file_format == "delta":
+            return cls._read_delta_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings
             )
         elif read_settings.file_format == "csv":
             return cls._read_csv_from_cloud(
@@ -363,7 +370,8 @@ class FlowDataEngine:
                 if not resource_path.endswith("*.parquet"):
                     resource_path = resource_path.rstrip("/") + "/*.parquet"
 
-            scan_kwargs = {"source": resource_path}
+            scan_kwargs = {"source": resource_path,
+                           "missing_columns": True}
 
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
@@ -372,16 +380,9 @@ class FlowDataEngine:
 
             lf = pl.scan_parquet(**scan_kwargs)
 
-            try:
-                # This is efficient for Parquet as it can read metadata
-                schema = lf.collect_schema()
-                number_of_records = -1
-            except Exception:
-                number_of_records = -1
-
             return cls(
                 lf,
-                number_of_records=number_of_records,
+                number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
                 optimize_memory=True,
                 streamable=True
             )
@@ -391,11 +392,37 @@ class FlowDataEngine:
             raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}")
 
     @classmethod
+    def _read_delta_from_cloud(cls,
+                               resource_path: str,
+                               storage_options: Dict[str, Any],
+                               credential_provider: Optional[Callable],
+                               read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
+        try:
+            scan_kwargs = {"source": resource_path}
+            if read_settings.delta_version:
+                scan_kwargs['version'] = read_settings.delta_version
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+            lf = pl.scan_delta(**scan_kwargs)
+
+            return cls(
+                lf,
+                number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
+                optimize_memory=True,
+                streamable=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to read Delta file from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}")
+
+    @classmethod
     def _read_csv_from_cloud(cls,
                              resource_path: str,
                              storage_options: Dict[str, Any],
                              credential_provider: Optional[Callable],
-                             read_settings: 'CloudStorageReadSettings') -> "FlowDataEngine":
+                             read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
         """Read CSV file(s) from cloud storage."""
         try:
             scan_kwargs = {
@@ -419,7 +446,7 @@ class FlowDataEngine:
 
             return cls(
                 lf,
-                number_of_records=-1,  # Will be calculated lazily
+                number_of_records=6_666_666,  # Will be calculated lazily
                 optimize_memory=True,
                 streamable=True
             )
@@ -516,6 +543,16 @@ class FlowDataEngine:
             raise Exception('Cannot set a non-lazy dataframe to a lazy flowfile')
         self._data_frame = df
 
+    @staticmethod
+    def _create_schema_stats_from_pl_schema(pl_schema: pl.Schema) -> List[Dict]:
+        return [
+            dict(column_name=k, pl_datatype=v, col_index=i)
+            for i, (k, v) in enumerate(pl_schema.items())
+        ]
+
+    def _add_schema_from_schema_stats(self, schema_stats: List[Dict]):
+        self._schema = convert_stats_to_column_info(schema_stats)
+
     @property
     def schema(self) -> List[FlowfileColumn]:
         """Get the schema of the DataFrame, calculating if necessary."""
@@ -526,11 +563,8 @@ class FlowDataEngine:
                 schema_stats = self._calculate_schema()
                 self.ind_schema_calculated = True
             else:
-                schema_stats = [
-                    dict(column_name=k, pl_datatype=v, col_index=i)
-                    for i, (k, v) in enumerate(self.data_frame.collect_schema().items())
-                ]
-            self._schema = convert_stats_to_column_info(schema_stats)
+                schema_stats = self._create_schema_stats_from_pl_schema(self.data_frame.collect_schema())
+            self._add_schema_from_schema_stats(schema_stats)
         return self._schema
 
     @property
@@ -776,13 +810,11 @@ class FlowDataEngine:
             length = 10_000_000
         return cls(pl.LazyFrame().select((pl.int_range(0, length, dtype=pl.UInt32)).alias(output_name)))
 
-    # Schema Handling Methods
-
     def _handle_schema(self, schema: List[FlowfileColumn] | List[str] | pl.Schema,
                        pl_schema: pl.Schema) -> List[FlowfileColumn] | None:
         """Handle schema processing and validation."""
-        if schema is None:
-            return None
+        if schema is None and pl_schema is not None:
+            return convert_stats_to_column_info(self._create_schema_stats_from_pl_schema(pl_schema))
 
         if schema.__len__() != pl_schema.__len__():
             raise Exception(
@@ -1454,6 +1486,7 @@ class FlowDataEngine:
         """
         if self.is_future and not self.is_collected:
             return -1
+        breakpoint()
         calculate_in_worker_process = False if not OFFLOAD_TO_WORKER.value else calculate_in_worker_process
         if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:

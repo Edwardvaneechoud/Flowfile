@@ -56,6 +56,7 @@ polars_simed = "^0.3.4"
 
 # Only install pendulum for Python versions below 3.12
 pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
+deltalake = "^1.1.0"
 
 
 [tool.poetry.scripts]
