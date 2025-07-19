@@ -2,18 +2,21 @@
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettings,
                                                          CloudStorageReadSettingsInternal,
-                                                         FullCloudStorageConnection)
-import polars as pl
+                                                         FullCloudStorageConnection,
+                                                         CloudStorageWriteSettings,
+                                                         CloudStorageWriteSettingsInternal)
+from flowfile_core.schemas.transform_schema import UniqueInput
 import pytest
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from logging import getLogger
+from datetime import datetime
 
 logger = getLogger(__name__)
 
 
 @dataclass
-class S3TestCase:
+class S3TestReadCase:
     """Test case for S3 reading functionality."""
     id: str
     read_settings: CloudStorageReadSettings
@@ -24,6 +27,30 @@ class S3TestCase:
     should_fail_on_create: bool = False
     should_fail_on_collect: bool = False
     expected_error: type = Exception
+
+
+@dataclass
+class S3TestWriteCase:
+    """Test case for S3 reading functionality."""
+    id: str
+    write_settings: CloudStorageWriteSettings
+    expected_columns: Optional[int] = None
+    expected_lazy_records: int = -1
+
+
+@pytest.fixture(scope="module")
+def source_flow_data_engine():
+    """
+    Provides a source FlowDataEngine with a sample DataFrame.
+    This is created once per module to be used as the source for all write tests.
+    """
+    df = FlowDataEngine({
+        "id": [1, 2, 3, 4, 5],
+        "name": ["alpha", "beta", "gamma", "delta", "epsilon"],
+        "value": [10.1, 20.2, 30.3, 40.4, 50.5],
+        "is_active": [True, False, True, False, True]
+    })
+    return df
 
 
 @pytest.fixture
@@ -39,7 +66,7 @@ def aws_cli_connection():
 
 # Bundle test cases with CloudStorageReadSettings
 S3_READ_TEST_CASES = [
-    S3TestCase(
+    S3TestReadCase(
         id="single_parquet_file",
         read_settings=CloudStorageReadSettings(
             resource_path="s3://eu-north-1-rs-small-data-demo/gold/balance_sheet_data",
@@ -51,7 +78,7 @@ S3_READ_TEST_CASES = [
         expected_actual_records=1534248,
         expected_sample_size=5,
     ),
-    S3TestCase(
+    S3TestReadCase(
         id="directory_parquet_scan",
         read_settings=CloudStorageReadSettings(
             resource_path="s3://eu-north-1-rs-small-data-demo/silver/realtime_stock_data/",
@@ -63,7 +90,7 @@ S3_READ_TEST_CASES = [
         expected_actual_records=None,
         expected_sample_size=10,
     ),
-    S3TestCase(
+    S3TestReadCase(
         id="nested_directory_scan",
         read_settings=CloudStorageReadSettings(
             resource_path="s3://eu-north-1-rs-small-data-demo/raw/interval_stockprices/**/*.parquet",
@@ -71,7 +98,7 @@ S3_READ_TEST_CASES = [
             scan_mode="directory"
         ),
     ),
-    S3TestCase(
+    S3TestReadCase(
         id="csv_single_file",
         read_settings=CloudStorageReadSettings(
             resource_path="s3://eu-north-1-rs-small-data-demo/landing/nasdaq_screener/nasdaq_screener_1723980768900.csv",
@@ -82,7 +109,7 @@ S3_READ_TEST_CASES = [
             csv_encoding="utf8"
         ),
     ),
-    S3TestCase(
+    S3TestReadCase(
         id="csv_directory_scan",
         read_settings=CloudStorageReadSettings(
             resource_path="s3://eu-north-1-rs-small-data-demo/landing/nasdaq_screener/*.csv",
@@ -93,7 +120,7 @@ S3_READ_TEST_CASES = [
             csv_encoding="utf8"
         )
     ),
-    S3TestCase(
+    S3TestReadCase(
         id="delta_scan",
         read_settings=CloudStorageReadSettings(
             resource_path="s3://eu-north-1-rs-small-data-demo/raw/realtime_stock_prices/",
@@ -107,10 +134,67 @@ S3_READ_TEST_CASES = [
 ]
 
 
+S3_WRITE_TEST_CASES = [
+    # S3TestWriteCase(
+    #     id="write_parquet_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.parquet",
+    #         file_format="parquet",
+    #         write_mode="overwrite",
+    #         parquet_compression="snappy",
+    #         auth_mode="aws-cli"
+    #     ),
+    #     expected_columns=4,
+    # ),
+    # S3TestWriteCase(
+    #     id="write_csv_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.csv",
+    #         file_format="csv",
+    #         write_mode="overwrite",
+    #         csv_delimiter="|",
+    #         auth_mode="aws-cli"
+    #     ),
+    #     expected_columns=5,
+    # ),
+    # S3TestWriteCase(
+    #     id="write_json_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.json",
+    #         file_format="json",
+    #         write_mode="overwrite",
+    #         auth_mode="aws-cli"
+    #     ),
+    #     expected_columns=5,
+    # ),
+    S3TestWriteCase(
+        id="overwrite_delta",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test_delta",
+            file_format="delta",
+            write_mode="overwrite",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=5,
+    ),
+    S3TestWriteCase(
+        id="append_delta_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test_append",
+            file_format="delta",
+            write_mode="append",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=5,
+    ),
+
+]
+
+
 @pytest.mark.parametrize("test_case", S3_READ_TEST_CASES, ids=lambda tc: tc.id)
-def test_read_from_s3_with_aws_cli(test_case: S3TestCase, aws_cli_connection):
+def test_read_from_s3_with_aws_cli(test_case: S3TestReadCase, aws_cli_connection):
     """Test reading various file formats and configurations from S3."""
-    breakpoint()
+
     # Create settings with the bundled read_settings
     settings = CloudStorageReadSettingsInternal(
         connection=aws_cli_connection,
@@ -132,9 +216,8 @@ def test_read_from_s3_with_aws_cli(test_case: S3TestCase, aws_cli_connection):
     assert flow_data_engine.get_number_of_records(force_calculate=True) != 6_666_666
 
 
-def test_read_parquet_single(scenario: Dict[str, Any]):
+def test_read_parquet_single():
     """Test reading a Parquet file from S3 using AWS CLI credentials."""
-    breakpoint()
     # Create settings using AWS CLI authentication
     # No access keys needed - will use ~/.aws/credentials
     settings = CloudStorageReadSettingsInternal(
@@ -162,3 +245,32 @@ def test_read_parquet_single(scenario: Dict[str, Any]):
     sample_data.lazy = False
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
 
+
+@pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
+def test_write_to_s3_with_aws_cli(
+    test_case: S3TestWriteCase,
+    source_flow_data_engine: FlowDataEngine,
+    aws_cli_connection: FullCloudStorageConnection
+):
+    """
+    Tests writing data to S3 and verifies the output by reading it back.
+    """
+    logger.info(f"--- Running S3 Write Test: {test_case.id} ---")
+    logger.info(f"Writing to: {test_case.write_settings.resource_path}")
+    added_values: list[str] = []
+    for i in range(5 if test_case.write_settings.write_mode == 'append' else 1):
+        now = str(datetime.now())
+        added_values.append(now)
+        output_file = source_flow_data_engine.apply_flowfile_formula(f'"{now}"', "ref_col")
+        write_settings_internal = CloudStorageWriteSettingsInternal(
+            connection=aws_cli_connection,
+            write_settings=test_case.write_settings
+        )
+        output_file.to_cloud_storage_obj(write_settings_internal)
+    read_settings = CloudStorageReadSettingsInternal(
+        connection=aws_cli_connection,
+        read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()))
+    now_vals = (FlowDataEngine.from_cloud_storage_obj(read_settings).select_columns(["ref_col"])
+                .make_unique(UniqueInput(columns=["ref_col"]))).to_raw_data().data[0]
+    for now_value in added_values:
+        assert now_value in now_vals, "Data did not update"

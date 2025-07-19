@@ -215,7 +215,6 @@ class FlowDataEngine:
 
     def _handle_polars_dataframe(self, df: pl.DataFrame, number_of_records: Optional[int]):
         """Handle Polars DataFrame input."""
-        breakpoint()
         self.data_frame = df
         self.number_of_records = number_of_records or df.select(pl.len())[0, 0]
 
@@ -294,6 +293,147 @@ class FlowDataEngine:
 
         return ensure_similarity_dicts(data)
 
+    def to_cloud_storage_obj(self, settings: cloud_storage_schemas.CloudStorageWriteSettingsInternal):
+        """
+        Write the FlowDataEngine's data to an object in cloud storage.
+
+        Supports writing to S3, Azure ADLS, and Google Cloud Storage. The 'overwrite'
+        write mode is supported. The 'append' mode is not yet implemented.
+
+        Args:
+            settings: Cloud storage write settings with connection details and write options.
+
+        Raises:
+            ValueError: If file format is not supported.
+            NotImplementedError: If the 'append' write mode is used.
+            Exception: If writing to cloud storage fails.
+        """
+        connection = settings.connection
+        write_settings = settings.write_settings
+
+        logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
+
+        if write_settings.write_mode == 'append' and write_settings.file_format != "delta":
+            raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
+
+        storage_options = CloudStorageReader.get_storage_options(connection)
+        credential_provider = CloudStorageReader.get_credential_provider(connection)
+        # Dispatch to the correct writer based on file format
+        if write_settings.file_format == "parquet":
+            self._write_parquet_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        elif write_settings.file_format == "delta":
+            self._write_delta_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        elif write_settings.file_format == "csv":
+            self._write_csv_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        elif write_settings.file_format == "json":
+            self._write_json_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        else:
+            raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
+
+        logger.info(f"Successfully wrote data to {write_settings.resource_path}")
+
+    def _write_parquet_to_cloud(self,
+                                resource_path: str,
+                                storage_options: Dict[str, Any],
+                                credential_provider: Optional[Callable],
+                                write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """Write LazyFrame to a Parquet file in cloud storage."""
+        try:
+            sink_kwargs = {
+                "path": resource_path,
+                "compression": write_settings.parquet_compression,
+            }
+            if storage_options:
+                sink_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                sink_kwargs["credential_provider"] = credential_provider
+            try:
+                self.data_frame.sink_parquet(**sink_kwargs)
+            except:
+                pl_df = self.collect()
+                sink_kwargs['file'] = sink_kwargs.pop("path")
+                pl_df.write_parquet(**sink_kwargs)
+
+        except Exception as e:
+            logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
+            raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}")
+
+    def _write_delta_to_cloud(self,
+                              resource_path: str,
+                              storage_options: Dict[str, Any],
+                              credential_provider: Optional[Callable],
+                              write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        sink_kwargs = {
+            "target": resource_path,
+            "mode": write_settings.write_mode,
+        }
+        if storage_options:
+            sink_kwargs["storage_options"] = storage_options
+        if credential_provider:
+            sink_kwargs["credential_provider"] = credential_provider
+        self.collect().write_delta(**sink_kwargs)
+
+    def _write_csv_to_cloud(self,
+                            resource_path: str,
+                            storage_options: Dict[str, Any],
+                            credential_provider: Optional[Callable],
+                            write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """Write LazyFrame to a CSV file in cloud storage."""
+        try:
+            sink_kwargs = {
+                "path": resource_path,
+                "separator": write_settings.csv_delimiter,
+            }
+            if storage_options:
+                sink_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                sink_kwargs["credential_provider"] = credential_provider
+
+            # sink_csv executes the lazy query and writes the result
+            self.data_frame.sink_csv(**sink_kwargs)
+
+        except Exception as e:
+            logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
+            raise Exception(f"Failed to write CSV to cloud storage: {str(e)}")
+
+    def _write_json_to_cloud(self,
+                             resource_path: str,
+                             storage_options: Dict[str, Any],
+                             credential_provider: Optional[Callable],
+                             write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage."""
+        try:
+            sink_kwargs = {"path": resource_path}
+            if storage_options:
+                sink_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                sink_kwargs["credential_provider"] = credential_provider
+            self.data_frame.sink_ndjson(**sink_kwargs)
+
+        except Exception as e:
+            logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
+            raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
+
     @classmethod
     def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal):
         """
@@ -366,13 +506,14 @@ class FlowDataEngine:
         try:
             # Use scan_parquet for lazy evaluation
             if is_directory:
+
                 # Handle directory scan with wildcard
                 if not resource_path.endswith("*.parquet"):
                     resource_path = resource_path.rstrip("/") + "/*.parquet"
 
-            scan_kwargs = {"source": resource_path,
-                           "missing_columns": True}
-
+                scan_kwargs = {"source": resource_path,}
+            else:
+                scan_kwargs = {"source": resource_path}
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
@@ -1486,7 +1627,6 @@ class FlowDataEngine:
         """
         if self.is_future and not self.is_collected:
             return -1
-        breakpoint()
         calculate_in_worker_process = False if not OFFLOAD_TO_WORKER.value else calculate_in_worker_process
         if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:
@@ -1837,3 +1977,4 @@ def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowD
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
     return FlowDataEngine(df)
+

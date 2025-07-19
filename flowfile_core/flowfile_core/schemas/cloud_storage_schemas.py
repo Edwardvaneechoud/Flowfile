@@ -86,7 +86,7 @@ class CloudStoragePermission(BaseModel):
 class CloudStorageSettings(BaseModel):
     """Settings for cloud storage nodes in the visual designer"""
 
-    auth_mode: Literal["aws-cli", "azure-cli", "reference", "auto"] = "reference"
+    auth_mode: Literal["aws-cli", "azure-cli", "reference", "auto"] = "auto"
     connection_name: Optional[str] = None  # Required only for 'reference' mode
     resource_path: str  # s3://bucket/path/to/file.csv
 
@@ -106,7 +106,7 @@ class CloudStorageReadSettings(CloudStorageSettings):
     # CSV specific options
     csv_has_header: bool = True
     csv_delimiter: str = ","
-    csv_encoding: str = "utf-8"
+    csv_encoding: str = "utf8"
     # Deltalake specific settings
     delta_version: Optional[int] = None
 
@@ -120,9 +120,14 @@ class CloudStorageWriteSettings(CloudStorageSettings):
     """Settings for writing to cloud storage"""
 
     write_mode: Literal["overwrite", "append"] = "overwrite"
-    file_format: Literal["csv", "parquet", "json"] = "parquet"
-    # Parquet specific options
+    file_format: Literal["csv", "parquet", "json", "delta"] = "parquet"
+
     parquet_compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy"
-    # CSV specific options
+
     csv_delimiter: str = ","
-    csv_encoding: str = "utf-8"
+    csv_encoding: str = "utf8"
+
+
+class CloudStorageWriteSettingsInternal(BaseModel):
+    write_settings: CloudStorageWriteSettings
+    connection: FullCloudStorageConnection
