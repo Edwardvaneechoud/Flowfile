@@ -1,9 +1,11 @@
-from typing import List, Optional, Literal, Iterator
+from typing import Annotated, List, Optional, Literal
 from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
 from flowfile_core.schemas.external_sources.airbyte_schemas import AirbyteConfig
+from flowfile_core.schemas.schemas import SecretRef
 from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
 
 
@@ -265,7 +267,7 @@ class NodeRead(NodeBase):
 class DatabaseConnection(BaseModel):
     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     username: Optional[str] = None
-    password_ref: Optional[str] = None
+    password_ref: Optional[SecretRef] = None
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None
@@ -336,6 +338,17 @@ class NodeDatabaseReader(NodeBase):
 
 class NodeDatabaseWriter(NodeSingleInput):
     database_write_settings: DatabaseWriteSettings
+
+
+class NodeCloudStorageReader(NodeBase):
+    """Cloud storage source node"""
+    cloud_storage_settings: CloudStorageReadSettings
+    fields: Optional[List[MinimalFieldInfo]] = None
+
+
+class NodeCloudStorageWriter(NodeSingleInput):
+    """Cloud storage destination node"""
+    cloud_storage_settings: CloudStorageWriteSettings
 
 
 class ExternalSource(BaseModel):

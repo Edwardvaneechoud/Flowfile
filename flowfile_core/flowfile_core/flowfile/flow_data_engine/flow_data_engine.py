@@ -19,6 +19,7 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
+    cloud_storage_schemas,
     input_schema,
     transform_schema as transform_schemas
 )
@@ -279,13 +280,20 @@ class FlowDataEngine:
         if not (isinstance(data[0], dict) or hasattr(data[0], '__dict__')):
             try:
                 return pl.DataFrame(data).to_dicts()
-            except:
+            except TypeError:
                 raise Exception('Value must be able to be converted to dictionary')
+            except Exception as e:
+                raise Exception(f'Value must be able to be converted to dictionary: {e}')
 
         if not isinstance(data[0], dict):
             data = [row.__dict__ for row in data]
 
         return utils.ensure_similarity_dicts(data)
+
+    @classmethod
+    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettings):
+
+
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
         """Handle file path reference input."""
