@@ -26,6 +26,7 @@ from flowfile_core.schemas import (
 
 # Local imports - Flow File Components
 from flowfile_core.flowfile.flow_data_engine import utils
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
@@ -291,9 +292,173 @@ class FlowDataEngine:
         return utils.ensure_similarity_dicts(data)
 
     @classmethod
-    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettings):
+    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal):
+        """
+        Create a FlowDataEngine from an object in cloud storage.
 
+        Supports reading from S3, Azure ADLS, and Google Cloud Storage with various
+        authentication methods including access keys, IAM roles, and CLI credentials.
 
+        Args:
+            settings: Cloud storage read settings with connection details and read options
+
+        Returns:
+            FlowDataEngine: New instance with data from cloud storage
+
+        Raises:
+            ValueError: If storage type or file format is not supported
+            Exception: If reading from cloud storage fails
+        """
+        connection = settings.connection
+        read_settings = settings.read_settings
+
+        logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
+
+        # Get storage options based on connection type
+        storage_options = CloudStorageReader.get_storage_options(connection)
+
+        # Get credential provider if needed
+        credential_provider = CloudStorageReader.get_credential_provider(connection)
+
+        # Handle different file formats
+        if read_settings.file_format == "parquet":
+            return cls._read_parquet_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings.scan_mode == "directory"
+            )
+        elif read_settings.file_format == "csv":
+            return cls._read_csv_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings
+            )
+        elif read_settings.file_format == "json":
+            return cls._read_json_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings.scan_mode == "directory"
+            )
+        elif read_settings.file_format in ["delta", "iceberg"]:
+            # These would require additional libraries
+            raise NotImplementedError(f"File format {read_settings.file_format} not yet implemented")
+        else:
+            raise ValueError(f"Unsupported file format: {read_settings.file_format}")
+
+    @classmethod
+    def _read_parquet_from_cloud(cls,
+                                 resource_path: str,
+                                 storage_options: Dict[str, Any],
+                                 credential_provider: Optional[Callable],
+                                 is_directory: bool) -> "FlowDataEngine":
+        """Read Parquet file(s) from cloud storage."""
+        try:
+            # Use scan_parquet for lazy evaluation
+            if is_directory:
+                # Handle directory scan with wildcard
+                if not resource_path.endswith("*.parquet"):
+                    resource_path = resource_path.rstrip("/") + "/*.parquet"
+
+            scan_kwargs = {"source": resource_path}
+
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+
+            lf = pl.scan_parquet(**scan_kwargs)
+
+            try:
+                # This is efficient for Parquet as it can read metadata
+                schema = lf.collect_schema()
+                number_of_records = -1
+            except Exception:
+                number_of_records = -1
+
+            return cls(
+                lf,
+                number_of_records=number_of_records,
+                optimize_memory=True,
+                streamable=True
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to read Parquet from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}")
+
+    @classmethod
+    def _read_csv_from_cloud(cls,
+                             resource_path: str,
+                             storage_options: Dict[str, Any],
+                             credential_provider: Optional[Callable],
+                             read_settings: 'CloudStorageReadSettings') -> "FlowDataEngine":
+        """Read CSV file(s) from cloud storage."""
+        try:
+            scan_kwargs = {
+                "source": resource_path,
+                "has_header": read_settings.csv_has_header,
+                "separator": read_settings.csv_delimiter,
+                "encoding": read_settings.csv_encoding,
+            }
+
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+
+            if read_settings.scan_mode == "directory":
+                if not resource_path.endswith("*.csv"):
+                    resource_path = resource_path.rstrip("/") + "/*.csv"
+                scan_kwargs["source"] = resource_path
+
+            lf = pl.scan_csv(**scan_kwargs)
+
+            return cls(
+                lf,
+                number_of_records=-1,  # Will be calculated lazily
+                optimize_memory=True,
+                streamable=True
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to read CSV from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read CSV from cloud storage: {str(e)}")
+
+    @classmethod
+    def _read_json_from_cloud(cls,
+                              resource_path: str,
+                              storage_options: Dict[str, Any],
+                              credential_provider: Optional[Callable],
+                              is_directory: bool) -> "FlowDataEngine":
+        """Read JSON file(s) from cloud storage."""
+        try:
+            scan_kwargs = {"source": resource_path}
+
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+
+            if is_directory:
+                if not resource_path.endswith("*.json"):
+                    resource_path = resource_path.rstrip("/") + "/*.json"
+                scan_kwargs["source"] = resource_path
+
+            lf = pl.scan_ndjson(**scan_kwargs)  # Using NDJSON for line-delimited JSON
+
+            return cls(
+                lf,
+                number_of_records=-1,
+                optimize_memory=True,
+                streamable=True
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to read JSON from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read JSON from cloud storage: {str(e)}")
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
         """Handle file path reference input."""
