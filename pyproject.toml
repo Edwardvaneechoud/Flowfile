@@ -53,6 +53,7 @@ pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }
 deltalake = "^1.1.0"
 pyiceberg = {extras = ["hadoop"], version = "^0.9.1"}
 boto3 = ">=1.38.40,<1.38.47"
+cryptography = "^45.0.5"
 
 
 [tool.poetry.scripts]
@@ -74,6 +75,7 @@ psycopg2-binary = "^2.9.9"
 sqlalchemy = "^2.0.27"
 pytest = "^8.4.1"
 testcontainers = "^4.10.0"
+numpy = "1.26.4"
 
 [build-system]
 requires = ["poetry-core"]
