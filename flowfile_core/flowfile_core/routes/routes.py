@@ -27,12 +27,7 @@ from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.extensions import get_instant_func_results
 # Flow handling
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import AirbyteConfigTemplate
-# Airbyte
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import (
-    airbyte_config_handler,
-    AirbyteHandler
-)
+
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 # Schema and models
@@ -382,38 +377,6 @@ def create_flow(flow_path: str):
 @router.post('/editor/close_flow/', tags=['editor'])
 def close_flow(flow_id: int) -> None:
     flow_file_handler.delete_flow(flow_id)
-
-
-@router.get('/airbyte/available_connectors', tags=['airbyte'])
-def get_available_connectors():
-    return airbyte_config_handler.available_connectors
-
-
-@router.get('/airbyte/available_configs', tags=['airbyte'])
-def get_available_configs() -> List[str]:
-    """
-    Get the available configurations for the airbyte connectors
-    Returns: List of available configurations
-    """
-    return airbyte_config_handler.available_configs
-
-
-@router.get('/airbyte/config_template', tags=['airbyte'], response_model=AirbyteConfigTemplate)
-def get_config_spec(connector_name: str):
-    a = airbyte_config_handler.get_config('source-' + connector_name)
-    return a
-
-
-@router.post('/airbyte/set_airbyte_configs_for_streams', tags=['airbyte'])
-def set_airbyte_configs_for_streams(airbyte_config: input_schema.AirbyteConfig):
-    logger.info('Setting airbyte config, update_style = ')
-    logger.info(f'Setting config for {airbyte_config.source_name}')
-    logger.debug(f'Config: {airbyte_config.mapped_config_spec}')
-    airbyte_handler = AirbyteHandler(airbyte_config=airbyte_config)
-    try:
-        _ = airbyte_handler.get_available_streams()
-    except Exception as e:
-        raise HTTPException(404, str(e))
 
 
 @router.post('/update_settings/', tags=['transform'])

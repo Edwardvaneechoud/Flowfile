@@ -4,7 +4,6 @@ from pathlib import Path
 import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
-from flowfile_core.schemas.external_sources.airbyte_schemas import AirbyteConfig
 from flowfile_core.schemas.schemas import SecretRef
 from flowfile_core.utils.utils import standardize_col_dtype
 from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
@@ -381,11 +380,6 @@ class SampleUsers(ExternalSource):
     size: int = 100
 
 
-class AirbyteReader(AirbyteConfig):
-    class_name: Optional[str] = "airbyte_reader"
-    fields: Optional[List[MinimalFieldInfo]] = None
-
-
 class AccessToken(BaseModel):
     user_id: str
     access_token: SecretStr = None
@@ -394,11 +388,6 @@ class AccessToken(BaseModel):
 class NodeExternalSource(NodeBase):
     identifier: str
     source_settings: SampleUsers
-
-
-class NodeAirbyteReader(NodeExternalSource):
-    identifier: str = 'airbyte'
-    source_settings: AirbyteReader
 
 
 class NodeFormula(NodeSingleInput):

@@ -9,7 +9,6 @@ from flowfile_worker import main
 from flowfile_worker import models
 from flowfile_worker.secrets import encrypt_secret
 from polars_grouper import graph_solver
-from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 
 client = TestClient(main.app)
 
@@ -195,25 +194,6 @@ def test_write_output_csv():
         raise Exception(f'Error message: {status.error_message}')
     df = pl.read_csv(status.file_ref)
     assert df.count()[0, 0] == 3, f'Expected 3 records, got {df.count()[0, 0]}'
-
-
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_store_airbyte_result():
-    airbyte_settings = AirbyteSettings(**{'source_name': 'source-faker', 'stream': 'users', 'config_ref': None,
-                                          'config': {'count': 1000, 'seed': -1, 'records_per_slice': 1000,
-                                                     'always_updated': True, 'parallelism': 4}, 'fields': None,
-                                          'enforce_full_refresh': True,
-                                          'version': '6.2.21'})
-    v = client.post('/store_airbyte_result', json=airbyte_settings.dict())
-    assert v.status_code == 200, v.text
-    assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
-    status: models.Status = models.Status.model_validate(v.json())
-    r = client.get(f'/status/{status.background_task_id}')
-    status = models.Status.model_validate(r.json())
-    if status.error_message is not None:
-        raise Exception(f'Error message: {status.error_message}')
-    lf_test = base64.decodebytes(status.results.encode())
-    result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")

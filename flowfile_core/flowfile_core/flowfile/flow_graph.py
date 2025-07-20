@@ -13,7 +13,6 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                        pre_calculate_pivot_schema)
@@ -29,8 +28,7 @@ from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_fr
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
-                                                                                                 ExternalDatabaseFetcher,
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
                                                                                                  ExternalDfFetcher)
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
@@ -854,80 +852,28 @@ class FlowGraph:
             self._flow_starts.append(node)
             self._node_ids.append(node_database_reader.node_id)
 
-    def add_airbyte_reader(self, external_source_input: input_schema.NodeAirbyteReader):
-        logger.info('Adding airbyte reader')
-        node_type = 'airbyte_reader'
-        source_settings: input_schema.AirbyteReader = external_source_input.source_settings
-        airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
-                                                        node_id=external_source_input.node_id)
-
-        logger.info("Airbyte settings created")
-        airbyte_settings.fields = source_settings.fields
-        external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
-
-        def _func():
-            logger.info('Calling external source')
-            external_fetcher = ExternalAirbyteFetcher(airbyte_settings, wait_on_completion=False)
-            node._fetch_cached_df = external_fetcher
-            fl = FlowDataEngine(external_fetcher.get_result())
-            external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
-            return fl
-
-        def schema_callback():
-            return [FlowfileColumn.from_input(f.name, f.data_type) for f in external_source.schema]
-
-        node = self.get_node(external_source_input.node_id)
-        if node:
-            node.node_type = node_type
-            node.name = node_type
-            node.function = _func
-            node.setting_input = external_source_input
-            node.node_settings.cache_results = external_source_input.cache_results
-            if external_source_input.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
-            node.schema_callback = schema_callback
-        else:
-            node = FlowNode(external_source_input.node_id, function=_func,
-                            setting_input=external_source_input,
-                            name=node_type, node_type=node_type, parent_uuid=self.uuid,
-                            schema_callback=schema_callback)
-            self._node_db[external_source_input.node_id] = node
-            self._flow_starts.append(node)
-            self._node_ids.append(external_source_input.node_id)
-        if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
-            logger.info('Using provided schema in the node')
-
-
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
     def add_external_source(self,
-                            external_source_input: input_schema.NodeExternalSource | input_schema.NodeAirbyteReader):
+                            external_source_input: input_schema.NodeExternalSource):
 
-        custom_source_type = external_source_input.identifier != 'airbyte'
-        if custom_source_type:
-            node_type = 'external_source'
-            external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
-            source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
-                               model_validate(external_source_input.source_settings))
-            if hasattr(external_source_script, 'initial_getter'):
-                initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
-            else:
-                initial_getter = None
-            data_getter = external_source_script.getter(source_settings)
-            external_source = data_source_factory(source_type='custom',
-                                                  data_getter=data_getter,
-                                                  initial_data_getter=initial_getter,
-                                                  orientation=external_source_input.source_settings.orientation,
-                                                  schema=None)
+        node_type = 'external_source'
+        external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
+        source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
+                           model_validate(external_source_input.source_settings))
+        if hasattr(external_source_script, 'initial_getter'):
+            initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
         else:
-            node_type = 'airbyte_reader'
-            source_settings: input_schema.AirbyteReader = external_source_input.source_settings
-            airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
-                                                            node_id=external_source_input.node_id)
-            airbyte_settings.fields = source_settings.fields
-            external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
+            initial_getter = None
+        data_getter = external_source_script.getter(source_settings)
+        external_source = data_source_factory(source_type='custom',
+                                              data_getter=data_getter,
+                                              initial_data_getter=initial_getter,
+                                              orientation=external_source_input.source_settings.orientation,
+                                              schema=None)
+
 
         def _func():
             logger.info('Calling external source')

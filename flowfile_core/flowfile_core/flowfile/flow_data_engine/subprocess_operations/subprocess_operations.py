@@ -18,7 +18,6 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     PolarsOperation,
     Status
 )
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import AirbyteSettings
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (DatabaseExternalReadSettings,
                                                                                DatabaseExternalWriteSettings)
 from flowfile_core.schemas.input_schema import (
@@ -76,13 +75,6 @@ def trigger_create_operation(flow_id: int, node_id: int | str, received_table: R
                              file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
     f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.model_dump_json(),
                       params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
-    if not f.ok:
-        raise Exception(f'Could not cache the data, {f.text}')
-    return Status(**f.json())
-
-
-def trigger_airbyte_collector(airbyte_settings: AirbyteSettings):
-    f = requests.post(url=f'{WORKER_URL}/store_airbyte_result', data=airbyte_settings.model_dump_json())
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
     return Status(**f.json())
@@ -330,15 +322,6 @@ class ExternalCreateFetcher(BaseFetcher):
                  file_type: str = 'csv', wait_on_completion: bool = True):
         r = trigger_create_operation(received_table=received_table, file_type=file_type,
                                      node_id=node_id, flow_id=flow_id)
-        super().__init__(file_ref=r.background_task_id)
-        self.running = r.status == 'Processing'
-        if wait_on_completion:
-            _ = self.get_result()
-
-
-class ExternalAirbyteFetcher(BaseFetcher):
-    def __init__(self, airbyte_settings: AirbyteSettings, wait_on_completion: bool = True):
-        r = trigger_airbyte_collector(airbyte_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:
