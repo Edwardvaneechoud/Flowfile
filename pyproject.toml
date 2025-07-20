@@ -67,12 +67,18 @@ build_backends_prd = "build_backends.main_prd:main"
 start_postgres = "test_utils.postgres.commands:start_postgres"
 stop_postgres = "test_utils.postgres.commands:stop_postgres"
 flowfile = "flowfile.__main__:main"
+start_minio = "test_utils.s3.commands:start_minio"
+stop_minio = "test_utils.s3.commands:stop_minio"
+
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
 mkdocs-material = "^9.5.46"
 psycopg2-binary = "^2.9.9"
 sqlalchemy = "^2.0.27"
+pytest = "^8.4.1"
+testcontainers = "^4.10.0"
+boto3 = "^1.39.9"
 
 [build-system]
 requires = ["poetry-core"]

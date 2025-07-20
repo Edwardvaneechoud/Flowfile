@@ -1,4 +1,3 @@
-
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettings,
                                                          CloudStorageReadSettingsInternal,
@@ -8,9 +7,10 @@ from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSetting
 from flowfile_core.schemas.transform_schema import UniqueInput
 import pytest
 from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from pydantic import SecretStr
 from logging import getLogger
 from datetime import datetime
+from dataclasses import dataclass
 
 logger = getLogger(__name__)
 
@@ -56,12 +56,17 @@ def source_flow_data_engine():
 @pytest.fixture
 def aws_cli_connection():
     """Reusable AWS CLI connection configuration."""
-    return FullCloudStorageConnection(
-        connection_name="aws-cli-connection",
-        storage_type="s3",
-        auth_method="aws-cli",
-        aws_region="eu-north-1"
+    minio_connection = FullCloudStorageConnection(
+        connection_name="minio-test",
+        storage_type="s3",  # Use s3, not a separate minio type
+        auth_method="access_key",
+        aws_access_key_id="minioadmin",
+        aws_secret_access_key=SecretStr("minioadmin"),
+        aws_region="us-east-1",
+        endpoint_url="http://localhost:9000",  # Critical!
+        verify_ssl=False  # For local testing
     )
+    return minio_connection
 
 
 # Bundle test cases with CloudStorageReadSettings
@@ -69,7 +74,7 @@ S3_READ_TEST_CASES = [
     S3TestReadCase(
         id="single_parquet_file",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/gold/balance_sheet_data",
+            resource_path="s3://test-bucket/sample_data.parquet",
             file_format="parquet",
             scan_mode="single_file"
         ),
@@ -133,40 +138,39 @@ S3_READ_TEST_CASES = [
     ),
 ]
 
-
 S3_WRITE_TEST_CASES = [
-    # S3TestWriteCase(
-    #     id="write_parquet_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.parquet",
-    #         file_format="parquet",
-    #         write_mode="overwrite",
-    #         parquet_compression="snappy",
-    #         auth_mode="aws-cli"
-    #     ),
-    #     expected_columns=4,
-    # ),
-    # S3TestWriteCase(
-    #     id="write_csv_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.csv",
-    #         file_format="csv",
-    #         write_mode="overwrite",
-    #         csv_delimiter="|",
-    #         auth_mode="aws-cli"
-    #     ),
-    #     expected_columns=5,
-    # ),
-    # S3TestWriteCase(
-    #     id="write_json_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.json",
-    #         file_format="json",
-    #         write_mode="overwrite",
-    #         auth_mode="aws-cli"
-    #     ),
-    #     expected_columns=5,
-    # ),
+    S3TestWriteCase(
+        id="write_parquet_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.parquet",
+            file_format="parquet",
+            write_mode="overwrite",
+            parquet_compression="snappy",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=4,
+    ),
+    S3TestWriteCase(
+        id="write_csv_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.csv",
+            file_format="csv",
+            write_mode="overwrite",
+            csv_delimiter="|",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=5,
+    ),
+    S3TestWriteCase(
+        id="write_json_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.json",
+            file_format="json",
+            write_mode="overwrite",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=5,
+    ),
     S3TestWriteCase(
         id="overwrite_delta",
         write_settings=CloudStorageWriteSettings(
@@ -222,17 +226,21 @@ def test_read_parquet_single():
     # No access keys needed - will use ~/.aws/credentials
     settings = CloudStorageReadSettingsInternal(
         connection=FullCloudStorageConnection(
-            connection_name="aws-cli-connection",
+            connection_name="minio-test",
             storage_type="s3",
-            auth_method="aws-cli",  # This should use your CLI credentials
-            aws_region="eu-north-1"  # Adjust to your region
+            auth_method="access_key",
+            aws_access_key_id="minioadmin",
+            aws_secret_access_key=SecretStr("minioadmin"),
+            aws_region="us-east-1",
+            endpoint_url="http://localhost:9000",
         ),
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/gold/balance_sheet_data",  # Adjust path
+            resource_path="s3://test-bucket/sample_data.parquet",  # Adjust path
             file_format="parquet",
             scan_mode="single_file"
         )
     )
+    breakpoint()
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
     assert flow_data_engine.schema is not None
     assert len(flow_data_engine.columns) == 9
@@ -248,9 +256,9 @@ def test_read_parquet_single():
 
 @pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
 def test_write_to_s3_with_aws_cli(
-    test_case: S3TestWriteCase,
-    source_flow_data_engine: FlowDataEngine,
-    aws_cli_connection: FullCloudStorageConnection
+        test_case: S3TestWriteCase,
+        source_flow_data_engine: FlowDataEngine,
+        aws_cli_connection: FullCloudStorageConnection
 ):
     """
     Tests writing data to S3 and verifies the output by reading it back.

@@ -459,7 +459,7 @@ class FlowDataEngine:
 
         # Get storage options based on connection type
         storage_options = CloudStorageReader.get_storage_options(connection)
-
+        breakpoint()
         # Get credential provider if needed
         credential_provider = CloudStorageReader.get_credential_provider(connection)
         if read_settings.file_format == "parquet":
@@ -504,6 +504,7 @@ class FlowDataEngine:
                                  is_directory: bool) -> "FlowDataEngine":
         """Read Parquet file(s) from cloud storage."""
         try:
+            breakpoint()
             # Use scan_parquet for lazy evaluation
             if is_directory:
 
@@ -518,8 +519,8 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-
-            lf = pl.scan_parquet(**scan_kwargs)
+            breakpoint()
+            lf = pl.scan_parquet(source=resource_path, storage_options=storage_options)
 
             return cls(
                 lf,
