@@ -15,6 +15,16 @@ from dataclasses import dataclass
 logger = getLogger(__name__)
 
 
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+
+
 @dataclass
 class S3TestReadCase:
     """Test case for S3 reading functionality."""
@@ -63,8 +73,7 @@ def aws_cli_connection():
         aws_access_key_id="minioadmin",
         aws_secret_access_key=SecretStr("minioadmin"),
         aws_region="us-east-1",
-        endpoint_url="http://localhost:9000",  # Critical!
-        verify_ssl=False  # For local testing
+        endpoint_url="http://localhost:9000",
     )
     return minio_connection
 
@@ -74,31 +83,23 @@ S3_READ_TEST_CASES = [
     S3TestReadCase(
         id="single_parquet_file",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/sample_data.parquet",
+            resource_path="s3://test-bucket/single-file-parquet/data.parquet",
             file_format="parquet",
             scan_mode="single_file"
         ),
-        expected_columns=9,
-        expected_lazy_records=-1,
-        expected_actual_records=1534248,
-        expected_sample_size=5,
     ),
     S3TestReadCase(
         id="directory_parquet_scan",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/silver/realtime_stock_data/",
+            resource_path="s3://test-bucket/multi-file-parquet",
             file_format="parquet",
             scan_mode="directory"
         ),
-        expected_columns=None,
-        expected_lazy_records=-1,
-        expected_actual_records=None,
-        expected_sample_size=10,
     ),
     S3TestReadCase(
         id="nested_directory_scan",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/raw/interval_stockprices/**/*.parquet",
+            resource_path="s3://test-bucket/multi-file-parquet/**/*.parquet",
             file_format="parquet",
             scan_mode="directory"
         ),
@@ -106,7 +107,7 @@ S3_READ_TEST_CASES = [
     S3TestReadCase(
         id="csv_single_file",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/landing/nasdaq_screener/nasdaq_screener_1723980768900.csv",
+            resource_path="s3://test-bucket/single-file-csv/data.csv",
             file_format="csv",
             scan_mode="single_file",
             csv_has_header=True,
@@ -117,7 +118,7 @@ S3_READ_TEST_CASES = [
     S3TestReadCase(
         id="csv_directory_scan",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/landing/nasdaq_screener/*.csv",
+            resource_path="s3://test-bucket/multi-file-csv",
             file_format="csv",
             scan_mode="directory",
             csv_has_header=True,
@@ -126,9 +127,34 @@ S3_READ_TEST_CASES = [
         )
     ),
     S3TestReadCase(
+        id="single_json_file",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/single-file-json/data.json",
+            file_format="json",
+            scan_mode="single_file",
+        ),
+        expected_columns=None,
+        expected_lazy_records=-1,
+        expected_actual_records=None,
+        expected_sample_size=10,
+    ),
+    S3TestReadCase(
+        id="multi_json_file",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/multi-file-json",
+            file_format="json",
+            scan_mode="directory",
+        ),
+        expected_columns=None,
+        expected_lazy_records=-1,
+        expected_actual_records=None,
+        expected_sample_size=10,
+    ),
+
+    S3TestReadCase(
         id="delta_scan",
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/raw/realtime_stock_prices/",
+            resource_path="s3://test-bucket/delta-lake-table",
             file_format="delta",
         ),
         expected_columns=None,
@@ -136,13 +162,24 @@ S3_READ_TEST_CASES = [
         expected_actual_records=None,
         expected_sample_size=10,
     ),
+    # S3TestReadCase(
+    #     id="iceberg_scan",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/delta-lake-table",
+    #         file_format="iceberg",
+    #     ),
+    #     expected_columns=None,
+    #     expected_lazy_records=-1,
+    #     expected_actual_records=None,
+    #     expected_sample_size=10,
+    # ),
 ]
 
 S3_WRITE_TEST_CASES = [
     S3TestWriteCase(
         id="write_parquet_file",
         write_settings=CloudStorageWriteSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.parquet",
+            resource_path="s3://flowfile-test/write_test.parquet",
             file_format="parquet",
             write_mode="overwrite",
             parquet_compression="snappy",
@@ -153,7 +190,7 @@ S3_WRITE_TEST_CASES = [
     S3TestWriteCase(
         id="write_csv_file",
         write_settings=CloudStorageWriteSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.csv",
+            resource_path="s3://flowfile-test/write_test.csv",
             file_format="csv",
             write_mode="overwrite",
             csv_delimiter="|",
@@ -164,7 +201,7 @@ S3_WRITE_TEST_CASES = [
     S3TestWriteCase(
         id="write_json_file",
         write_settings=CloudStorageWriteSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test.json",
+            resource_path="s3://flowfile-test/write_test.json",
             file_format="json",
             write_mode="overwrite",
             auth_mode="aws-cli"
@@ -174,7 +211,7 @@ S3_WRITE_TEST_CASES = [
     S3TestWriteCase(
         id="overwrite_delta",
         write_settings=CloudStorageWriteSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test_delta",
+            resource_path="s3://flowfile-test/write_test_delta",
             file_format="delta",
             write_mode="overwrite",
             auth_mode="aws-cli"
@@ -184,7 +221,7 @@ S3_WRITE_TEST_CASES = [
     S3TestWriteCase(
         id="append_delta_file",
         write_settings=CloudStorageWriteSettings(
-            resource_path="s3://eu-north-1-rs-small-data-demo/testing/write_test_append",
+            resource_path="s3://flowfile-test/write_test_append",
             file_format="delta",
             write_mode="append",
             auth_mode="aws-cli"
@@ -194,11 +231,12 @@ S3_WRITE_TEST_CASES = [
 
 ]
 
-
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
 @pytest.mark.parametrize("test_case", S3_READ_TEST_CASES, ids=lambda tc: tc.id)
 def test_read_from_s3_with_aws_cli(test_case: S3TestReadCase, aws_cli_connection):
     """Test reading various file formats and configurations from S3."""
-
+    if test_case.read_settings.file_format == "delta":
+        aws_cli_connection.aws_allow_unsafe_html = True
     # Create settings with the bundled read_settings
     settings = CloudStorageReadSettingsInternal(
         connection=aws_cli_connection,
@@ -220,6 +258,7 @@ def test_read_from_s3_with_aws_cli(test_case: S3TestReadCase, aws_cli_connection
     assert flow_data_engine.get_number_of_records(force_calculate=True) != 6_666_666
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
 def test_read_parquet_single():
     """Test reading a Parquet file from S3 using AWS CLI credentials."""
     # Create settings using AWS CLI authentication
@@ -235,17 +274,16 @@ def test_read_parquet_single():
             endpoint_url="http://localhost:9000",
         ),
         read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/sample_data.parquet",  # Adjust path
+            resource_path="s3://test-bucket/single-file-parquet/data.parquet",
             file_format="parquet",
             scan_mode="single_file"
         )
     )
-    breakpoint()
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
     assert flow_data_engine.schema is not None
-    assert len(flow_data_engine.columns) == 9
+    assert len(flow_data_engine.columns) == 4
     assert flow_data_engine.number_of_records == 6_666_666, "The number of columns should be a fictive number"
-    assert flow_data_engine.get_number_of_records(force_calculate=True) == 1534248
+    assert flow_data_engine.get_number_of_records(force_calculate=True) == 100000
 
     sample_data = flow_data_engine.get_sample(5)
     assert sample_data.lazy
@@ -254,6 +292,7 @@ def test_read_parquet_single():
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
 @pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
 def test_write_to_s3_with_aws_cli(
         test_case: S3TestWriteCase,
@@ -266,6 +305,8 @@ def test_write_to_s3_with_aws_cli(
     logger.info(f"--- Running S3 Write Test: {test_case.id} ---")
     logger.info(f"Writing to: {test_case.write_settings.resource_path}")
     added_values: list[str] = []
+    if test_case.write_settings.file_format == "delta":
+        aws_cli_connection.aws_allow_unsafe_html = True
     for i in range(5 if test_case.write_settings.write_mode == 'append' else 1):
         now = str(datetime.now())
         added_values.append(now)

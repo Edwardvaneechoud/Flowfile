@@ -456,10 +456,8 @@ class FlowDataEngine:
         read_settings = settings.read_settings
 
         logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
-
         # Get storage options based on connection type
         storage_options = CloudStorageReader.get_storage_options(connection)
-        breakpoint()
         # Get credential provider if needed
         credential_provider = CloudStorageReader.get_credential_provider(connection)
         if read_settings.file_format == "parquet":
@@ -490,11 +488,28 @@ class FlowDataEngine:
                 credential_provider,
                 read_settings.scan_mode == "directory"
             )
+        elif read_settings.file_format == "iceberg":
+            return cls._read_iceberg_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings
+            )
+
         elif read_settings.file_format in ["delta", "iceberg"]:
             # These would require additional libraries
             raise NotImplementedError(f"File format {read_settings.file_format} not yet implemented")
         else:
             raise ValueError(f"Unsupported file format: {read_settings.file_format}")
+
+    @classmethod
+    def _read_iceberg_from_cloud(cls,
+                                 resource_path: str,
+                                 storage_options: Dict[str, Any],
+                                 credential_provider: Optional[Callable],
+                                 read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
+        """Read Iceberg table(s) from cloud storage."""
+        raise NotImplementedError(f"Failed to read Iceberg table from cloud storage: Not yet implemented")
 
     @classmethod
     def _read_parquet_from_cloud(cls,
@@ -504,7 +519,6 @@ class FlowDataEngine:
                                  is_directory: bool) -> "FlowDataEngine":
         """Read Parquet file(s) from cloud storage."""
         try:
-            breakpoint()
             # Use scan_parquet for lazy evaluation
             if is_directory:
 
@@ -519,8 +533,7 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-            breakpoint()
-            lf = pl.scan_parquet(source=resource_path, storage_options=storage_options)
+            lf = pl.scan_parquet(**scan_kwargs)
 
             return cls(
                 lf,
@@ -547,6 +560,7 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
+
             lf = pl.scan_delta(**scan_kwargs)
 
             return cls(
@@ -583,7 +597,6 @@ class FlowDataEngine:
                 if not resource_path.endswith("*.csv"):
                     resource_path = resource_path.rstrip("/") + "/*.csv"
                 scan_kwargs["source"] = resource_path
-
             lf = pl.scan_csv(**scan_kwargs)
 
             return cls(

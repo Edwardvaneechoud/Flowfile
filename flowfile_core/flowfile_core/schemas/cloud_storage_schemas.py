@@ -44,6 +44,7 @@ class FullCloudStorageConnection(BaseModel):
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[SecretStr] = None
     aws_role_arn: Optional[str] = None
+    aws_allow_unsafe_html: Optional[bool] = None
 
     # Azure ADLS
     azure_account_name: Optional[str] = None

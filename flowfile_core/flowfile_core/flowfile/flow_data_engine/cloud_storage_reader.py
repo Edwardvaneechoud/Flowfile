@@ -37,6 +37,9 @@ class CloudStorageReader:
             except Exception:
                 pass
 
+        if connection.aws_allow_unsafe_html:
+            storage_options["aws_allow_http"] = str(connection.aws_allow_unsafe_html)
+
         if connection.auth_method == "access_key":
             if connection.aws_access_key_id:
                 storage_options["aws_access_key_id"] = connection.aws_access_key_id

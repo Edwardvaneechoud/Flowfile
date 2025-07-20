@@ -60,6 +60,9 @@ jobs:
       - name: Start Mock Database with Sample Data
         run: poetry run start_postgres
 
+      - name: Start Mock S3 bucket with Sample Data
+        run: poetry run start_s3
+
       - name: Run pytest for flowfile_frame
         run: poetry run pytest flowfile_frame/tests --disable-warnings
 
@@ -71,6 +74,9 @@ jobs:
 
       - name: Stop Mock Database
         run: poetry run stop_postgres
+
+      - name: Stop Mock S3 bucket
+        run: poetry run stop_s3
 
       - name: Run pytest for flowfile
         shell: pwsh

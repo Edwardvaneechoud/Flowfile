@@ -88,27 +88,16 @@ export function getResourceServicePath(resourceName: string): string {
   return "";
 }
 
-function formatDockerPath(path: string): string {
-  if (platform() === "win32") {
-    return path.replace(/\\/g, "/").replace(/^(\w):\//, "/$1/");
-  }
-  return path;
-}
-
 function getProcessEnv(): NodeJS.ProcessEnv {
   const isWindows = platform() === "win32";
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
   const flowfileDir = join(homeDir, ".flowfile");
-  const airbyteDir = join(homeDir, ".airbyte");
   const cacheDirRoot = join(flowfileDir, ".tmp");
 
   const dirsToCreate = [
     flowfileDir,
-    airbyteDir,
     cacheDirRoot,
-    join(airbyteDir, "connectors"),
-    join(tempDir, "airbyte", "logs"),
   ];
 
   for (const dir of dirsToCreate) {
@@ -121,21 +110,12 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     }
   }
 
-  const dockerVolumes = isWindows
-    ? `-v "${formatDockerPath(cacheDirRoot)}:/tmp" -v "${formatDockerPath(airbyteDir)}:/airbyte"`
-    : `--volume "${cacheDirRoot}:/tmp" --volume "${airbyteDir}:/airbyte"`;
-
   const baseEnv = {
     ...process.env,
     HOME: homeDir,
     DOCKER_CONFIG: join(homeDir, ".docker"),
     TMPDIR: tempDir,
-    AIRBYTE_CACHE_ROOT: cacheDirRoot,
-    AIRBYTE_TEMP_DIR: tempDir,
-    AIRBYTE_LOGS_DIR: join(tempDir, "airbyte", "logs"),
-    AIRBYTE_LOCAL_ROOT: airbyteDir,
-    AIRBYTE_EXTRA_DOCKER_OPTS: dockerVolumes,
-  };
+    };
 
   if (isWindows) {
     return {

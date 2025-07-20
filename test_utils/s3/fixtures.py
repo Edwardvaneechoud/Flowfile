@@ -3,9 +3,10 @@ import time
 import subprocess
 import logging
 from contextlib import contextmanager
-from typing import Dict, Generator, Optional
+from typing import Dict, Generator
 import boto3
 from botocore.client import Config
+from test_utils.s3.data_generator import populate_test_data
 
 logger = logging.getLogger("s3_fixture")
 
@@ -59,16 +60,36 @@ def is_container_running(container_name: str) -> bool:
 
 
 def stop_minio_container() -> bool:
-    """Stop MinIO container"""
-    if not is_container_running(MINIO_CONTAINER_NAME):
+    """Stop the MinIO container and remove its data volume for a clean shutdown."""
+    container_name = MINIO_CONTAINER_NAME
+    volume_name = f"{container_name}-data"
+
+    if not is_container_running(container_name):
+        logger.info(f"Container '{container_name}' is not running.")
+        # Attempt to remove the volume in case it was left orphaned
+        try:
+            subprocess.run(["docker", "volume", "rm", volume_name], check=False, capture_output=True)
+        except Exception:
+            pass  # Ignore errors if volume doesn't exist
         return True
 
+    logger.info(f"Stopping and cleaning up container '{container_name}' and volume '{volume_name}'...")
     try:
-        subprocess.run(["docker", "stop", MINIO_CONTAINER_NAME], check=True)
-        subprocess.run(["docker", "rm", MINIO_CONTAINER_NAME], check=True)
+        # Stop and remove the container
+        subprocess.run(["docker", "stop", container_name], check=True, capture_output=True)
+        subprocess.run(["docker", "rm", container_name], check=True, capture_output=True)
+
+        # Remove the associated volume to clear all data
+        subprocess.run(["docker", "volume", "rm", volume_name], check=True, capture_output=True)
+
+        logger.info("✅ MinIO container and data volume successfully removed.")
         return True
-    except Exception as e:
-        logger.error(f"Failed to stop MinIO: {e}")
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode()
+        if "no such volume" in stderr:
+            logger.info("Volume was already removed or never created.")
+            return True
+        logger.error(f"❌ Failed to clean up MinIO resources: {stderr}")
         return False
 
 
@@ -86,56 +107,6 @@ def create_test_buckets():
             logger.info(f"Bucket already exists: {bucket}")
         except client.exceptions.BucketAlreadyOwnedByYou:
             logger.info(f"Bucket already owned: {bucket}")
-
-
-def populate_test_data():
-    """Populate MinIO with test data"""
-    import polars as pl
-    import io
-
-    client = get_minio_client()
-
-    # Create sample DataFrame
-    df = pl.DataFrame({
-        "id": range(1, 1000),
-        "name": [f"user_{i}" for i in range(1, 1000)],
-        "value": [i * 10.5 for i in range(1, 1000)],
-        "category": ["A", "B", "C", "D"] * 250
-    })
-
-    # Write as Parquet
-    parquet_buffer = io.BytesIO()
-    df.write_parquet(parquet_buffer)
-    parquet_buffer.seek(0)
-    client.put_object(
-        Bucket='test-bucket',
-        Key='sample_data.parquet',
-        Body=parquet_buffer.getvalue()
-    )
-
-    # Write as CSV
-    csv_buffer = io.BytesIO()
-    df.write_csv(csv_buffer)
-    csv_buffer.seek(0)
-    client.put_object(
-        Bucket='test-bucket',
-        Key='sample_data.csv',
-        Body=csv_buffer.getvalue()
-    )
-
-    # Create directory structure with multiple files
-    for i in range(5):
-        sub_df = df.slice(i * 20, 20)
-        buffer = io.BytesIO()
-        sub_df.write_parquet(buffer)
-        buffer.seek(0)
-        client.put_object(
-            Bucket='test-bucket',
-            Key=f'partitioned/part_{i}.parquet',
-            Body=buffer.getvalue()
-        )
-
-    logger.info("Test data populated successfully")
 
 
 def start_minio_container() -> bool:
@@ -160,12 +131,16 @@ def start_minio_container() -> bool:
         # Wait for MinIO to be ready
         if wait_for_minio():
             create_test_buckets()
-            populate_test_data()
+            populate_test_data(endpoint_url=MINIO_ENDPOINT_URL,
+                               access_key=MINIO_ACCESS_KEY,
+                               secret_key=MINIO_SECRET_KEY,
+                               bucket_name="test-bucket")
             return True
         return False
 
     except Exception as e:
         logger.error(f"Failed to start MinIO: {e}")
+        stop_minio_container()
         return False
 
 
