@@ -55,6 +55,7 @@ class CloudStorageConnection(Base):
     aws_secret_access_key_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     aws_session_token_id = Column(Integer, ForeignKey("secrets.id"), nullable=True)
     aws_role_arn = Column(String, nullable=True)
+    aws_allow_unsafe_html = Column(Boolean, nullable=True)
 
     # Azure ADLS fields
     azure_account_name = Column(String, nullable=True)

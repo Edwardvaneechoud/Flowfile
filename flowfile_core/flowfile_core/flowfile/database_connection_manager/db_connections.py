@@ -1,6 +1,8 @@
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, CloudStorageConnection
 from sqlalchemy.orm import Session
-from flowfile_core.database.models import DatabaseConnection as DBConnectionModel, Secret
+from flowfile_core.database.models import (DatabaseConnection as DBConnectionModel, Secret,
+                                           CloudStorageConnection as DBCloudStorageConnection)
 from flowfile_core.secret_manager.secret_manager import store_secret, SecretInput, decrypt_secret
 from flowfile_core.database.connection import get_db_context
 
@@ -102,7 +104,8 @@ def delete_database_connection(db: Session, connection_name: str, user_id: int) 
         db.commit()
 
 
-def database_connection_interface_from_db_connection(db_connection: DBConnectionModel) -> FullDatabaseConnectionInterface:
+def database_connection_interface_from_db_connection(
+        db_connection: DBConnectionModel) -> FullDatabaseConnectionInterface:
     """
     Convert a database connection from the database model to the interface model.
     """
@@ -139,8 +142,49 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
     return result
 
 
-def store_cloud_connection():
+def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, user_id: int):
     """
     Placeholder function to store a cloud database connection.
     This function should be implemented based on specific cloud provider requirements.
     """
+    existing_database_connection = get_database_connection(db, connection.connection_name, user_id)
+    if existing_database_connection:
+        raise ValueError(
+            f"Database connection with name '{connection.connection_name}' already exists for user {user_id}."
+            f" Please use a unique connection name or delete the existing connection first."
+        )
+
+    aws_secret_access_key_ref_id = store_secret(db,
+                                                SecretInput(name=connection.connection_name + "_aws_saki",
+                                                            value=connection.aws_secret_access_key), user_id).id
+
+    azure_client_secret_ref_id = store_secret(db,
+                                              SecretInput(name=connection.connection_name,
+                                                          value=connection.azure_client_secret), user_id).id
+    azure_account_key_ref_id = store_secret(db, SecretInput(name=connection.connection_name,
+                                                            value=connection.azure_account_key), user_id).id
+
+    db_connection = DBCloudStorageConnection(
+        connection_name=connection.connection_name,
+        storage_type=connection.storage_type,
+        auth_method=connection.auth_method,
+        user_id=user_id,
+
+        # AWS S3 fields
+        aws_region=connection.aws_region,
+        aws_access_key_id=connection.aws_access_key_id,
+        aws_role_arn=connection.aws_role_arn,
+        aws_secret_access_key_id=aws_secret_access_key_ref_id,
+        aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
+
+        # Azure ADLS fields
+        azure_account_name=connection.azure_account_name,
+        azure_tenant_id=connection.azure_tenant_id,
+        azure_client_id=connection.azure_client_id,
+        azure_account_key_id=azure_account_key_ref_id,
+        azure_client_secret_id=azure_client_secret_ref_id,
+
+        # Common fields
+        endpoint_url=connection.endpoint_url,
+        verify_ssl=connection.verify_ssl
+    )

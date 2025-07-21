@@ -55,6 +55,7 @@ pyiceberg = {extras = ["hadoop"], version = "^0.9.1"}
 boto3 = ">=1.38.40,<1.38.47"
 cryptography = "^45.0.5"
 httpx = "^0.28.1"
+tqdm = "^4.67.1"
 
 
 [tool.poetry.scripts]
