@@ -190,7 +190,7 @@ def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, 
         auth_method=connection.auth_method,
         user_id=user_id,
 
-        # AWS S3 fields
+            # AWS S3 fields
         aws_region=connection.aws_region,
         aws_access_key_id=connection.aws_access_key_id,
         aws_role_arn=connection.aws_role_arn,
@@ -239,7 +239,6 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
     Retrieves a full cloud storage connection schema, including decrypted secrets, by its name and user ID.
     """
     db_connection = get_cloud_connection(db, connection_name, user_id)
-
     if not db_connection:
         return None
 
@@ -248,19 +247,19 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
     if db_connection.aws_secret_access_key_id:
         secret_record = db.query(Secret).filter(Secret.id == db_connection.aws_secret_access_key_id).first()
         if secret_record:
-            aws_secret_key = decrypt_secret(secret_record.encrypted_value, secret_record.iv)
+            aws_secret_key = decrypt_secret(secret_record.encrypted_value)
 
     azure_account_key = None
     if db_connection.azure_account_key_id:
         secret_record = db.query(Secret).filter(Secret.id == db_connection.azure_account_key_id).first()
         if secret_record:
-            azure_account_key = decrypt_secret(secret_record.encrypted_value, secret_record.iv)
+            azure_account_key = decrypt_secret(secret_record.encrypted_value)
 
     azure_client_secret = None
     if db_connection.azure_client_secret_id:
         secret_record = db.query(Secret).filter(Secret.id == db_connection.azure_client_secret_id).first()
         if secret_record:
-            azure_client_secret = decrypt_secret(secret_record.encrypted_value, secret_record.iv)
+            azure_client_secret = decrypt_secret(secret_record.encrypted_value)
 
     # Construct the full Pydantic model
     return FullCloudStorageConnection(
@@ -279,6 +278,7 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         endpoint_url=db_connection.endpoint_url,
         verify_ssl=db_connection.verify_ssl
     )
+
 
 def cloud_connection_interface_from_db_connection(
         db_connection: DBCloudStorageConnection) -> FullCloudStorageConnectionInterface:

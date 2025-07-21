@@ -24,8 +24,9 @@ def del_all_cloud_connections(user_id: int = 1):
     This is useful for cleaning up test data.
     """
     with get_db_context() as db:
-        breakpoint()
         all_cloud_connections = get_all_cloud_connections_interface(db, user_id)
+        for cloud_connection in all_cloud_connections:
+            delete_cloud_connection(db, cloud_connection.connection_name, user_id)
 
 
 @pytest.fixture()
@@ -48,7 +49,6 @@ def test_database_connection():
     connection = FullDatabaseConnection(username='testuser', password='testpass',
                                         connection_name='test_connection_v2', host='localhost',
                                         port=5433, database='testdb', database_type='postgresql', ssl_enabled=False)
-
     with get_db_context() as db:
         db_connection = store_database_connection(db, connection, user_id)
         assert db_connection is not None, "Database connection should not be None"
@@ -124,22 +124,6 @@ def test_get_all_database_connections_interface():
         assert database_connection is None, "Database connection should be None after deletion"
 
 
-def test_store_cloud_connection(cloud_connection):
-    user_id = 1
-    breakpoint()
-    # ensure that the cloud connection is created
-    with get_db_context() as db:
-        db_connection = store_cloud_connection(db, cloud_connection, user_id)
-        assert db_connection is not None, "Database connection should not be None"
-        assert db_connection.id is not None, "ID should not be None"
-    breakpoint()
-    # Verify that the cloud connection is stored correctly
-    with get_db_context() as db:
-        breakpoint()
-        new_cloud_connection = get_cloud_connection(db, cloud_connection.connection_name, user_id)
-        assert new_cloud_connection is not None, "Cloud connection should not be None"
-
-
 def test_store_and_delete_cloud_connection(cloud_connection):
     """
     Tests the creation and subsequent deletion of a cloud storage connection,
@@ -182,15 +166,16 @@ def test_get_cloud_connection_schema(cloud_connection):
     values are correctly decrypted and all data matches the original input.
     """
     user_id = 1
+    del_all_cloud_connections(user_id)
+
     # Setup: Store the connection
-    breakpoint()
     with get_db_context() as db:
         store_cloud_connection(db, cloud_connection, user_id)
 
     # Retrieve the full schema
     with get_db_context() as db:
+
         schema = get_cloud_connection_schema(db, cloud_connection.connection_name, user_id)
-        breakpoint()
         # Assertions
         assert isinstance(schema, FullCloudStorageConnection)
         assert schema.connection_name == cloud_connection.connection_name
@@ -214,15 +199,12 @@ def test_get_all_cloud_connections_interface(cloud_connection):
     with get_db_context() as db:
         store_cloud_connection(db, cloud_connection, user_id)
 
-    # Retrieve all connection interfaces for the user
     with get_db_context() as db:
         interfaces = get_all_cloud_connections_interface(db, user_id)
 
-        # Assertions
         assert isinstance(interfaces, list)
         assert len(interfaces) > 0
 
-        # Find our specific connection in the list
         interface = next((i for i in interfaces if i.connection_name == cloud_connection.connection_name), None)
         assert interface is not None
         assert isinstance(interface, FullCloudStorageConnectionInterface)
@@ -232,7 +214,6 @@ def test_get_all_cloud_connections_interface(cloud_connection):
         assert not hasattr(interface, 'azure_account_key')
         assert not hasattr(interface, 'azure_client_secret')
 
-        # Verify public fields are present and correct
         assert interface.aws_access_key_id == cloud_connection.aws_access_key_id
 
     # Teardown
