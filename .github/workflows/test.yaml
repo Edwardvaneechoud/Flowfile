@@ -43,7 +43,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          poetry install --no-interaction --no-ansi
+          poetry install --no-interaction --no-ansi --with dev
 
       - name: Build Vue app for web
         run: |
@@ -104,7 +104,7 @@ jobs:
       - name: Install Dependencies
         shell: pwsh
         run: |
-          poetry install --no-interaction --no-ansi
+          poetry install --no-interaction --no-ansi --with dev
 
       - name: Build Vue app for web
         shell: pwsh
@@ -123,6 +123,10 @@ jobs:
         shell: pwsh
         run: poetry run start_postgres
 
+      - name: Start Mock S3 bucket with Sample Data
+        shell: pwsh
+        run: poetry run start_minio
+
       - name: Run pytest for flowfile_frame
         shell: pwsh
         run: poetry run pytest flowfile_frame/tests --disable-warnings
@@ -138,6 +142,10 @@ jobs:
       - name: Stop Mock Database
         shell: pwsh
         run: poetry run stop_postgres
+
+      - name: Stop Mock S3 bucket
+        shell: pwsh
+        run: poetry run stop_minio
 
       - name: Run pytest for flowfile
         shell: pwsh
@@ -208,7 +216,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          poetry install
+          poetry install --with dev
 
       - name: Build Python services
         run: |
