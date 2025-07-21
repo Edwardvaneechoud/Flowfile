@@ -107,5 +107,5 @@ class NodeDefault(BaseModel):
 
 
 # Define SecretRef here if not in a common location
-SecretRef = Annotated[int, StringConstraints(min_length=1, max_length=100),
+SecretRef = Annotated[str, StringConstraints(min_length=1, max_length=100),
                       Field(description="An ID referencing an encrypted secret.")]

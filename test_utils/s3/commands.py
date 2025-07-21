@@ -24,7 +24,6 @@ def start_minio():
     if fixtures.start_minio_container():
         print(f"MinIO started at http://localhost:{fixtures.MINIO_PORT}")
         print(f"Access Key: {fixtures.MINIO_ACCESS_KEY}")
-        print(f"Secret Key: {fixtures.MINIO_SECRET_KEY}")
         return 0
     return 1
 
