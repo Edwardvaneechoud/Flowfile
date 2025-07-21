@@ -4,6 +4,7 @@ import subprocess
 import logging
 from contextlib import contextmanager
 from typing import Dict, Generator
+import shutil
 import boto3
 from botocore.client import Config
 from test_utils.s3.data_generator import populate_test_data
@@ -18,6 +19,9 @@ MINIO_SECRET_KEY = os.environ.get("TEST_MINIO_SECRET_KEY", "minioadmin")
 MINIO_CONTAINER_NAME = os.environ.get("TEST_MINIO_CONTAINER", "test-minio-s3")
 MINIO_ENDPOINT_URL = f"http://{MINIO_HOST}:{MINIO_PORT}"
 
+# Operating system detection
+IS_MACOS = os.uname().sysname == 'Darwin' if hasattr(os, 'uname') else False
+IS_WINDOWS = os.name == 'nt'
 
 def get_minio_client():
     """Get boto3 client for MinIO"""
@@ -107,6 +111,43 @@ def create_test_buckets():
             logger.info(f"Bucket already exists: {bucket}")
         except client.exceptions.BucketAlreadyOwnedByYou:
             logger.info(f"Bucket already owned: {bucket}")
+
+
+def is_docker_available() -> bool:
+    """
+    Check if Docker is available on the system.
+
+    Returns:
+        bool: True if Docker is available and working, False otherwise
+    """
+    # Skip Docker on macOS and Windows in CI
+    if (IS_MACOS or IS_WINDOWS) and os.environ.get('CI', '').lower() in ('true', '1', 'yes'):
+        logger.info("Skipping Docker on macOS/Windows in CI environment")
+        return False
+
+    # If docker executable is not in PATH
+    if shutil.which("docker") is None:
+        logger.warning("Docker executable not found in PATH")
+        return False
+
+    # Try a simple docker command
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False  # Don't raise exception on non-zero return code
+        )
+
+        if result.returncode != 0:
+            logger.warning("Docker is not operational")
+            return False
+
+        return True
+    except (subprocess.SubprocessError, OSError):
+        logger.warning("Error running Docker command")
+        return False
 
 
 def start_minio_container() -> bool:

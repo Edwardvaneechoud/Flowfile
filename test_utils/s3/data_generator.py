@@ -227,7 +227,6 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
 """)
 
 
-
 def populate_test_data(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str):
     """
     Populates a MinIO bucket with a variety of large-scale test data formats.
