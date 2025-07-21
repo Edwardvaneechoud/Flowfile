@@ -1,12 +1,15 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_graph import (FlowGraph, add_connection, RunInformation)
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               store_database_connection,)
+                                                                               store_database_connection,
+                                                                               store_cloud_connection,
+                                                                               delete_cloud_connection,
+                                                                               get_all_cloud_connections_interface)
 from flowfile_core.database.connection import get_db_context
 
 import pytest
@@ -17,12 +20,15 @@ from copy import deepcopy
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 
 
 @pytest.fixture
@@ -968,3 +974,27 @@ def test_empty_manual_input_should_run():
         assert r.success, 'Should be able to run even with empty manual input'
     except:
         raise ValueError('Should be able to run empty manual input')
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
+def test_cloud_reader(flow_logger):
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_read(node_settings)
+    assert graph.get_node(1) is not None, 'Node should be added to the graph'
+    node = graph.get_node(1)
+    try:
+        node.execute_remote(node_logger=flow_logger.get_node_logger(1))
+    except Exception as e:
+        flow_logger.error(f"Error executing cloud storage read node: {str(e)}")
+        raise ValueError(f"Error executing cloud storage read node: {str(e)}")
+    assert not node.needs_run(False), 'Node should not need to run after execution'
+    assert node.get_resulting_data().number_of_records == 100_000, 'Should have read 100000 records from the cloud storage'
+    assert len(node.schema) == 4, 'Should have 4 columns in the schema'

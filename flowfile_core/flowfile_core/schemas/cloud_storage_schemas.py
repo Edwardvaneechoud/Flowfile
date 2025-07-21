@@ -7,13 +7,21 @@ from pydantic import BaseModel, SecretStr, field_validator
 from flowfile_core.schemas.schemas import SecretRef
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
-AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli"]
+AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli", "auto"]
 
 
-class CloudStorageConnection(BaseModel):
-    """Base cloud storage connection for API requests"""
+class AuthSettingsInput(BaseModel):
+    """
+    The information needed for the user to provide the details that are needed to provide how to connect to the
+     Cloud provider
+    """
     storage_type: CloudStorageType
     auth_method: AuthMethod
+    connection_name: Optional[str] = None  # This is the reference to the item we will fetch that contains the data
+
+
+class CloudStorageConnection(AuthSettingsInput):
+    """Base cloud storage connection for API requests"""
 
     # AWS S3
     aws_region: Optional[str] = None
@@ -33,11 +41,8 @@ class CloudStorageConnection(BaseModel):
     verify_ssl: bool = True
 
 
-class FullCloudStorageConnection(BaseModel):
+class FullCloudStorageConnection(AuthSettingsInput):
     """Internal model with decrypted secrets"""
-    connection_name: str
-    storage_type: CloudStorageType
-    auth_method: AuthMethod
 
     # AWS S3
     aws_region: Optional[str] = None
@@ -58,11 +63,8 @@ class FullCloudStorageConnection(BaseModel):
     verify_ssl: bool = True
 
 
-class FullCloudStorageConnectionInterface(BaseModel):
+class FullCloudStorageConnectionInterface(AuthSettingsInput):
     """API response model - no secrets exposed"""
-    connection_name: str
-    storage_type: CloudStorageType
-    auth_method: AuthMethod
 
     # Public fields only
     aws_region: Optional[str] = None
@@ -75,19 +77,10 @@ class FullCloudStorageConnectionInterface(BaseModel):
     verify_ssl: bool = True
 
 
-class CloudStoragePermission(BaseModel):
-    """Granular permissions for cloud resources"""
-    resource_path: str  # e.g., "s3://bucket-name"
-    can_read: bool = True
-    can_write: bool = False
-    can_delete: bool = False
-    can_list: bool = True
-
-
 class CloudStorageSettings(BaseModel):
     """Settings for cloud storage nodes in the visual designer"""
 
-    auth_mode: Literal["aws-cli", "azure-cli", "reference", "auto"] = "auto"
+    auth_mode: AuthMethod = "auto"
     connection_name: Optional[str] = None  # Required only for 'reference' mode
     resource_path: str  # s3://bucket/path/to/file.csv
 

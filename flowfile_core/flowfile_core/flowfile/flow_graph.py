@@ -23,6 +23,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal, FullCloudStorageConnection
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -34,7 +35,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
-from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
+from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
+                                                                               get_local_cloud_connection)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 
 
@@ -856,6 +858,48 @@ class FlowGraph:
         logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
+    def add_cloud_storage_read(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
+        """
+        Adds a cloud storage read node to the flow graph.
+        Args:
+            node_cloud_storage_reader (input_schema.NodeCloudStorageReader):
+            The settings for the cloud storage read node.
+        Returns:
+        """
+        node_type = "node_cloud_storage_reader"
+        logger.info("Adding cloud storage reader")
+        cloud_storage_read_settings = node_cloud_storage_reader.cloud_storage_settings
+
+        cloud_connection_settings = get_local_cloud_connection(cloud_storage_read_settings.connection_name,
+                                                               node_cloud_storage_reader.user_id)
+        if cloud_connection_settings is None:
+            raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+        settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
+                                                    connection=cloud_connection_settings)
+        def _func():
+            fl = FlowDataEngine.from_cloud_storage_obj(settings)
+            return fl
+
+        node = self.get_node(node_cloud_storage_reader.node_id)
+        if node:
+            node.node_type = node_type
+            node.name = node_type
+            node.function = _func
+            node.setting_input = node_cloud_storage_reader
+            node.node_settings.cache_results = node_cloud_storage_reader.cache_results
+            if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
+                self._flow_starts.append(node)
+        else:
+            node = FlowNode(node_cloud_storage_reader.node_id,
+                            function=_func,
+                            setting_input=node_cloud_storage_reader,
+                            name=node_type, node_type=node_type,
+                            parent_uuid=self.uuid,
+                            )
+            self._node_db[node_cloud_storage_reader.node_id] = node
+            self._flow_starts.append(node)
+            self._node_ids.append(node_cloud_storage_reader.node_id)
+
     def add_external_source(self,
                             external_source_input: input_schema.NodeExternalSource):
 
@@ -873,8 +917,6 @@ class FlowGraph:
                                               initial_data_getter=initial_getter,
                                               orientation=external_source_input.source_settings.orientation,
                                               schema=None)
-
-
         def _func():
             logger.info('Calling external source')
             fl = FlowDataEngine.create_from_external_source(external_source=external_source)

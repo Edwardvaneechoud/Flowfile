@@ -98,6 +98,20 @@ def get_local_database_connection(connection_name: str, user_id: int) -> FullDat
         return get_database_connection_schema(db, connection_name, user_id)
 
 
+def get_local_cloud_connection(connection_name: str, user_id: int) -> FullCloudStorageConnection | None:
+    """
+    Get a cloud storage connection schema by its name and user ID.
+    Args:
+        connection_name (str): The name of the cloud storage connection.
+        user_id (int): The ID of the user who owns the connection.
+
+    Returns:
+        FullCloudStorageConnection | None: The cloud storage connection schema if found, otherwise None.
+    """
+    with get_db_context() as db:
+        return get_cloud_connection_schema(db, connection_name, user_id)
+
+
 def delete_database_connection(db: Session, connection_name: str, user_id: int) -> None:
     """
     Delete a database connection by its name and user ID.
@@ -154,7 +168,7 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
     return result
 
 
-def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, user_id: int):
+def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, user_id: int) -> DBCloudStorageConnection:
     """
     Placeholder function to store a cloud database connection.
     This function should be implemented based on specific cloud provider requirements.
