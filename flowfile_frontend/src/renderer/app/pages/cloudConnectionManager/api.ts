@@ -65,6 +65,7 @@ export const convertConnectionInterfacePytoTs = (
     awsRegion: pythonConnectionInterface.aws_region,
     awsAccessKeyId: pythonConnectionInterface.aws_access_key_id,
     awsRoleArn: pythonConnectionInterface.aws_role_arn,
+    awsAllowUnsafeHtml: pythonConnectionInterface.aws_allow_unsafe_html,
     
     // Azure ADLS
     azureAccountName: pythonConnectionInterface.azure_account_name,
@@ -86,6 +87,7 @@ export const convertConnectionInterfaceTstoPy = (
     connection_name: cloudConnectionInterface.connectionName,
     
     // AWS S3
+    aws_allow_unsafe_html: cloudConnectionInterface.awsAllowUnsafeHtml,
     aws_region: cloudConnectionInterface.awsRegion,
     aws_access_key_id: cloudConnectionInterface.awsAccessKeyId,
     aws_role_arn: cloudConnectionInterface.awsRoleArn,

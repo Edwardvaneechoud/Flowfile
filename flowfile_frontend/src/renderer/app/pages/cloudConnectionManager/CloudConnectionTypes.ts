@@ -60,6 +60,7 @@ export interface FullCloudStorageConnection extends AuthSettingsInput {
 
 export interface PythonFullCloudStorageConnectionInterface extends PythonAuthSettingsInput {
     // Public fields only
+    aws_allow_unsafe_html?: boolean;
     aws_region?: string;
     aws_access_key_id?: string;
     aws_role_arn?: string;
@@ -72,6 +73,7 @@ export interface PythonFullCloudStorageConnectionInterface extends PythonAuthSet
 
 export interface FullCloudStorageConnectionInterface extends AuthSettingsInput {
     // Public fields only
+    awsAllowUnsafeHtml?: boolean;
     awsRegion?: string;
     awsAccessKeyId?: string;
     awsRoleArn?: string;

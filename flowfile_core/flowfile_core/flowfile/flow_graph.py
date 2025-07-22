@@ -23,7 +23,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal, FullCloudStorageConnection
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -858,6 +858,9 @@ class FlowGraph:
         logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
+    def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
+        pass
+
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """
         Adds a cloud storage read node to the flow graph.
@@ -866,7 +869,7 @@ class FlowGraph:
             The settings for the cloud storage read node.
         Returns:
         """
-        node_type = "node_cloud_storage_reader"
+        node_type = "cloud_storage_reader"
         logger.info("Adding cloud storage reader")
         cloud_storage_read_settings = node_cloud_storage_reader.cloud_storage_settings
 
@@ -881,6 +884,7 @@ class FlowGraph:
             return fl
 
         node = self.get_node(node_cloud_storage_reader.node_id)
+
         if node:
             node.node_type = node_type
             node.name = node_type

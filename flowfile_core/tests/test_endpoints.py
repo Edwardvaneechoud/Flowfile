@@ -16,6 +16,7 @@ from flowfile_core.routes.routes import (add_node,
                                          connect_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
+from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_database_connection,
@@ -897,6 +898,29 @@ def test_create_cloud_storage_connection():
     assert created_cloud_connection == new_cloud_connection
 
 
+def test_create_cloud_storage_connection_allow_unsafe_html():
+    ensure_password_is_available()
+    ensure_password_is_available()
+    user_id = 1
+    ensure_no_cloud_storage_connection_is_available(user_id=user_id)
+    new_cloud_connection = get_cloud_connection()
+    new_cloud_connection.aws_allow_unsafe_html = True
+    cloud_connection_dict = new_cloud_connection.model_dump()
+    for field_name, field_value in cloud_connection_dict.items():
+        if isinstance(field_value, SecretStr):
+            cloud_connection_dict[field_name] = field_value.get_secret_value()
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 200, "Connection not created"
+    created_cloud_connection = get_local_cloud_connection(new_cloud_connection.connection_name, user_id=user_id)
+    assert created_cloud_connection is not None, "Connection should be available in database"
+    assert created_cloud_connection == new_cloud_connection
+    cloud_connections_response = client.get("cloud_connections/cloud_connections")
+    assert cloud_connections_response.status_code == 200, "Connections not retrieved"
+    cloud_connections = cloud_connections_response.json()
+    assert len(cloud_connections) == 1, "Should be one connection available"
+    assert cloud_connections[0]["aws_allow_unsafe_html"], "Connection should have allow_unsafe_html set to True"
+
+
 def test_create_cloud_storage_connection_already_exists():
     ensure_password_is_available()
     user_id = 1
@@ -929,3 +953,29 @@ def test_storage_connections_not_available_when_not_logged_in():
         assert non_logged_in_client.delete("/cloud_connections/cloud_connection").status_code == 401
         assert non_logged_in_client.post("/cloud_connections/cloud_connection").status_code == 401
         assert non_logged_in_client.get("/cloud_connections/cloud_connections").status_code == 401
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason='Docker is not available or not running so cloud storage connection cannot be tested')
+def test_create_cloud_storage_reader():
+    flow_id = ensure_clean_flow()
+    add_node_placeholder("cloud_storage_reader", flow_id=flow_id)
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection(user_id=1)
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    r = client.post("/update_settings/", json=node_settings.model_dump(), params={"node_type": "cloud_storage_reader"})
+    assert r.status_code == 200, 'Settings not updated'
+    node = flow_file_handler.get_node(flow_id, 1)
+    assert node._hash is not None, 'Node hash should be set after settings update'
+    _ = node.schema
+
+    assert node.node_schema.predicted_schema is not None, 'Node schema should be set'
+    r = client.post("/update_settings/", json=node_settings.model_dump(), params={"node_type": "cloud_storage_reader"})
+    assert r.status_code == 200, 'Settings not updated'
+    assert node.node_schema.result_schema is not None, "Node schema should be set after run"

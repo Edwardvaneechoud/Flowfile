@@ -39,7 +39,6 @@ class CloudStorageReader:
 
         if connection.aws_allow_unsafe_html:
             storage_options["aws_allow_http"] = str(connection.aws_allow_unsafe_html)
-
         if connection.auth_method == "access_key":
             if connection.aws_access_key_id:
                 storage_options["aws_access_key_id"] = connection.aws_access_key_id
@@ -56,15 +55,13 @@ class CloudStorageReader:
                 pass
         else:
             storage_options['aws_region'] = connection.aws_region
-
         # Add endpoint URL if provided (for S3-compatible services)
         if connection.endpoint_url:
             storage_options["endpoint_url"] = connection.endpoint_url
 
         # SSL verification
         if not connection.verify_ssl:
-            storage_options["verify"] = False
-
+            storage_options["verify"] = "False"
         return storage_options
 
     @staticmethod

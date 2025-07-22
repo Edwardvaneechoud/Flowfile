@@ -46,6 +46,7 @@ class FullCloudStorageConnectionInterface(AuthSettingsInput):
     """API response model - no secrets exposed"""
 
     # Public fields only
+    aws_allow_unsafe_html: Optional[bool] = None
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_role_arn: Optional[str] = None

@@ -397,7 +397,6 @@ def test_join_operation(test_name, join_scenario, join_input_dataset):
     flow.add_manual_input(right_data)
     # Add join node
     flow.add_join(join_scenario)
-    # breakpoint()
     # Add connections
     left_connection = input_schema.NodeConnection.create_from_simple_input(1, 3, 'main')
     right_connection = input_schema.NodeConnection.create_from_simple_input(2, 3, 'right')

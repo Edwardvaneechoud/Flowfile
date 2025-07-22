@@ -611,6 +611,7 @@ class FlowNode:
             self._hash = None
             self.node_information.is_setup = None
             self.evaluate_nodes()
+            _ = self.hash
 
     def delete_lead_to_node(self, node_id: int) -> bool:
         logger.info(f'Deleting lead to node: {node_id}')

@@ -51,7 +51,7 @@
         </div>
 
         <!-- Scan Mode -->
-        <div class="form-group">
+        <div v-if="nodeCloudStorageReader.cloud_storage_settings.file_format !== 'delta'" class="form-group">
           <label for="scan-mode">Scan Mode</label>
           <select
             id="scan-mode"
@@ -78,7 +78,6 @@
             <option value="parquet">Parquet</option>
             <option value="json">JSON</option>
             <option value="delta">Delta Lake</option>
-            <option value="iceberg">Apache Iceberg</option>
           </select>
         </div>
 
@@ -224,6 +223,7 @@ const handleScanModeChange = () => {
   }
 };
 
+
 const handleFileFormatChange = () => {
   resetFields();
   // Set default values for format-specific options
@@ -282,7 +282,6 @@ const pushNodeData = async () => {
     console.log("Returning without pushing")
     return;
   }
-  console.log("pushing this data", nodeCloudStorageReader.value)
   nodeCloudStorageReader.value.is_setup = true;
   nodeStore.updateSettings(nodeCloudStorageReader);
   dataLoaded.value = false;

@@ -245,7 +245,7 @@ import { connect } from "http2";
       awsAccessKeyId: connection.awsAccessKeyId || "",
       awsSecretAccessKey: "", // Password is not returned from the API
       awsRoleArn: connection.awsRoleArn || "",
-      awsAllowUnsafeHtml: false, // Not returned from API, default to false
+      awsAllowUnsafeHtml: connection.awsAllowUnsafeHtml,
       
       // Azure fields
       azureAccountName: connection.azureAccountName || "",

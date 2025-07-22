@@ -12,7 +12,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (s
                                                                                store_cloud_connection,
                                                                                delete_cloud_connection,
                                                                                get_all_cloud_connections_interface,
-                                                                               get_cloud_connection_schema)
+                                                                               get_cloud_connection_schema,
+                                                                               get_full_cloud_storage_interface_from_db)
 from flowfile_core.database.connection import get_db_context, SessionLocal
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 from pydantic import SecretStr
@@ -122,6 +123,25 @@ def test_get_all_database_connections_interface():
         # Verify that the database connection has been deleted
         database_connection = get_database_connection(db, connection.connection_name, user_id)
         assert database_connection is None, "Database connection should be None after deletion"
+
+
+def test_store_and_get_cloud_connection_unsafe_html(cloud_connection):
+    """
+    Tests the storage of a cloud connection with unsafe HTML in the connection name,
+    ensuring that it is sanitized before being stored in the database.
+    """
+    user_id = 1
+    del_all_cloud_connections(user_id)
+    cloud_connection.aws_allow_unsafe_html = True
+    with get_db_context() as db:
+        db_conn = store_cloud_connection(db, cloud_connection, user_id)
+        assert db_conn is not None
+        assert db_conn.aws_secret_access_key_id is not None
+    with get_db_context() as db:
+        retrieved_db_obj = get_cloud_connection(db, cloud_connection.connection_name, user_id)
+        assert retrieved_db_obj.aws_allow_unsafe_html, "Connection should allow unsafe HTML"
+        retrieved_interface_obj = get_cloud_connection_schema(db, cloud_connection.connection_name, user_id)
+        assert retrieved_interface_obj.aws_allow_unsafe_html, "Interface should allow unsafe HTML"
 
 
 def test_store_and_delete_cloud_connection(cloud_connection):

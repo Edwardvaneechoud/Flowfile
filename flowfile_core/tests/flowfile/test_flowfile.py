@@ -985,7 +985,6 @@ def test_cloud_reader(flow_logger):
         scan_mode="single_file",
         connection_name=conn.connection_name
     )
-    breakpoint()
     graph = create_graph()
     node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
                                                         cloud_storage_settings=read_settings)
@@ -1000,3 +999,4 @@ def test_cloud_reader(flow_logger):
     assert not node.needs_run(False), 'Node should not need to run after execution'
     assert node.get_resulting_data().number_of_records == 100_000, 'Should have read 100000 records from the cloud storage'
     assert len(node.schema) == 4, 'Should have 4 columns in the schema'
+
