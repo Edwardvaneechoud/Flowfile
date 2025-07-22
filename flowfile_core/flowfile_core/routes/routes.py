@@ -44,7 +44,6 @@ from flowfile_core.database.connection import get_db
 
 
 
-# Router setup
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 # Initialize services
@@ -52,9 +51,11 @@ file_explorer = FileExplorer('/app/shared' if IS_RUNNING_IN_DOCKER else None)
 
 
 def get_node_model(setting_name_ref: str):
+    logger.info("Getting node model for: " + setting_name_ref)
     for ref_name, ref in inspect.getmodule(input_schema).__dict__.items():
         if ref_name.lower() == setting_name_ref:
             return ref
+    logger.error(f"Could not find node model for: {setting_name_ref}")
 
 
 @router.post("/upload/")

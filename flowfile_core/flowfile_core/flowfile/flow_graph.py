@@ -858,7 +858,7 @@ class FlowGraph:
         logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
-    def add_cloud_storage_read(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
+    def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """
         Adds a cloud storage read node to the flow graph.
         Args:

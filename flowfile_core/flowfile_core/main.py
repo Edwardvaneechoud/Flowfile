@@ -8,14 +8,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from flowfile_core import ServerRun
-from flowfile_core.configs.settings import (SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL,
-                                            OFFLOAD_TO_WORKER)
+from flowfile_core.configs.settings import (SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL,)
 
 from flowfile_core.routes.auth import router as auth_router
 from flowfile_core.routes.secrets import router as secrets_router
 from flowfile_core.routes.routes import router
 from flowfile_core.routes.public import router as public_router
 from flowfile_core.routes.logs import router as logs_router
+from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 
@@ -72,6 +72,7 @@ app.include_router(router)
 app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
+app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 
 
 @app.post("/shutdown")

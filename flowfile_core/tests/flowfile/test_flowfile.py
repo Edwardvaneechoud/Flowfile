@@ -975,6 +975,7 @@ def test_empty_manual_input_should_run():
     except:
         raise ValueError('Should be able to run empty manual input')
 
+
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
 def test_cloud_reader(flow_logger):
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
@@ -984,10 +985,11 @@ def test_cloud_reader(flow_logger):
         scan_mode="single_file",
         connection_name=conn.connection_name
     )
+    breakpoint()
     graph = create_graph()
     node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
                                                         cloud_storage_settings=read_settings)
-    graph.add_cloud_storage_read(node_settings)
+    graph.add_cloud_storage_reader(node_settings)
     assert graph.get_node(1) is not None, 'Node should be added to the graph'
     node = graph.get_node(1)
     try:

@@ -34,10 +34,17 @@ export default {
       }
     },
     {
+      name: "cloudConnectionManager",
+      displayName: "menu.cloudConnectionManager",
+      meta: {
+        icon: "fa-solid fa-cloud"
+      }
+    },
+    {
       name: "secretManager",
       displayName: "menu.secretManager",
       meta: {
-        icon: "fa-solid fa-cog",
+        icon: "fa-solid fa-key",
       },
     },
   ] as INavigationRoute[],

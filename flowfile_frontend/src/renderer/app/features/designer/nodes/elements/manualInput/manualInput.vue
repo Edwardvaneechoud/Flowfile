@@ -81,7 +81,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { createManualInput } from "./manualInputLogic";
 import type {

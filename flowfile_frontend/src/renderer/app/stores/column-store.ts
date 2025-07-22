@@ -498,6 +498,7 @@ export const useNodeStore = defineStore('node', {
         inputData.value.pos_y = node.position.y
         console.log("updating settings")
         console.log('node', node)
+        console.log("node name", node.data.component.__name)
         const response = await axios.post('/update_settings/', inputData.value, {
           params: {
             node_type: node.data.component.__name,

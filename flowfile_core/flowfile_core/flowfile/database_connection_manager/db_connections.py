@@ -1,5 +1,5 @@
 from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
-from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, CloudStorageConnection, FullCloudStorageConnectionInterface
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from sqlalchemy.orm import Session
 from flowfile_core.database.models import (DatabaseConnection as DBConnectionModel, Secret,
                                            CloudStorageConnection as DBCloudStorageConnection)

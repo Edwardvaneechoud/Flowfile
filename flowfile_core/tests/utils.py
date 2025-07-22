@@ -10,7 +10,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 
-def cloud_connection():
+def get_cloud_connection():
     """Reusable AWS CLI connection configuration."""
     minio_connection = FullCloudStorageConnection(
         connection_name="minio-test",
@@ -24,14 +24,16 @@ def cloud_connection():
     return minio_connection
 
 
-def ensure_cloud_storage_connection_is_available_and_get_connection() -> FullCloudStorageConnectionInterface:
-    user_id = 1
+def ensure_no_cloud_storage_connection_is_available(user_id: int) -> None:
     with get_db_context() as db:
         all_cloud_connections = get_all_cloud_connections_interface(db, user_id)
         for cs in all_cloud_connections:
             delete_cloud_connection(db, cs.connection_name, user_id)
 
+
+def ensure_cloud_storage_connection_is_available_and_get_connection(user_id: int = 1) -> FullCloudStorageConnectionInterface:
+    ensure_no_cloud_storage_connection_is_available(user_id)
     with get_db_context() as db:
         return cloud_connection_interface_from_db_connection(
-            store_cloud_connection(db, cloud_connection(), user_id=user_id)
+            store_cloud_connection(db, get_cloud_connection(), user_id=user_id)
         )

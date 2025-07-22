@@ -42,10 +42,10 @@ nodes_list: List[NodeTemplate] = [
                  node_group='input'),
     NodeTemplate(name='Write to Database', item='database_writer', input=1, output=0, image='database_writer.svg',
                  node_group='output'),
-    NodeTemplate(name='Read from cloud provider', item='node_cloud_storage_reader', input=0, output=1,
-                 image='node_cloud_storage_reader.png', node_group='input'),
-    NodeTemplate(name='Write to cloud provider', item='node_cloud_storage_writer', input=1, output=0,
-                image='node_cloud_storage_writer.png', node_group='output'),
+    NodeTemplate(name='Read from cloud provider', item='cloud_storage_reader', input=0, output=1,
+                 image='cloud_storage_reader.png', node_group='input'),
+    NodeTemplate(name='Write to cloud provider', item='cloud_storage_writer', input=1, output=0,
+                image='cloud_storage_writer.png', node_group='output'),
 ]
 
 nodes_list.sort(key=lambda x: x.name)

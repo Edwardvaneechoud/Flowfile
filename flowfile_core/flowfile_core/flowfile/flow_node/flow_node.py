@@ -333,7 +333,7 @@ class FlowNode:
                 try:
                     if isinstance(self.function, FlowDataEngine):
                         fl: FlowDataEngine = self.function
-                    elif self.node_type in ('external_source'):
+                    elif self.node_type == 'external_source':
                         fl: FlowDataEngine = self.function()
                         fl.collect_external()
                         self.node_settings.streamable = False

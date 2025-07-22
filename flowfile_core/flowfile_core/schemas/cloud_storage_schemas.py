@@ -17,28 +17,7 @@ class AuthSettingsInput(BaseModel):
     """
     storage_type: CloudStorageType
     auth_method: AuthMethod
-    connection_name: Optional[str] = None  # This is the reference to the item we will fetch that contains the data
-
-
-class CloudStorageConnection(AuthSettingsInput):
-    """Base cloud storage connection for API requests"""
-
-    # AWS S3
-    aws_region: Optional[str] = None
-    aws_access_key_id: Optional[str] = None
-    aws_secret_access_key_ref: Optional[SecretRef] = None
-    aws_role_arn: Optional[str] = None
-
-    # Azure ADLS
-    azure_account_name: Optional[str] = None
-    azure_account_key_ref: Optional[SecretRef] = None
-    azure_tenant_id: Optional[str] = None
-    azure_client_id: Optional[str] = None
-    azure_client_secret_ref: Optional[SecretRef] = None
-
-    # Common
-    endpoint_url: Optional[str] = None
-    verify_ssl: bool = True
+    connection_name: Optional[str] = "None"  # This is the reference to the item we will fetch that contains the data
 
 
 class FullCloudStorageConnection(AuthSettingsInput):
@@ -98,9 +77,9 @@ class CloudStorageReadSettings(CloudStorageSettings):
     scan_mode: Literal["single_file", "directory"] = "single_file"
     file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet"
     # CSV specific options
-    csv_has_header: bool = True
-    csv_delimiter: str = ","
-    csv_encoding: str = "utf8"
+    csv_has_header: Optional[bool] = True
+    csv_delimiter: Optional[str] = ","
+    csv_encoding: Optional[str] = "utf8"
     # Deltalake specific settings
     delta_version: Optional[int] = None
 

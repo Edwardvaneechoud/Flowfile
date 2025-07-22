@@ -3,6 +3,7 @@ import threading
 import pickle
 import pytest
 
+from pydantic import SecretStr
 from fastapi.testclient import TestClient
 from time import sleep
 from typing import Dict
@@ -19,15 +20,24 @@ from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_database_connection,
                                                                                delete_database_connection,
-                                                                               get_all_database_connections_interface)
+                                                                               get_all_database_connections_interface,
+                                                                               get_local_cloud_connection,)
+
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
+                             ensure_no_cloud_storage_connection_is_available,
+                             get_cloud_connection)
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
+                             ensure_no_cloud_storage_connection_is_available,
+                             get_cloud_connection)
 
 FlowId = int
 
@@ -869,3 +879,53 @@ def test_get_db_connection_libs():
     with get_db_context() as db:
         for con_name in ['test_connection', 'test_connection_2']:
             delete_database_connection(db, con_name, 1)
+
+
+def test_create_cloud_storage_connection():
+    ensure_password_is_available()
+    user_id = 1
+    ensure_no_cloud_storage_connection_is_available(user_id=user_id)
+    new_cloud_connection = get_cloud_connection()
+    cloud_connection_dict = new_cloud_connection.model_dump()
+    for field_name, field_value in cloud_connection_dict.items():
+        if isinstance(field_value, SecretStr):
+            cloud_connection_dict[field_name] = field_value.get_secret_value()
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 200, "Connection not created"
+    created_cloud_connection = get_local_cloud_connection(new_cloud_connection.connection_name, user_id=user_id)
+    assert created_cloud_connection is not None, "Connection should be available in database"
+    assert created_cloud_connection == new_cloud_connection
+
+
+def test_create_cloud_storage_connection_already_exists():
+    ensure_password_is_available()
+    user_id = 1
+    ensure_no_cloud_storage_connection_is_available(user_id=user_id)
+    new_cloud_connection = get_cloud_connection()
+    cloud_connection_dict = new_cloud_connection.model_dump()
+    for field_name, field_value in cloud_connection_dict.items():
+        if isinstance(field_value, SecretStr):
+            cloud_connection_dict[field_name] = field_value.get_secret_value()
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 200, "Connection not created"
+
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 422, "Connection should not be created again"
+
+
+def test_delete_cloud_storage_connection():
+    ensure_password_is_available()
+    user_id = 1
+    connection = ensure_cloud_storage_connection_is_available_and_get_connection(user_id)
+    response = client.delete("/cloud_connections/cloud_connection",
+                             params={'connection_name': connection.connection_name})
+    assert response.status_code == 200
+    available_cloud_account = get_local_cloud_connection(connection.connection_name, user_id=user_id)
+    assert available_cloud_account is None
+
+
+def test_storage_connections_not_available_when_not_logged_in():
+    with TestClient(main.app) as non_logged_in_client:
+        assert non_logged_in_client.delete("/cloud_connections/cloud_connection").status_code == 401
+        assert non_logged_in_client.post("/cloud_connections/cloud_connection").status_code == 401
+        assert non_logged_in_client.get("/cloud_connections/cloud_connections").status_code == 401
