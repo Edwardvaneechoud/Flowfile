@@ -134,12 +134,12 @@ class FlowNode:
                     schema_callback: Callable = None,
                     ):
 
-        self.schema_callback = schema_callback
         self.node_information.y_position = pos_y
         self.node_information.x_position = pos_x
         self.node_information.setting_input = setting_input
         self.name = self.node_type if name is None else name
         self._function = function
+
         self.node_schema.input_columns = [] if input_columns is None else input_columns
         self.node_schema.output_columns = [] if output_schema is None else output_schema
         self.node_schema.drop_columns = [] if drop_columns is None else drop_columns
@@ -148,6 +148,7 @@ class FlowNode:
             self.node_settings.cache_results = setting_input.cache_results
 
         self.setting_input = setting_input
+
         self.results.errors = None
         self.add_lead_to_in_depend_source()
         _ = self.hash
@@ -155,6 +156,8 @@ class FlowNode:
         if self.node_template is None:
             raise Exception(f'Node template {self.node_type} not found')
         self.node_default = node_interface.node_defaults.get(self.node_type)
+        self.schema_callback = schema_callback
+
 
     @property
     def name(self):
@@ -297,7 +300,9 @@ class FlowNode:
         Method to get a predicted schema based on the columns that are dropped and added
         :return:
         """
-        if self.node_schema.predicted_schema is not None and not force:
+
+        if self.node_schema.predicted_schema and not force:
+
             return self.node_schema.predicted_schema
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
             self.print('Getting the data from a schema callback')
@@ -400,6 +405,7 @@ class FlowNode:
     @property
     def schema(self) -> List[FlowfileColumn]:
         try:
+
             if self.is_setup and self.results.errors is None:
                 if self.node_schema.result_schema is not None and len(self.node_schema.result_schema) > 0:
                     return self.node_schema.result_schema
@@ -599,12 +605,16 @@ class FlowNode:
         return self._hash != self.calculate_hash(self.setting_input)
 
     def reset(self, deep: bool = False):
+        if self._hash is None:
+            _ = self.hash  # Ensure the hash is calculated
         needs_reset = self.needs_reset() or deep
+
         if needs_reset:
             logger.info(f'{self.node_id}: Node needs reset')
             self.node_stats.has_run = False
             self.results.reset()
             if self.schema_callback:
+
                 self.schema_callback.reset()
             self.node_schema.result_schema = None
             self.node_schema.predicted_schema = None

@@ -179,7 +179,7 @@ def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, 
             f"Database connection with name '{connection.connection_name}' already exists for user {user_id}."
             f" Please use a unique connection name or delete the existing connection first."
         )
-    if connection.connection_name is not None:
+    if connection.aws_secret_access_key is not None:
         aws_secret_access_key_ref_id = store_secret(db,
                                                     SecretInput(name=connection.connection_name + "_aws_secret_access_key",
                                                                 value=connection.aws_secret_access_key), user_id).id
@@ -192,7 +192,6 @@ def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, 
     else:
         azure_client_secret_ref_id = None
     if connection.azure_account_key is not None:
-        # Store the Azure account key as a secret
         azure_account_key_ref_id = store_secret(db, SecretInput(name=connection.connection_name + "azure_account_key",
                                                                 value=connection.azure_account_key), user_id).id
     else:

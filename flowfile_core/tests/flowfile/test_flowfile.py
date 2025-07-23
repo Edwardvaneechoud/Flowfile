@@ -1000,3 +1000,23 @@ def test_cloud_reader(flow_logger):
     assert node.get_resulting_data().number_of_records == 100_000, 'Should have read 100000 records from the cloud storage'
     assert len(node.schema) == 4, 'Should have 4 columns in the schema'
 
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_schema_callback_cloud_read(flow_logger):
+    # Validate that when the node is added, the schema is being calculated in a separate thread, so that the user has
+    # the least amount of waiting time.
+
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    node.schema_callback.future is not None, 'Schema callback future should be set'
+    len(node.schema_callback()) == 4, 'Schema should have 4 columns'

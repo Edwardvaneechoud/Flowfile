@@ -12,15 +12,15 @@
           <div v-else>
             <select
               id="connection-select"
-              v-model="nodeCloudStorageReader.cloud_storage_settings.connection_name"
+              v-model="selectedConnection"
               class="form-control minimal-select"
               @change="resetFields"
             >
-              <option value="">No connection (use local credentials)</option>
+              <option :value="null">No connection (use local credentials)</option>
               <option
                 v-for="conn in connectionInterfaces"
                 :key="conn.connectionName"
-                :value="conn.connectionName"
+                :value="conn"
               >
                 {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} - {{ getAuthMethodLabel(conn.authMethod) }})
               </option>
@@ -32,7 +32,6 @@
           </div>
         </div>
       </div>
-
       <!-- File Path and Scan Settings -->
       <div class="listbox-wrapper">
         <h4 class="section-subtitle">File Settings</h4>
@@ -50,20 +49,6 @@
           />
         </div>
 
-        <!-- Scan Mode -->
-        <div v-if="nodeCloudStorageReader.cloud_storage_settings.file_format !== 'delta'" class="form-group">
-          <label for="scan-mode">Scan Mode</label>
-          <select
-            id="scan-mode"
-            v-model="nodeCloudStorageReader.cloud_storage_settings.scan_mode"
-            class="form-control"
-            @change="handleScanModeChange"
-          >
-            <option value="single_file">Single File</option>
-            <option value="directory">Directory</option>
-          </select>
-        </div>
-
         <!-- File Format -->
         <div class="form-group">
           <label for="file-format">File Format</label>
@@ -73,11 +58,23 @@
             class="form-control"
             @change="handleFileFormatChange"
           >
-            <option value="">Auto-detect</option>
             <option value="csv">CSV</option>
             <option value="parquet">Parquet</option>
             <option value="json">JSON</option>
             <option value="delta">Delta Lake</option>
+          </select>
+        </div>
+
+        <!-- Scan Mode -->
+        <div v-if="nodeCloudStorageReader.cloud_storage_settings.file_format !== 'delta'" class="form-group">
+          <label for="scan-mode">Scan Mode</label>
+          <select
+            id="scan-mode"
+            v-model="nodeCloudStorageReader.cloud_storage_settings.scan_mode"
+            class="form-control"
+          >
+            <option value="single_file">Single File</option>
+            <option value="directory">Directory</option>
           </select>
         </div>
 
@@ -159,9 +156,7 @@ import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted } from "vue";
 import { 
   NodeCloudStorageReader, 
-  CloudStorageReadSettings, 
-  FileFormat, 
-  CsvEncoding
+
 } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -180,6 +175,7 @@ const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
+const selectedConnection = ref<FullCloudStorageConnectionInterface | null >(null)
 
 const getStorageTypeLabel = (storageType: string) => {
   switch (storageType) {
@@ -212,14 +208,6 @@ const getAuthMethodLabel = (authMethod: string) => {
       return "Auto";
     default:
       return authMethod;
-  }
-};
-
-const handleScanModeChange = () => {
-  resetFields();
-  // If switching to single file mode, clear the file format to allow auto-detection
-  if (nodeCloudStorageReader.value && nodeCloudStorageReader.value.cloud_storage_settings.scan_mode === 'single_file') {
-    nodeCloudStorageReader.value.cloud_storage_settings.file_format = undefined;
   }
 };
 
@@ -258,17 +246,40 @@ const handleFileFormatChange = () => {
 const resetFields = () => {
   if (nodeCloudStorageReader.value) {
     nodeCloudStorageReader.value.fields = [];
+    if (!selectedConnection.value) {
+      nodeCloudStorageReader.value.cloud_storage_settings.auth_mode = "aws-cli"
+      nodeCloudStorageReader.value.cloud_storage_settings.connection_name = undefined
+    }
+    else {
+      nodeCloudStorageReader.value.cloud_storage_settings.auth_mode = selectedConnection.value.authMethod
+      nodeCloudStorageReader.value.cloud_storage_settings.connection_name = selectedConnection.value.connectionName
+    }
   }
 };
 
+const setConnectionOnConnectionName = async (connectionName: string | null) => {
+  selectedConnection.value = connectionInterfaces.value.find(
+        (connectionInterface) => connectionInterface.connectionName === connectionName // Use '===' for strict equality
+    ) || null
+}
+
 const loadNodeData = async (nodeId: number) => {
   try {
-    const nodeData = await nodeStore.getNodeData(nodeId, false);
+    const [nodeData] = await Promise.all([
+      nodeStore.getNodeData(nodeId, false),
+      fetchConnections()
+    ]);
     if (nodeData) {
       const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
       nodeCloudStorageReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
+        if(nodeCloudStorageReader.value?.cloud_storage_settings.connection_name){
+          await setConnectionOnConnectionName(nodeCloudStorageReader.value.cloud_storage_settings.connection_name)
+        }
+        else {
+          selectedConnection.value = null
+        }
     }
     dataLoaded.value = true;
   } catch (error) {
@@ -298,10 +309,6 @@ const fetchConnections = async () => {
     connectionsAreLoading.value = false;
   }
 };
-
-onMounted(async () => {
-  await fetchConnections();
-});
 
 defineExpose({
   loadNodeData,

@@ -23,7 +23,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal, FullCloudStorageConnection
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -656,7 +656,7 @@ class FlowGraph:
                       setting_input: Any = None,
                       cache_results: bool = None,
                       schema_callback: Callable = None,
-                      input_node_ids: List[int] = None):
+                      input_node_ids: List[int] = None) -> FlowNode:
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:
@@ -674,8 +674,11 @@ class FlowGraph:
                 cache_results = False if cache_results is None else cache_results
         if isinstance(input_columns, str):
             input_columns = [input_columns]
-
-        if input_nodes is not None or function.__name__ in ('placeholder', 'analysis_preparation'):
+        if (
+                input_nodes is not None or
+                function.__name__ in ('placeholder', 'analysis_preparation') or
+                node_type == "cloud_storage_reader"
+        ):
 
             if not existing_node:
                 node = FlowNode(node_id=node_id,
@@ -703,6 +706,7 @@ class FlowGraph:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
+        return node
 
     def add_include_cols(self, include_columns: List[str]):
         for column in include_columns:
@@ -875,34 +879,32 @@ class FlowGraph:
 
         cloud_connection_settings = get_local_cloud_connection(cloud_storage_read_settings.connection_name,
                                                                node_cloud_storage_reader.user_id)
+        if cloud_connection_settings is None and cloud_storage_read_settings.auth_mode == "aws-cli":
+            # If the auth mode is aws-cli, we do not need connection settings
+            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
         if cloud_connection_settings is None:
             raise HTTPException(status_code=400, detail="Cloud connection settings not found")
-        settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
-                                                    connection=cloud_connection_settings)
+
+
         def _func():
+            settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
+                                                        connection=cloud_connection_settings)
             fl = FlowDataEngine.from_cloud_storage_obj(settings)
             return fl
 
-        node = self.get_node(node_cloud_storage_reader.node_id)
+        def schema_callback():
+            logger.info("Starting to run the schema callback for cloud storage reader")
+            return _func().schema
 
-        if node:
-            node.node_type = node_type
-            node.name = node_type
-            node.function = _func
-            node.setting_input = node_cloud_storage_reader
-            node.node_settings.cache_results = node_cloud_storage_reader.cache_results
-            if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
-        else:
-            node = FlowNode(node_cloud_storage_reader.node_id,
-                            function=_func,
-                            setting_input=node_cloud_storage_reader,
-                            name=node_type, node_type=node_type,
-                            parent_uuid=self.uuid,
-                            )
-            self._node_db[node_cloud_storage_reader.node_id] = node
+        node = self.add_node_step(node_id=node_cloud_storage_reader.node_id,
+                                  function=_func,
+                                  cache_results=node_cloud_storage_reader.cache_results,
+                                  setting_input=node_cloud_storage_reader,
+                                  schema_callback=schema_callback,
+                                  node_type=node_type
+                                  )
+        if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
             self._flow_starts.append(node)
-            self._node_ids.append(node_cloud_storage_reader.node_id)
 
     def add_external_source(self,
                             external_source_input: input_schema.NodeExternalSource):

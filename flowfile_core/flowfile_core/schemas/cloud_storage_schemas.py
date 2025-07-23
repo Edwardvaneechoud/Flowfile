@@ -2,7 +2,7 @@
 
 from typing import Optional, Literal
 
-from pydantic import BaseModel, SecretStr, field_validator
+from pydantic import BaseModel, SecretStr, field_validator, Field
 
 from flowfile_core.schemas.schemas import SecretRef
 

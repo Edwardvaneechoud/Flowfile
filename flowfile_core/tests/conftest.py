@@ -47,7 +47,6 @@ STARTUP_CHECK_INTERVAL = 2  # seconds
 SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # seconds
 
 
-
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
     """Setup the test database and clean up after tests"""

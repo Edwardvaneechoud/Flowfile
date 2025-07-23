@@ -36,7 +36,6 @@ class CloudStorageReader:
                 connection.aws_region = boto3.Session().region_name
             except Exception:
                 pass
-
         if connection.aws_allow_unsafe_html:
             storage_options["aws_allow_http"] = str(connection.aws_allow_unsafe_html)
         if connection.auth_method == "access_key":
@@ -46,7 +45,8 @@ class CloudStorageReader:
                 storage_options["aws_secret_access_key"] = connection.aws_secret_access_key.get_secret_value()
             if connection.aws_region:
                 storage_options["aws_region"] = connection.aws_region
-
+            if connection.endpoint_url:
+                storage_options["endpoint_url"] = connection.endpoint_url
         elif connection.auth_method == "iam_role":
             # IAM role authentication
             if connection.aws_role_arn:
@@ -55,11 +55,7 @@ class CloudStorageReader:
                 pass
         else:
             storage_options['aws_region'] = connection.aws_region
-        # Add endpoint URL if provided (for S3-compatible services)
-        if connection.endpoint_url:
-            storage_options["endpoint_url"] = connection.endpoint_url
 
-        # SSL verification
         if not connection.verify_ssl:
             storage_options["verify"] = "False"
         return storage_options

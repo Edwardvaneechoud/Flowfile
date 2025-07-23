@@ -66,8 +66,8 @@ class NodeStepInputs:
 
 
 class NodeSchemaInformation:
-    result_schema: Optional[List[FlowfileColumn]] = []  # resulting schema of the function
-    predicted_schema: Optional[List[FlowfileColumn]] = []  # predicted resulting schema of the function
+    result_schema: Optional[List[FlowfileColumn]] = None  # resulting schema of the function
+    predicted_schema: Optional[List[FlowfileColumn]] = None  # predicted resulting schema of the function
     input_columns: List[str] = []  # columns that are needed for the function
     drop_columns: List[str] = []  # columns that will not be available after the function
     output_columns: List[FlowfileColumn] = []  # columns that will be added with the function

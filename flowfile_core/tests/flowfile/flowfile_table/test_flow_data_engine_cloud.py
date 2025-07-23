@@ -25,6 +25,34 @@ except ModuleNotFoundError:
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
 
 
+import os
+import pytest
+
+@pytest.fixture
+def s3_env_vars():
+    """A pytest fixture to set S3 environment variables for a test."""
+    original_vars = {
+        key: os.environ.get(key) for key in [
+            "AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+            "AWS_REGION", "AWS_ALLOW_HTTP"
+        ]
+    }
+
+    os.environ["AWS_ENDPOINT_URL"] = "http://localhost:9000"
+    os.environ["AWS_ACCESS_KEY_ID"] = "minioadmin"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin"
+    os.environ["AWS_REGION"] = "us-east-1"
+    os.environ["AWS_ALLOW_HTTP"] = "true"
+
+    yield
+
+    for key, value in original_vars.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 @dataclass
 class S3TestReadCase:
     """Test case for S3 reading functionality."""
@@ -64,7 +92,7 @@ def source_flow_data_engine():
 
 
 @pytest.fixture
-def aws_cli_connection():
+def aws_access_key_connection():
     """Reusable AWS CLI connection configuration."""
     minio_connection = FullCloudStorageConnection(
         connection_name="minio-test",
@@ -233,13 +261,13 @@ S3_WRITE_TEST_CASES = [
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
 @pytest.mark.parametrize("test_case", S3_READ_TEST_CASES, ids=lambda tc: tc.id)
-def test_read_from_s3_with_aws_cli(test_case: S3TestReadCase, aws_cli_connection):
+def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_connection):
     """Test reading various file formats and configurations from S3."""
     if test_case.read_settings.file_format == "delta":
-        aws_cli_connection.aws_allow_unsafe_html = True
+        aws_access_key_connection.aws_allow_unsafe_html = True
     # Create settings with the bundled read_settings
     settings = CloudStorageReadSettingsInternal(
-        connection=aws_cli_connection,
+        connection=aws_access_key_connection,
         read_settings=test_case.read_settings
     )
 
@@ -258,7 +286,116 @@ def test_read_from_s3_with_aws_cli(test_case: S3TestReadCase, aws_cli_connection
     assert flow_data_engine.get_number_of_records(force_calculate=True) != 6_666_666
 
 
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+@pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
+def test_write_to_s3_with_aws_keys(
+        test_case: S3TestWriteCase,
+        source_flow_data_engine: FlowDataEngine,
+        aws_access_key_connection: FullCloudStorageConnection
+):
+    """
+    Tests writing data to S3 and verifies the output by reading it back.
+    """
+    logger.info(f"--- Running S3 Write Test: {test_case.id} ---")
+    logger.info(f"Writing to: {test_case.write_settings.resource_path}")
+    added_values: list[str] = []
+    if test_case.write_settings.file_format == "delta":
+        aws_access_key_connection.aws_allow_unsafe_html = True
+    for i in range(5 if test_case.write_settings.write_mode == 'append' else 1):
+        now = str(datetime.now())
+        added_values.append(now)
+        output_file = source_flow_data_engine.apply_flowfile_formula(f'"{now}"', "ref_col")
+        write_settings_internal = CloudStorageWriteSettingsInternal(
+            connection=aws_access_key_connection,
+            write_settings=test_case.write_settings
+        )
+        output_file.to_cloud_storage_obj(write_settings_internal)
+    read_settings = CloudStorageReadSettingsInternal(
+        connection=aws_access_key_connection,
+        read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()))
+    now_vals = (FlowDataEngine.from_cloud_storage_obj(read_settings).select_columns(["ref_col"])
+                .make_unique(UniqueInput(columns=["ref_col"]))).to_raw_data().data[0]
+    for now_value in added_values:
+        assert now_value in now_vals, "Data did not update"
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+@pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
+def test_write_to_s3_with_aws_env_vars(
+        test_case: S3TestWriteCase,
+        source_flow_data_engine: FlowDataEngine,
+        s3_env_vars: Dict[str, str],
+):
+    """
+    Tests writing data to S3 and verifies the output by reading it back.
+    """
+    logger.info(f"--- Running S3 Write Test: {test_case.id} ---")
+    logger.info(f"Writing to: {test_case.write_settings.resource_path}")
+    added_values: list[str] = []
+    connection = FullCloudStorageConnection(
+        connection_name="minio-test-env-vars",
+        storage_type="s3",
+        auth_method="aws-cli",
+        aws_region="us-east-1",
+        endpoint_url="http://localhost:9000"
+    )
+    test_case.write_settings.auth_mode = "aws-cli"
+    if test_case.write_settings.file_format == "delta":
+        connection.aws_allow_unsafe_html = True
+    for i in range(5 if test_case.write_settings.write_mode == 'append' else 1):
+        now = str(datetime.now())
+        added_values.append(now)
+        output_file = source_flow_data_engine.apply_flowfile_formula(f'"{now}"', "ref_col")
+        write_settings_internal = CloudStorageWriteSettingsInternal(
+            connection=connection,
+            write_settings=test_case.write_settings
+        )
+        output_file.to_cloud_storage_obj(write_settings_internal)
+    read_settings = CloudStorageReadSettingsInternal(
+        connection=connection,
+        read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()))
+    now_vals = (FlowDataEngine.from_cloud_storage_obj(read_settings).select_columns(["ref_col"])
+                .make_unique(UniqueInput(columns=["ref_col"]))).to_raw_data().data[0]
+    for now_value in added_values:
+        assert now_value in now_vals, "Data did not update"
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+@pytest.mark.parametrize("test_case", S3_READ_TEST_CASES, ids=lambda tc: tc.id)
+def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
+    """
+    Tests reading various file formats from S3 using environment variables for authentication.
+    """
+    # Create a connection object that relies on environment variables
+    connection = FullCloudStorageConnection(
+        connection_name="minio-test-env-vars",
+        storage_type="s3",
+        auth_method="aws-cli",
+        aws_region="us-east-1",
+        endpoint_url="http://localhost:9000"
+    )
+
+    if test_case.read_settings.file_format == "delta":
+        connection.aws_allow_unsafe_html = True
+    test_case.read_settings.auth_mode = "aws-cli"
+    settings = CloudStorageReadSettingsInternal(
+        connection=connection,
+        read_settings=test_case.read_settings
+    )
+
+    logger.info(f"Testing scenario with env vars: {test_case.id}")
+    logger.info(f"Resource path: {test_case.read_settings.resource_path}")
+
+    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
+    assert flow_data_engine is not None
+    assert flow_data_engine.lazy is True
+    assert flow_data_engine.schema is not None
+    assert len(flow_data_engine.columns) > 0, "Should have at least one column"
+    # Note: You may want to adjust this assertion to be more specific if possible
+    assert flow_data_engine.get_number_of_records(force_calculate=True) != 6_666_666
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_read_parquet_single():
     """Test reading a Parquet file from S3 using AWS CLI credentials."""
     # Create settings using AWS CLI authentication
@@ -290,36 +427,3 @@ def test_read_parquet_single():
     assert "Parquet SCAN" in sample_data.data_frame.explain(), "Should still have predicate pushdown to Remote scan"
     sample_data.lazy = False
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
-
-
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database connection cannot be established")
-@pytest.mark.parametrize("test_case", S3_WRITE_TEST_CASES, ids=lambda tc: tc.id)
-def test_write_to_s3_with_aws_cli(
-        test_case: S3TestWriteCase,
-        source_flow_data_engine: FlowDataEngine,
-        aws_cli_connection: FullCloudStorageConnection
-):
-    """
-    Tests writing data to S3 and verifies the output by reading it back.
-    """
-    logger.info(f"--- Running S3 Write Test: {test_case.id} ---")
-    logger.info(f"Writing to: {test_case.write_settings.resource_path}")
-    added_values: list[str] = []
-    if test_case.write_settings.file_format == "delta":
-        aws_cli_connection.aws_allow_unsafe_html = True
-    for i in range(5 if test_case.write_settings.write_mode == 'append' else 1):
-        now = str(datetime.now())
-        added_values.append(now)
-        output_file = source_flow_data_engine.apply_flowfile_formula(f'"{now}"', "ref_col")
-        write_settings_internal = CloudStorageWriteSettingsInternal(
-            connection=aws_cli_connection,
-            write_settings=test_case.write_settings
-        )
-        output_file.to_cloud_storage_obj(write_settings_internal)
-    read_settings = CloudStorageReadSettingsInternal(
-        connection=aws_cli_connection,
-        read_settings=CloudStorageReadSettings.model_validate(test_case.write_settings.model_dump()))
-    now_vals = (FlowDataEngine.from_cloud_storage_obj(read_settings).select_columns(["ref_col"])
-                .make_unique(UniqueInput(columns=["ref_col"]))).to_raw_data().data[0]
-    for now_value in added_values:
-        assert now_value in now_vals, "Data did not update"

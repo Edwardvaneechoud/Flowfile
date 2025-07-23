@@ -553,6 +553,8 @@ class FlowDataEngine:
                                credential_provider: Optional[Callable],
                                read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
         try:
+            logger.info("Reading Delta file from cloud storage...")
+            logger.info(f"read_settings: {read_settings}")
             scan_kwargs = {"source": resource_path}
             if read_settings.delta_version:
                 scan_kwargs['version'] = read_settings.delta_version

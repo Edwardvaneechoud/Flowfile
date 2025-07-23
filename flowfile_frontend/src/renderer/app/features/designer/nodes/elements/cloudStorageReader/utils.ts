@@ -3,7 +3,7 @@ import { NodeCloudStorageReader, CloudStorageReadSettings } from "../../../baseN
 
 export const createNodeCloudStorageReader = (flowId: number, nodeId: number): NodeCloudStorageReader => {
   const cloudStorageReadSettings: CloudStorageReadSettings = {
-    auth_mode: "access_key",
+    auth_mode: "aws-cli",
     scan_mode: "directory",
     resource_path: "",
     file_format: undefined,

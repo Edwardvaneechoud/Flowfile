@@ -45,6 +45,19 @@ def cloud_connection():
     return minio_connection
 
 
+@pytest.fixture()
+def cli_cloud_connection():
+    """Reusable AWS CLI connection configuration."""
+    minio_connection = FullCloudStorageConnection(
+        connection_name="minio-test",
+        storage_type="s3",
+        auth_method="aws-cli",
+        aws_region="us-east-1",
+        endpoint_url="http://localhost:9000",
+    )
+    return minio_connection
+
+
 def test_database_connection():
     user_id = 1
     connection = FullDatabaseConnection(username='testuser', password='testpass',
@@ -178,6 +191,17 @@ def test_store_and_delete_cloud_connection(cloud_connection):
 
         deleted_secret = get_encrypted_secret(user_id, secret_name)
         assert deleted_secret is None
+
+
+def test_store_aws_cli_cloud_connection(cli_cloud_connection):
+    user_id = 1
+    del_all_cloud_connections(user_id)
+    # Setup: Store the connection
+    with get_db_context() as db:
+        store_cloud_connection(db, cli_cloud_connection, user_id)
+    # Retrieve the connection
+    with get_db_context() as db:
+        schema = get_cloud_connection_schema(db, cli_cloud_connection.connection_name, user_id)
 
 
 def test_get_cloud_connection_schema(cloud_connection):
