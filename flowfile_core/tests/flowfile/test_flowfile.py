@@ -1018,5 +1018,13 @@ def test_schema_callback_cloud_read(flow_logger):
                                                         cloud_storage_settings=read_settings)
     graph.add_cloud_storage_reader(node_settings)
     node = graph.get_node(1)
-    node.schema_callback.future is not None, 'Schema callback future should be set'
-    len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    assert node.schema_callback.future is not None, 'Schema callback future should be set'
+    assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    original_schema_callback = id(node.schema_callback)
+    graph.add_cloud_storage_reader(node_settings)
+    # breakpoint()
+    new_schema_callback = id(node.schema_callback)
+    assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
+    # breakpoint()
+    node.get_table_example(True)
+    # breakpoint()

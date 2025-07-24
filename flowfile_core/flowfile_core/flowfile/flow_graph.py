@@ -668,10 +668,6 @@ class FlowGraph:
             input_nodes = [self.get_node(node_id) for node_id in input_node_ids]
         else:
             input_nodes = None
-        if cache_results is None:
-            if hasattr(setting_input, 'cache_results'):
-                cache_results = getattr(setting_input, 'cache_results')
-                cache_results = False if cache_results is None else cache_results
         if isinstance(input_columns, str):
             input_columns = [input_columns]
         if (
@@ -887,20 +883,18 @@ class FlowGraph:
 
 
         def _func():
+            logger.info("Starting to run the schema callback for cloud storage reader")
+            self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
             settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
                                                         connection=cloud_connection_settings)
             fl = FlowDataEngine.from_cloud_storage_obj(settings)
             return fl
 
-        def schema_callback():
-            logger.info("Starting to run the schema callback for cloud storage reader")
-            return _func().schema
 
         node = self.add_node_step(node_id=node_cloud_storage_reader.node_id,
                                   function=_func,
                                   cache_results=node_cloud_storage_reader.cache_results,
                                   setting_input=node_cloud_storage_reader,
-                                  schema_callback=schema_callback,
                                   node_type=node_type
                                   )
         if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):

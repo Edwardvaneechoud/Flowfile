@@ -31,6 +31,7 @@ class FlowNode:
     results: NodeResults
     node_information: Optional[schemas.NodeInformation] = None
     leads_to_nodes: List["FlowNode"] = []  # list with target flows, after execution the step will trigger those step(s)
+    user_provided_schema_callback: Optional[Callable] = None  # user provided callback function for schema calculation
     _setting_input: Any = None
     _hash: Optional[str] = None  # host this for caching results
     _function: Callable = None  # the function that needs to be executed when triggered
@@ -60,8 +61,29 @@ class FlowNode:
     def state_needs_reset(self, v: bool):
         self._state_needs_reset = v
 
+    @staticmethod
+    def create_schema_callback_from_function(f: Callable) -> Callable[[], List[FlowfileColumn]]:
+        """
+        Create a schema callback from a function.
+        :param f: Function that returns the schema
+        :return: Callable that returns the schema
+        """
+        def schema_callback() -> List[FlowfileColumn]:
+            try:
+                logger.info('Executing the schema callback function based on the node function')
+                return f().schema
+            except Exception as e:
+                logger.warning(f'Error with the schema callback: {e}')
+                return []
+        return schema_callback
+
     @property
-    def schema_callback(self):
+    def schema_callback(self) -> SingleExecutionFuture:
+        if self._schema_callback is None:
+            if self.user_provided_schema_callback is not None:
+                self.schema_callback = self.user_provided_schema_callback
+            else:
+                self.schema_callback = self.create_schema_callback_from_function(self._function)
         return self._schema_callback
 
     @schema_callback.setter
@@ -76,7 +98,6 @@ class FlowNode:
             return []
 
         self._schema_callback = SingleExecutionFuture(f, error_callback)
-        self._schema_callback.start()
 
     @property
     def is_start(self) -> bool:
@@ -133,7 +154,7 @@ class FlowNode:
                     pos_y: float = 0,
                     schema_callback: Callable = None,
                     ):
-
+        self.user_provided_schema_callback = schema_callback
         self.node_information.y_position = pos_y
         self.node_information.x_position = pos_x
         self.node_information.setting_input = setting_input
@@ -147,8 +168,6 @@ class FlowNode:
         if hasattr(setting_input, 'cache_results'):
             self.node_settings.cache_results = setting_input.cache_results
 
-        self.setting_input = setting_input
-
         self.results.errors = None
         self.add_lead_to_in_depend_source()
         _ = self.hash
@@ -156,8 +175,7 @@ class FlowNode:
         if self.node_template is None:
             raise Exception(f'Node template {self.node_type} not found')
         self.node_default = node_interface.node_defaults.get(self.node_type)
-        self.schema_callback = schema_callback
-
+        self.setting_input = setting_input  # wait until the end so that the hash is calculated correctly
 
     @property
     def name(self):
@@ -300,7 +318,6 @@ class FlowNode:
         Method to get a predicted schema based on the columns that are dropped and added
         :return:
         """
-
         if self.node_schema.predicted_schema and not force:
 
             return self.node_schema.predicted_schema
@@ -605,23 +622,21 @@ class FlowNode:
         return self._hash != self.calculate_hash(self.setting_input)
 
     def reset(self, deep: bool = False):
-        if self._hash is None:
-            _ = self.hash  # Ensure the hash is calculated
         needs_reset = self.needs_reset() or deep
-
         if needs_reset:
             logger.info(f'{self.node_id}: Node needs reset')
             self.node_stats.has_run = False
             self.results.reset()
-            if self.schema_callback:
-
-                self.schema_callback.reset()
+            if self.is_correct:
+                self._schema_callback = None  # Ensure the schema callback is reset
+                logger.info(f'{self.node_id}: Resetting the schema callback')
+                self.schema_callback.start()
             self.node_schema.result_schema = None
             self.node_schema.predicted_schema = None
             self._hash = None
             self.node_information.is_setup = None
             self.evaluate_nodes()
-            _ = self.hash
+            _ = self.hash  # Recalculate the hash after reset
 
     def delete_lead_to_node(self, node_id: int) -> bool:
         logger.info(f'Deleting lead to node: {node_id}')
