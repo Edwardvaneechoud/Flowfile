@@ -312,9 +312,12 @@ class JoinInput(JoinSelectMixin):
         self.join_mapping = self.parse_join_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)
+        self.set_join_keys()
+        self.how = how
+
+    def set_join_keys(self):
         [setattr(v, "join_key", v.old_name in self._left_join_keys) for v in self.left_select.renames]
         [setattr(v, "join_key", v.old_name in self._right_join_keys) for v in self.right_select.renames]
-        self.how = how
 
     def get_join_key_renames(self, filter_drop: bool = False) -> FullJoinKeyResponse:
         return FullJoinKeyResponse(self.left_select.get_join_key_renames(side="left", filter_drop=filter_drop),
@@ -354,6 +357,7 @@ class JoinInput(JoinSelectMixin):
             return self.left_select.new_cols & self.right_select.new_cols
 
     def auto_rename(self):
+        self.set_join_keys()
         overlapping_records = self.overlapping_records
         while len(overlapping_records) > 0:
             for right_col in self.right_select.renames:

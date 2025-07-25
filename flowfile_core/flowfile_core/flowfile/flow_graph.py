@@ -485,6 +485,7 @@ class FlowGraph:
 
     def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
+            breakpoint()
             for left_select in join_settings.join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in join_settings.join_input.right_select.renames:

@@ -128,7 +128,6 @@ class CloudStorageReader:
             # Use AWS CLI credentials
             # Polars should automatically pick these up, so we don't need a custom provider
             print(f"Using AWS region from connection: {connection.aws_region}")
-            breakpoint()
             if connection.aws_region is not None:
                 print(f"Using AWS region from connection: {connection.aws_region}")
                 return pl.CredentialProviderAWS(profile_name=connection.connection_name,

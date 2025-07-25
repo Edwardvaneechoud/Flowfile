@@ -600,8 +600,6 @@ class FlowDataEngine:
                     resource_path = resource_path.rstrip("/") + "/*.csv"
                 scan_kwargs["source"] = resource_path
             print("scan kwargs:", scan_kwargs)
-            breakpoint()
-
             lf = pl.scan_csv(**scan_kwargs)
 
             return cls(
@@ -1496,7 +1494,6 @@ class FlowDataEngine:
         left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input)
         left, right = rename_df_table_for_join(left, right, join_input.get_join_key_renames())
         if join_input.how == 'right':
-
             joined_df = right.join(
                 other=left,
                 left_on=join_input.right_join_keys,
