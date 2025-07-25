@@ -2,6 +2,7 @@ import boto3
 
 from typing import Dict, Optional, Any, Callable
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
+import polars as pl
 
 
 class CloudStorageReader:
@@ -33,7 +34,9 @@ class CloudStorageReader:
         storage_options = {}
         if not connection.aws_region:
             try:
-                connection.aws_region = boto3.Session().region_name
+                boto3_region_name = boto3.Session().region_name
+                if boto3_region_name:
+                    connection.aws_region = boto3_region_name
             except Exception:
                 pass
         if connection.aws_allow_unsafe_html:
@@ -47,6 +50,7 @@ class CloudStorageReader:
                 storage_options["aws_region"] = connection.aws_region
             if connection.endpoint_url:
                 storage_options["endpoint_url"] = connection.endpoint_url
+            storage_options["aws_session_token"] = ""  # Overwrite so that it is not using AWS-cli credentials
         elif connection.auth_method == "iam_role":
             # IAM role authentication
             if connection.aws_role_arn:
@@ -54,7 +58,8 @@ class CloudStorageReader:
                 # This will be handled by the credential_provider parameter
                 pass
         else:
-            storage_options['aws_region'] = connection.aws_region
+            if connection.aws_region and connection.auth_method != "aws-cli":
+                storage_options['aws_region'] = connection.aws_region
 
         if not connection.verify_ssl:
             storage_options["verify"] = "False"
@@ -122,5 +127,11 @@ class CloudStorageReader:
         elif connection.storage_type == "s3" and connection.auth_method == "aws-cli":
             # Use AWS CLI credentials
             # Polars should automatically pick these up, so we don't need a custom provider
-            return None
+            print(f"Using AWS region from connection: {connection.aws_region}")
+            breakpoint()
+            if connection.aws_region is not None:
+                print(f"Using AWS region from connection: {connection.aws_region}")
+                return pl.CredentialProviderAWS(profile_name=connection.connection_name,
+                                                region_name=connection.aws_region)
+            return pl.CredentialProviderAWS(profile_name=connection.connection_name)
         return None

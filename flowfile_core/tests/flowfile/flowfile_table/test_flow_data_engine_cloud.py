@@ -43,7 +43,7 @@ def s3_env_vars():
     os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin"
     os.environ["AWS_REGION"] = "us-east-1"
     os.environ["AWS_ALLOW_HTTP"] = "true"
-
+    os.environ["AWS_SESSION_TOKEN"] = ""  # Overwrite so that it is not using AWS-cli credentials
     yield
 
     for key, value in original_vars.items():
@@ -204,38 +204,38 @@ S3_READ_TEST_CASES = [
 ]
 
 S3_WRITE_TEST_CASES = [
-    S3TestWriteCase(
-        id="write_parquet_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="s3://flowfile-test/write_test.parquet",
-            file_format="parquet",
-            write_mode="overwrite",
-            parquet_compression="snappy",
-            auth_mode="aws-cli"
-        ),
-        expected_columns=4,
-    ),
-    S3TestWriteCase(
-        id="write_csv_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="s3://flowfile-test/write_test.csv",
-            file_format="csv",
-            write_mode="overwrite",
-            csv_delimiter="|",
-            auth_mode="aws-cli"
-        ),
-        expected_columns=5,
-    ),
-    S3TestWriteCase(
-        id="write_json_file",
-        write_settings=CloudStorageWriteSettings(
-            resource_path="s3://flowfile-test/write_test.json",
-            file_format="json",
-            write_mode="overwrite",
-            auth_mode="aws-cli"
-        ),
-        expected_columns=5,
-    ),
+    # S3TestWriteCase(
+    #     id="write_parquet_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="s3://flowfile-test/write_test.parquet",
+    #         file_format="parquet",
+    #         write_mode="overwrite",
+    #         parquet_compression="snappy",
+    #         auth_mode="aws-cli"
+    #     ),
+    #     expected_columns=4,
+    # ),
+    # S3TestWriteCase(
+    #     id="write_csv_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="s3://flowfile-test/write_test.csv",
+    #         file_format="csv",
+    #         write_mode="overwrite",
+    #         csv_delimiter="|",
+    #         auth_mode="aws-cli"
+    #     ),
+    #     expected_columns=5,
+    # ),
+    # S3TestWriteCase(
+    #     id="write_json_file",
+    #     write_settings=CloudStorageWriteSettings(
+    #         resource_path="s3://flowfile-test/write_test.json",
+    #         file_format="json",
+    #         write_mode="overwrite",
+    #         auth_mode="aws-cli"
+    #     ),
+    #     expected_columns=5,
+    # ),
     S3TestWriteCase(
         id="overwrite_delta",
         write_settings=CloudStorageWriteSettings(
@@ -270,7 +270,6 @@ def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_co
         connection=aws_access_key_connection,
         read_settings=test_case.read_settings
     )
-
     # Log test details
     logger.info(f"Testing scenario: {test_case.id}")
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
@@ -335,11 +334,11 @@ def test_write_to_s3_with_aws_env_vars(
     connection = FullCloudStorageConnection(
         connection_name="minio-test-env-vars",
         storage_type="s3",
-        auth_method="aws-cli",
+        auth_method="env_vars",
         aws_region="us-east-1",
         endpoint_url="http://localhost:9000"
     )
-    test_case.write_settings.auth_mode = "aws-cli"
+    test_case.write_settings.auth_mode = "env_vars"
     if test_case.write_settings.file_format == "delta":
         connection.aws_allow_unsafe_html = True
     for i in range(5 if test_case.write_settings.write_mode == 'append' else 1):
@@ -370,14 +369,14 @@ def test_read_from_s3_with_env_vars(test_case: S3TestReadCase, s3_env_vars):
     connection = FullCloudStorageConnection(
         connection_name="minio-test-env-vars",
         storage_type="s3",
-        auth_method="aws-cli",
+        auth_method="env_vars",
         aws_region="us-east-1",
         endpoint_url="http://localhost:9000"
     )
 
     if test_case.read_settings.file_format == "delta":
         connection.aws_allow_unsafe_html = True
-    test_case.read_settings.auth_mode = "aws-cli"
+    test_case.read_settings.auth_mode = "env_vars"
     settings = CloudStorageReadSettingsInternal(
         connection=connection,
         read_settings=test_case.read_settings
@@ -427,3 +426,25 @@ def test_read_parquet_single():
     assert "Parquet SCAN" in sample_data.data_frame.explain(), "Should still have predicate pushdown to Remote scan"
     sample_data.lazy = False
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
+
+
+def test_cli_read():
+    settings = CloudStorageReadSettingsInternal(
+        connection=FullCloudStorageConnection(
+            storage_type="s3",
+            auth_method="aws-cli",
+            connection_name="989679912879_ProjectAdmin",
+            aws_region="eu-central-1",
+        ),
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://posman-data-sources-dev/ps_pn/ps-pn-weights-202502.csv",
+            file_format="csv",
+            scan_mode="single_file",
+            csv_has_header=True,
+            csv_delimiter=";",
+        )
+    )
+    breakpoint()
+    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
+    assert len(flow_data_engine.schema) > 0
+

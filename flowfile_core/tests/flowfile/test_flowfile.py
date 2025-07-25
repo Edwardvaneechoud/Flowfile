@@ -1028,3 +1028,61 @@ def test_schema_callback_cloud_read(flow_logger):
     # breakpoint()
     node.get_table_example(True)
     # breakpoint()
+
+
+def test_cli_read():
+    graph = create_graph()
+    breakpoint()
+    read_settings=cloud_ss.CloudStorageReadSettings(
+            resource_path="s3://posman-data-sources-dev/ps_pn/ps-pn-weights-202502.csv",
+            file_format="csv",
+            scan_mode="single_file",
+            auth_mode="aws-cli",
+            csv_delimiter=",",
+            csv_has_header=True,
+            csv_encoding="utf8"
+        )
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    node.schema
+
+
+def test_multi_join():
+
+    breakpoint()
+    df_1 = pl.scan_csv(
+        "/Users/edwardvanechoud/Downloads/2025-07-25 1_44pm.csv",
+        separator=",",
+        has_header=True,
+        ignore_errors=False,
+        encoding="utf8-lossy",
+        skip_rows=0,
+    ).collect()
+
+    df_3 = df_1.group_by(['BRANDNAME', 'CHANNELNAME', 'PARTNERNAME', 'INDICATOR']).agg([
+    ])
+
+    graph = create_graph(1)
+    graph.add_read(input_schema.NodeRead(flow_id=1, node_id=1, received_file=input_schema.ReceivedTable(name="2025-07-25 1_44pm.csv",
+                                                                                         path="/Users/edwardvanechoud/Downloads/2025-07-25 1_44pm.csv",
+                                                                                         file_type="csv",has_headers=True,
+                                                                                         encoding="utf8-lossy",)))
+    graph.add_group_by(input_schema.NodeGroupBy(
+        flow_id=1, node_id=2,
+        group_by_input=transform_schema.GroupByInput(
+            agg_cols=[transform_schema.AggColl("BRANDNAME", agg="groupby"),
+                      transform_schema.AggColl("CHANNELNAME", agg="groupby"),
+                      transform_schema.AggColl("PARTNERNAME", agg="groupby"),
+                      transform_schema.AggColl("INDICATOR", agg="groupby")]))
+    )
+    graph.add_join(input_schema.NodeJoin(flow_id=1, node_id=3, join_input=transform_schema.JoinInput(
+        join_mapping=[transform_schema.JoinMapping(left_col='BRANDNAME', right_col='BRANDNAME'),
+                      transform_schema.JoinMapping(left_col='CHANNELNAME', right_col='CHANNELNAME'),
+                      transform_schema.JoinMapping(left_col='PARTNERNAME', right_col='PARTNERNAME'),
+                      transform_schema.JoinMapping(left_col='INDICATOR', right_col='INDICATOR')],
+        left_select=transform_schema.SelectInput(renames=[]),
+        right_select=transform_schema.SelectInput(renames=[]),
+        how='left',
+    )))

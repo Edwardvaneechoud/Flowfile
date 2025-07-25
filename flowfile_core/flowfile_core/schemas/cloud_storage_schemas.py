@@ -7,7 +7,7 @@ from pydantic import BaseModel, SecretStr, field_validator, Field
 from flowfile_core.schemas.schemas import SecretRef
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
-AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli", "auto"]
+AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli", "env_vars"]
 
 
 class AuthSettingsInput(BaseModel):

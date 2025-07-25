@@ -254,6 +254,7 @@ def populate_test_data(endpoint_url: str, access_key: str, secret_key: str, buck
         "AWS_REGION": "us-east-1",
         "AWS_ALLOW_HTTP": "true",
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true"
+        "AWS_S3_"
     }
 
     # --- Data Generation ---

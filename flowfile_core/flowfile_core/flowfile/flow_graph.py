@@ -23,7 +23,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal, FullCloudStorageConnection
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal, FullCloudStorageConnection, CloudStorageReadSettings
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -880,7 +880,6 @@ class FlowGraph:
             cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
         if cloud_connection_settings is None:
             raise HTTPException(status_code=400, detail="Cloud connection settings not found")
-
 
         def _func():
             logger.info("Starting to run the schema callback for cloud storage reader")

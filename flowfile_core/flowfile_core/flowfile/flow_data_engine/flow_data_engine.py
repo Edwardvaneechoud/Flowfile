@@ -465,7 +465,8 @@ class FlowDataEngine:
                 read_settings.resource_path,
                 storage_options,
                 credential_provider,
-                read_settings.scan_mode == "directory"
+                read_settings.scan_mode == "directory",
+
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
@@ -522,11 +523,10 @@ class FlowDataEngine:
             # Use scan_parquet for lazy evaluation
             if is_directory:
 
-                # Handle directory scan with wildcard
                 if not resource_path.endswith("*.parquet"):
                     resource_path = resource_path.rstrip("/") + "/*.parquet"
 
-                scan_kwargs = {"source": resource_path,}
+                scan_kwargs = {"source": resource_path}
             else:
                 scan_kwargs = {"source": resource_path}
             if storage_options:
@@ -589,16 +589,19 @@ class FlowDataEngine:
                 "separator": read_settings.csv_delimiter,
                 "encoding": read_settings.csv_encoding,
             }
-
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
+                print("Using credential provider:", credential_provider.__dict__)
 
             if read_settings.scan_mode == "directory":
                 if not resource_path.endswith("*.csv"):
                     resource_path = resource_path.rstrip("/") + "/*.csv"
                 scan_kwargs["source"] = resource_path
+            print("scan kwargs:", scan_kwargs)
+            breakpoint()
+
             lf = pl.scan_csv(**scan_kwargs)
 
             return cls(
