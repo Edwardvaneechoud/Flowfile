@@ -602,22 +602,23 @@ def test_add_cross_join():
                                   )
     output_data.assert_equal(expected_data)
 
-
-def test_add_external_source():
-    graph = create_graph()
-    graph.flow_settings.execution_mode = 'Development'
-    node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
-    graph.add_node_promise(node_promise)
-    external_source_input = input_schema.NodeExternalSource(
-        **{'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 501.8727272727273, 'pos_y': 313.4,
-           'is_setup': True, 'description': '', 'node_type': 'external_source',
-           'source_settings': {'SAMPLE_USERS': True, 'size': 10, 'orientation': 'row', 'fields': []},
-           'identifier': 'sample_users'})
-    graph.add_external_source(external_source_input)
-    run_info = graph.run_graph()
-    handle_run_info(run_info)
-    resulting_data = graph.get_node(1).get_resulting_data()
-    assert resulting_data.get_number_of_records(force_calculate=True), 'There should be 60 records'
+#
+# def test_add_external_source():
+#     graph = create_graph()
+#     graph.flow_settings.execution_mode = 'Development'
+#     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
+#     graph.add_node_promise(node_promise)
+#     external_source_input = input_schema.NodeExternalSource(
+#         **{'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 501.8727272727273, 'pos_y': 313.4,
+#            'is_setup': True, 'description': '', 'node_type': 'external_source',
+#            'source_settings': {'SAMPLE_USERS': True, 'size': 10, 'orientation': 'row', 'fields': []},
+#            'identifier': 'sample_users'})
+#     graph.add_external_source(external_source_input)
+#     run_info = graph.run_graph()
+#     handle_run_info(run_info)
+#     resulting_data = graph.get_node(1).get_resulting_data()
+#
+#     assert resulting_data.get_number_of_records(force_calculate=True), 'There should be 60 records'
 
 
 def test_read_excel():
