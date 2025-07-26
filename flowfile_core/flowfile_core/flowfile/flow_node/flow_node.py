@@ -204,7 +204,6 @@ class FlowNode:
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run:
                 self.function = FlowDataEngine(setting_input.raw_data_format)
                 self.reset()
-                breakpoint()
                 self.get_predicted_schema()
         elif self._setting_input is not None:
             self.reset()
