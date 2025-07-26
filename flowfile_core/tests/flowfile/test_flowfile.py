@@ -602,7 +602,7 @@ def test_add_cross_join():
                                   )
     output_data.assert_equal(expected_data)
 
-#
+
 # def test_add_external_source():
 #     graph = create_graph()
 #     graph.flow_settings.execution_mode = 'Development'

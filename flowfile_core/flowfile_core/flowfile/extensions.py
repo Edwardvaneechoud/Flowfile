@@ -16,6 +16,7 @@ def get_instant_func_results(node_step: FlowNode, func_string: str) -> InstantFu
     if len(node_step.main_input) == 0:
         return InstantFuncResult(result='No input data connected, so cannot evaluate the result', success=None)
     node_input = node_step.main_input[0]
+    breakpoint()
     try:
         if node_input.node_stats.has_run and node_input.is_setup and node_input.results.example_data_path:
             df = get_first_row(node_input.results.example_data_path)

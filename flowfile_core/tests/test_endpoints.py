@@ -433,12 +433,13 @@ def test_instant_function_result():
     # Setup nodes
     flow_id = create_flow_with_manual_input()
     add_node(flow_id=flow_id, node_id=2, node_type='formula', pos_x=0, pos_y=0)
+
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
-
     # Await the result
     response = client.get("/custom_functions/instant_result",
                           params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
+    breakpoint()
     assert response.status_code == 200, 'Instant function result failed'
     assert response.json()['success'], 'Instant function result failed'
 

@@ -72,6 +72,11 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/store_data_in_cloud/")
+def store_data_in_cloud(polars_script, background_tasks: BackgroundTasks) -> models.Status:
+    ...
+
+
 @router.post('/store_database_write_result/')
 def store_in_database(database_script_write: models.DatabaseScriptWrite, background_tasks: BackgroundTasks) -> models.Status:
     """
