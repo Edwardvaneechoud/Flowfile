@@ -11,7 +11,7 @@ from typing import Tuple, Generator
 import sys
 import os
 
-os.environ['TESTING'] = 'True'
+os.environ['TESTING'] = 'False'
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from tests.flowfile_core_test_utils import is_docker_available

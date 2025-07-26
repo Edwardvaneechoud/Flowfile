@@ -387,6 +387,7 @@ class FlowDataEngine:
             "target": resource_path,
             "mode": write_settings.write_mode,
         }
+        breakpoint()
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
         if credential_provider:
@@ -562,7 +563,7 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-
+            # {'source': 's3://test-bucket/delta-lake-table', 'storage_options': {'aws_allow_http': 'True', 'aws_access_key_id': 'minioadmin', 'aws_secret_access_key': 'minioadmin', 'aws_region': 'us-east-1', 'endpoint_url': 'http://localhost:9000', 'aws_session_token': '', 'verify': 'False'}}
             lf = pl.scan_delta(**scan_kwargs)
 
             return cls(
@@ -676,7 +677,7 @@ class FlowDataEngine:
         return self.data_frame.select([item])
 
     @property
-    def data_frame(self) -> pl.LazyFrame | pl.DataFrame:
+    def data_frame(self) -> pl.LazyFrame | pl.DataFrame | None:
         """Get the underlying DataFrame with appropriate handling of different states."""
         if self._data_frame is not None and not self.is_future:
             return self._data_frame

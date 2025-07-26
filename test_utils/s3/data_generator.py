@@ -148,16 +148,17 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
         }
     )
     table_identifier = ("default_db", "iceberg_table")
-
     # Create a namespace (like a schema or database) for the table
     try:
         catalog.drop_namespace("default_db")
     except Exception:
         pass  # Ignore if namespace doesn't exist
     catalog.create_namespace("default_db")
-
-    if catalog.table_exists(table_identifier):
+    try:
+        catalog.load_table(table_identifier)
         catalog.drop_table(table_identifier)
+    except:
+        pass
 
     # Create the table schema and object first
     schema = df.to_arrow().schema
@@ -254,7 +255,6 @@ def populate_test_data(endpoint_url: str, access_key: str, secret_key: str, buck
         "AWS_REGION": "us-east-1",
         "AWS_ALLOW_HTTP": "true",
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true"
-        "AWS_S3_"
     }
 
     # --- Data Generation ---

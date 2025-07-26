@@ -2,7 +2,42 @@ import boto3
 
 from typing import Dict, Optional, Any, Callable
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
-import polars as pl
+
+
+def create_storage_options_from_boto_credentials(profile_name: Optional[str],
+                                                 region_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Create a storage options dictionary from AWS credentials using a boto3 profile.
+    This is the most robust way to handle profile-based authentication as it
+    bypasses Polars' internal credential provider chain, avoiding conflicts.
+
+    Parameters
+    ----------
+    profile_name
+        The name of the AWS profile in ~/.aws/credentials.
+    region_name
+        The AWS region to use.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A storage options dictionary for Polars with explicit credentials.
+    """
+    session = boto3.Session(profile_name=profile_name, region_name=region_name)
+    credentials = session.get_credentials()
+    frozen_creds = credentials.get_frozen_credentials()
+
+    storage_options = {
+        "aws_access_key_id": frozen_creds.access_key,
+        "aws_secret_access_key": frozen_creds.secret_key,
+        "aws_session_token": frozen_creds.token,
+    }
+    # Use the session's region if one was resolved, otherwise use the provided one
+    if session.region_name:
+        storage_options["aws_region"] = session.region_name
+
+    print("Boto3: Successfully created storage options with explicit credentials.")
+    return storage_options
 
 
 class CloudStorageReader:
@@ -31,38 +66,43 @@ class CloudStorageReader:
     @staticmethod
     def _get_s3_storage_options(connection: 'FullCloudStorageConnection') -> Dict[str, Any]:
         """Build S3-specific storage options."""
-        storage_options = {}
-        if not connection.aws_region:
-            try:
-                boto3_region_name = boto3.Session().region_name
-                if boto3_region_name:
-                    connection.aws_region = boto3_region_name
-            except Exception:
-                pass
-        if connection.aws_allow_unsafe_html:
-            storage_options["aws_allow_http"] = str(connection.aws_allow_unsafe_html)
-        if connection.auth_method == "access_key":
-            if connection.aws_access_key_id:
-                storage_options["aws_access_key_id"] = connection.aws_access_key_id
-            if connection.aws_secret_access_key:
-                storage_options["aws_secret_access_key"] = connection.aws_secret_access_key.get_secret_value()
-            if connection.aws_region:
-                storage_options["aws_region"] = connection.aws_region
-            if connection.endpoint_url:
-                storage_options["endpoint_url"] = connection.endpoint_url
-            storage_options["aws_session_token"] = ""  # Overwrite so that it is not using AWS-cli credentials
-        elif connection.auth_method == "iam_role":
-            # IAM role authentication
-            if connection.aws_role_arn:
-                # For IAM role, we might need to use a credential provider
-                # This will be handled by the credential_provider parameter
-                pass
-        else:
-            if connection.aws_region and connection.auth_method != "aws-cli":
-                storage_options['aws_region'] = connection.aws_region
+        auth_method = connection.auth_method
+        print(f"Building S3 storage options for auth_method: '{auth_method}'")
 
+        if auth_method == "aws-cli":
+            return create_storage_options_from_boto_credentials(
+                profile_name=connection.connection_name,
+                region_name=connection.aws_region
+            )
+
+        storage_options = {}
+        if connection.aws_region:
+            storage_options["aws_region"] = connection.aws_region
+        if connection.endpoint_url:
+            storage_options["endpoint_url"] = connection.endpoint_url
         if not connection.verify_ssl:
             storage_options["verify"] = "False"
+        if connection.aws_allow_unsafe_html: # Note: Polars uses aws_allow_http
+            storage_options["aws_allow_http"] = "true"
+
+        if auth_method == "access_key":
+            storage_options["aws_access_key_id"] = connection.aws_access_key_id
+            storage_options["aws_secret_access_key"] = connection.aws_secret_access_key.get_secret_value()
+            # Explicitly clear any session token from the environment
+            storage_options["aws_session_token"] = ""
+
+        elif auth_method == "iam_role":
+            # Correctly implement IAM role assumption using boto3 STS client.
+            sts_client = boto3.client('sts', region_name=connection.aws_region)
+            assumed_role_object = sts_client.assume_role(
+                RoleArn=connection.aws_role_arn,
+                RoleSessionName="PolarsCloudStorageReaderSession" # A descriptive session name
+            )
+            credentials = assumed_role_object['Credentials']
+            storage_options["aws_access_key_id"] = credentials['AccessKeyId']
+            storage_options["aws_secret_access_key"] = credentials['SecretAccessKey']
+            storage_options["aws_session_token"] = credentials['SessionToken']
+
         return storage_options
 
     @staticmethod
@@ -123,14 +163,4 @@ class CloudStorageReader:
                 }, None  # expiry
 
             return aws_credential_provider
-
-        elif connection.storage_type == "s3" and connection.auth_method == "aws-cli":
-            # Use AWS CLI credentials
-            # Polars should automatically pick these up, so we don't need a custom provider
-            print(f"Using AWS region from connection: {connection.aws_region}")
-            if connection.aws_region is not None:
-                print(f"Using AWS region from connection: {connection.aws_region}")
-                return pl.CredentialProviderAWS(profile_name=connection.connection_name,
-                                                region_name=connection.aws_region)
-            return pl.CredentialProviderAWS(profile_name=connection.connection_name)
         return None

@@ -1022,29 +1022,9 @@ def test_schema_callback_cloud_read(flow_logger):
     assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
     original_schema_callback = id(node.schema_callback)
     graph.add_cloud_storage_reader(node_settings)
-    # breakpoint()
     new_schema_callback = id(node.schema_callback)
     assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
     # breakpoint()
     node.get_table_example(True)
     # breakpoint()
-
-
-def test_cli_read():
-    graph = create_graph()
-    breakpoint()
-    read_settings=cloud_ss.CloudStorageReadSettings(
-            resource_path="s3://posman-data-sources-dev/ps_pn/ps-pn-weights-202502.csv",
-            file_format="csv",
-            scan_mode="single_file",
-            auth_mode="aws-cli",
-            csv_delimiter=",",
-            csv_has_header=True,
-            csv_encoding="utf8"
-        )
-    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
-                                                        cloud_storage_settings=read_settings)
-    graph.add_cloud_storage_reader(node_settings)
-    node = graph.get_node(1)
-    node.schema
 
