@@ -82,7 +82,7 @@ class FlowNode:
         if self._schema_callback is None:
             if self.user_provided_schema_callback is not None:
                 self.schema_callback = self.user_provided_schema_callback
-            else:
+            elif self.is_start:
                 self.schema_callback = self.create_schema_callback_from_function(self._function)
         return self._schema_callback
 
@@ -204,6 +204,7 @@ class FlowNode:
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run:
                 self.function = FlowDataEngine(setting_input.raw_data_format)
                 self.reset()
+                breakpoint()
                 self.get_predicted_schema()
         elif self._setting_input is not None:
             self.reset()
@@ -318,8 +319,8 @@ class FlowNode:
         Method to get a predicted schema based on the columns that are dropped and added
         :return:
         """
-        if self.node_schema.predicted_schema and not force:
 
+        if self.node_schema.predicted_schema and not force:
             return self.node_schema.predicted_schema
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
             self.print('Getting the data from a schema callback')
@@ -422,7 +423,6 @@ class FlowNode:
     @property
     def schema(self) -> List[FlowfileColumn]:
         try:
-
             if self.is_setup and self.results.errors is None:
                 if self.node_schema.result_schema is not None and len(self.node_schema.result_schema) > 0:
                     return self.node_schema.result_schema
@@ -629,8 +629,9 @@ class FlowNode:
             self.results.reset()
             if self.is_correct:
                 self._schema_callback = None  # Ensure the schema callback is reset
-                logger.info(f'{self.node_id}: Resetting the schema callback')
-                self.schema_callback.start()
+                if self.schema_callback:
+                    logger.info(f'{self.node_id}: Resetting the schema callback')
+                    self.schema_callback.start()
             self.node_schema.result_schema = None
             self.node_schema.predicted_schema = None
             self._hash = None

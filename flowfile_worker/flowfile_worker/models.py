@@ -65,6 +65,14 @@ class DatabaseScriptWrite(DatabaseWriteSettings):
         )
 
 
+class CloudStorageScriptWrite(BaseModel):
+    operation: bytes
+
+    def polars_serializable_object(self):
+        return decodebytes(self.operation)
+
+
+
 class FuzzyJoinInput(BaseModel):
     task_id: Optional[str] = None
     cache_dir: Optional[str] = None

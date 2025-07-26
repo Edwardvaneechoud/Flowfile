@@ -442,6 +442,7 @@ def test_analytics_processor_existing_specs_run():
 def test_analytics_changing_data_processor_existing_specs_run():
     # In this scenario, we want to reset the data types of the columns in the graphic walker settings
     graph = create_big_flow()
+    # We want to run the graph in development mode
     graph.flow_settings.execution_mode = "Performance"
     # Shuffle things up by changing the data type input. Instead of float, we get string as input
     delete_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
@@ -449,6 +450,7 @@ def test_analytics_changing_data_processor_existing_specs_run():
 
     node_step = graph.get_node(3)
     graphic_walker_input = node_step.setting_input.graphic_walker_input
+
     graphic_walker_input = AnalyticsProcessor.create_graphic_walker_input(node_step, graphic_walker_input)
     assert len(graphic_walker_input.specList[0]['encodings']['dimensions']) == 4, 'There should be 4 dimensions'
     assert len(graphic_walker_input.specList[0]['encodings']['measures']) == 3
