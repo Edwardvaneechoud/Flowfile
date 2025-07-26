@@ -426,24 +426,3 @@ def test_read_parquet_single():
     assert "Parquet SCAN" in sample_data.data_frame.explain(), "Should still have predicate pushdown to Remote scan"
     sample_data.lazy = False
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
-
-
-def test_cli_read():
-    settings = CloudStorageReadSettingsInternal(
-        connection=FullCloudStorageConnection(
-            storage_type="s3",
-            auth_method="aws-cli",
-            connection_name="989679912879_ProjectAdmin",
-            aws_region="eu-central-1",
-        ),
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://posman-data-sources-dev/ps_pn/ps-pn-weights-202502.csv",
-            file_format="csv",
-            scan_mode="single_file",
-            csv_has_header=True,
-            csv_delimiter=";",
-        )
-    )
-    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
-    assert len(flow_data_engine.schema) > 0
-
