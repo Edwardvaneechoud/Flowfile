@@ -444,7 +444,6 @@ def test_cli_read():
             csv_delimiter=";",
         )
     )
-    breakpoint()
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
     assert len(flow_data_engine.schema) > 0
 

@@ -387,7 +387,6 @@ class FlowDataEngine:
             "target": resource_path,
             "mode": write_settings.write_mode,
         }
-        breakpoint()
         if storage_options:
             sink_kwargs["storage_options"] = storage_options
         if credential_provider:

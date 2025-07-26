@@ -3,7 +3,7 @@
       <NodeButton
         ref="nodeButton"
         :node-id="nodeId"
-        image-src="database_reader.svg"
+        image-src="cloud_storage_reader.png"
         :title="`${nodeId}: Cloud storage reader`"
         @click="openDrawer"
       />
