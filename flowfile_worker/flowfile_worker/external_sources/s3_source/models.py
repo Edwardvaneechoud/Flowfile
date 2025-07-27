@@ -1,27 +1,55 @@
 """Cloud storage connection schemas for S3, ADLS, and other cloud providers."""
 
-from typing import Optional, Literal
-
-from pydantic import BaseModel, SecretStr, field_validator, Field
-
-from flowfile_core.schemas.schemas import SecretRef
+from typing import Optional, Literal, Dict, Any
+import boto3
+from pydantic import BaseModel, SecretStr
+from flowfile_worker.secrets import decrypt_secret
 
 CloudStorageType = Literal["s3", "adls", "gcs"]
 AuthMethod = Literal["access_key", "iam_role", "service_principal", "managed_identity", "sas_token", "aws-cli", "env_vars"]
 
 
-class AuthSettingsInput(BaseModel):
+def create_storage_options_from_boto_credentials(profile_name: Optional[str],
+                                                 region_name: Optional[str] = None) -> Dict[str, Any]:
     """
-    The information needed for the user to provide the details that are needed to provide how to connect to the
-     Cloud provider
+    Create a storage options dictionary from AWS credentials using a boto3 profile.
+    This is the most robust way to handle profile-based authentication as it
+    bypasses Polars' internal credential provider chain, avoiding conflicts.
+
+    Parameters
+    ----------
+    profile_name
+        The name of the AWS profile in ~/.aws/credentials.
+    region_name
+        The AWS region to use.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A storage options dictionary for Polars with explicit credentials.
     """
+    session = boto3.Session(profile_name=profile_name, region_name=region_name)
+    credentials = session.get_credentials()
+    frozen_creds = credentials.get_frozen_credentials()
+
+    storage_options = {
+        "aws_access_key_id": frozen_creds.access_key,
+        "aws_secret_access_key": frozen_creds.secret_key,
+        "aws_session_token": frozen_creds.token,
+    }
+    # Use the session's region if one was resolved, otherwise use the provided one
+    if session.region_name:
+        storage_options["aws_region"] = session.region_name
+
+    print("Boto3: Successfully created storage options with explicit credentials.")
+    return storage_options
+
+
+class FullCloudStorageConnection(BaseModel):
+    """Internal model with decrypted secrets"""
     storage_type: CloudStorageType
     auth_method: AuthMethod
     connection_name: Optional[str] = "None"  # This is the reference to the item we will fetch that contains the data
-
-
-class FullCloudStorageConnection(AuthSettingsInput):
-    """Internal model with decrypted secrets"""
 
     # AWS S3
     aws_region: Optional[str] = None
@@ -41,42 +69,65 @@ class FullCloudStorageConnection(AuthSettingsInput):
     endpoint_url: Optional[str] = None
     verify_ssl: bool = True
 
+    def get_storage_options(self) -> Dict[str, Any]:
+        """
+        Build storage options dict based on the connection type and auth method.
 
-class CloudStorageSettings(BaseModel):
-    """Settings for cloud storage nodes in the visual designer"""
+        Args:
+            connection: Full connection details with decrypted secrets
 
-    auth_mode: AuthMethod = "auto"
-    connection_name: Optional[str] = None  # Required only for 'reference' mode
-    resource_path: str  # s3://bucket/path/to/file.csv
+        Returns:
+            Dict containing appropriate storage options for the provider
+        """
+        if self.storage_type == "s3":
+            return self._get_s3_storage_options()
 
-    @field_validator("auth_mode", mode="after")
-    def validate_auth_requirements(cls, v, values):
-        data = values.data
-        if v == "reference" and not data.get("connection_name"):
-            raise ValueError("connection_name required when using reference mode")
-        return v
+    def _get_s3_storage_options(self) -> Dict[str, Any]:
+        """Build S3-specific storage options."""
+        auth_method = self.auth_method
+        print(f"Building S3 storage options for auth_method: '{auth_method}'")
+
+        if auth_method == "aws-cli":
+            return create_storage_options_from_boto_credentials(
+                profile_name=self.connection_name,
+                region_name=self.aws_region
+            )
+
+        storage_options = {}
+        if self.aws_region:
+            storage_options["aws_region"] = self.aws_region
+        if self.endpoint_url:
+            storage_options["endpoint_url"] = self.endpoint_url
+        if not self.verify_ssl:
+            storage_options["verify"] = "False"
+        if self.aws_allow_unsafe_html:  # Note: Polars uses aws_allow_http
+            storage_options["aws_allow_http"] = "true"
+
+        if auth_method == "access_key":
+            storage_options["aws_access_key_id"] = self.aws_access_key_id
+            storage_options["aws_secret_access_key"] = decrypt_secret(
+                self.aws_secret_access_key.get_secret_value())
+            # Explicitly clear any session token from the environment
+            storage_options["aws_session_token"] = ""
+
+        elif auth_method == "iam_role":
+            # Correctly implement IAM role assumption using boto3 STS client.
+            sts_client = boto3.client('sts', region_name=self.aws_region)
+            assumed_role_object = sts_client.assume_role(
+                RoleArn=self.aws_role_arn,
+                RoleSessionName="PolarsCloudStorageReaderSession"  # A descriptive session name
+            )
+            credentials = assumed_role_object['Credentials']
+            storage_options["aws_access_key_id"] = credentials['AccessKeyId']
+            storage_options["aws_secret_access_key"] = decrypt_secret(credentials['SecretAccessKey'])
+            storage_options["aws_session_token"] = decrypt_secret(credentials['SessionToken'])
+
+        return storage_options
 
 
-class CloudStorageReadSettings(CloudStorageSettings):
-    """Settings for reading from cloud storage"""
-
-    scan_mode: Literal["single_file", "directory"] = "single_file"
-    file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet"
-    # CSV specific options
-    csv_has_header: Optional[bool] = True
-    csv_delimiter: Optional[str] = ","
-    csv_encoding: Optional[str] = "utf8"
-    # Deltalake specific settings
-    delta_version: Optional[int] = None
-
-
-class CloudStorageReadSettingsInternal(BaseModel):
-    read_settings: CloudStorageReadSettings
-    connection: FullCloudStorageConnection
-
-
-class CloudStorageWriteSettings(CloudStorageSettings):
+class WriteSettings(BaseModel):
     """Settings for writing to cloud storage"""
+    resource_path: str  # s3://bucket/path/to/file.csv
 
     write_mode: Literal["overwrite", "append"] = "overwrite"
     file_format: Literal["csv", "parquet", "json", "delta"] = "parquet"
@@ -87,6 +138,8 @@ class CloudStorageWriteSettings(CloudStorageSettings):
     csv_encoding: str = "utf8"
 
 
-class CloudStorageWriteSettingsInternal(BaseModel):
-    write_settings: CloudStorageWriteSettings
+class CloudStorageWriteSettings(BaseModel):
+    write_settings: WriteSettings
     connection: FullCloudStorageConnection
+    flowfile_flow_id: int = 1
+    flowfile_node_id: int | str = -1

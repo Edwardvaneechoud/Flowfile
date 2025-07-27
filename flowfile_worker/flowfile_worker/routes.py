@@ -72,9 +72,42 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/store_data_in_cloud/")
-def store_data_in_cloud(polars_script, background_tasks: BackgroundTasks) -> models.Status:
-    ...
+@router.post("/write_data_to_cloud/")
+def write_data_to_cloud(cloud_storage_script_write: models.CloudStorageScriptWrite,
+                        background_tasks: BackgroundTasks) -> models.Status:
+    """
+    Write polars dataframe to a file in cloud storage.
+    Args:
+        cloud_storage_script_write (): Contains dataframe and write options for cloud storage
+        background_tasks (): FastAPI background tasks handler
+
+    Returns:
+        models.Status: Status object tracking the write operation
+    """
+    try:
+        logger.info("Starting write operation to: cloud storage")
+        task_id = str(uuid.uuid4())
+        polars_serializable_object = cloud_storage_script_write.polars_serializable_object()
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref='',
+                               result_type="other")
+        status_dict[task_id] = status
+        background_tasks.add_task(
+            start_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=task_id,
+            operation="write_to_cloud_storage",
+            file_ref='',
+            flowfile_flow_id=cloud_storage_script_write.flowfile_flow_id,
+            flowfile_node_id=cloud_storage_script_write.flowfile_node_id,
+            kwargs=dict(cloud_write_settings=cloud_storage_script_write.get_cloud_storage_write_settings()),
+        )
+        logger.info(
+            f"Started write task: {task_id} to database"
+        )
+        return status
+    except Exception as e:
+        logger.error(f"Error in write operation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post('/store_database_write_result/')

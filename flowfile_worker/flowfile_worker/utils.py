@@ -7,7 +7,7 @@ def collect_lazy_frame(lf: pl.LazyFrame) -> pl.DataFrame:
     try:
         return lf.collect(engine="streaming")
     except PanicException:
-        return lf.collect(engine="auto")
+        return lf.collect(engine="in-memory")
 
 
 @dataclass

@@ -204,38 +204,38 @@ S3_READ_TEST_CASES = [
 ]
 
 S3_WRITE_TEST_CASES = [
-    # S3TestWriteCase(
-    #     id="write_parquet_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="s3://flowfile-test/write_test.parquet",
-    #         file_format="parquet",
-    #         write_mode="overwrite",
-    #         parquet_compression="snappy",
-    #         auth_mode="aws-cli"
-    #     ),
-    #     expected_columns=4,
-    # ),
-    # S3TestWriteCase(
-    #     id="write_csv_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="s3://flowfile-test/write_test.csv",
-    #         file_format="csv",
-    #         write_mode="overwrite",
-    #         csv_delimiter="|",
-    #         auth_mode="aws-cli"
-    #     ),
-    #     expected_columns=5,
-    # ),
-    # S3TestWriteCase(
-    #     id="write_json_file",
-    #     write_settings=CloudStorageWriteSettings(
-    #         resource_path="s3://flowfile-test/write_test.json",
-    #         file_format="json",
-    #         write_mode="overwrite",
-    #         auth_mode="aws-cli"
-    #     ),
-    #     expected_columns=5,
-    # ),
+    S3TestWriteCase(
+        id="write_parquet_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://flowfile-test/write_test.parquet",
+            file_format="parquet",
+            write_mode="overwrite",
+            parquet_compression="snappy",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=4,
+    ),
+    S3TestWriteCase(
+        id="write_csv_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://flowfile-test/write_test.csv",
+            file_format="csv",
+            write_mode="overwrite",
+            csv_delimiter="|",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=5,
+    ),
+    S3TestWriteCase(
+        id="write_json_file",
+        write_settings=CloudStorageWriteSettings(
+            resource_path="s3://flowfile-test/write_test.json",
+            file_format="json",
+            write_mode="overwrite",
+            auth_mode="aws-cli"
+        ),
+        expected_columns=5,
+    ),
     S3TestWriteCase(
         id="overwrite_delta",
         write_settings=CloudStorageWriteSettings(

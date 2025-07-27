@@ -102,7 +102,7 @@ def create_test_buckets():
     client = get_minio_client()
 
     # Create test buckets
-    buckets = ['test-bucket', 'flowfile-test', 'sample-data']
+    buckets = ['test-bucket', 'flowfile-test', 'sample-data', 'worker-test-bucket']
     for bucket in buckets:
         try:
             client.create_bucket(Bucket=bucket)

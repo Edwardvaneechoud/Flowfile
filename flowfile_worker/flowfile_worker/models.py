@@ -3,11 +3,12 @@ from typing import Optional, Literal, Any
 from base64 import decodebytes
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
+from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 
 
 OperationType = Literal[
     'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample',
-    'write_to_database']
+    'write_to_database', "write_to_cloud_storage",]
 ResultType = Literal['polars', 'other']
 
 
@@ -65,12 +66,24 @@ class DatabaseScriptWrite(DatabaseWriteSettings):
         )
 
 
-class CloudStorageScriptWrite(BaseModel):
+class CloudStorageScriptWrite(CloudStorageWriteSettings):
     operation: bytes
 
     def polars_serializable_object(self):
         return decodebytes(self.operation)
 
+    def get_cloud_storage_write_settings(self) -> CloudStorageWriteSettings:
+        """
+        Converts the current instance to a DatabaseWriteSettings object.
+        Returns:
+            DatabaseWriteSettings: The corresponding DatabaseWriteSettings object.
+        """
+        return CloudStorageWriteSettings(
+            write_settings=self.write_settings,
+            connection=self.connection,
+            flowfile_flow_id=self.flowfile_flow_id,
+            flowfile_node_id=self.flowfile_node_id
+        )
 
 
 class FuzzyJoinInput(BaseModel):
