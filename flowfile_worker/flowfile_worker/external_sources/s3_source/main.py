@@ -190,7 +190,6 @@ def write_df_to_cloud(
     logger.info(
         f"Writing to {connection.storage_type} storage: {write_settings.resource_path}"
     )
-
     # Validate write mode
     if write_settings.write_mode == 'append' and write_settings.file_format != "delta":
         raise NotImplementedError(

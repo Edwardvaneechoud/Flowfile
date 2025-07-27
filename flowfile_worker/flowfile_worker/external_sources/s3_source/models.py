@@ -73,9 +73,6 @@ class FullCloudStorageConnection(BaseModel):
         """
         Build storage options dict based on the connection type and auth method.
 
-        Args:
-            connection: Full connection details with decrypted secrets
-
         Returns:
             Dict containing appropriate storage options for the provider
         """
@@ -106,7 +103,7 @@ class FullCloudStorageConnection(BaseModel):
         if auth_method == "access_key":
             storage_options["aws_access_key_id"] = self.aws_access_key_id
             storage_options["aws_secret_access_key"] = decrypt_secret(
-                self.aws_secret_access_key.get_secret_value())
+                self.aws_secret_access_key.get_secret_value()).get_secret_value()
             # Explicitly clear any session token from the environment
             storage_options["aws_session_token"] = ""
 
@@ -119,8 +116,8 @@ class FullCloudStorageConnection(BaseModel):
             )
             credentials = assumed_role_object['Credentials']
             storage_options["aws_access_key_id"] = credentials['AccessKeyId']
-            storage_options["aws_secret_access_key"] = decrypt_secret(credentials['SecretAccessKey'])
-            storage_options["aws_session_token"] = decrypt_secret(credentials['SessionToken'])
+            storage_options["aws_secret_access_key"] = decrypt_secret(credentials['SecretAccessKey']).get_secret_value()
+            storage_options["aws_session_token"] = decrypt_secret(credentials['SessionToken']).get_secret_value()
 
         return storage_options
 

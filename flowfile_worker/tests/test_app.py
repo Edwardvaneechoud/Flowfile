@@ -247,7 +247,6 @@ def test_store_in_database(pw):
                      'operation': s.decode()}
     v = client.post('/store_database_write_result', json=settings_data)
     assert v.status_code == 200, v.text
-
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status = models.Status.model_validate(v.json())
     assert status.status == 'Starting', 'Expected status to be Starting'
@@ -259,6 +258,7 @@ def test_store_in_database(pw):
     assert status.status == 'Completed', 'Expected status to be Completed'
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_cloud_storage(cloud_storage_connection_settings):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
     s = base64.encodebytes(lf.serialize())

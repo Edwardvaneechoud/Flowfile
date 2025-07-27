@@ -56,7 +56,6 @@ class DatabaseScriptWrite(DatabaseWriteSettings):
         Returns:
             DatabaseWriteSettings: The corresponding DatabaseWriteSettings object.
         """
-
         return DatabaseWriteSettings(
             connection=self.connection,
             table_name=self.table_name,

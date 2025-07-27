@@ -118,7 +118,7 @@ def get_master_key() -> str:
     return key
 
 
-def decrypt_secret(encrypted_value) -> str:
+def decrypt_secret(encrypted_value) -> SecretStr:
     """
     Decrypt an encrypted value using the master key.
 
@@ -130,7 +130,7 @@ def decrypt_secret(encrypted_value) -> str:
     """
     key = get_master_key().encode()
     f = Fernet(key)
-    return f.decrypt(encrypted_value.encode()).decode()
+    return SecretStr(f.decrypt(encrypted_value.encode()).decode())
 
 
 def encrypt_secret(secret_value):

@@ -68,7 +68,6 @@ class CloudStorageReader:
         """Build S3-specific storage options."""
         auth_method = connection.auth_method
         print(f"Building S3 storage options for auth_method: '{auth_method}'")
-
         if auth_method == "aws-cli":
             return create_storage_options_from_boto_credentials(
                 profile_name=connection.connection_name,

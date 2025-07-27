@@ -1025,7 +1025,25 @@ def test_schema_callback_cloud_read(flow_logger):
     graph.add_cloud_storage_reader(node_settings)
     new_schema_callback = id(node.schema_callback)
     assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
-    # breakpoint()
     node.get_table_example(True)
-    # breakpoint()
 
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_add_cloud_writer(flow_logger):
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    read_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path="s3://flowfile-test/flow_graph_data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
+                                                        cloud_storage_settings=read_settings,
+                                                        depending_on_ids=[1])
+    graph.add_cloud_storage_writer(node_settings)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    result = graph.run_graph()
+    handle_run_info(result)

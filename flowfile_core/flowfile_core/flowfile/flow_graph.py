@@ -16,6 +16,7 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                        pre_calculate_pivot_schema)
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_xlsx_datatypes, \
@@ -23,7 +24,8 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettingsInternal, FullCloudStorageConnection, CloudStorageReadSettings
+from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal, FullCloudStorageConnection,
+                                                         get_cloud_storage_write_settings_worker_interface)
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -31,7 +33,8 @@ from flowfile_core.flowfile.util.execution_orderer import determine_execution_or
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
-                                                                                                 ExternalDfFetcher)
+                                                                                                 ExternalDfFetcher,
+                                                                                                 ExternalCloudWriter)
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
@@ -859,7 +862,54 @@ class FlowGraph:
         self.add_external_source(external_source_input)
 
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
-        pass
+
+        node_type = "cloud_storage_writer"
+        node_cloud_storage_writer.cloud_storage_settings.get_write_setting_worker_interface()
+        cloud_connection_settings = get_local_cloud_connection(
+            node_cloud_storage_writer.cloud_storage_settings.connection_name,
+            node_cloud_storage_writer.user_id)
+        if (cloud_connection_settings is None and
+                node_cloud_storage_writer.cloud_storage_settings.auth_mode in ("aws-cli", "env_vars")):
+            # If the auth mode is aws-cli, we do not need connection settings
+            cloud_connection_settings = FullCloudStorageConnection(
+                storage_type="s3",
+                auth_method=node_cloud_storage_writer.cloud_storage_settings.auth_mode
+            )
+        if cloud_connection_settings is None:
+            raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+        full_cloud_storage_connection = FullCloudStorageConnection(
+            storage_type= cloud_connection_settings.storage_type,
+            auth_method=cloud_connection_settings.auth_method,
+            **CloudStorageReader.get_storage_options(cloud_connection_settings)
+        )
+
+        def _func(df: FlowDataEngine):
+            df.lazy = True
+            settings = get_cloud_storage_write_settings_worker_interface(
+                write_settings=node_cloud_storage_writer.cloud_storage_settings,
+                connection=full_cloud_storage_connection,
+                lf=df.data_frame,
+                flowfile_node_id=node_cloud_storage_writer.node_id,
+                flowfile_flow_id=self.flow_id)
+            external_database_writer = ExternalCloudWriter(settings, wait_on_completion=False)
+            node._fetch_cached_df = external_database_writer
+            external_database_writer.get_result()
+            return df
+
+        def schema_callback():
+            input_node: FlowNode = self.get_node(node_cloud_storage_writer.node_id).node_inputs.main_inputs[0]
+            return input_node.schema
+
+        self.add_node_step(
+            node_id=node_cloud_storage_writer.node_id,
+            function=_func,
+            input_columns=[],
+            node_type=node_type,
+            setting_input=node_cloud_storage_writer,
+            schema_callback=schema_callback,
+            input_node_ids=[node_cloud_storage_writer.depending_on_id]
+        )
+        node = self.get_node(node_cloud_storage_writer.node_id)
 
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """

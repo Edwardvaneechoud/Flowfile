@@ -20,6 +20,7 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
 )
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (DatabaseExternalReadSettings,
                                                                                DatabaseExternalWriteSettings)
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import (
     ReceivedCsvTable,
     ReceivedExcelTable,
@@ -90,6 +91,14 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
 
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
     f = requests.post(url=f'{WORKER_URL}/store_database_write_result',
+                      data=database_external_write_settings.model_dump_json())
+    if not f.ok:
+        raise Exception(f'Could not cache the data, {f.text}')
+    return Status(**f.json())
+
+
+def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
+    f = requests.post(url=f'{WORKER_URL}/write_data_to_cloud',
                       data=database_external_write_settings.model_dump_json())
     if not f.ok:
         raise Exception(f'Could not cache the data, {f.text}')
@@ -342,6 +351,17 @@ class ExternalDatabaseWriter(BaseFetcher):
     def __init__(self, database_external_write_settings: DatabaseExternalWriteSettings,
                  wait_on_completion: bool = True):
         r = trigger_database_write(database_external_write_settings=database_external_write_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == 'Processing'
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalCloudWriter(BaseFetcher):
+
+    def __init__(self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface,
+                 wait_on_completion: bool = True):
+        r = trigger_cloud_storage_write(database_external_write_settings=cloud_storage_write_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:
