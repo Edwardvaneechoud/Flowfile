@@ -19,7 +19,7 @@ logger = getLogger(__name__)
 
 try:
     # noinspection PyUnresolvedReferences
-    from tests.utils import is_docker_available
+    from tests.utils import is_docker_available, cloud_storage_connection_settings
     from test_utils.s3.fixtures import get_minio_client
 except ModuleNotFoundError:
     import os
@@ -27,7 +27,7 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
-    from utils import (is_docker_available)
+    from utils import (is_docker_available, cloud_storage_connection_settings)
     from test_utils.s3.fixtures import get_minio_client
 
 
