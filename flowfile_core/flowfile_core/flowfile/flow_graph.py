@@ -868,9 +868,10 @@ class FlowGraph:
         cloud_connection_settings = get_local_cloud_connection(
             node_cloud_storage_writer.cloud_storage_settings.connection_name,
             node_cloud_storage_writer.user_id)
+        breakpoint()
         if (cloud_connection_settings is None and
                 node_cloud_storage_writer.cloud_storage_settings.auth_mode in ("aws-cli", "env_vars")):
-            # If the auth mode is aws-cli, we do not need connection settings
+
             cloud_connection_settings = FullCloudStorageConnection(
                 storage_type="s3",
                 auth_method=node_cloud_storage_writer.cloud_storage_settings.auth_mode
@@ -878,8 +879,9 @@ class FlowGraph:
         if cloud_connection_settings is None:
             raise HTTPException(status_code=400, detail="Cloud connection settings not found")
         full_cloud_storage_connection = FullCloudStorageConnection(
-            storage_type= cloud_connection_settings.storage_type,
+            storage_type=cloud_connection_settings.storage_type,
             auth_method=cloud_connection_settings.auth_method,
+            aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
             **CloudStorageReader.get_storage_options(cloud_connection_settings)
         )
 
@@ -897,8 +899,11 @@ class FlowGraph:
             return df
 
         def schema_callback():
-            input_node: FlowNode = self.get_node(node_cloud_storage_writer.node_id).node_inputs.main_inputs[0]
-            return input_node.schema
+            logger.info("Starting to run the schema callback for cloud storage writer")
+            if self.get_node(node_cloud_storage_writer.node_id).is_correct:
+                return self.get_node(node_cloud_storage_writer.node_id).node_inputs.main_inputs[0].schema
+            else:
+                return [FlowfileColumn.from_input(column_name="__error__", data_type="String")]
 
         self.add_node_step(
             node_id=node_cloud_storage_writer.node_id,
@@ -909,6 +914,7 @@ class FlowGraph:
             schema_callback=schema_callback,
             input_node_ids=[node_cloud_storage_writer.depending_on_id]
         )
+
         node = self.get_node(node_cloud_storage_writer.node_id)
 
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:

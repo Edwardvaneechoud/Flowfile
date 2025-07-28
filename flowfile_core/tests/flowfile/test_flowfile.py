@@ -603,24 +603,6 @@ def test_add_cross_join():
     output_data.assert_equal(expected_data)
 
 
-# def test_add_external_source():
-#     graph = create_graph()
-#     graph.flow_settings.execution_mode = 'Development'
-#     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
-#     graph.add_node_promise(node_promise)
-#     external_source_input = input_schema.NodeExternalSource(
-#         **{'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 501.8727272727273, 'pos_y': 313.4,
-#            'is_setup': True, 'description': '', 'node_type': 'external_source',
-#            'source_settings': {'SAMPLE_USERS': True, 'size': 10, 'orientation': 'row', 'fields': []},
-#            'identifier': 'sample_users'})
-#     graph.add_external_source(external_source_input)
-#     run_info = graph.run_graph()
-#     handle_run_info(run_info)
-#     resulting_data = graph.get_node(1).get_resulting_data()
-#
-#     assert resulting_data.get_number_of_records(force_calculate=True), 'There should be 60 records'
-
-
 def test_read_excel():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
@@ -1038,12 +1020,37 @@ def test_add_cloud_writer(flow_logger):
         connection_name=conn.connection_name
     )
     graph = create_graph()
-    add_manual_input(graph, data=[{'name': 'eduward'}, {'name': 'edward'}, {'name': 'courtney'}])
+    add_manual_input(graph, data=[{'name': 'eduward', 'city': "a"},
+                                  {'name': 'edward', 'city': "a"},
+                                  {'name': 'courtney', 'city': "a"}])
     node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
-                                                        cloud_storage_settings=read_settings,
-                                                        depending_on_ids=[1])
+                                                        cloud_storage_settings=read_settings,)
     graph.add_cloud_storage_writer(node_settings)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph, connection)
+    node = graph.get_node(2)
+    original_method = node._predicted_data_getter
+
+    call_count = {'count': 0}
+    def tracking_method(*args, **kwargs):
+        call_count['count'] += 1
+        return original_method(*args, **kwargs)
+
+    node._predicted_data_getter = tracking_method
+
+    predicted_schema = node.schema
+    assert len(predicted_schema) == 2, 'Should have 2 columns in the schema'
+    assert call_count['count'] == 0, 'Predicted data getter should not be called when getting schema'
+
     result = graph.run_graph()
     handle_run_info(result)
+
+
+def test_complex_cloud_write_scenario():
+    ensure_cloud_storage_connection_is_available_and_get_connection()
+    handler = FlowfileHandler()
+    flow_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/test_cloud_local.flowfile"))
+    graph = handler.get_flow(flow_id)
+    node= graph.get_node(3)
+    node.get_table_example(True)
+    graph.run_graph()

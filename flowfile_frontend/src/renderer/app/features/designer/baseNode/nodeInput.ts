@@ -428,5 +428,5 @@ export interface NodeCloudStorageReader extends NodeBase {
 }
 
 export interface NodeCloudStorageWriter extends NodeBase {
-  cloud_storage_settings: CloudStorageReadSettings
+  cloud_storage_settings: CloudStorageWriteSettings
 }

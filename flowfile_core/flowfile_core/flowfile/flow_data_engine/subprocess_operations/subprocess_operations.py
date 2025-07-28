@@ -114,11 +114,15 @@ def get_results(file_ref: str) -> Status | None:
 
 
 def results_exists(file_ref: str):
-    f = requests.get(f'{WORKER_URL}/status/{file_ref}')
-    if f.status_code == 200:
-        if f.json()['status'] == 'Completed':
-            return True
-    return False
+    try:
+        f = requests.get(f'{WORKER_URL}/status/{file_ref}')
+        if f.status_code == 200:
+            if f.json()['status'] == 'Completed':
+                return True
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Failed to check results existence: {str(e)}")
+        return False
 
 
 def get_df_result(encoded_df: str) -> pl.LazyFrame:

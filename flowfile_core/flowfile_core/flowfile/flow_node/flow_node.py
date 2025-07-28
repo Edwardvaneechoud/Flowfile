@@ -13,7 +13,7 @@ from flowfile_core.configs.node_store import nodes as node_interface
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result, ExternalDatabaseFetcher, ExternalDatabaseWriter)
+    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result, ExternalDatabaseFetcher, ExternalDatabaseWriter, ExternalCloudWriter)
 from flowfile_core.flowfile.flow_node.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
@@ -37,8 +37,8 @@ class FlowNode:
     _function: Callable = None  # the function that needs to be executed when triggered
     _schema_callback: Optional[SingleExecutionFuture] = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
-    _fetch_cached_df: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter] = None
-    _cache_progress: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter] = None
+    _fetch_cached_df: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter] = None
+    _cache_progress: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter] = None
 
     def post_init(self):
         self.node_inputs = NodeStepInputs()
@@ -318,7 +318,6 @@ class FlowNode:
         Method to get a predicted schema based on the columns that are dropped and added
         :return:
         """
-
         if self.node_schema.predicted_schema and not force:
             return self.node_schema.predicted_schema
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
@@ -327,7 +326,7 @@ class FlowNode:
                 # Force the schema callback to reset, so that it will be executed again
                 self.schema_callback.reset()
             schema = self.schema_callback()
-            if schema is not None:
+            if schema is not None and len(schema) > 0:
                 self.print('Calculating the schema based on the schema callback')
                 self.node_schema.predicted_schema = schema
                 return self.node_schema.predicted_schema
@@ -374,7 +373,7 @@ class FlowNode:
                     raise e
             return self.results.resulting_data
 
-    def _predicted_data_getter(self) -> FlowDataEngine|None:
+    def _predicted_data_getter(self) -> FlowDataEngine | None:
         try:
             fl = self._function(*[v.get_predicted_resulting_data() for v in self.all_inputs])
             return fl
@@ -393,6 +392,7 @@ class FlowNode:
     def get_predicted_resulting_data(self) -> FlowDataEngine:
         if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print('Getting data based on the schema')
+
             _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
             return FlowDataEngine.create_from_schema(_s)
         else:
@@ -714,10 +714,11 @@ class FlowNode:
 
     def get_table_example(self, include_data: bool = False) -> TableExample | None:
         self.print('Getting a table example')
-        if self.node_type == 'output':
-            self.print('getting the table example')
-            return self.main_input[0].get_table_example(include_data)
-        if self.is_setup and include_data:
+        if self.is_setup and include_data and self.node_stats.has_run:
+            if self.node_template.node_group == 'output':
+                self.print('getting the table example')
+                return self.main_input[0].get_table_example(include_data)
+
             logger.info('getting the table example since the node has run')
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:

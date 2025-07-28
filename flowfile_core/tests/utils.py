@@ -20,6 +20,7 @@ def get_cloud_connection():
         aws_secret_access_key=SecretStr("minioadmin"),
         aws_region="us-east-1",
         endpoint_url="http://localhost:9000",
+        aws_allow_unsafe_html=True,
     )
     return minio_connection
 
