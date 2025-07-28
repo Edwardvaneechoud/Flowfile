@@ -868,7 +868,6 @@ class FlowGraph:
         cloud_connection_settings = get_local_cloud_connection(
             node_cloud_storage_writer.cloud_storage_settings.connection_name,
             node_cloud_storage_writer.user_id)
-        breakpoint()
         if (cloud_connection_settings is None and
                 node_cloud_storage_writer.cloud_storage_settings.auth_mode in ("aws-cli", "env_vars")):
 
