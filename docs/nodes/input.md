@@ -1,6 +1,6 @@
 # Input Nodes
 
-Input nodes are the starting point for any data flow. Flowfile currently supports reading from **local files**, **Airbyte sources**, and **manual input**.
+Input nodes are the starting point for any data flow. Flowfile currently supports reading from **local files**, and **manual input**.
 
 ## Node Details
 
@@ -55,12 +55,6 @@ When an **Excel** file is selected, you can specify the sheet, select specific r
 
 #### Parquet  
 When a **Parquet** file is selected, no additional setup options are required. Parquet is a columnar storage format optimized for efficiency and performance. It retains schema information and data types, enabling faster reads and writes without manual configuration.
-
----
-
-### ![Read Airbyte](../assets/images/nodes/airbyte.png){ width="50" height="50" } Read Airbyte
-
-The **Read Airbyte** node allows you to connect to any configured Airbyte source and import data directly. This feature is **experimental** and requires a running Docker instance. The behavior of this node depends heavily on the Airbyte source settings, following Airbyte’s standard configuration guidelines.
 
 ---
 

@@ -13,10 +13,10 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.settings import airbyte_settings_from_config
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
                                                                                        pre_calculate_pivot_schema)
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_xlsx_datatypes, \
@@ -24,19 +24,22 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
+from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal, FullCloudStorageConnection,
+                                                         get_cloud_storage_write_settings_worker_interface, AuthMethod)
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalAirbyteFetcher,
-                                                                                                 ExternalDatabaseFetcher,
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
-                                                                                                 ExternalDfFetcher)
+                                                                                                 ExternalDfFetcher,
+                                                                                                 ExternalCloudWriter)
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
 from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
-from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
+from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
+                                                                               get_local_cloud_connection)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 
 
@@ -78,6 +81,16 @@ def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start
                              end_row: int, end_column: int, has_headers: bool):
     return partial(get_xlsx_schema, engine=engine, file_path=file_path, sheet_name=sheet_name, start_row=start_row,
                    start_column=start_column, end_row=end_row, end_column=end_column, has_headers=has_headers)
+
+
+def get_cloud_connection_settings(connection_name: str, user_id: int, auth_mode: AuthMethod) -> FullCloudStorageConnection:
+    cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
+    if cloud_connection_settings is None and auth_mode == "aws-cli":
+        # If the auth mode is aws-cli, we do not need connection settings
+        cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
+    if cloud_connection_settings is None:
+        raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+    return cloud_connection_settings
 
 
 class FlowGraph:
@@ -656,7 +669,7 @@ class FlowGraph:
                       setting_input: Any = None,
                       cache_results: bool = None,
                       schema_callback: Callable = None,
-                      input_node_ids: List[int] = None):
+                      input_node_ids: List[int] = None) -> FlowNode:
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:
@@ -668,14 +681,13 @@ class FlowGraph:
             input_nodes = [self.get_node(node_id) for node_id in input_node_ids]
         else:
             input_nodes = None
-        if cache_results is None:
-            if hasattr(setting_input, 'cache_results'):
-                cache_results = getattr(setting_input, 'cache_results')
-                cache_results = False if cache_results is None else cache_results
         if isinstance(input_columns, str):
             input_columns = [input_columns]
-
-        if input_nodes is not None or function.__name__ in ('placeholder', 'analysis_preparation'):
+        if (
+                input_nodes is not None or
+                function.__name__ in ('placeholder', 'analysis_preparation') or
+                node_type == "cloud_storage_reader"
+        ):
 
             if not existing_node:
                 node = FlowNode(node_id=node_id,
@@ -703,6 +715,7 @@ class FlowGraph:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
         self._node_ids.append(node_id)
+        return node
 
     def add_include_cols(self, include_columns: List[str]):
         for column in include_columns:
@@ -854,80 +867,107 @@ class FlowGraph:
             self._flow_starts.append(node)
             self._node_ids.append(node_database_reader.node_id)
 
-    def add_airbyte_reader(self, external_source_input: input_schema.NodeAirbyteReader):
-        logger.info('Adding airbyte reader')
-        node_type = 'airbyte_reader'
-        source_settings: input_schema.AirbyteReader = external_source_input.source_settings
-        airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
-                                                        node_id=external_source_input.node_id)
-
-        logger.info("Airbyte settings created")
-        airbyte_settings.fields = source_settings.fields
-        external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
-
-        def _func():
-            logger.info('Calling external source')
-            external_fetcher = ExternalAirbyteFetcher(airbyte_settings, wait_on_completion=False)
-            node._fetch_cached_df = external_fetcher
-            fl = FlowDataEngine(external_fetcher.get_result())
-            external_source_input.source_settings.fields = [c.get_minimal_field_info() for c in fl.schema]
-            return fl
-
-        def schema_callback():
-            return [FlowfileColumn.from_input(f.name, f.data_type) for f in external_source.schema]
-
-        node = self.get_node(external_source_input.node_id)
-        if node:
-            node.node_type = node_type
-            node.name = node_type
-            node.function = _func
-            node.setting_input = external_source_input
-            node.node_settings.cache_results = external_source_input.cache_results
-            if external_source_input.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
-            node.schema_callback = schema_callback
-        else:
-            node = FlowNode(external_source_input.node_id, function=_func,
-                            setting_input=external_source_input,
-                            name=node_type, node_type=node_type, parent_uuid=self.uuid,
-                            schema_callback=schema_callback)
-            self._node_db[external_source_input.node_id] = node
-            self._flow_starts.append(node)
-            self._node_ids.append(external_source_input.node_id)
-        if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
-            logger.info('Using provided schema in the node')
-
-
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
         logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
-    def add_external_source(self,
-                            external_source_input: input_schema.NodeExternalSource | input_schema.NodeAirbyteReader):
+    def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
 
-        custom_source_type = external_source_input.identifier != 'airbyte'
-        if custom_source_type:
-            node_type = 'external_source'
-            external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
-            source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
-                               model_validate(external_source_input.source_settings))
-            if hasattr(external_source_script, 'initial_getter'):
-                initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
+        node_type = "cloud_storage_writer"
+
+        def _func(df: FlowDataEngine):
+            df.lazy = True
+            cloud_connection_settings = get_cloud_connection_settings(
+                connection_name=node_cloud_storage_writer.cloud_storage_settings.connection_name,
+                user_id=node_cloud_storage_writer.user_id,
+                auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode
+            )
+            full_cloud_storage_connection = FullCloudStorageConnection(
+                storage_type=cloud_connection_settings.storage_type,
+                auth_method=cloud_connection_settings.auth_method,
+                aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
+                **CloudStorageReader.get_storage_options(cloud_connection_settings)
+            )
+            settings = get_cloud_storage_write_settings_worker_interface(
+                write_settings=node_cloud_storage_writer.cloud_storage_settings,
+                connection=full_cloud_storage_connection,
+                lf=df.data_frame,
+                flowfile_node_id=node_cloud_storage_writer.node_id,
+                flowfile_flow_id=self.flow_id)
+            external_database_writer = ExternalCloudWriter(settings, wait_on_completion=False)
+            node._fetch_cached_df = external_database_writer
+            external_database_writer.get_result()
+            return df
+
+        def schema_callback():
+            logger.info("Starting to run the schema callback for cloud storage writer")
+            if self.get_node(node_cloud_storage_writer.node_id).is_correct:
+                return self.get_node(node_cloud_storage_writer.node_id).node_inputs.main_inputs[0].schema
             else:
-                initial_getter = None
-            data_getter = external_source_script.getter(source_settings)
-            external_source = data_source_factory(source_type='custom',
-                                                  data_getter=data_getter,
-                                                  initial_data_getter=initial_getter,
-                                                  orientation=external_source_input.source_settings.orientation,
-                                                  schema=None)
+                return [FlowfileColumn.from_input(column_name="__error__", data_type="String")]
+
+        self.add_node_step(
+            node_id=node_cloud_storage_writer.node_id,
+            function=_func,
+            input_columns=[],
+            node_type=node_type,
+            setting_input=node_cloud_storage_writer,
+            schema_callback=schema_callback,
+            input_node_ids=[node_cloud_storage_writer.depending_on_id]
+        )
+
+        node = self.get_node(node_cloud_storage_writer.node_id)
+
+    def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
+        """
+        Adds a cloud storage read node to the flow graph.
+        Args:
+            node_cloud_storage_reader (input_schema.NodeCloudStorageReader):
+            The settings for the cloud storage read node.
+        Returns:
+        """
+        node_type = "cloud_storage_reader"
+        logger.info("Adding cloud storage reader")
+        cloud_storage_read_settings = node_cloud_storage_reader.cloud_storage_settings
+
+        def _func():
+            logger.info("Starting to run the schema callback for cloud storage reader")
+            self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
+            settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
+                                                        connection=get_cloud_connection_settings(
+                                                            connection_name=cloud_storage_read_settings.connection_name,
+                                                            user_id=node_cloud_storage_reader.user_id,
+                                                            auth_mode=cloud_storage_read_settings.auth_mode
+                                                        ))
+            fl = FlowDataEngine.from_cloud_storage_obj(settings)
+            return fl
+
+        node = self.add_node_step(node_id=node_cloud_storage_reader.node_id,
+                                  function=_func,
+                                  cache_results=node_cloud_storage_reader.cache_results,
+                                  setting_input=node_cloud_storage_reader,
+                                  node_type=node_type,
+                                  )
+        if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
+            self._flow_starts.append(node)
+
+    def add_external_source(self,
+                            external_source_input: input_schema.NodeExternalSource):
+
+        node_type = 'external_source'
+        external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
+        source_settings = (getattr(input_schema, snake_case_to_camel_case(external_source_input.identifier)).
+                           model_validate(external_source_input.source_settings))
+        if hasattr(external_source_script, 'initial_getter'):
+            initial_getter = getattr(external_source_script, 'initial_getter')(source_settings)
         else:
-            node_type = 'airbyte_reader'
-            source_settings: input_schema.AirbyteReader = external_source_input.source_settings
-            airbyte_settings = airbyte_settings_from_config(source_settings, flow_id=self.flow_id,
-                                                            node_id=external_source_input.node_id)
-            airbyte_settings.fields = source_settings.fields
-            external_source = data_source_factory(source_type='airbyte', airbyte_settings=airbyte_settings)
+            initial_getter = None
+        data_getter = external_source_script.getter(source_settings)
+        external_source = data_source_factory(source_type='custom',
+                                              data_getter=data_getter,
+                                              initial_data_getter=initial_getter,
+                                              orientation=external_source_input.source_settings.orientation,
+                                              schema=None)
 
         def _func():
             logger.info('Calling external source')

@@ -37,6 +37,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import("../pages/DatabaseManager.vue"),
       },
       {
+        name: "cloudConnectionManager",
+        path: "cloudConnectionManager",
+        component: () => import("../pages/CloudConnectionManager.vue"),
+      },
+      {
         name: "secretManager",
         path: "secretManager",
         component: () => import("../pages/SecretManager.vue"),

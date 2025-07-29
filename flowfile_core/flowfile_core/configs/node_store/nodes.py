@@ -2,8 +2,6 @@ from typing import List
 from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault, TransformTypeLiteral, NodeTypeLiteral
 
 nodes_list: List[NodeTemplate] = [
-    NodeTemplate(name='Read Airbyte', item='airbyte_reader', input=0, output=1, image='airbyte.png',
-                 node_group='input'),
     NodeTemplate(name='External source', item='external_source', input=0, output=1,
                  image='external_source.png', node_group='input', prod_ready=False),
     NodeTemplate(name='Manual input', item='manual_input', input=0, output=1,
@@ -44,20 +42,24 @@ nodes_list: List[NodeTemplate] = [
                  node_group='input'),
     NodeTemplate(name='Write to Database', item='database_writer', input=1, output=0, image='database_writer.svg',
                  node_group='output'),
+    NodeTemplate(name='Read from cloud provider', item='cloud_storage_reader', input=0, output=1,
+                 image='cloud_storage_reader.png', node_group='input'),
+    NodeTemplate(name='Write to cloud provider', item='cloud_storage_writer', input=1, output=0,
+                image='cloud_storage_writer.png', node_group='output'),
 ]
 
 nodes_list.sort(key=lambda x: x.name)
 
-output = ['Explore data', 'Write data', 'Write to Database']
-_input = ['Read Airbyte',  'Manual input', 'Read data', 'External source', 'Read from Database']
+output = ['Explore data', 'Write data', 'Write to Database', 'Write to cloud provider',]
+_input = [ 'Manual input', 'Read data', 'External source', 'Read from Database', "Read from cloud provider",]
 transform = ['Join', 'Formula', 'Select data', 'Filter data', 'Group by', 'Fuzzy match', 'Sort data', 'Add record Id',
              'Take Sample', 'Pivot data', 'Unpivot data', 'Union data', 'Drop duplicates', 'Graph solver',
              'Count records', 'Cross join', 'Text to rows', 'Polars code']
 narrow = ['Select data', 'Filter data', 'Take Sample', 'Formula', 'Read data', 'Union data', 'Polars code']
 wide = ['Join', 'Group by', 'Fuzzy match', 'Sort data', 'Pivot data', 'Unpivot data', 'Add record Id',
         'Graph solver', 'Drop duplicates', 'Count records', 'Cross join', 'Text to rows']
-other = ['Explore data', 'Write data', 'Read Airbyte','Manual input', 'Read data', 'External source',
-         'Read from Database', 'Write to Database']
+other = ['Explore data', 'Write data', 'Manual input', 'Read data', 'External source',
+         'Read from Database', 'Write to Database', "Read from cloud provider", 'Write to cloud provider',]
 nodes_with_defaults = {'sample', 'sort', 'union', 'select', 'record_count'}
 
 

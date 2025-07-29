@@ -1,12 +1,15 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_graph import (FlowGraph, add_connection, RunInformation)
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               store_database_connection,)
+                                                                               store_database_connection,
+                                                                               store_cloud_connection,
+                                                                               delete_cloud_connection,
+                                                                               get_all_cloud_connections_interface)
 from flowfile_core.database.connection import get_db_context
 
 import pytest
@@ -17,12 +20,15 @@ from copy import deepcopy
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 
 
 @pytest.fixture
@@ -171,7 +177,7 @@ def test_run_graph(raw_data):
     graph = add_manual_input(graph, data=raw_data)
     graph.run_graph()
     node = graph.get_node(1)
-    assert node.node_stats.has_run, 'Node should have run'
+    assert node.node_stats.has_run_with_current_setup, 'Node should have run'
     assert node.results.resulting_data.collect().to_dicts() == node.setting_input.raw_data_format.to_pylist(), 'Data should be the same'
 
 
@@ -224,7 +230,7 @@ def test_running_unique(raw_data):
     add_connection(graph, node_connection)
     graph.run_graph()
     node = graph.get_node(2)
-    assert node.node_stats.has_run, 'Node should have run'
+    assert node.node_stats.has_run_with_current_setup, 'Node should have run'
     df = node.results.resulting_data.collect()
     assert len(df) == 3, 'There should be 3 rows in the data'
     assert (set(df.select('city').to_series(0).to_list()) ==
@@ -597,58 +603,6 @@ def test_add_cross_join():
     output_data.assert_equal(expected_data)
 
 
-def test_add_external_source():
-    graph = create_graph()
-    graph.flow_settings.execution_mode = 'Development'
-    node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
-    graph.add_node_promise(node_promise)
-    external_source_input = input_schema.NodeExternalSource(
-        **{'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 501.8727272727273, 'pos_y': 313.4,
-           'is_setup': True, 'description': '', 'node_type': 'external_source',
-           'source_settings': {'SAMPLE_USERS': True, 'size': 10, 'orientation': 'row', 'fields': []},
-           'identifier': 'sample_users'})
-    graph.add_external_source(external_source_input)
-    run_info = graph.run_graph()
-    handle_run_info(run_info)
-    resulting_data = graph.get_node(1).get_resulting_data()
-    assert resulting_data.get_number_of_records(force_calculate=True), 'There should be 60 records'
-
-
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_airbyte():
-    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': False, 'pos_x': 110.87272727272727, 'pos_y': 298.4,
-                'is_setup': True, 'description': '', 'node_type': 'airbyte_reader', 'source_settings': {
-            'parsed_config': [
-                {'title': 'Count', 'type': 'integer', 'key': 'count', 'properties': [], 'required': False,
-                 'description': 'How many users should be generated in total. The purchases table will be scaled to match, with 10 purchases created per 10 users. This setting does not apply to the products stream.',
-                 'isOpen': False, 'airbyte_secret': False, 'input_value': 1000, 'default': 1000},
-                {'title': 'Seed', 'type': 'integer', 'key': 'seed', 'properties': [], 'required': False,
-                 'description': 'Manually control the faker random seed to return the same values on subsequent runs (leave -1 for random)',
-                 'isOpen': False, 'airbyte_secret': False, 'input_value': -1, 'default': -1},
-                {'title': 'Records Per Stream Slice', 'type': 'integer', 'key': 'records_per_slice',
-                 'properties': [], 'required': False,
-                 'description': 'How many fake records will be in each page (stream slice), before a state message is emitted?',
-                 'isOpen': False, 'airbyte_secret': False, 'input_value': 1000, 'default': 1000},
-                {'title': 'Always Updated', 'type': 'boolean', 'key': 'always_updated', 'properties': [],
-                 'required': False,
-                 'description': 'Should the updated_at values for every record be new each sync?  Setting this to false will case the source to stop emitting records after COUNT records have been emitted.',
-                 'isOpen': False, 'airbyte_secret': False, 'input_value': True, 'default': True},
-                {'title': 'Parallelism', 'type': 'integer', 'key': 'parallelism', 'properties': [],
-                 'required': False,
-                 'description': 'How many parallel workers should we use to generate fake data?  Choose a value equal to the number of CPUs you will allocate to this source.',
-                 'isOpen': False, 'airbyte_secret': False, 'input_value': 4, 'default': 4}],
-            'mapped_config_spec': {'count': 1000, 'seed': -1, 'records_per_slice': 1000, 'always_updated': True,
-                                   'parallelism': 4}, 'config_mode': 'in_line', 'selected_stream': 'products',
-            'source_name': 'faker', 'fields': [], 'version': '6.2.21'}}
-    graph = create_graph()
-    node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='external_source')
-    graph.add_node_promise(node_promise)
-    external_source_input = input_schema.NodeAirbyteReader(**settings)
-    graph.add_airbyte_reader(external_source_input)
-    data = graph.get_node(1).get_resulting_data()
-    assert data.get_number_of_records(force_calculate=True) > 0
-
-
 def test_read_excel():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
@@ -1003,3 +957,100 @@ def test_empty_manual_input_should_run():
         assert r.success, 'Should be able to run even with empty manual input'
     except:
         raise ValueError('Should be able to run empty manual input')
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
+def test_cloud_reader(flow_logger):
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    assert graph.get_node(1) is not None, 'Node should be added to the graph'
+    node = graph.get_node(1)
+    try:
+        node.execute_remote(node_logger=flow_logger.get_node_logger(1))
+    except Exception as e:
+        flow_logger.error(f"Error executing cloud storage read node: {str(e)}")
+        raise ValueError(f"Error executing cloud storage read node: {str(e)}")
+    assert not node.needs_run(False), 'Node should not need to run after execution'
+    assert node.get_resulting_data().number_of_records == 100_000, 'Should have read 100000 records from the cloud storage'
+    assert len(node.schema) == 4, 'Should have 4 columns in the schema'
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_schema_callback_cloud_read(flow_logger):
+    # Validate that when the node is added, the schema is being calculated in a separate thread, so that the user has
+    # the least amount of waiting time.
+
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=graph.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    graph.add_cloud_storage_reader(node_settings)
+    node = graph.get_node(1)
+    assert node.schema_callback.future is not None, 'Schema callback future should be set'
+    assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
+    original_schema_callback = id(node.schema_callback)
+    graph.add_cloud_storage_reader(node_settings)
+    new_schema_callback = id(node.schema_callback)
+    assert new_schema_callback == original_schema_callback, 'Schema callback future should not be set again'
+    node.get_table_example(True)
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud writer cannot be tested")
+def test_add_cloud_writer(flow_logger):
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    read_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path="s3://flowfile-test/flow_graph_data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    graph = create_graph()
+    add_manual_input(graph, data=[{'name': 'eduward', 'city': "a"},
+                                  {'name': 'edward', 'city': "a"},
+                                  {'name': 'courtney', 'city': "a"}])
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=graph.flow_id, node_id=2, user_id=1,
+                                                        cloud_storage_settings=read_settings,)
+    graph.add_cloud_storage_writer(node_settings)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    node = graph.get_node(2)
+    original_method = node._predicted_data_getter
+
+    call_count = {'count': 0}
+    def tracking_method(*args, **kwargs):
+        call_count['count'] += 1
+        return original_method(*args, **kwargs)
+
+    node._predicted_data_getter = tracking_method
+
+    predicted_schema = node.schema
+    assert len(predicted_schema) == 2, 'Should have 2 columns in the schema'
+    assert call_count['count'] == 0, 'Predicted data getter should not be called when getting schema'
+
+    result = graph.run_graph()
+    handle_run_info(result)
+
+
+def test_complex_cloud_write_scenario():
+    ensure_cloud_storage_connection_is_available_and_get_connection()
+    handler = FlowfileHandler()
+    flow_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/test_cloud_local.flowfile"))
+    graph = handler.get_flow(flow_id)
+    node= graph.get_node(3)
+    node.get_table_example(True)
+    graph.run_graph()

@@ -7,7 +7,6 @@ from functools import reduce
 from operator import add
 from string import ascii_letters
 from typing import TYPE_CHECKING, Any, Callable, NoReturn, cast
-
 import numpy as np
 import polars as pl
 import pytest

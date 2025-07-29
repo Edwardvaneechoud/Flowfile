@@ -21,9 +21,38 @@ class NodeStepPromise:
 
 class NodeStepStats:
     error: str = None
-    has_run: bool = False
+    _has_run_with_current_setup: bool = False
+    has_completed_last_run: bool = False
     active: bool = True
     is_canceled: bool = False
+
+    def __init__(self, error: str = None,
+                 has_run_with_current_setup: bool = False,
+                 has_completed_last_run: bool = False,
+                 active: bool = True,
+                 is_canceled: bool = False):
+        self.error = error
+        self._has_run_with_current_setup = has_run_with_current_setup
+        self.has_completed_last_run = has_completed_last_run
+        self.active = active
+        self.is_canceled = is_canceled
+
+    def __repr__(self):
+        return (f"NodeStepStats(error={self.error}, has_run_with_current_setup={self.has_run_with_current_setup}, "
+                f"has_completed_last_run={self.has_completed_last_run}, "
+                f"active={self.active}, is_canceled={self.is_canceled})")
+
+    @property
+    def has_run_with_current_setup(self) -> bool:
+        return self._has_run_with_current_setup
+
+    @has_run_with_current_setup.setter
+    def has_run_with_current_setup(self, value: bool):
+        if value:
+            self._has_run_with_current_setup = True
+            self.has_completed_last_run = True
+        else:
+            self._has_run_with_current_setup = False
 
 
 class NodeStepSettings:
@@ -66,8 +95,8 @@ class NodeStepInputs:
 
 
 class NodeSchemaInformation:
-    result_schema: Optional[List[FlowfileColumn]] = []  # resulting schema of the function
-    predicted_schema: Optional[List[FlowfileColumn]] = []  # predicted resulting schema of the function
+    result_schema: Optional[List[FlowfileColumn]] = None  # resulting schema of the function
+    predicted_schema: Optional[List[FlowfileColumn]] = None  # predicted resulting schema of the function
     input_columns: List[str] = []  # columns that are needed for the function
     drop_columns: List[str] = []  # columns that will not be available after the function
     output_columns: List[FlowfileColumn] = []  # columns that will be added with the function

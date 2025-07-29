@@ -1,5 +1,5 @@
-import { extend } from 'lodash'
 import { ref } from 'vue'
+import { AuthMethod,  } from "../../../pages/cloudConnectionManager/CloudConnectionTypes"
 
 export interface SelectInput {
   old_name: string
@@ -392,4 +392,41 @@ export interface DatabaseWriteSettings {
 
 export interface NodeDatabaseWriter extends NodeSingleInput {
   database_write_settings: DatabaseWriteSettings
+}
+
+interface CloudStorageSettings {
+  auth_mode: AuthMethod
+  connection_name?: string
+  resource_path: string
+}
+
+export type FileFormat = "csv" | "parquet" | "json" | "delta" | "iceberg"
+export type CsvEncoding = "utf8" | "utf8-lossy"
+export type ParquetCompression = "snappy" | "gzip" | "brotli" | "lz4" | "zstd"
+export type WriteMode = "overwrite" | "append"
+
+export interface CloudStorageReadSettings extends CloudStorageSettings {
+  scan_mode: "single_file" | "directory"
+  file_format?: FileFormat | undefined
+  csv_has_header?: boolean
+  csv_delimiter?: string
+  csv_encoding?: CsvEncoding
+  delta_version?: number
+}
+
+export interface CloudStorageWriteSettings extends CloudStorageSettings {
+  write_mode: WriteMode
+  file_format: FileFormat
+  parquet_compression: ParquetCompression
+  csv_delimiter: string
+  csv_encoding: CsvEncoding
+}
+
+export interface NodeCloudStorageReader extends NodeBase {
+  cloud_storage_settings: CloudStorageReadSettings
+  fields?: MinimalFieldInput[]
+}
+
+export interface NodeCloudStorageWriter extends NodeBase {
+  cloud_storage_settings: CloudStorageWriteSettings
 }

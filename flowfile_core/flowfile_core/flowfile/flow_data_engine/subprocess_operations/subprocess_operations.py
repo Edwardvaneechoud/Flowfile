@@ -18,9 +18,9 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     PolarsOperation,
     Status
 )
-from flowfile_core.flowfile.sources.external_sources.airbyte_sources.models import AirbyteSettings
 from flowfile_core.flowfile.sources.external_sources.sql_source.models import (DatabaseExternalReadSettings,
                                                                                DatabaseExternalWriteSettings)
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import (
     ReceivedCsvTable,
     ReceivedExcelTable,
@@ -81,13 +81,6 @@ def trigger_create_operation(flow_id: int, node_id: int | str, received_table: R
     return Status(**f.json())
 
 
-def trigger_airbyte_collector(airbyte_settings: AirbyteSettings):
-    f = requests.post(url=f'{WORKER_URL}/store_airbyte_result', data=airbyte_settings.model_dump_json())
-    if not f.ok:
-        raise Exception(f'Could not cache the data, {f.text}')
-    return Status(**f.json())
-
-
 def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
     f = requests.post(url=f'{WORKER_URL}/store_database_read_result',
                       data=database_external_read_settings.model_dump_json())
@@ -104,6 +97,14 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
     return Status(**f.json())
 
 
+def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
+    f = requests.post(url=f'{WORKER_URL}/write_data_to_cloud',
+                      data=database_external_write_settings.model_dump_json())
+    if not f.ok:
+        raise Exception(f'Could not cache the data, {f.text}')
+    return Status(**f.json())
+
+
 def get_results(file_ref: str) -> Status | None:
     f = requests.get(f'{WORKER_URL}/status/{file_ref}')
     if f.status_code == 200:
@@ -113,11 +114,15 @@ def get_results(file_ref: str) -> Status | None:
 
 
 def results_exists(file_ref: str):
-    f = requests.get(f'{WORKER_URL}/status/{file_ref}')
-    if f.status_code == 200:
-        if f.json()['status'] == 'Completed':
-            return True
-    return False
+    try:
+        f = requests.get(f'{WORKER_URL}/status/{file_ref}')
+        if f.status_code == 200:
+            if f.json()['status'] == 'Completed':
+                return True
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Failed to check results existence: {str(e)}")
+        return False
 
 
 def get_df_result(encoded_df: str) -> pl.LazyFrame:
@@ -336,15 +341,6 @@ class ExternalCreateFetcher(BaseFetcher):
             _ = self.get_result()
 
 
-class ExternalAirbyteFetcher(BaseFetcher):
-    def __init__(self, airbyte_settings: AirbyteSettings, wait_on_completion: bool = True):
-        r = trigger_airbyte_collector(airbyte_settings)
-        super().__init__(file_ref=r.background_task_id)
-        self.running = r.status == 'Processing'
-        if wait_on_completion:
-            _ = self.get_result()
-
-
 class ExternalDatabaseFetcher(BaseFetcher):
     def __init__(self, database_external_read_settings: DatabaseExternalReadSettings,
                  wait_on_completion: bool = True):
@@ -359,6 +355,17 @@ class ExternalDatabaseWriter(BaseFetcher):
     def __init__(self, database_external_write_settings: DatabaseExternalWriteSettings,
                  wait_on_completion: bool = True):
         r = trigger_database_write(database_external_write_settings=database_external_write_settings)
+        super().__init__(file_ref=r.background_task_id)
+        self.running = r.status == 'Processing'
+        if wait_on_completion:
+            _ = self.get_result()
+
+
+class ExternalCloudWriter(BaseFetcher):
+
+    def __init__(self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface,
+                 wait_on_completion: bool = True):
+        r = trigger_cloud_storage_write(database_external_write_settings=cloud_storage_write_settings)
         super().__init__(file_ref=r.background_task_id)
         self.running = r.status == 'Processing'
         if wait_on_completion:

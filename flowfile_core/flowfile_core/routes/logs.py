@@ -86,7 +86,6 @@ async def stream_log_file(
                 line = await file.readline()
                 if line:
                     formatted_message = await format_sse_message(line.strip())
-                    logger.info(f'Yielding line: {line.strip()}')
                     yield formatted_message
                     last_active = time.monotonic()  # Reset idle timer on activity
                 else:

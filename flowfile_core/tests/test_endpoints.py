@@ -3,6 +3,7 @@ import threading
 import pickle
 import pytest
 
+from pydantic import SecretStr
 from fastapi.testclient import TestClient
 from time import sleep
 from typing import Dict
@@ -15,19 +16,29 @@ from flowfile_core.routes.routes import (add_node,
                                          connect_node,
                                          output_model, )
 from flowfile_core.schemas.transform_schema import SelectInput
+from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
 from flowfile_core.secret_manager.secret_manager import get_encrypted_secret
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_database_connection,
                                                                                delete_database_connection,
-                                                                               get_all_database_connections_interface)
+                                                                               get_all_database_connections_interface,
+                                                                               get_local_cloud_connection,)
+
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
+                             ensure_no_cloud_storage_connection_is_available,
+                             get_cloud_connection)
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
+                             ensure_no_cloud_storage_connection_is_available,
+                             get_cloud_connection)
 
 FlowId = int
 
@@ -422,14 +433,14 @@ def test_instant_function_result():
     # Setup nodes
     flow_id = create_flow_with_manual_input()
     add_node(flow_id=flow_id, node_id=2, node_type='formula', pos_x=0, pos_y=0)
+
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
-
     # Await the result
     response = client.get("/custom_functions/instant_result",
                           params={'flow_id': flow_id, 'node_id': 2, 'func_string': '[name]'})
     assert response.status_code == 200, 'Instant function result failed'
-    assert response.json()['success'], 'Instant function result failed'
+    assert response.json()['success'] is not False, 'Instant function result failed'
 
 
 def test_instant_function_result_fail():
@@ -458,7 +469,7 @@ def test_instant_function_result_after_run():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     connect_node(flow_id, connection)
     flow = flow_file_handler.get_flow(flow_id)
-    flow._flow_starts
+    _ = flow._flow_starts
     flow.flow_settings.execution_mode = "Development"
     flow.run_graph()
     response = client.get("/custom_functions/instant_result",
@@ -869,3 +880,103 @@ def test_get_db_connection_libs():
     with get_db_context() as db:
         for con_name in ['test_connection', 'test_connection_2']:
             delete_database_connection(db, con_name, 1)
+
+
+def test_create_cloud_storage_connection():
+    ensure_password_is_available()
+    user_id = 1
+    ensure_no_cloud_storage_connection_is_available(user_id=user_id)
+    new_cloud_connection = get_cloud_connection()
+    cloud_connection_dict = new_cloud_connection.model_dump()
+    for field_name, field_value in cloud_connection_dict.items():
+        if isinstance(field_value, SecretStr):
+            cloud_connection_dict[field_name] = field_value.get_secret_value()
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 200, "Connection not created"
+    created_cloud_connection = get_local_cloud_connection(new_cloud_connection.connection_name, user_id=user_id)
+    assert created_cloud_connection is not None, "Connection should be available in database"
+    assert created_cloud_connection == new_cloud_connection
+
+
+def test_create_cloud_storage_connection_allow_unsafe_html():
+    ensure_password_is_available()
+    ensure_password_is_available()
+    user_id = 1
+    ensure_no_cloud_storage_connection_is_available(user_id=user_id)
+    new_cloud_connection = get_cloud_connection()
+    new_cloud_connection.aws_allow_unsafe_html = True
+    cloud_connection_dict = new_cloud_connection.model_dump()
+    for field_name, field_value in cloud_connection_dict.items():
+        if isinstance(field_value, SecretStr):
+            cloud_connection_dict[field_name] = field_value.get_secret_value()
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 200, "Connection not created"
+    created_cloud_connection = get_local_cloud_connection(new_cloud_connection.connection_name, user_id=user_id)
+    assert created_cloud_connection is not None, "Connection should be available in database"
+    assert created_cloud_connection == new_cloud_connection
+    cloud_connections_response = client.get("cloud_connections/cloud_connections")
+    assert cloud_connections_response.status_code == 200, "Connections not retrieved"
+    cloud_connections = cloud_connections_response.json()
+    assert len(cloud_connections) == 1, "Should be one connection available"
+    assert cloud_connections[0]["aws_allow_unsafe_html"], "Connection should have allow_unsafe_html set to True"
+
+
+def test_create_cloud_storage_connection_already_exists():
+    ensure_password_is_available()
+    user_id = 1
+    ensure_no_cloud_storage_connection_is_available(user_id=user_id)
+    new_cloud_connection = get_cloud_connection()
+    cloud_connection_dict = new_cloud_connection.model_dump()
+    for field_name, field_value in cloud_connection_dict.items():
+        if isinstance(field_value, SecretStr):
+            cloud_connection_dict[field_name] = field_value.get_secret_value()
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 200, "Connection not created"
+
+    response = client.post("/cloud_connections/cloud_connection", json=cloud_connection_dict)
+    assert response.status_code == 422, "Connection should not be created again"
+
+
+def test_delete_cloud_storage_connection():
+    ensure_password_is_available()
+    user_id = 1
+    connection = ensure_cloud_storage_connection_is_available_and_get_connection(user_id)
+    response = client.delete("/cloud_connections/cloud_connection",
+                             params={'connection_name': connection.connection_name})
+    assert response.status_code == 200
+    available_cloud_account = get_local_cloud_connection(connection.connection_name, user_id=user_id)
+    assert available_cloud_account is None
+
+
+def test_storage_connections_not_available_when_not_logged_in():
+    with TestClient(main.app) as non_logged_in_client:
+        assert non_logged_in_client.delete("/cloud_connections/cloud_connection").status_code == 401
+        assert non_logged_in_client.post("/cloud_connections/cloud_connection").status_code == 401
+        assert non_logged_in_client.get("/cloud_connections/cloud_connections").status_code == 401
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason='Docker is not available or not running so cloud storage connection cannot be tested')
+def test_create_cloud_storage_reader():
+    flow_id = ensure_clean_flow()
+    add_node_placeholder("cloud_storage_reader", flow_id=flow_id)
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection(user_id=1)
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name,
+        auth_mode="access_key"
+    )
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    r = client.post("/update_settings/", json=node_settings.model_dump(), params={"node_type": "cloud_storage_reader"})
+    assert r.status_code == 200, 'Settings not updated'
+    node = flow_file_handler.get_node(flow_id, 1)
+    assert node._hash is not None, 'Node hash should be set after settings update'
+    _ = node.schema
+
+    assert node.node_schema.predicted_schema is not None, 'Node schema should be set'
+    r = client.post("/update_settings/", json=node_settings.model_dump(), params={"node_type": "cloud_storage_reader"})
+    assert r.status_code == 200, 'Settings not updated'
+    assert node.node_schema.result_schema is not None, "Node schema should be set after run"

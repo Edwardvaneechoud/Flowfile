@@ -10,10 +10,8 @@ from flowfile_worker import models
 from flowfile_worker.spawner import start_process, start_fuzzy_process, start_generic_process, process_manager
 from flowfile_worker.create import table_creator_factory_method, received_table_parser, FileType
 from flowfile_worker.configs import logger
-from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
 from flowfile_worker.external_sources.sql_source.main import read_sql_source, write_serialized_df_to_database
-from flowfile_worker.external_sources.airbyte_sources.main import read_airbyte_source
 
 
 router = APIRouter()
@@ -71,6 +69,44 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
 
     except Exception as e:
         logger.error(f"Error storing sample: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/write_data_to_cloud/")
+def write_data_to_cloud(cloud_storage_script_write: models.CloudStorageScriptWrite,
+                        background_tasks: BackgroundTasks) -> models.Status:
+    """
+    Write polars dataframe to a file in cloud storage.
+    Args:
+        cloud_storage_script_write (): Contains dataframe and write options for cloud storage
+        background_tasks (): FastAPI background tasks handler
+
+    Returns:
+        models.Status: Status object tracking the write operation
+    """
+    try:
+        logger.info("Starting write operation to: cloud storage")
+        task_id = str(uuid.uuid4())
+        polars_serializable_object = cloud_storage_script_write.polars_serializable_object()
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref='',
+                               result_type="other")
+        status_dict[task_id] = status
+        background_tasks.add_task(
+            start_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=task_id,
+            operation="write_to_cloud_storage",
+            file_ref='',
+            flowfile_flow_id=cloud_storage_script_write.flowfile_flow_id,
+            flowfile_node_id=cloud_storage_script_write.flowfile_node_id,
+            kwargs=dict(cloud_write_settings=cloud_storage_script_write.get_cloud_storage_write_settings()),
+        )
+        logger.info(
+            f"Started write task: {task_id} to database"
+        )
+        return status
+    except Exception as e:
+        logger.error(f"Error in write operation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -158,44 +194,10 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/store_airbyte_result')
-def store_airbyte_result(airbyte_settings: AirbyteSettings, background_tasks: BackgroundTasks) -> models.Status:
-    """
-    Store the result of an Airbyte source operation.
-
-    Args:
-        airbyte_settings (AirbyteSettings): Settings for the Airbyte source operation
-        background_tasks (BackgroundTasks): FastAPI background tasks handler
-
-    Returns:
-        models.Status: Status object tracking the Airbyte source operation
-    """
-    logger.info("Processing Airbyte source operation")
-
-    try:
-        task_id = str(uuid.uuid4())
-        file_path = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
-                               result_type="polars")
-        status_dict[task_id] = status
-        logger.info(f"Starting Airbyte source task: {task_id}")
-        background_tasks.add_task(start_generic_process, func_ref=read_airbyte_source, file_ref=file_path,
-                                  flowfile_flow_id=airbyte_settings.flowfile_flow_id,
-                                  flowfile_node_id=airbyte_settings.flowfile_node_id,
-                                  task_id=task_id, kwargs=dict(airbyte_settings=airbyte_settings))
-        logger.info(f"Started Airbyte source task: {task_id}")
-
-        return status
-
-    except Exception as e:
-        logger.error(f"Error processing Airbyte source: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post('/store_database_read_result')
 def store_sql_db_result(database_read_settings: DatabaseReadSettings, background_tasks: BackgroundTasks) -> models.Status:
     """
-    Store the result of an Airbyte source operation.
+    Store the result of an sql source operation.
 
     Args:
         database_read_settings (SQLSourceSettings): Settings for the SQL source operation
@@ -204,7 +206,7 @@ def store_sql_db_result(database_read_settings: DatabaseReadSettings, background
     Returns:
         models.Status: Status object tracking the Sql operation
     """
-    logger.info("Processing Airbyte source operation")
+    logger.info("Processing Sql source operation")
 
     try:
         task_id = str(uuid.uuid4())

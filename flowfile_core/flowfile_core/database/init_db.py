@@ -13,7 +13,6 @@ db_models.Base.metadata.create_all(bind=engine)
 
 def create_default_local_user(db: Session):
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
-
     if not local_user:
         random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
         hashed_password = pwd_context.hash(random_password)

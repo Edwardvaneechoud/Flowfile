@@ -1,6 +1,6 @@
-from pydantic import BaseModel, field_validator, ConfigDict
-from typing import List, Dict, Tuple, Iterable, Optional, Any, Literal
+from typing import List, Dict, Tuple, Optional, Any, Literal, Annotated
 
+from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints
 
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
@@ -104,3 +104,8 @@ class NodeDefault(BaseModel):
     node_type: NodeTypeLiteral
     transform_type: TransformTypeLiteral
     has_default_settings: Optional[Any] = None
+
+
+# Define SecretRef here if not in a common location
+SecretRef = Annotated[str, StringConstraints(min_length=1, max_length=100),
+                      Field(description="An ID referencing an encrypted secret.")]

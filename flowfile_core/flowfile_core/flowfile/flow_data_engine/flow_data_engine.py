@@ -20,15 +20,20 @@ from flowfile_core.utils.utils import ensure_similarity_dicts
 from flowfile_core.configs.flow_logger import NodeLogger
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
+    cloud_storage_schemas,
     input_schema,
     transform_schema as transform_schemas
 )
 
 # Local imports - Flow File Components
 from flowfile_core.flowfile.flow_data_engine import utils
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (CloudStorageReader,
+                                                                          ensure_path_has_wildcard_pattern,
+                                                                          get_first_file_from_s3_dir)
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
+    assert_if_flowfile_schema,
     convert_stats_to_column_info
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
@@ -182,7 +187,6 @@ class FlowDataEngine:
             self._handle_path_ref(path_ref, optimize_memory)
         else:
             self.initialize_empty_fl()
-
         self._finalize_initialization(name, optimize_memory, schema, calculate_schema_stats)
 
     def _initialize_attributes(self, number_of_records_callback, data_callback, streamable):
@@ -225,6 +229,7 @@ class FlowDataEngine:
         elif optimize_memory:
             self.number_of_records = -1
         else:
+            # TODO: assess whether this leads to slow downs with multi remote files
             self.number_of_records = lf.select(pl.len()).collect()[0, 0]
 
     def _handle_python_data(self, data: Union[List, Dict]):
@@ -280,13 +285,384 @@ class FlowDataEngine:
         if not (isinstance(data[0], dict) or hasattr(data[0], '__dict__')):
             try:
                 return pl.DataFrame(data).to_dicts()
-            except:
+            except TypeError:
                 raise Exception('Value must be able to be converted to dictionary')
+            except Exception as e:
+                raise Exception(f'Value must be able to be converted to dictionary: {e}')
 
         if not isinstance(data[0], dict):
             data = [row.__dict__ for row in data]
 
         return ensure_similarity_dicts(data)
+
+    def to_cloud_storage_obj(self, settings: cloud_storage_schemas.CloudStorageWriteSettingsInternal):
+        """
+        Write the FlowDataEngine's data to an object in cloud storage.
+
+        Supports writing to S3, Azure ADLS, and Google Cloud Storage. The 'overwrite'
+        write mode is supported. The 'append' mode is not yet implemented.
+
+        Args:
+            settings: Cloud storage write settings with connection details and write options.
+
+        Raises:
+            ValueError: If file format is not supported.
+            NotImplementedError: If the 'append' write mode is used.
+            Exception: If writing to cloud storage fails.
+        """
+        connection = settings.connection
+        write_settings = settings.write_settings
+
+        logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
+
+        if write_settings.write_mode == 'append' and write_settings.file_format != "delta":
+            raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
+
+        storage_options = CloudStorageReader.get_storage_options(connection)
+        credential_provider = CloudStorageReader.get_credential_provider(connection)
+        # Dispatch to the correct writer based on file format
+        if write_settings.file_format == "parquet":
+            self._write_parquet_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        elif write_settings.file_format == "delta":
+            self._write_delta_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        elif write_settings.file_format == "csv":
+            self._write_csv_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        elif write_settings.file_format == "json":
+            self._write_json_to_cloud(
+                write_settings.resource_path,
+                storage_options,
+                credential_provider,
+                write_settings
+            )
+        else:
+            raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
+
+        logger.info(f"Successfully wrote data to {write_settings.resource_path}")
+
+    def _write_parquet_to_cloud(self,
+                                resource_path: str,
+                                storage_options: Dict[str, Any],
+                                credential_provider: Optional[Callable],
+                                write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """Write LazyFrame to a Parquet file in cloud storage."""
+        try:
+            sink_kwargs = {
+                "path": resource_path,
+                "compression": write_settings.parquet_compression,
+            }
+            if storage_options:
+                sink_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                sink_kwargs["credential_provider"] = credential_provider
+            try:
+                self.data_frame.sink_parquet(**sink_kwargs)
+            except:
+                pl_df = self.collect()
+                sink_kwargs['file'] = sink_kwargs.pop("path")
+                pl_df.write_parquet(**sink_kwargs)
+
+        except Exception as e:
+            logger.error(f"Failed to write Parquet to {resource_path}: {str(e)}")
+            raise Exception(f"Failed to write Parquet to cloud storage: {str(e)}")
+
+    def _write_delta_to_cloud(self,
+                              resource_path: str,
+                              storage_options: Dict[str, Any],
+                              credential_provider: Optional[Callable],
+                              write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        sink_kwargs = {
+            "target": resource_path,
+            "mode": write_settings.write_mode,
+        }
+        if storage_options:
+            sink_kwargs["storage_options"] = storage_options
+        if credential_provider:
+            sink_kwargs["credential_provider"] = credential_provider
+        self.collect().write_delta(**sink_kwargs)
+
+    def _write_csv_to_cloud(self,
+                            resource_path: str,
+                            storage_options: Dict[str, Any],
+                            credential_provider: Optional[Callable],
+                            write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """Write LazyFrame to a CSV file in cloud storage."""
+        try:
+            sink_kwargs = {
+                "path": resource_path,
+                "separator": write_settings.csv_delimiter,
+            }
+            if storage_options:
+                sink_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                sink_kwargs["credential_provider"] = credential_provider
+
+            # sink_csv executes the lazy query and writes the result
+            self.data_frame.sink_csv(**sink_kwargs)
+
+        except Exception as e:
+            logger.error(f"Failed to write CSV to {resource_path}: {str(e)}")
+            raise Exception(f"Failed to write CSV to cloud storage: {str(e)}")
+
+    def _write_json_to_cloud(self,
+                             resource_path: str,
+                             storage_options: Dict[str, Any],
+                             credential_provider: Optional[Callable],
+                             write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage."""
+        try:
+            sink_kwargs = {"path": resource_path}
+            if storage_options:
+                sink_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                sink_kwargs["credential_provider"] = credential_provider
+            self.data_frame.sink_ndjson(**sink_kwargs)
+
+        except Exception as e:
+            logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
+            raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
+
+    @classmethod
+    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal):
+        """
+        Create a FlowDataEngine from an object in cloud storage.
+
+        Supports reading from S3, Azure ADLS, and Google Cloud Storage with various
+        authentication methods including access keys, IAM roles, and CLI credentials.
+
+        Args:
+            settings: Cloud storage read settings with connection details and read options
+
+        Returns:
+            FlowDataEngine: New instance with data from cloud storage
+
+        Raises:
+            ValueError: If storage type or file format is not supported
+            Exception: If reading from cloud storage fails
+        """
+        connection = settings.connection
+        read_settings = settings.read_settings
+
+        logger.info(f"Reading from {connection.storage_type} storage: {read_settings.resource_path}")
+        # Get storage options based on connection type
+        storage_options = CloudStorageReader.get_storage_options(connection)
+        # Get credential provider if needed
+        credential_provider = CloudStorageReader.get_credential_provider(connection)
+        if read_settings.file_format == "parquet":
+            return cls._read_parquet_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings.scan_mode == "directory",
+            )
+        elif read_settings.file_format == "delta":
+            return cls._read_delta_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings
+            )
+        elif read_settings.file_format == "csv":
+            return cls._read_csv_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings
+            )
+        elif read_settings.file_format == "json":
+            return cls._read_json_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings.scan_mode == "directory"
+            )
+        elif read_settings.file_format == "iceberg":
+            return cls._read_iceberg_from_cloud(
+                read_settings.resource_path,
+                storage_options,
+                credential_provider,
+                read_settings
+            )
+
+        elif read_settings.file_format in ["delta", "iceberg"]:
+            # These would require additional libraries
+            raise NotImplementedError(f"File format {read_settings.file_format} not yet implemented")
+        else:
+            raise ValueError(f"Unsupported file format: {read_settings.file_format}")
+
+    @staticmethod
+    def _get_schema_from_first_file_in_dir(source: str, storage_options: Dict[str, Any]) -> List[FlowfileColumn] | None:
+        try:
+            first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
+            return convert_stats_to_column_info(FlowDataEngine._create_schema_stats_from_pl_schema(
+                pl.scan_parquet(first_file_ref, storage_options=storage_options).collect_schema()))
+        except Exception as e:
+            logger.warning(f"Could not read schema from first file in directory, using default schema: {e}")
+
+
+    @classmethod
+    def _read_iceberg_from_cloud(cls,
+                                 resource_path: str,
+                                 storage_options: Dict[str, Any],
+                                 credential_provider: Optional[Callable],
+                                 read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
+        """Read Iceberg table(s) from cloud storage."""
+        raise NotImplementedError(f"Failed to read Iceberg table from cloud storage: Not yet implemented")
+
+    @classmethod
+    def _read_parquet_from_cloud(cls,
+                                 resource_path: str,
+                                 storage_options: Dict[str, Any],
+                                 credential_provider: Optional[Callable],
+                                 is_directory: bool) -> "FlowDataEngine":
+        """Read Parquet file(s) from cloud storage."""
+        try:
+            # Use scan_parquet for lazy evaluation
+            if is_directory:
+                resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
+            scan_kwargs = {"source": resource_path}
+
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+            if storage_options and is_directory:
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+            else:
+                schema = None
+            lf = pl.scan_parquet(**scan_kwargs)
+
+            return cls(
+                lf,
+                number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
+                optimize_memory=True,
+                streamable=True,
+                schema=schema
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to read Parquet from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read Parquet from cloud storage: {str(e)}")
+
+    @classmethod
+    def _read_delta_from_cloud(cls,
+                               resource_path: str,
+                               storage_options: Dict[str, Any],
+                               credential_provider: Optional[Callable],
+                               read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
+        try:
+            logger.info("Reading Delta file from cloud storage...")
+            logger.info(f"read_settings: {read_settings}")
+            scan_kwargs = {"source": resource_path}
+            if read_settings.delta_version:
+                scan_kwargs['version'] = read_settings.delta_version
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+            lf = pl.scan_delta(**scan_kwargs)
+
+            return cls(
+                lf,
+                number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
+                optimize_memory=True,
+                streamable=True
+            )
+        except Exception as e:
+            logger.error(f"Failed to read Delta file from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read Delta file from cloud storage: {str(e)}")
+
+    @classmethod
+    def _read_csv_from_cloud(cls,
+                             resource_path: str,
+                             storage_options: Dict[str, Any],
+                             credential_provider: Optional[Callable],
+                             read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
+        """Read CSV file(s) from cloud storage."""
+        try:
+            scan_kwargs = {
+                "source": resource_path,
+                "has_header": read_settings.csv_has_header,
+                "separator": read_settings.csv_delimiter,
+                "encoding": read_settings.csv_encoding,
+            }
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+
+            if read_settings.scan_mode == "directory":
+                resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
+                scan_kwargs["source"] = resource_path
+            if storage_options and read_settings.scan_mode == "directory":
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+            else:
+                schema = None
+
+            lf = pl.scan_csv(**scan_kwargs)
+
+            return cls(
+                lf,
+                number_of_records=6_666_666,  # Will be calculated lazily
+                optimize_memory=True,
+                streamable=True,
+                schema=schema
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to read CSV from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read CSV from cloud storage: {str(e)}")
+
+    @classmethod
+    def _read_json_from_cloud(cls,
+                              resource_path: str,
+                              storage_options: Dict[str, Any],
+                              credential_provider: Optional[Callable],
+                              is_directory: bool) -> "FlowDataEngine":
+        """Read JSON file(s) from cloud storage."""
+        try:
+            scan_kwargs = {"source": resource_path}
+
+            if storage_options:
+                scan_kwargs["storage_options"] = storage_options
+            if credential_provider:
+                scan_kwargs["credential_provider"] = credential_provider
+
+            if is_directory:
+                resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
+            if storage_options and is_directory:
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+            else:
+                schema = None
+
+            lf = pl.scan_ndjson(**scan_kwargs)  # Using NDJSON for line-delimited JSON
+
+            return cls(
+                lf,
+                number_of_records=-1,
+                optimize_memory=True,
+                streamable=True,
+                schema=schema
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to read JSON from {resource_path}: {str(e)}")
+            raise Exception(f"Failed to read JSON from cloud storage: {str(e)}")
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
         """Handle file path reference input."""
@@ -309,16 +685,20 @@ class FlowDataEngine:
         _ = calculate_schema_stats
         self.name = name
         self._optimize_memory = optimize_memory
-        pl_schema = self.data_frame.collect_schema()
-        self._schema = self._handle_schema(schema, pl_schema)
-        self.columns = [c.column_name for c in self._schema] if self._schema else pl_schema.names()
+        if assert_if_flowfile_schema(schema):
+            self._schema = schema
+            self.columns = [c.column_name for c in self._schema]
+        else:
+            pl_schema = self.data_frame.collect_schema()
+            self._schema = self._handle_schema(schema, pl_schema)
+            self.columns = [c.column_name for c in self._schema] if self._schema else pl_schema.names()
 
     def __getitem__(self, item):
         """Access a specific column or item from the DataFrame."""
         return self.data_frame.select([item])
 
     @property
-    def data_frame(self) -> pl.LazyFrame | pl.DataFrame:
+    def data_frame(self) -> pl.LazyFrame | pl.DataFrame | None:
         """Get the underlying DataFrame with appropriate handling of different states."""
         if self._data_frame is not None and not self.is_future:
             return self._data_frame
@@ -343,6 +723,16 @@ class FlowDataEngine:
             raise Exception('Cannot set a non-lazy dataframe to a lazy flowfile')
         self._data_frame = df
 
+    @staticmethod
+    def _create_schema_stats_from_pl_schema(pl_schema: pl.Schema) -> List[Dict]:
+        return [
+            dict(column_name=k, pl_datatype=v, col_index=i)
+            for i, (k, v) in enumerate(pl_schema.items())
+        ]
+
+    def _add_schema_from_schema_stats(self, schema_stats: List[Dict]):
+        self._schema = convert_stats_to_column_info(schema_stats)
+
     @property
     def schema(self) -> List[FlowfileColumn]:
         """Get the schema of the DataFrame, calculating if necessary."""
@@ -353,11 +743,8 @@ class FlowDataEngine:
                 schema_stats = self._calculate_schema()
                 self.ind_schema_calculated = True
             else:
-                schema_stats = [
-                    dict(column_name=k, pl_datatype=v, col_index=i)
-                    for i, (k, v) in enumerate(self.data_frame.collect_schema().items())
-                ]
-            self._schema = convert_stats_to_column_info(schema_stats)
+                schema_stats = self._create_schema_stats_from_pl_schema(self.data_frame.collect_schema())
+            self._add_schema_from_schema_stats(schema_stats)
         return self._schema
 
     @property
@@ -392,6 +779,7 @@ class FlowDataEngine:
     def _collect_data(self, n_records: int = None) -> pl.DataFrame:
         """Internal method to handle data collection."""
         if n_records is None:
+
             self.collect_external()
             if self._streamable:
                 try:
@@ -407,7 +795,7 @@ class FlowDataEngine:
             return self._collect_from_external_source(n_records)
 
         if self._streamable:
-            return self.data_frame.head(n_records).collect(engine="streaming", comm_subplan_elim=False)
+            return self.data_frame.head(n_records).collect(engine="streaming")
         return self.data_frame.head(n_records).collect()
 
     def _collect_from_external_source(self, n_records: int) -> pl.DataFrame:
@@ -603,25 +991,26 @@ class FlowDataEngine:
             length = 10_000_000
         return cls(pl.LazyFrame().select((pl.int_range(0, length, dtype=pl.UInt32)).alias(output_name)))
 
-    # Schema Handling Methods
-
-    def _handle_schema(self, schema: List[FlowfileColumn] | List[str] | pl.Schema,
+    def _handle_schema(self, schema: List[FlowfileColumn] | List[str] | pl.Schema | None,
                        pl_schema: pl.Schema) -> List[FlowfileColumn] | None:
         """Handle schema processing and validation."""
-        if schema is None:
+        if schema is None and pl_schema is not None:
+            return convert_stats_to_column_info(self._create_schema_stats_from_pl_schema(pl_schema))
+        elif schema is None and pl_schema is None:
             return None
-
-        if schema.__len__() != pl_schema.__len__():
-            raise Exception(
-                f'Schema does not match the data got {schema.__len__()} columns expected {pl_schema.__len__()}')
-
-        if isinstance(schema, pl.Schema):
-            return self._handle_polars_schema(schema, pl_schema)
-        elif isinstance(schema, list) and len(schema) == 0:
-            return []
-        elif isinstance(schema[0], str):
-            return self._handle_string_schema(schema, pl_schema)
-        return schema
+        elif assert_if_flowfile_schema(schema) and pl_schema is None:
+            return schema
+        elif pl_schema is not None and schema is not None:
+            if schema.__len__() != pl_schema.__len__():
+                raise Exception(
+                    f'Schema does not match the data got {schema.__len__()} columns expected {pl_schema.__len__()}')
+            if isinstance(schema, pl.Schema):
+                return self._handle_polars_schema(schema, pl_schema)
+            elif isinstance(schema, list) and len(schema) == 0:
+                return []
+            elif isinstance(schema[0], str):
+                return self._handle_string_schema(schema, pl_schema)
+            return schema
 
     def _handle_polars_schema(self, schema: pl.Schema, pl_schema: pl.Schema) -> List[FlowfileColumn]:
         """Handle Polars schema conversion."""
@@ -909,7 +1298,6 @@ class FlowDataEngine:
         """
         n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=True))
         logging.info(f'Getting sample of {n_rows} rows')
-
         if random:
             if self.lazy and self.external_source is not None:
                 self.collect_external()
@@ -1131,7 +1519,6 @@ class FlowDataEngine:
         left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input)
         left, right = rename_df_table_for_join(left, right, join_input.get_join_key_renames())
         if join_input.how == 'right':
-
             joined_df = right.join(
                 other=left,
                 left_on=join_input.right_join_keys,
@@ -1631,3 +2018,4 @@ def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowD
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
     return FlowDataEngine(df)
+

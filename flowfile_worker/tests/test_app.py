@@ -1,32 +1,48 @@
 import pytest
-import subprocess
 from fastapi.testclient import TestClient
 import polars as pl
-import platform
 import base64
 from io import BytesIO
 from flowfile_worker import main
 from flowfile_worker import models
 from flowfile_worker.secrets import encrypt_secret
 from polars_grouper import graph_solver
-from flowfile_worker.external_sources.airbyte_sources.models import AirbyteSettings
+
+from logging import getLogger
+from multiprocessing import Queue
+
+import polars as pl
+import pytest
+from pydantic import SecretStr
+
+from flowfile_worker import mp_context
+from flowfile_worker.external_sources.s3_source.models import (CloudStorageWriteSettings,
+                                                               FullCloudStorageConnection,
+                                                               WriteSettings,
+                                                               )
+from flowfile_worker.funcs import write_to_cloud_storage
+from flowfile_worker.secrets import encrypt_secret
+
 
 client = TestClient(main.app)
+
+
+try:
+    # noinspection PyUnresolvedReferences
+    from tests.utils import is_docker_available, cloud_storage_connection_settings
+    from test_utils.s3.fixtures import get_minio_client
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
+    sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
+    # noinspection PyUnresolvedReferences
+    from utils import is_docker_available, cloud_storage_connection_settings
+    from test_utils.s3.fixtures import get_minio_client
 
 @pytest.fixture
 def pw():
     return encrypt_secret('testpass')
-
-
-def is_docker_available():
-    """Check if Docker is running."""
-    if platform.system() == "Windows":
-        return False
-    try:
-        subprocess.run(["docker", "info"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
 
 
 @pytest.fixture
@@ -198,25 +214,6 @@ def test_write_output_csv():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_store_airbyte_result():
-    airbyte_settings = AirbyteSettings(**{'source_name': 'source-faker', 'stream': 'users', 'config_ref': None,
-                                          'config': {'count': 1000, 'seed': -1, 'records_per_slice': 1000,
-                                                     'always_updated': True, 'parallelism': 4}, 'fields': None,
-                                          'enforce_full_refresh': True,
-                                          'version': '6.2.21'})
-    v = client.post('/store_airbyte_result', json=airbyte_settings.dict())
-    assert v.status_code == 200, v.text
-    assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
-    status: models.Status = models.Status.model_validate(v.json())
-    r = client.get(f'/status/{status.background_task_id}')
-    status = models.Status.model_validate(r.json())
-    if status.error_message is not None:
-        raise Exception(f'Error message: {status.error_message}')
-    lf_test = base64.decodebytes(status.results.encode())
-    result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
-
-
-@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_sql_result(pw):
     database_connection = dict(host='localhost', password=pw, username='testuser', port=5433, database='testdb')
     sql_source_settings = dict(connection=database_connection, query='SELECT * FROM public.movies')
@@ -250,12 +247,40 @@ def test_store_in_database(pw):
                      'operation': s.decode()}
     v = client.post('/store_database_write_result', json=settings_data)
     assert v.status_code == 200, v.text
-
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status = models.Status.model_validate(v.json())
     assert status.status == 'Starting', 'Expected status to be Starting'
     r = client.get(f'/status/{status.background_task_id}')
     assert r.status_code == 200, r.text
+    status = models.Status.model_validate(r.json())
+    if status.error_message is not None:
+        raise Exception(f'Error message: {status.error_message}')
+    assert status.status == 'Completed', 'Expected status to be Completed'
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_store_in_cloud_storage(cloud_storage_connection_settings):
+    lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
+    s = base64.encodebytes(lf.serialize())
+    cloud_write_settings = models.CloudStorageScriptWrite(
+        connection=cloud_storage_connection_settings,
+        write_settings=WriteSettings(
+            resource_path="s3://worker-test-bucket/write_test.parquet",
+            file_format="parquet",
+            write_mode="overwrite",
+            parquet_compression="snappy"
+        ),
+        operation=s
+    )
+    settings_data = cloud_write_settings.model_dump()
+    settings_data["connection"]["aws_secret_access_key"] = (
+        settings_data)["connection"]["aws_secret_access_key"].get_secret_value()
+    settings_data["operation"] = settings_data["operation"].decode()
+    v = client.post('/write_data_to_cloud', json=settings_data)
+    assert v.status_code == 200, v.text
+    assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
+    status: models.Status = models.Status.model_validate(v.json())
+    r = client.get(f'/status/{status.background_task_id}')
     status = models.Status.model_validate(r.json())
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')

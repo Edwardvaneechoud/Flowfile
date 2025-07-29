@@ -6,7 +6,9 @@ from flowfile_worker.polars_fuzzy_match.matcher import fuzzy_match_dfs
 from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
-from flowfile_worker.external_sources.sql_source.main import write_serialized_df_to_database, write_df_to_database
+from flowfile_worker.external_sources.sql_source.main import write_df_to_database
+from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
+from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 from base64 import encodebytes
 from logging import Logger
 import logging
@@ -205,9 +207,9 @@ def execute_write_method(write_method: Callable, path: str, data_type: str = Non
         logger.info('Writing as csv file')
         if write_mode == 'append':
             with open(path, 'ab') as f:
-                write_method(file=f, separator=delimiter, quote_style='always')
+                write_method(f, separator=delimiter, quote_style='always')
         else:
-            write_method(file=path, separator=delimiter, quote_style='always')
+            write_method(path, separator=delimiter, quote_style='always')
     elif data_type == 'parquet':
         logger.info('Writing as parquet file')
         write_method(path)
@@ -243,6 +245,49 @@ def write_to_database(polars_serializable_object: bytes,
             progress.value = -1
 
 
+def write_to_cloud_storage(polars_serializable_object: bytes,
+                           progress: Value,
+                           error_message: Array,
+                           queue: Queue,
+                           file_path: str,
+                           cloud_write_settings: CloudStorageWriteSettings,
+                           flowfile_flow_id: int = -1,
+                           flowfile_node_id: int | str = -1
+                           ) -> None:
+    """
+    Writes a Polars DataFrame to cloud storage using the provided settings.
+    Args:
+        polars_serializable_object ():  # Serialized Polars DataFrame object
+        progress (): Multiprocessing Value to track progress
+        error_message (): Array to store error messages
+        queue (): Queue to send results back
+        file_path (): Path to the file where the DataFrame will be written
+        cloud_write_settings (): CloudStorageWriteSettings object containing write settings and connection details
+        flowfile_flow_id (): Flowfile flow ID for logging
+        flowfile_node_id (): Flowfile node ID for logging
+
+    Returns:
+        None
+    """
+    flowfile_logger = get_worker_logger(flowfile_flow_id, flowfile_node_id)
+    flowfile_logger.info(f"Starting write operation to: {cloud_write_settings.write_settings.resource_path}")
+    df = pl.LazyFrame.deserialize(io.BytesIO(polars_serializable_object))
+    flowfile_logger.info(f"Starting to sync the data to cloud, execution plan: \n"
+                         f"{df.explain(format='plain')}")
+    try:
+        write_df_to_cloud(df, cloud_write_settings, flowfile_logger)
+        flowfile_logger.info("Write operation completed successfully")
+        with progress.get_lock():
+            progress.value = 100
+    except Exception as e:
+        error_msg = str(e).encode()[:1024]
+        flowfile_logger.error(f'Error during write operation: {str(e)}')
+        with error_message.get_lock():
+            error_message[:len(error_msg)] = error_msg
+        with progress.get_lock():
+            progress.value = -1
+
+
 def write_output(polars_serializable_object: bytes,
                  progress: Value,
                  error_message: Array,
@@ -263,16 +308,16 @@ def write_output(polars_serializable_object: bytes,
         if isinstance(df, pl.LazyFrame):
             flowfile_logger.info(f'Execution plan explanation:\n{df.explain(format="plain")}')
         flowfile_logger.info("Successfully deserialized dataframe")
-        is_lazy = False
         sink_method_str = 'sink_'+data_type
         write_method_str = 'write_'+data_type
         has_sink_method = hasattr(df, sink_method_str)
         write_method = None
         if os.path.exists(path) and write_mode == 'create':
             raise Exception('File already exists')
-        if has_sink_method and is_lazy:
+        if has_sink_method and write_method != 'append':
+            flowfile_logger.info(f'Using sink method: {sink_method_str}')
             write_method = getattr(df, 'sink_' + data_type)
-        elif not is_lazy or not has_sink_method:
+        elif not has_sink_method:
             if isinstance(df, pl.LazyFrame):
                 df = collect_lazy_frame(df)
             write_method = getattr(df, write_method_str)

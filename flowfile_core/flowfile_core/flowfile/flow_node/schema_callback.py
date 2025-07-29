@@ -14,6 +14,7 @@ class SingleExecutionFuture(Generic[T]):
     func: Callable[[], T]
     on_error: Optional[Callable[[Exception], Any]]
     result_value: Optional[T]
+    has_run_at_least_once: bool = False  # Indicates if the function has been run at least once
 
     def __init__(
         self,
@@ -26,6 +27,7 @@ class SingleExecutionFuture(Generic[T]):
         self.func = func
         self.on_error = on_error
         self.result_value = None
+        self.has_run_at_least_once = False
 
     def start(self) -> None:
         """Start the function execution if not already started."""
@@ -35,8 +37,7 @@ class SingleExecutionFuture(Generic[T]):
 
     def cleanup(self) -> None:
         """Clean up resources by clearing the future and shutting down the executor."""
-        # if self.future:
-        #     self.future = None
+        self.has_run_at_least_once = True
         self.executor.shutdown(wait=False)
 
     def __call__(self) -> Optional[T]:

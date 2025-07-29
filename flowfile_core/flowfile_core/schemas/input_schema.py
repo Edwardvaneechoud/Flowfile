@@ -3,8 +3,9 @@ from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
-from flowfile_core.schemas.external_sources.airbyte_schemas import AirbyteConfig
-from flowfile_core.utils.utils import standardize_col_dtype
+from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.schemas.schemas import SecretRef
+from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
 import polars as pl
 
@@ -262,9 +263,10 @@ class RawData(BaseModel):
     def from_pylist(cls, pylist: List[dict]):
         if len(pylist) == 0:
             return cls(columns=[], data=[])
-
+        pylist = ensure_similarity_dicts(pylist)
         values = [standardize_col_dtype([vv for vv in c]) for c in
                   zip(*(r.values() for r in pylist))]
+
         data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
         columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
         return cls(columns=columns, data=values)
@@ -284,7 +286,7 @@ class NodeRead(NodeBase):
 class DatabaseConnection(BaseModel):
     database_type: str = "postgresql"  # Database type (postgresql, mysql, etc.)
     username: Optional[str] = None
-    password_ref: Optional[str] = None
+    password_ref: Optional[SecretRef] = None
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None
@@ -357,6 +359,17 @@ class NodeDatabaseWriter(NodeSingleInput):
     database_write_settings: DatabaseWriteSettings
 
 
+class NodeCloudStorageReader(NodeBase):
+    """Cloud storage source node"""
+    cloud_storage_settings: CloudStorageReadSettings
+    fields: Optional[List[MinimalFieldInfo]] = None
+
+
+class NodeCloudStorageWriter(NodeSingleInput):
+    """Cloud storage destination node"""
+    cloud_storage_settings: CloudStorageWriteSettings
+
+
 class ExternalSource(BaseModel):
     orientation: str = 'row'
     fields: Optional[List[MinimalFieldInfo]] = None
@@ -368,11 +381,6 @@ class SampleUsers(ExternalSource):
     size: int = 100
 
 
-class AirbyteReader(AirbyteConfig):
-    class_name: Optional[str] = "airbyte_reader"
-    fields: Optional[List[MinimalFieldInfo]] = None
-
-
 class AccessToken(BaseModel):
     user_id: str
     access_token: SecretStr = None
@@ -381,11 +389,6 @@ class AccessToken(BaseModel):
 class NodeExternalSource(NodeBase):
     identifier: str
     source_settings: SampleUsers
-
-
-class NodeAirbyteReader(NodeExternalSource):
-    identifier: str = 'airbyte'
-    source_settings: AirbyteReader
 
 
 class NodeFormula(NodeSingleInput):

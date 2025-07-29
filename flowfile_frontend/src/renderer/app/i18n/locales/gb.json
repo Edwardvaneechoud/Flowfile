@@ -335,6 +335,7 @@
     "sliders": "Sliders",
     "secretManager": "Secret Manager",
     "databaseManager": "Database Connection Manager",
+    "cloudConnectionManager": "Cloud Connection Manager",
     "popovers": "Popovers",
     "chat": "Chat",
     "maplibre-maps": "MapLibre Maps",

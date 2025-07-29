@@ -24,7 +24,6 @@ Flowfile Core is the central engine of Flowfile, providing a powerful ETL (Extra
   - Data Sampling
 
 - **External Data Sources**
-  - Airbyte Integration
   - Custom Source Extensions
 
 ## 🔧 Core Components

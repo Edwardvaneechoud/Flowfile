@@ -25,3 +25,26 @@ def ensure_password_is_available():
         with get_db_context() as db:
             store_secret(db, secret, 1)
 
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def generator_func():
+    try:
+        import os
+        os.environ["TESTING"] = "True"
+        yield None
+    finally:
+        os.environ["TESTING"] = "False"
+
+
+def run_generator():
+    with generator_func() as value:
+        import os
+        from time import sleep
+        print(os.environ["TESTING"])
+        sleep(1)
+        # Do something with the value
+
+    print(os.environ["TESTING"])
