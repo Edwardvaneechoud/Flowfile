@@ -5,6 +5,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSetting
                                                          CloudStorageWriteSettings,
                                                          CloudStorageWriteSettingsInternal)
 from flowfile_core.schemas.transform_schema import UniqueInput
+from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_cloud_connection
 import pytest
 from typing import Dict, Any, Optional
 from pydantic import SecretStr
@@ -426,3 +427,22 @@ def test_read_parquet_single():
     assert "Parquet SCAN" in sample_data.data_frame.explain(), "Should still have predicate pushdown to Remote scan"
     sample_data.lazy = False
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
+
+
+def test_gigantic_table():
+    breakpoint()
+
+    read_settings = CloudStorageReadSettings(
+        resource_path="s3://posman-meter-readings-prod/meter_reading_with_consent/",
+        file_format="parquet",
+        scan_mode="directory"
+    )
+    connection = get_local_cloud_connection(connection_name="760163046258_ProjectAdmin", user_id=1)
+    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(CloudStorageReadSettingsInternal(
+        connection=connection,
+        read_settings=read_settings
+    ))
+    breakpoint()
+    import polars as pl
+    print(flow_data_engine.data_frame.select(pl.len()).collect(engine="in-memory")[0, 0])
+    breakpoint()

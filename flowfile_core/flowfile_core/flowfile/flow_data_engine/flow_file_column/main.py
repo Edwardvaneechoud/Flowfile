@@ -1,9 +1,10 @@
+
 from dataclasses import dataclass
-from typing import Optional, Any, List, Dict, Literal
+from typing import Optional, Any, List, Dict, Literal, Iterable
+
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
-from polars import datatypes
 import polars as pl
 # TODO: rename flow_file_column to flowfile_column
 DataTypeGroup = Literal['numeric', 'str', 'date']
@@ -175,3 +176,12 @@ def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowfileColumn]:
 def convert_pl_schema_to_raw_data_format(pl_schema: pl.Schema) -> List[input_schema.MinimalFieldInfo]:
     return [FlowfileColumn.create_from_polars_type(PlType(column_name=k, pl_datatype=v)).get_minimal_field_info()
             for k, v in pl_schema.items()]
+
+
+def assert_if_flowfile_schema(obj: Iterable) -> bool:
+    """
+    Assert that the object is a valid iterable of FlowfileColumn objects.
+    """
+    if isinstance(obj, (list, set, tuple)):
+        return all(isinstance(item, FlowfileColumn) for item in obj)
+    return False

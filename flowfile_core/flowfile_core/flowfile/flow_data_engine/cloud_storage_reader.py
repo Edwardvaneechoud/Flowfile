@@ -175,7 +175,7 @@ def get_first_file_from_s3_dir(source: str, storage_options: Dict[str, Any] = No
     source : str
         S3 path with wildcards (e.g., 's3://bucket/prefix/**/*/*.parquet')
 
-    connection: FullCloudStorageConnection
+    storage_options: FullCloudStorageConnection
 
     Returns
     -------
@@ -191,21 +191,23 @@ def get_first_file_from_s3_dir(source: str, storage_options: Dict[str, Any] = No
     """
     if not source.startswith('s3://'):
         raise ValueError("Source must be a valid S3 URI starting with 's3://'")
-    breakpoint()
     bucket_name, prefix = _parse_s3_path(source)
+    file_extension = _get_file_extension(source)
     base_prefix = _remove_wildcards_from_prefix(prefix)
-    # Create S3 client
     s3_client = _create_s3_client(storage_options)
 
     # Get parquet files
-    parquet_files = _list_files(s3_client, bucket_name, base_prefix)
-
-    if not parquet_files:
-        raise ValueError(f"No parquet files found in {source}")
+    first_file = _get_first_file(s3_client, bucket_name, base_prefix, file_extension)
 
     # Return first file URI
-    first_file = parquet_files[0]
     return f"s3://{bucket_name}/{first_file['Key']}"
+
+
+def _get_file_extension(source: str) -> str:
+    parts = source.split(".")
+    if len(parts) == 1:
+        raise ValueError("Source path does not contain a file extension")
+    return parts[-1].lower()
 
 
 def _parse_s3_path(source: str) -> tuple[str, str]:
@@ -234,31 +236,24 @@ def _create_s3_client(storage_options: Optional[Dict[str, Any]]):
     return boto3.client('s3', **client_options)
 
 
-def _list_files(s3_client, bucket_name: str, prefix: str) -> list:
+def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extension: str) -> Dict[Any, Any]:
     """List all parquet files in S3 bucket with given prefix."""
     try:
-        breakpoint()
-        response = s3_client.list_objects_v2(
-            Bucket="flowfile-test",
-            Prefix="write_test_append"
-        )
-
-        if 'Contents' not in response:
-            return []
-
-        parquet_files = [
-            obj for obj in response['Contents']
-            if obj['Key'].endswith('.parquet')
-        ]
-
-        # Sort for consistent ordering
-        return sorted(parquet_files, key=lambda x: x['Key'])
-
+        paginator = s3_client.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=bucket_name, Prefix=base_prefix)
+        for page in pages:
+            if 'Contents' in page:
+                for obj in page['Contents']:
+                    if obj['Key'].endswith(f".{file_extension}"):
+                        return obj
+            else:
+                raise ValueError(f"No objects found in s3://{bucket_name}/{base_prefix}")
+        raise ValueError(f"No {file_extension} files found in s3://{bucket_name}/{base_prefix}")
     except ClientError as e:
-        raise ClientError(f"Failed to list objects in s3://{bucket_name}/{prefix}: {e}", "ListObjectsV2") from e
+        raise ValueError(f"Failed to list files in s3://{bucket_name}/{base_prefix}: {e}")
 
 
-def ensure_path_has_wildcard_pattern(resource_path: str, file_type: Literal["csv", "parquet", "json"]):
-    if not resource_path.endswith(f"*{file_type}"):
-        resource_path = resource_path.rstrip("/") + f"/**/*.{file_type}"
+def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["csv", "parquet", "json"]):
+    if not resource_path.endswith(f"*{file_format}"):
+        resource_path = resource_path.rstrip("/") + f"/**/*.{file_format}"
     return resource_path

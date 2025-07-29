@@ -25,7 +25,7 @@ from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal, FullCloudStorageConnection,
-                                                         get_cloud_storage_write_settings_worker_interface)
+                                                         get_cloud_storage_write_settings_worker_interface, AuthMethod)
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
@@ -81,6 +81,16 @@ def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start
                              end_row: int, end_column: int, has_headers: bool):
     return partial(get_xlsx_schema, engine=engine, file_path=file_path, sheet_name=sheet_name, start_row=start_row,
                    start_column=start_column, end_row=end_row, end_column=end_column, has_headers=has_headers)
+
+
+def get_cloud_connection_settings(connection_name: str, user_id: int, auth_mode: AuthMethod) -> FullCloudStorageConnection:
+    cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
+    if cloud_connection_settings is None and auth_mode == "aws-cli":
+        # If the auth mode is aws-cli, we do not need connection settings
+        cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
+    if cloud_connection_settings is None:
+        raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+    return cloud_connection_settings
 
 
 class FlowGraph:
@@ -864,28 +874,20 @@ class FlowGraph:
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
 
         node_type = "cloud_storage_writer"
-        node_cloud_storage_writer.cloud_storage_settings.get_write_setting_worker_interface()
-        cloud_connection_settings = get_local_cloud_connection(
-            node_cloud_storage_writer.cloud_storage_settings.connection_name,
-            node_cloud_storage_writer.user_id)
-        if (cloud_connection_settings is None and
-                node_cloud_storage_writer.cloud_storage_settings.auth_mode in ("aws-cli", "env_vars")):
-
-            cloud_connection_settings = FullCloudStorageConnection(
-                storage_type="s3",
-                auth_method=node_cloud_storage_writer.cloud_storage_settings.auth_mode
-            )
-        if cloud_connection_settings is None:
-            raise HTTPException(status_code=400, detail="Cloud connection settings not found")
-        full_cloud_storage_connection = FullCloudStorageConnection(
-            storage_type=cloud_connection_settings.storage_type,
-            auth_method=cloud_connection_settings.auth_method,
-            aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
-            **CloudStorageReader.get_storage_options(cloud_connection_settings)
-        )
 
         def _func(df: FlowDataEngine):
             df.lazy = True
+            cloud_connection_settings = get_cloud_connection_settings(
+                connection_name=node_cloud_storage_writer.cloud_storage_settings.connection_name,
+                user_id=node_cloud_storage_writer.user_id,
+                auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode
+            )
+            full_cloud_storage_connection = FullCloudStorageConnection(
+                storage_type=cloud_connection_settings.storage_type,
+                auth_method=cloud_connection_settings.auth_method,
+                aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
+                **CloudStorageReader.get_storage_options(cloud_connection_settings)
+            )
             settings = get_cloud_storage_write_settings_worker_interface(
                 write_settings=node_cloud_storage_writer.cloud_storage_settings,
                 connection=full_cloud_storage_connection,
@@ -927,23 +929,16 @@ class FlowGraph:
         node_type = "cloud_storage_reader"
         logger.info("Adding cloud storage reader")
         cloud_storage_read_settings = node_cloud_storage_reader.cloud_storage_settings
-        def get_cloud_connection_settings():
-
-            cloud_connection_settings = get_local_cloud_connection(cloud_storage_read_settings.connection_name,
-                                                                   node_cloud_storage_reader.user_id)
-            if cloud_connection_settings is None and cloud_storage_read_settings.auth_mode == "aws-cli":
-                # If the auth mode is aws-cli, we do not need connection settings
-                cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
-            if cloud_connection_settings is None:
-                raise HTTPException(status_code=400, detail="Cloud connection settings not found")
-            return cloud_connection_settings
 
         def _func():
             logger.info("Starting to run the schema callback for cloud storage reader")
             self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
-
             settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
-                                                        connection=get_cloud_connection_settings())
+                                                        connection=get_cloud_connection_settings(
+                                                            connection_name=cloud_storage_read_settings.connection_name,
+                                                            user_id=node_cloud_storage_reader.user_id,
+                                                            auth_mode=cloud_storage_read_settings.auth_mode
+                                                        ))
             fl = FlowDataEngine.from_cloud_storage_obj(settings)
             return fl
 

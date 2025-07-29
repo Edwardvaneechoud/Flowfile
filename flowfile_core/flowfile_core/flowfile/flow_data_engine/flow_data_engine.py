@@ -33,6 +33,7 @@ from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (CloudS
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
+    assert_if_flowfile_schema,
     convert_stats_to_column_info
 )
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
@@ -186,7 +187,6 @@ class FlowDataEngine:
             self._handle_path_ref(path_ref, optimize_memory)
         else:
             self.initialize_empty_fl()
-
         self._finalize_initialization(name, optimize_memory, schema, calculate_schema_stats)
 
     def _initialize_attributes(self, number_of_records_callback, data_callback, streamable):
@@ -504,6 +504,16 @@ class FlowDataEngine:
         else:
             raise ValueError(f"Unsupported file format: {read_settings.file_format}")
 
+    @staticmethod
+    def _get_schema_from_first_file_in_dir(source: str, storage_options: Dict[str, Any]) -> List[FlowfileColumn] | None:
+        try:
+            first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
+            return convert_stats_to_column_info(FlowDataEngine._create_schema_stats_from_pl_schema(
+                pl.scan_parquet(first_file_ref, storage_options=storage_options).collect_schema()))
+        except Exception as e:
+            logger.warning(f"Could not read schema from first file in directory, using default schema: {e}")
+
+
     @classmethod
     def _read_iceberg_from_cloud(cls,
                                  resource_path: str,
@@ -523,25 +533,26 @@ class FlowDataEngine:
         try:
             # Use scan_parquet for lazy evaluation
             if is_directory:
+                resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="parquet")
+            scan_kwargs = {"source": resource_path}
 
-                if not resource_path.endswith("*.parquet"):
-                    resource_path = resource_path.rstrip("/") + "/*.parquet"
-
-                scan_kwargs = {"source": resource_path}
-            else:
-                scan_kwargs = {"source": resource_path}
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
+
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-            logger.info(f"Reading Parquet from {resource_path} with scan_kwargs: {scan_kwargs}")
+            if storage_options and is_directory:
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+            else:
+                schema = None
             lf = pl.scan_parquet(**scan_kwargs)
 
             return cls(
                 lf,
                 number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
                 optimize_memory=True,
-                streamable=True
+                streamable=True,
+                schema=schema
             )
 
         except Exception as e:
@@ -594,20 +605,23 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-                print("Using credential provider:", credential_provider.__dict__)
 
             if read_settings.scan_mode == "directory":
-                if not resource_path.endswith("*.csv"):
-                    resource_path = resource_path.rstrip("/") + "/*.csv"
+                resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
                 scan_kwargs["source"] = resource_path
-            print("scan kwargs:", scan_kwargs)
+            if storage_options and read_settings.scan_mode == "directory":
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+            else:
+                schema = None
+
             lf = pl.scan_csv(**scan_kwargs)
 
             return cls(
                 lf,
                 number_of_records=6_666_666,  # Will be calculated lazily
                 optimize_memory=True,
-                streamable=True
+                streamable=True,
+                schema=schema
             )
 
         except Exception as e:
@@ -630,9 +644,11 @@ class FlowDataEngine:
                 scan_kwargs["credential_provider"] = credential_provider
 
             if is_directory:
-                if not resource_path.endswith("*.json"):
-                    resource_path = resource_path.rstrip("/") + "/*.json"
-                scan_kwargs["source"] = resource_path
+                resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
+            if storage_options and is_directory:
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+            else:
+                schema = None
 
             lf = pl.scan_ndjson(**scan_kwargs)  # Using NDJSON for line-delimited JSON
 
@@ -640,7 +656,8 @@ class FlowDataEngine:
                 lf,
                 number_of_records=-1,
                 optimize_memory=True,
-                streamable=True
+                streamable=True,
+                schema=schema
             )
 
         except Exception as e:
@@ -668,9 +685,13 @@ class FlowDataEngine:
         _ = calculate_schema_stats
         self.name = name
         self._optimize_memory = optimize_memory
-        pl_schema = self.data_frame.collect_schema()
-        self._schema = self._handle_schema(schema, pl_schema)
-        self.columns = [c.column_name for c in self._schema] if self._schema else pl_schema.names()
+        if assert_if_flowfile_schema(schema):
+            self._schema = schema
+            self.columns = [c.column_name for c in self._schema]
+        else:
+            pl_schema = self.data_frame.collect_schema()
+            self._schema = self._handle_schema(schema, pl_schema)
+            self.columns = [c.column_name for c in self._schema] if self._schema else pl_schema.names()
 
     def __getitem__(self, item):
         """Access a specific column or item from the DataFrame."""
@@ -758,6 +779,7 @@ class FlowDataEngine:
     def _collect_data(self, n_records: int = None) -> pl.DataFrame:
         """Internal method to handle data collection."""
         if n_records is None:
+
             self.collect_external()
             if self._streamable:
                 try:
@@ -773,7 +795,7 @@ class FlowDataEngine:
             return self._collect_from_external_source(n_records)
 
         if self._streamable:
-            return self.data_frame.head(n_records).collect(engine="streaming", comm_subplan_elim=False)
+            return self.data_frame.head(n_records).collect(engine="streaming")
         return self.data_frame.head(n_records).collect()
 
     def _collect_from_external_source(self, n_records: int) -> pl.DataFrame:
@@ -969,23 +991,26 @@ class FlowDataEngine:
             length = 10_000_000
         return cls(pl.LazyFrame().select((pl.int_range(0, length, dtype=pl.UInt32)).alias(output_name)))
 
-    def _handle_schema(self, schema: List[FlowfileColumn] | List[str] | pl.Schema,
+    def _handle_schema(self, schema: List[FlowfileColumn] | List[str] | pl.Schema | None,
                        pl_schema: pl.Schema) -> List[FlowfileColumn] | None:
         """Handle schema processing and validation."""
         if schema is None and pl_schema is not None:
             return convert_stats_to_column_info(self._create_schema_stats_from_pl_schema(pl_schema))
-
-        if schema.__len__() != pl_schema.__len__():
-            raise Exception(
-                f'Schema does not match the data got {schema.__len__()} columns expected {pl_schema.__len__()}')
-
-        if isinstance(schema, pl.Schema):
-            return self._handle_polars_schema(schema, pl_schema)
-        elif isinstance(schema, list) and len(schema) == 0:
-            return []
-        elif isinstance(schema[0], str):
-            return self._handle_string_schema(schema, pl_schema)
-        return schema
+        elif schema is None and pl_schema is None:
+            return None
+        elif assert_if_flowfile_schema(schema) and pl_schema is None:
+            return schema
+        elif pl_schema is not None and schema is not None:
+            if schema.__len__() != pl_schema.__len__():
+                raise Exception(
+                    f'Schema does not match the data got {schema.__len__()} columns expected {pl_schema.__len__()}')
+            if isinstance(schema, pl.Schema):
+                return self._handle_polars_schema(schema, pl_schema)
+            elif isinstance(schema, list) and len(schema) == 0:
+                return []
+            elif isinstance(schema[0], str):
+                return self._handle_string_schema(schema, pl_schema)
+            return schema
 
     def _handle_polars_schema(self, schema: pl.Schema, pl_schema: pl.Schema) -> List[FlowfileColumn]:
         """Handle Polars schema conversion."""
@@ -1273,7 +1298,6 @@ class FlowDataEngine:
         """
         n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=True))
         logging.info(f'Getting sample of {n_rows} rows')
-
         if random:
             if self.lazy and self.external_source is not None:
                 self.collect_external()
