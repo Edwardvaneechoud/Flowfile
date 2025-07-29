@@ -5,7 +5,7 @@ import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
 from flowfile_core.schemas.schemas import SecretRef
-from flowfile_core.utils.utils import standardize_col_dtype
+from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
 import polars as pl
 
@@ -263,9 +263,10 @@ class RawData(BaseModel):
     def from_pylist(cls, pylist: List[dict]):
         if len(pylist) == 0:
             return cls(columns=[], data=[])
-
+        pylist = ensure_similarity_dicts(pylist)
         values = [standardize_col_dtype([vv for vv in c]) for c in
                   zip(*(r.values() for r in pylist))]
+
         data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
         columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
         return cls(columns=columns, data=values)

@@ -27,7 +27,9 @@ from flowfile_core.schemas import (
 
 # Local imports - Flow File Components
 from flowfile_core.flowfile.flow_data_engine import utils
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import (CloudStorageReader,
+                                                                          ensure_path_has_wildcard_pattern,
+                                                                          get_first_file_from_s3_dir)
 from flowfile_core.flowfile.flow_data_engine.create import funcs as create_funcs
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import (
     FlowfileColumn,
@@ -466,7 +468,6 @@ class FlowDataEngine:
                 storage_options,
                 credential_provider,
                 read_settings.scan_mode == "directory",
-
             )
         elif read_settings.file_format == "delta":
             return cls._read_delta_from_cloud(
@@ -533,6 +534,7 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
+            logger.info(f"Reading Parquet from {resource_path} with scan_kwargs: {scan_kwargs}")
             lf = pl.scan_parquet(**scan_kwargs)
 
             return cls(
@@ -562,7 +564,6 @@ class FlowDataEngine:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-            # {'source': 's3://test-bucket/delta-lake-table', 'storage_options': {'aws_allow_http': 'True', 'aws_access_key_id': 'minioadmin', 'aws_secret_access_key': 'minioadmin', 'aws_region': 'us-east-1', 'endpoint_url': 'http://localhost:9000', 'aws_session_token': '', 'verify': 'False'}}
             lf = pl.scan_delta(**scan_kwargs)
 
             return cls(

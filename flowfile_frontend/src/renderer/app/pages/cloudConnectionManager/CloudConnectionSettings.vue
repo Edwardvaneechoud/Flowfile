@@ -238,7 +238,11 @@
 
 <script lang="ts" setup>
 import { ref, computed, defineProps, defineEmits, watch } from "vue";
-import type { FullCloudStorageConnection, CloudStorageType, AuthMethod } from "./CloudConnectionTypes";
+import type {
+  FullCloudStorageConnection,
+  CloudStorageType,
+  AuthMethod,
+} from "./CloudConnectionTypes";
 
 const props = defineProps<{
   initialConnection?: FullCloudStorageConnection;
@@ -298,7 +302,7 @@ const showAzureSecret = ref(false);
 
 // Computed property for available auth methods based on storage type
 const availableAuthMethods = computed(() => {
-  const cloudStorageType = connection.value.storageType as CloudStorageType
+  const cloudStorageType = connection.value.storageType as CloudStorageType;
   return authMethodsByStorageType[cloudStorageType] || [];
 });
 
@@ -309,7 +313,7 @@ watch(
     const methods = authMethodsByStorageType[newStorageType as CloudStorageType];
     if (methods && methods.length > 0) {
       // If current auth method is not available for new storage type, reset to first option
-      const currentMethodAvailable = methods.some(m => m.value === connection.value.authMethod);
+      const currentMethodAvailable = methods.some((m) => m.value === connection.value.authMethod);
       if (!currentMethodAvailable) {
         connection.value.authMethod = methods[0].value as AuthMethod;
       }
@@ -319,34 +323,39 @@ watch(
 
 // Computed property to determine if the form is valid
 const isValid = computed(() => {
-  const baseValid = !!connection.value.connectionName && !!connection.value.storageType && !!connection.value.authMethod;
-  
+  const baseValid =
+    !!connection.value.connectionName &&
+    !!connection.value.storageType &&
+    !!connection.value.authMethod;
+
   if (!baseValid) return false;
-  
+
   // AWS S3 validation
   if (connection.value.storageType === "s3") {
     if (!connection.value.awsRegion) return false;
-    
+
     if (connection.value.authMethod === "access_key") {
       return !!connection.value.awsAccessKeyId && !!connection.value.awsSecretAccessKey;
     } else if (connection.value.authMethod === "iam_role") {
       return !!connection.value.awsRoleArn;
     }
   }
-  
+
   // Azure ADLS validation
   if (connection.value.storageType === "adls") {
     if (!connection.value.azureAccountName) return false;
-    
+
     if (connection.value.authMethod === "access_key") {
       return !!connection.value.azureAccountKey;
     } else if (connection.value.authMethod === "service_principal") {
-      return !!connection.value.azureTenantId && 
-             !!connection.value.azureClientId && 
-             !!connection.value.azureClientSecret;
+      return (
+        !!connection.value.azureTenantId &&
+        !!connection.value.azureClientId &&
+        !!connection.value.azureClientSecret
+      );
     }
   }
-  
+
   return true;
 });
 

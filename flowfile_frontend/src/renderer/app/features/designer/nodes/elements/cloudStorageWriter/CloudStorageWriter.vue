@@ -9,14 +9,22 @@
             <p>Loading connections...</p>
           </div>
           <div v-else>
-            <select id="connection-select" v-model="selectedConnection" class="form-control" @change="updateConnection">
+            <select
+              id="connection-select"
+              v-model="selectedConnection"
+              class="form-control"
+              @change="updateConnection"
+            >
               <option :value="null">No connection (use local credentials)</option>
               <option v-for="conn in connectionInterfaces" :key="conn.connectionName" :value="conn">
-                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} - {{
-                  getAuthMethodLabel(conn.authMethod) }})
+                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
+                {{ getAuthMethodLabel(conn.authMethod) }})
               </option>
             </select>
-            <div v-if="!nodeCloudStorageWriter.cloud_storage_settings.connection_name" class="helper-text">
+            <div
+              v-if="!nodeCloudStorageWriter.cloud_storage_settings.connection_name"
+              class="helper-text"
+            >
               <i class="fa-solid fa-info-circle"></i>
               Will use local AWS CLI credentials or environment variables
             </div>
@@ -28,14 +36,23 @@
         <h4 class="section-subtitle">File Settings</h4>
         <div class="form-group">
           <label for="file-path">File Path</label>
-          <input id="file-path" v-model="nodeCloudStorageWriter.cloud_storage_settings.resource_path" type="text"
-            class="form-control" placeholder="e.g., bucket-name/folder/file.parquet" />
+          <input
+            id="file-path"
+            v-model="nodeCloudStorageWriter.cloud_storage_settings.resource_path"
+            type="text"
+            class="form-control"
+            placeholder="e.g., bucket-name/folder/file.parquet"
+          />
         </div>
 
         <div class="form-group">
           <label for="file-format">File Format</label>
-          <select id="file-format" v-model="nodeCloudStorageWriter.cloud_storage_settings.file_format"
-            class="form-control" @change="handleFileFormatChange">
+          <select
+            id="file-format"
+            v-model="nodeCloudStorageWriter.cloud_storage_settings.file_format"
+            class="form-control"
+            @change="handleFileFormatChange"
+          >
             <option value="parquet">Parquet</option>
             <option value="csv">CSV</option>
             <option value="json">JSON</option>
@@ -45,25 +62,45 @@
 
         <div class="form-group">
           <label for="write-mode">Write Mode</label>
-          <select id="write-mode" v-model="nodeCloudStorageWriter.cloud_storage_settings.write_mode"
-            class="form-control">
+          <select
+            id="write-mode"
+            v-model="nodeCloudStorageWriter.cloud_storage_settings.write_mode"
+            class="form-control"
+          >
             <option value="overwrite">Overwrite</option>
-            <option v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'delta'" value="append">Append</option>
+            <option
+              v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'delta'"
+              value="append"
+            >
+              Append
+            </option>
           </select>
         </div>
 
-        <div v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'csv'" class="format-options">
+        <div
+          v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'csv'"
+          class="format-options"
+        >
           <h5 class="subsection-title">CSV Options</h5>
           <div class="form-row">
             <div class="form-group half">
               <label for="csv-delimiter">Delimiter</label>
-              <input id="csv-delimiter" v-model="nodeCloudStorageWriter.cloud_storage_settings.csv_delimiter" type="text"
-                class="form-control" placeholder="," maxlength="1" />
+              <input
+                id="csv-delimiter"
+                v-model="nodeCloudStorageWriter.cloud_storage_settings.csv_delimiter"
+                type="text"
+                class="form-control"
+                placeholder=","
+                maxlength="1"
+              />
             </div>
             <div class="form-group half">
               <label for="csv-encoding">Encoding</label>
-              <select id="csv-encoding" v-model="nodeCloudStorageWriter.cloud_storage_settings.csv_encoding"
-                class="form-control">
+              <select
+                id="csv-encoding"
+                v-model="nodeCloudStorageWriter.cloud_storage_settings.csv_encoding"
+                class="form-control"
+              >
                 <option value="utf8">UTF-8</option>
                 <option value="utf8-lossy">UTF-8 Lossy</option>
               </select>
@@ -71,12 +108,18 @@
           </div>
         </div>
 
-        <div v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'parquet'" class="format-options">
+        <div
+          v-if="nodeCloudStorageWriter.cloud_storage_settings.file_format === 'parquet'"
+          class="format-options"
+        >
           <h5 class="subsection-title">Parquet Options</h5>
           <div class="form-group">
             <label for="parquet-compression">Compression</label>
-            <select id="parquet-compression" v-model="nodeCloudStorageWriter.cloud_storage_settings.parquet_compression"
-              class="form-control">
+            <select
+              id="parquet-compression"
+              v-model="nodeCloudStorageWriter.cloud_storage_settings.parquet_compression"
+              class="form-control"
+            >
               <option value="snappy">Snappy</option>
               <option value="gzip">Gzip</option>
               <option value="brotli">Brotli</option>
@@ -86,20 +129,30 @@
           </div>
         </div>
 
-        <div v-if="nodeCloudStorageWriter.cloud_storage_settings.write_mode === 'overwrite'" class="info-box info-warn">
+        <div
+          v-if="nodeCloudStorageWriter.cloud_storage_settings.write_mode === 'overwrite'"
+          class="info-box info-warn"
+        >
           <i class="fa-solid fa-triangle-exclamation"></i>
           <div>
-            <p><strong>Overwrite mode:</strong> If a file or data at the target path exists, it will be replaced.</p>
+            <p>
+              <strong>Overwrite mode:</strong> If a file or data at the target path exists, it will
+              be replaced.
+            </p>
           </div>
         </div>
-        <div v-if="nodeCloudStorageWriter.cloud_storage_settings.write_mode === 'append'" class="info-box">
+        <div
+          v-if="nodeCloudStorageWriter.cloud_storage_settings.write_mode === 'append'"
+          class="info-box"
+        >
           <i class="fa-solid fa-info-circle"></i>
           <div>
-            <p><strong>Append mode:</strong> New data will be added. The schema of the new data must match the
-              existing data.</p>
+            <p>
+              <strong>Append mode:</strong> New data will be added. The schema of the new data must
+              match the existing data.
+            </p>
           </div>
         </div>
-
       </div>
     </generic-node-settings>
   </div>
@@ -132,23 +185,35 @@ const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null)
 // --- Reusable Helper Functions (from reader) ---
 const getStorageTypeLabel = (storageType: string) => {
   switch (storageType) {
-    case "s3": return "AWS S3";
-    case "adls": return "Azure ADLS";
-    case "gcs": return "Google Cloud Storage";
-    default: return storageType.toUpperCase();
+    case "s3":
+      return "AWS S3";
+    case "adls":
+      return "Azure ADLS";
+    case "gcs":
+      return "Google Cloud Storage";
+    default:
+      return storageType.toUpperCase();
   }
 };
 
 const getAuthMethodLabel = (authMethod: string) => {
   switch (authMethod) {
-    case "access_key": return "Access Key";
-    case "iam_role": return "IAM Role";
-    case "service_principal": return "Service Principal";
-    case "managed_identity": return "Managed Identity";
-    case "sas_token": return "SAS Token";
-    case "aws-cli": return "AWS CLI";
-    case "auto": return "Auto";
-    default: return authMethod;
+    case "access_key":
+      return "Access Key";
+    case "iam_role":
+      return "IAM Role";
+    case "service_principal":
+      return "Service Principal";
+    case "managed_identity":
+      return "Managed Identity";
+    case "sas_token":
+      return "SAS Token";
+    case "aws-cli":
+      return "AWS CLI";
+    case "auto":
+      return "Auto";
+    default:
+      return authMethod;
   }
 };
 
@@ -158,22 +223,22 @@ const handleFileFormatChange = () => {
     const format = settings.file_format;
 
     // If the newly selected format is NOT delta, force write_mode to 'overwrite'
-    if (format !== 'delta') {
-      settings.write_mode = 'overwrite';
+    if (format !== "delta") {
+      settings.write_mode = "overwrite";
     }
 
     // Set defaults for newly selected formats
-    if (format === 'parquet' && !settings.parquet_compression) {
-      settings.parquet_compression = 'snappy';
-    } else if (format === 'csv' && !settings.csv_delimiter) {
-      settings.csv_delimiter = ',';
-      settings.csv_encoding = 'utf8';
+    if (format === "parquet" && !settings.parquet_compression) {
+      settings.parquet_compression = "snappy";
+    } else if (format === "csv" && !settings.csv_delimiter) {
+      settings.csv_delimiter = ",";
+      settings.csv_encoding = "utf8";
     }
 
-    if (format !== 'parquet') {
+    if (format !== "parquet") {
       settings.parquet_compression = "snappy";
     }
-    if (format !== 'csv') {
+    if (format !== "csv") {
       settings.csv_delimiter = ";";
       settings.csv_encoding = "utf8-lossy";
     }
@@ -186,16 +251,17 @@ const updateConnection = () => {
       nodeCloudStorageWriter.value.cloud_storage_settings.auth_mode = "aws-cli";
       nodeCloudStorageWriter.value.cloud_storage_settings.connection_name = undefined;
     } else {
-      nodeCloudStorageWriter.value.cloud_storage_settings.auth_mode = selectedConnection.value.authMethod;
-      nodeCloudStorageWriter.value.cloud_storage_settings.connection_name = selectedConnection.value.connectionName;
+      nodeCloudStorageWriter.value.cloud_storage_settings.auth_mode =
+        selectedConnection.value.authMethod;
+      nodeCloudStorageWriter.value.cloud_storage_settings.connection_name =
+        selectedConnection.value.connectionName;
     }
   }
 };
 
 const setConnectionOnConnectionName = async (connectionName: string | null) => {
-  selectedConnection.value = connectionInterfaces.value.find(
-    (ci) => ci.connectionName === connectionName
-  ) || null;
+  selectedConnection.value =
+    connectionInterfaces.value.find((ci) => ci.connectionName === connectionName) || null;
 };
 
 // --- Data Fetching and Persistence (No changes here) ---
@@ -203,7 +269,7 @@ const loadNodeData = async (nodeId: number) => {
   try {
     const [nodeData] = await Promise.all([
       nodeStore.getNodeData(nodeId, false),
-      fetchConnections()
+      fetchConnections(),
     ]);
     if (nodeData) {
       const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
@@ -212,7 +278,9 @@ const loadNodeData = async (nodeId: number) => {
         : createNodeCloudStorageWriter(nodeStore.flow_id, nodeId);
 
       if (nodeCloudStorageWriter.value?.cloud_storage_settings.connection_name) {
-        await setConnectionOnConnectionName(nodeCloudStorageWriter.value.cloud_storage_settings.connection_name);
+        await setConnectionOnConnectionName(
+          nodeCloudStorageWriter.value.cloud_storage_settings.connection_name,
+        );
       } else {
         selectedConnection.value = null;
       }
@@ -229,7 +297,7 @@ const pushNodeData = async () => {
   if (!nodeCloudStorageWriter.value || !nodeCloudStorageWriter.value.cloud_storage_settings) {
     return;
   }
-  console.log(nodeCloudStorageWriter)
+  console.log(nodeCloudStorageWriter);
   nodeCloudStorageWriter.value.is_setup = true;
   nodeStore.updateSettings(nodeCloudStorageWriter);
   dataLoaded.value = false;

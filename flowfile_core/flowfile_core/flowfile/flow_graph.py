@@ -927,20 +927,23 @@ class FlowGraph:
         node_type = "cloud_storage_reader"
         logger.info("Adding cloud storage reader")
         cloud_storage_read_settings = node_cloud_storage_reader.cloud_storage_settings
+        def get_cloud_connection_settings():
 
-        cloud_connection_settings = get_local_cloud_connection(cloud_storage_read_settings.connection_name,
-                                                               node_cloud_storage_reader.user_id)
-        if cloud_connection_settings is None and cloud_storage_read_settings.auth_mode == "aws-cli":
-            # If the auth mode is aws-cli, we do not need connection settings
-            cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
-        if cloud_connection_settings is None:
-            raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+            cloud_connection_settings = get_local_cloud_connection(cloud_storage_read_settings.connection_name,
+                                                                   node_cloud_storage_reader.user_id)
+            if cloud_connection_settings is None and cloud_storage_read_settings.auth_mode == "aws-cli":
+                # If the auth mode is aws-cli, we do not need connection settings
+                cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="aws-cli")
+            if cloud_connection_settings is None:
+                raise HTTPException(status_code=400, detail="Cloud connection settings not found")
+            return cloud_connection_settings
 
         def _func():
             logger.info("Starting to run the schema callback for cloud storage reader")
             self.flow_logger.info("Starting to run the schema callback for cloud storage reader")
+
             settings = CloudStorageReadSettingsInternal(read_settings=cloud_storage_read_settings,
-                                                        connection=cloud_connection_settings)
+                                                        connection=get_cloud_connection_settings())
             fl = FlowDataEngine.from_cloud_storage_obj(settings)
             return fl
 
@@ -948,7 +951,7 @@ class FlowGraph:
                                   function=_func,
                                   cache_results=node_cloud_storage_reader.cache_results,
                                   setting_input=node_cloud_storage_reader,
-                                  node_type=node_type
+                                  node_type=node_type,
                                   )
         if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
             self._flow_starts.append(node)

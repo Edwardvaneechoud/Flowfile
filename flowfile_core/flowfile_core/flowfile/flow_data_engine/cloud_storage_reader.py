@@ -1,6 +1,7 @@
 import boto3
+from botocore.exceptions import ClientError
+from typing import Optional, Dict, Any, Callable, Literal
 
-from typing import Dict, Optional, Any, Callable
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 
@@ -163,3 +164,101 @@ class CloudStorageReader:
 
             return aws_credential_provider
         return None
+
+
+def get_first_file_from_s3_dir(source: str, storage_options: Dict[str, Any] = None) -> str:
+    """
+    Get the first parquet file from an S3 directory path.
+
+    Parameters
+    ----------
+    source : str
+        S3 path with wildcards (e.g., 's3://bucket/prefix/**/*/*.parquet')
+
+    connection: FullCloudStorageConnection
+
+    Returns
+    -------
+    str
+        S3 URI of the first parquet file found
+
+    Raises
+    ------
+    ValueError
+        If source path is invalid or no parquet files found
+    ClientError
+        If S3 access fails
+    """
+    if not source.startswith('s3://'):
+        raise ValueError("Source must be a valid S3 URI starting with 's3://'")
+    breakpoint()
+    bucket_name, prefix = _parse_s3_path(source)
+    base_prefix = _remove_wildcards_from_prefix(prefix)
+    # Create S3 client
+    s3_client = _create_s3_client(storage_options)
+
+    # Get parquet files
+    parquet_files = _list_files(s3_client, bucket_name, base_prefix)
+
+    if not parquet_files:
+        raise ValueError(f"No parquet files found in {source}")
+
+    # Return first file URI
+    first_file = parquet_files[0]
+    return f"s3://{bucket_name}/{first_file['Key']}"
+
+
+def _parse_s3_path(source: str) -> tuple[str, str]:
+    """Parse S3 URI into bucket name and prefix."""
+    path_parts = source[5:].split('/', 1)  # Remove 's3://'
+    bucket_name = path_parts[0]
+    prefix = path_parts[1] if len(path_parts) > 1 else ''
+    return bucket_name, prefix
+
+
+def _remove_wildcards_from_prefix(prefix: str) -> str:
+    """Remove wildcard patterns from S3 prefix."""
+    return prefix.split('*')[0]
+
+
+def _create_s3_client(storage_options: Optional[Dict[str, Any]]):
+    """Create boto3 S3 client with optional credentials."""
+    if storage_options is None:
+        return boto3.client('s3')
+
+    # Handle both 'aws_region' and 'region_name' keys
+    client_options = storage_options.copy()
+    if 'aws_region' in client_options:
+        client_options['region_name'] = client_options.pop('aws_region')
+
+    return boto3.client('s3', **client_options)
+
+
+def _list_files(s3_client, bucket_name: str, prefix: str) -> list:
+    """List all parquet files in S3 bucket with given prefix."""
+    try:
+        breakpoint()
+        response = s3_client.list_objects_v2(
+            Bucket="flowfile-test",
+            Prefix="write_test_append"
+        )
+
+        if 'Contents' not in response:
+            return []
+
+        parquet_files = [
+            obj for obj in response['Contents']
+            if obj['Key'].endswith('.parquet')
+        ]
+
+        # Sort for consistent ordering
+        return sorted(parquet_files, key=lambda x: x['Key'])
+
+    except ClientError as e:
+        raise ClientError(f"Failed to list objects in s3://{bucket_name}/{prefix}: {e}", "ListObjectsV2") from e
+
+
+def ensure_path_has_wildcard_pattern(resource_path: str, file_type: Literal["csv", "parquet", "json"]):
+    if not resource_path.endswith(f"*{file_type}"):
+        resource_path = resource_path.rstrip("/") + f"/**/*.{file_type}"
+    return resource_path

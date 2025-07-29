@@ -17,15 +17,15 @@
               @change="resetFields"
             >
               <option :value="null">No connection (use local credentials)</option>
-              <option
-                v-for="conn in connectionInterfaces"
-                :key="conn.connectionName"
-                :value="conn"
-              >
-                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} - {{ getAuthMethodLabel(conn.authMethod) }})
+              <option v-for="conn in connectionInterfaces" :key="conn.connectionName" :value="conn">
+                {{ conn.connectionName }} ({{ getStorageTypeLabel(conn.storageType) }} -
+                {{ getAuthMethodLabel(conn.authMethod) }})
               </option>
             </select>
-            <div v-if="!nodeCloudStorageReader.cloud_storage_settings.connection_name" class="helper-text">
+            <div
+              v-if="!nodeCloudStorageReader.cloud_storage_settings.connection_name"
+              class="helper-text"
+            >
               <i class="fa-solid fa-info-circle"></i>
               Will use local AWS CLI credentials or environment variables
             </div>
@@ -35,7 +35,7 @@
       <!-- File Path and Scan Settings -->
       <div class="listbox-wrapper">
         <h4 class="section-subtitle">File Settings</h4>
-        
+
         <!-- File Path -->
         <div class="form-group">
           <label for="file-path">File Path</label>
@@ -66,7 +66,10 @@
         </div>
 
         <!-- Scan Mode -->
-        <div v-if="nodeCloudStorageReader.cloud_storage_settings.file_format !== 'delta'" class="form-group">
+        <div
+          v-if="nodeCloudStorageReader.cloud_storage_settings.file_format !== 'delta'"
+          class="form-group"
+        >
           <label for="scan-mode">Scan Mode</label>
           <select
             id="scan-mode"
@@ -79,9 +82,12 @@
         </div>
 
         <!-- CSV-specific options -->
-        <div v-if="nodeCloudStorageReader.cloud_storage_settings.file_format === 'csv'" class="format-options">
+        <div
+          v-if="nodeCloudStorageReader.cloud_storage_settings.file_format === 'csv'"
+          class="format-options"
+        >
           <h5 class="subsection-title">CSV Options</h5>
-          
+
           <div class="form-group">
             <div class="checkbox-container">
               <input
@@ -122,9 +128,12 @@
         </div>
 
         <!-- Delta-specific options -->
-        <div v-if="nodeCloudStorageReader.cloud_storage_settings.file_format === 'delta'" class="format-options">
+        <div
+          v-if="nodeCloudStorageReader.cloud_storage_settings.file_format === 'delta'"
+          class="format-options"
+        >
           <h5 class="subsection-title">Delta Lake Options</h5>
-          
+
           <div class="form-group">
             <label for="delta-version">Version (optional)</label>
             <input
@@ -139,10 +148,15 @@
         </div>
 
         <!-- Info message for scan mode -->
-        <div v-if="nodeCloudStorageReader.cloud_storage_settings.scan_mode === 'directory'" class="info-box">
+        <div
+          v-if="nodeCloudStorageReader.cloud_storage_settings.scan_mode === 'directory'"
+          class="info-box"
+        >
           <i class="fa-solid fa-info-circle"></i>
           <div>
-            <p>Directory scan will read all files matching the selected format in the specified path.</p>
+            <p>
+              Directory scan will read all files matching the selected format in the specified path.
+            </p>
           </div>
         </div>
       </div>
@@ -154,10 +168,7 @@
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
 import { ref, onMounted } from "vue";
-import { 
-  NodeCloudStorageReader, 
-
-} from "../../../baseNode/nodeInput";
+import { NodeCloudStorageReader } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { fetchCloudStorageConnectionsInterfaces } from "../../../../../pages/cloudConnectionManager/api";
@@ -175,7 +186,7 @@ const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);
 const connectionsAreLoading = ref(false);
-const selectedConnection = ref<FullCloudStorageConnectionInterface | null >(null)
+const selectedConnection = ref<FullCloudStorageConnectionInterface | null>(null);
 
 const getStorageTypeLabel = (storageType: string) => {
   switch (storageType) {
@@ -211,23 +222,22 @@ const getAuthMethodLabel = (authMethod: string) => {
   }
 };
 
-
 const handleFileFormatChange = () => {
   resetFields();
   // Set default values for format-specific options
   if (nodeCloudStorageReader.value) {
     const format = nodeCloudStorageReader.value.cloud_storage_settings.file_format;
-    
-    if (format === 'csv') {
+
+    if (format === "csv") {
       // Set CSV defaults
       if (nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header === undefined) {
         nodeCloudStorageReader.value.cloud_storage_settings.csv_has_header = true;
       }
       if (!nodeCloudStorageReader.value.cloud_storage_settings.csv_delimiter) {
-        nodeCloudStorageReader.value.cloud_storage_settings.csv_delimiter = ',';
+        nodeCloudStorageReader.value.cloud_storage_settings.csv_delimiter = ",";
       }
       if (!nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding) {
-        nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = 'utf8';
+        nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = "utf8";
       }
     } else {
       // Clear CSV-specific settings
@@ -235,8 +245,8 @@ const handleFileFormatChange = () => {
       nodeCloudStorageReader.value.cloud_storage_settings.csv_delimiter = undefined;
       nodeCloudStorageReader.value.cloud_storage_settings.csv_encoding = undefined;
     }
-    
-    if (format !== 'delta') {
+
+    if (format !== "delta") {
       // Clear Delta-specific settings
       nodeCloudStorageReader.value.cloud_storage_settings.delta_version = undefined;
     }
@@ -247,39 +257,42 @@ const resetFields = () => {
   if (nodeCloudStorageReader.value) {
     nodeCloudStorageReader.value.fields = [];
     if (!selectedConnection.value) {
-      nodeCloudStorageReader.value.cloud_storage_settings.auth_mode = "aws-cli"
-      nodeCloudStorageReader.value.cloud_storage_settings.connection_name = undefined
-    }
-    else {
-      nodeCloudStorageReader.value.cloud_storage_settings.auth_mode = selectedConnection.value.authMethod
-      nodeCloudStorageReader.value.cloud_storage_settings.connection_name = selectedConnection.value.connectionName
+      nodeCloudStorageReader.value.cloud_storage_settings.auth_mode = "aws-cli";
+      nodeCloudStorageReader.value.cloud_storage_settings.connection_name = undefined;
+    } else {
+      nodeCloudStorageReader.value.cloud_storage_settings.auth_mode =
+        selectedConnection.value.authMethod;
+      nodeCloudStorageReader.value.cloud_storage_settings.connection_name =
+        selectedConnection.value.connectionName;
     }
   }
 };
 
 const setConnectionOnConnectionName = async (connectionName: string | null) => {
-  selectedConnection.value = connectionInterfaces.value.find(
-        (connectionInterface) => connectionInterface.connectionName === connectionName // Use '===' for strict equality
-    ) || null
-}
+  selectedConnection.value =
+    connectionInterfaces.value.find(
+      (connectionInterface) => connectionInterface.connectionName === connectionName, // Use '===' for strict equality
+    ) || null;
+};
 
 const loadNodeData = async (nodeId: number) => {
   try {
     const [nodeData] = await Promise.all([
       nodeStore.getNodeData(nodeId, false),
-      fetchConnections()
+      fetchConnections(),
     ]);
     if (nodeData) {
       const hasValidSetup = Boolean(nodeData.setting_input?.is_setup);
       nodeCloudStorageReader.value = hasValidSetup
         ? nodeData.setting_input
         : createNodeCloudStorageReader(nodeStore.flow_id, nodeId);
-        if(nodeCloudStorageReader.value?.cloud_storage_settings.connection_name){
-          await setConnectionOnConnectionName(nodeCloudStorageReader.value.cloud_storage_settings.connection_name)
-        }
-        else {
-          selectedConnection.value = null
-        }
+      if (nodeCloudStorageReader.value?.cloud_storage_settings.connection_name) {
+        await setConnectionOnConnectionName(
+          nodeCloudStorageReader.value.cloud_storage_settings.connection_name,
+        );
+      } else {
+        selectedConnection.value = null;
+      }
     }
     dataLoaded.value = true;
   } catch (error) {
@@ -290,7 +303,7 @@ const loadNodeData = async (nodeId: number) => {
 
 const pushNodeData = async () => {
   if (!nodeCloudStorageReader.value || !nodeCloudStorageReader.value.cloud_storage_settings) {
-    console.log("Returning without pushing")
+    console.log("Returning without pushing");
     return;
   }
   nodeCloudStorageReader.value.is_setup = true;
@@ -477,7 +490,7 @@ select.form-control {
     flex-direction: column;
     gap: 0.5rem;
   }
-  
+
   .half {
     max-width: 100%;
   }

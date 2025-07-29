@@ -201,7 +201,7 @@ class FlowNode:
         self._setting_input = setting_input
         self.set_node_information()
         if is_manual_input:
-            if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run:
+            if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run_with_current_setup:
                 self.function = FlowDataEngine(setting_input.raw_data_format)
                 self.reset()
                 self.get_predicted_schema()
@@ -347,7 +347,7 @@ class FlowNode:
     def print(self, v: Any):
         logger.info(f'{self.node_type}, node_id: {self.node_id}: {v}')
 
-    def get_resulting_data(self) -> FlowDataEngine:
+    def get_resulting_data(self) -> FlowDataEngine | None:
         if self.is_setup:
             if self.results.resulting_data is None and self.results.errors is None:
                 self.print('getting resulting data')
@@ -369,7 +369,8 @@ class FlowNode:
                 except Exception as e:
                     self.results.resulting_data = FlowDataEngine()
                     self.results.errors = str(e)
-                    self.node_stats.has_run = False
+                    self.node_stats.has_run_with_current_setup = False
+                    self.node_stats.has_completed_last_run = False
                     raise e
             return self.results.resulting_data
 
@@ -453,7 +454,7 @@ class FlowNode:
             return False
         flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
-        if not self.node_stats.has_run:
+        if not self.node_stats.has_run_with_current_setup:
             flow_logger.info('Node has not run, needs to run')
             return True
         if self.node_settings.cache_results and cache_result_exists:
@@ -477,17 +478,18 @@ class FlowNode:
                                                    wait_on_completion=True, node_id=self.node_id, flow_id=flow_id)
                 self.store_example_data_generator(external_sampler)
                 if self.results.errors is None and not self.node_stats.is_canceled:
-                    self.node_stats.has_run = True
+                    self.node_stats.has_run_with_current_setup = True
             self.node_schema.result_schema = resulting_data.schema
 
         except Exception as e:
             logger.warning(f"Error with step {self.__name__}")
             logger.error(str(e))
             self.results.errors = str(e)
-            self.node_stats.has_run = False
+            self.node_stats.has_run_with_current_setup = False
+            self.node_stats.has_completed_last_run = False
             raise e
 
-        if self.node_stats.has_run:
+        if self.node_stats.has_run_with_current_setup:
             for step in self.leads_to_nodes:
                 if not self.node_settings.streamable:
                     step.node_settings.streamable = self.node_settings.streamable
@@ -505,7 +507,7 @@ class FlowNode:
                 node_logger.warning('Failed to read the cache, rerunning the code')
         if self.node_type == 'output':
             self.results.resulting_data = self.get_resulting_data()
-            self.node_stats.has_run = True
+            self.node_stats.has_run_with_current_setup = True
             return
         try:
             self.get_resulting_data()
@@ -526,7 +528,7 @@ class FlowNode:
                 )
                 if not performance_mode:
                     self.store_example_data_generator(external_df_fetcher)
-                    self.node_stats.has_run = True
+                    self.node_stats.has_run_with_current_setup = True
 
             except Exception as e:
                 node_logger.error('Error with external process')
@@ -569,7 +571,8 @@ class FlowNode:
         # node_logger = flow_logger.get_node_logger(self.node_id)
         if reset_cache:
             self.remove_cache()
-            self.node_stats.has_run = False
+            self.node_stats.has_run_with_current_setup = False
+            self.node_stats.has_completed_last_run = False
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
             if self.needs_run(performance_mode, node_logger, run_location):
@@ -600,7 +603,6 @@ class FlowNode:
                                           performance_mode=performance_mode, retry=False,
                                           node_logger=node_logger)
                     else:
-                        self.node_stats.has_run = False
                         self.results.errors = str(e)
                         node_logger.error(f'Error with running the node: {e}')
 
@@ -624,7 +626,7 @@ class FlowNode:
         needs_reset = self.needs_reset() or deep
         if needs_reset:
             logger.info(f'{self.node_id}: Node needs reset')
-            self.node_stats.has_run = False
+            self.node_stats.has_run_with_current_setup = False
             self.results.reset()
             if self.is_correct:
                 self._schema_callback = None  # Ensure the schema callback is reset
@@ -714,7 +716,7 @@ class FlowNode:
 
     def get_table_example(self, include_data: bool = False) -> TableExample | None:
         self.print('Getting a table example')
-        if self.is_setup and include_data and self.node_stats.has_run:
+        if self.is_setup and include_data and self.node_stats.has_completed_last_run:
             if self.node_template.node_group == 'output':
                 self.print('getting the table example')
                 return self.main_input[0].get_table_example(include_data)
@@ -753,7 +755,7 @@ class FlowNode:
     def get_node_data(self, flow_id: int, include_example: bool = False) -> NodeData:
         node = NodeData(flow_id=flow_id,
                         node_id=self.node_id,
-                        has_run=self.node_stats.has_run,
+                        has_run=self.node_stats.has_run_with_current_setup,
                         setting_input=self.setting_input,
                         flow_type=self.node_type)
         if self.main_input:

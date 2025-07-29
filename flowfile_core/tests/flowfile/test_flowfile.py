@@ -177,7 +177,7 @@ def test_run_graph(raw_data):
     graph = add_manual_input(graph, data=raw_data)
     graph.run_graph()
     node = graph.get_node(1)
-    assert node.node_stats.has_run, 'Node should have run'
+    assert node.node_stats.has_run_with_current_setup, 'Node should have run'
     assert node.results.resulting_data.collect().to_dicts() == node.setting_input.raw_data_format.to_pylist(), 'Data should be the same'
 
 
@@ -230,7 +230,7 @@ def test_running_unique(raw_data):
     add_connection(graph, node_connection)
     graph.run_graph()
     node = graph.get_node(2)
-    assert node.node_stats.has_run, 'Node should have run'
+    assert node.node_stats.has_run_with_current_setup, 'Node should have run'
     df = node.results.resulting_data.collect()
     assert len(df) == 3, 'There should be 3 rows in the data'
     assert (set(df.select('city').to_series(0).to_list()) ==

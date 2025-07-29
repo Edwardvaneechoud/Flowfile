@@ -95,10 +95,7 @@ function getProcessEnv(): NodeJS.ProcessEnv {
   const flowfileDir = join(homeDir, ".flowfile");
   const cacheDirRoot = join(flowfileDir, ".tmp");
 
-  const dirsToCreate = [
-    flowfileDir,
-    cacheDirRoot,
-  ];
+  const dirsToCreate = [flowfileDir, cacheDirRoot];
 
   for (const dir of dirsToCreate) {
     try {
@@ -115,7 +112,7 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     HOME: homeDir,
     DOCKER_CONFIG: join(homeDir, ".docker"),
     TMPDIR: tempDir,
-    };
+  };
 
   if (isWindows) {
     return {

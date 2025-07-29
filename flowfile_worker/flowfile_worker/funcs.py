@@ -308,16 +308,16 @@ def write_output(polars_serializable_object: bytes,
         if isinstance(df, pl.LazyFrame):
             flowfile_logger.info(f'Execution plan explanation:\n{df.explain(format="plain")}')
         flowfile_logger.info("Successfully deserialized dataframe")
-        is_lazy = False
         sink_method_str = 'sink_'+data_type
         write_method_str = 'write_'+data_type
         has_sink_method = hasattr(df, sink_method_str)
         write_method = None
         if os.path.exists(path) and write_mode == 'create':
             raise Exception('File already exists')
-        if has_sink_method and is_lazy:
+        if has_sink_method:
+            flowfile_logger.info(f'Using sink method: {sink_method_str}')
             write_method = getattr(df, 'sink_' + data_type)
-        elif not is_lazy or not has_sink_method:
+        elif not has_sink_method:
             if isinstance(df, pl.LazyFrame):
                 df = collect_lazy_frame(df)
             write_method = getattr(df, write_method_str)
