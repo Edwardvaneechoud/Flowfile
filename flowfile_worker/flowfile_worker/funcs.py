@@ -207,9 +207,9 @@ def execute_write_method(write_method: Callable, path: str, data_type: str = Non
         logger.info('Writing as csv file')
         if write_mode == 'append':
             with open(path, 'ab') as f:
-                write_method(file=f, separator=delimiter, quote_style='always')
+                write_method(f, separator=delimiter, quote_style='always')
         else:
-            write_method(file=path, separator=delimiter, quote_style='always')
+            write_method(path, separator=delimiter, quote_style='always')
     elif data_type == 'parquet':
         logger.info('Writing as parquet file')
         write_method(path)
@@ -314,7 +314,7 @@ def write_output(polars_serializable_object: bytes,
         write_method = None
         if os.path.exists(path) and write_mode == 'create':
             raise Exception('File already exists')
-        if has_sink_method:
+        if has_sink_method and write_method != 'append':
             flowfile_logger.info(f'Using sink method: {sink_method_str}')
             write_method = getattr(df, 'sink_' + data_type)
         elif not has_sink_method:

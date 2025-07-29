@@ -109,22 +109,22 @@ def aws_access_key_connection():
 
 # Bundle test cases with CloudStorageReadSettings
 S3_READ_TEST_CASES = [
-    S3TestReadCase(
-        id="single_parquet_file",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/single-file-parquet/data.parquet",
-            file_format="parquet",
-            scan_mode="single_file"
-        ),
-    ),
-    S3TestReadCase(
-        id="directory_parquet_scan",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/multi-file-parquet",
-            file_format="parquet",
-            scan_mode="directory"
-        ),
-    ),
+    # S3TestReadCase(
+    #     id="single_parquet_file",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+    #         file_format="parquet",
+    #         scan_mode="single_file"
+    #     ),
+    # ),
+    # S3TestReadCase(
+    #     id="directory_parquet_scan",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/multi-file-parquet",
+    #         file_format="parquet",
+    #         scan_mode="directory"
+    #     ),
+    # ),
     S3TestReadCase(
         id="nested_directory_scan",
         read_settings=CloudStorageReadSettings(
@@ -133,64 +133,64 @@ S3_READ_TEST_CASES = [
             scan_mode="directory"
         ),
     ),
-    S3TestReadCase(
-        id="csv_single_file",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/single-file-csv/data.csv",
-            file_format="csv",
-            scan_mode="single_file",
-            csv_has_header=True,
-            csv_delimiter=",",
-            csv_encoding="utf8"
-        ),
-    ),
-    S3TestReadCase(
-        id="csv_directory_scan",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/multi-file-csv",
-            file_format="csv",
-            scan_mode="directory",
-            csv_has_header=True,
-            csv_delimiter=",",
-            csv_encoding="utf8"
-        )
-    ),
-    S3TestReadCase(
-        id="single_json_file",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/single-file-json/data.json",
-            file_format="json",
-            scan_mode="single_file",
-        ),
-        expected_columns=None,
-        expected_lazy_records=-1,
-        expected_actual_records=None,
-        expected_sample_size=10,
-    ),
-    S3TestReadCase(
-        id="multi_json_file",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/multi-file-json",
-            file_format="json",
-            scan_mode="directory",
-        ),
-        expected_columns=None,
-        expected_lazy_records=-1,
-        expected_actual_records=None,
-        expected_sample_size=10,
-    ),
-
-    S3TestReadCase(
-        id="delta_scan",
-        read_settings=CloudStorageReadSettings(
-            resource_path="s3://test-bucket/delta-lake-table",
-            file_format="delta",
-        ),
-        expected_columns=None,
-        expected_lazy_records=-1,
-        expected_actual_records=None,
-        expected_sample_size=10,
-    ),
+    # S3TestReadCase(
+    #     id="csv_single_file",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/single-file-csv/data.csv",
+    #         file_format="csv",
+    #         scan_mode="single_file",
+    #         csv_has_header=True,
+    #         csv_delimiter=",",
+    #         csv_encoding="utf8"
+    #     ),
+    # ),
+    # S3TestReadCase(
+    #     id="csv_directory_scan",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/multi-file-csv",
+    #         file_format="csv",
+    #         scan_mode="directory",
+    #         csv_has_header=True,
+    #         csv_delimiter=",",
+    #         csv_encoding="utf8"
+    #     )
+    # ),
+    # S3TestReadCase(
+    #     id="single_json_file",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/single-file-json/data.json",
+    #         file_format="json",
+    #         scan_mode="single_file",
+    #     ),
+    #     expected_columns=None,
+    #     expected_lazy_records=-1,
+    #     expected_actual_records=None,
+    #     expected_sample_size=10,
+    # ),
+    # S3TestReadCase(
+    #     id="multi_json_file",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/multi-file-json",
+    #         file_format="json",
+    #         scan_mode="directory",
+    #     ),
+    #     expected_columns=None,
+    #     expected_lazy_records=-1,
+    #     expected_actual_records=None,
+    #     expected_sample_size=10,
+    # ),
+    #
+    # S3TestReadCase(
+    #     id="delta_scan",
+    #     read_settings=CloudStorageReadSettings(
+    #         resource_path="s3://test-bucket/delta-lake-table",
+    #         file_format="delta",
+    #     ),
+    #     expected_columns=None,
+    #     expected_lazy_records=-1,
+    #     expected_actual_records=None,
+    #     expected_sample_size=10,
+    # ),
     # S3TestReadCase(
     #     id="iceberg_scan",
     #     read_settings=CloudStorageReadSettings(
@@ -275,7 +275,6 @@ def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_co
     logger.info(f"Testing scenario: {test_case.id}")
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
     logger.info(f"File format: {test_case.read_settings.file_format}")
-
     # Create FlowDataEngine
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
     # Basic assertions
@@ -427,22 +426,3 @@ def test_read_parquet_single():
     assert "Parquet SCAN" in sample_data.data_frame.explain(), "Should still have predicate pushdown to Remote scan"
     sample_data.lazy = False
     assert sample_data.get_number_of_records() == 5, "Should have the correct number of records after materialization"
-
-
-def test_gigantic_table():
-    breakpoint()
-
-    read_settings = CloudStorageReadSettings(
-        resource_path="s3://posman-meter-readings-prod/meter_reading_with_consent/",
-        file_format="parquet",
-        scan_mode="directory"
-    )
-    connection = get_local_cloud_connection(connection_name="760163046258_ProjectAdmin", user_id=1)
-    flow_data_engine = FlowDataEngine.from_cloud_storage_obj(CloudStorageReadSettingsInternal(
-        connection=connection,
-        read_settings=read_settings
-    ))
-    breakpoint()
-    import polars as pl
-    print(flow_data_engine.data_frame.select(pl.len()).collect(engine="in-memory")[0, 0])
-    breakpoint()

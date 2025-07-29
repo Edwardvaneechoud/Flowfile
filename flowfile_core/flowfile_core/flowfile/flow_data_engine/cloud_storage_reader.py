@@ -254,6 +254,6 @@ def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extensio
 
 
 def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["csv", "parquet", "json"]):
-    if not resource_path.endswith(f"*{file_format}"):
+    if not resource_path.endswith(f"*.{file_format}"):
         resource_path = resource_path.rstrip("/") + f"/**/*.{file_format}"
     return resource_path
