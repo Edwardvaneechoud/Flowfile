@@ -6,6 +6,9 @@ on:
       - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     runs-on: macos-latest
@@ -33,7 +36,7 @@ jobs:
         shell: bash
         run: make
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -66,12 +69,7 @@ jobs:
       - name: Install Python dependencies
         shell: pwsh
         run: |
-          poetry install # If polars-sim is a poetry dependency, it might still be installed here unless removed from pyproject.toml
-
-      # Removed: Check for cached polars-sim wheel
-      # Removed: Check if wheel files exist
-      # Removed: Build polars-sim wheel if needed
-      # Removed: Install polars-sim into Poetry environment
+          poetry install
 
       - name: Build Python services
         shell: pwsh
@@ -85,7 +83,7 @@ jobs:
           npm install
           npm run build
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -110,7 +108,7 @@ jobs:
             Flowfile-mac-dmg/Flowfile-*-arm64.dmg
             Flowfile-windows-exe/Flowfile*.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log release information
         run: |
