@@ -6,9 +6,6 @@ on:
       - 'v*'  # triggers on tags like v1.0.0 or v1.0.0-beta
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   build-macos:
     runs-on: macos-latest
@@ -36,7 +33,7 @@ jobs:
         shell: bash
         run: make
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -83,7 +80,7 @@ jobs:
           npm install
           npm run build
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -108,7 +105,7 @@ jobs:
             Flowfile-mac-dmg/Flowfile-*-arm64.dmg
             Flowfile-windows-exe/Flowfile*.exe
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Log release information
         run: |
