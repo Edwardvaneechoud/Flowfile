@@ -1,28 +1,36 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
 
-# Copy only the requirements.txt first to leverage Docker cache
-COPY flowfile_worker/requirements.txt /app/requirements.txt
-
-# Install system dependencies
+# Install system dependencies including Poetry
 RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     curl \
     build-essential \
     && curl https://sh.rustup.rs -sSf | sh -s -- -y \
+    && curl -sSL https://install.python-poetry.org | python3 - \
     && rm -rf /var/lib/apt/lists/*
 
-# Add cargo to PATH
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Add cargo and poetry to PATH
+ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
 
-# Install Python dependencies
-RUN pip install -r requirements.txt
+# Configure Poetry: Don't create a virtual environment (we're already in a container)
+ENV POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_CACHE_DIR=/tmp/poetry_cache
+
+# Copy poetry files from the root directory (build context)
+COPY pyproject.toml poetry.lock* /app/
+
+# Install dependencies
+RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
+
+# Install additional package that wasn't in requirements.txt
 RUN pip install --no-cache-dir --only-binary=:all: connectorx==0.4.3a1
 
-# Copy the flowfile_core package contents into the container
+# Copy the flowfile_worker package contents into the container
 COPY flowfile_worker/flowfile_worker /app/flowfile_worker
 
 # Expose the port the app runs on
