@@ -119,3 +119,11 @@ def stringify_values(v: Any) -> str:
     else:
         # Handle any other types
         return str(v)
+
+
+data = {"c": 0}
+
+
+def generate_node_id() -> int:
+    data["c"] += 1
+    return data["c"]

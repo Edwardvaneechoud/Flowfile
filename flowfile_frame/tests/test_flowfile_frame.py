@@ -43,3 +43,18 @@ def test_read_from_parquet_in_performance():
     # You could also check that the data was actually loaded correctly
     result_df = output_node.get_resulting_data().data_frame
     assert len(result_df.collect())>0, "The resulting dataframe should not be empty"
+
+
+def test_scan_parquet_from_cloud_storage():
+    source = "s3://test-bucket/multi-file-parquet/"
+    ff.scan_parquet_from_cloud_storage(source, connection_name="minio-test")
+
+
+def test_scan_csv_from_cloud_storage():
+    flow_frame = ff.scan_csv_from_cloud_storage("s3://test-bucket/multi-file-csv/", connection_name="minio-test", delimiter=",")
+    flow_frame.count().collect()
+
+
+def test_scan_delta():
+    flow_frame = ff.scan_json_from_cloud_storage("s3://test-bucket/multi-file-json/part_", connection_name="minio-test")
+    flow_frame.count().collect()

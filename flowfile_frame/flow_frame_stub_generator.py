@@ -181,7 +181,8 @@ def generate_improved_type_stub(
         "cache", "rename", "pivot", "concat", "write_csv", "write_parquet",
         "sink_csv", "sink_parquet", "_create_child_frame", "text_to_rows",
         "_with_flowfile_formula", "_add_number_of_records", "clear", "clone",
-        "gather_every", "approx_n_unique", "set_sorted"
+        "gather_every", "approx_n_unique", "set_sorted", "write_json_to_cloud_storage",
+        "write_delta", "write_parquet_to_cloud_storage", "write_csv_to_cloud_storage"
     }
 
     if output_file is None:

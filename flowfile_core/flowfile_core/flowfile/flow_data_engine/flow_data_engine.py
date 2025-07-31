@@ -4,7 +4,7 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union, TypeVar, Literal
 
 # Third-party imports
 from loky import Future
@@ -505,11 +505,13 @@ class FlowDataEngine:
             raise ValueError(f"Unsupported file format: {read_settings.file_format}")
 
     @staticmethod
-    def _get_schema_from_first_file_in_dir(source: str, storage_options: Dict[str, Any]) -> List[FlowfileColumn] | None:
+    def _get_schema_from_first_file_in_dir(source: str, storage_options: Dict[str, Any],
+                                           file_format: Literal["csv", "parquet", "json", "delta"]) -> List[FlowfileColumn] | None:
         try:
+            scan_func = getattr(pl, "scan_" + file_format)
             first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
             return convert_stats_to_column_info(FlowDataEngine._create_schema_stats_from_pl_schema(
-                pl.scan_parquet(first_file_ref, storage_options=storage_options).collect_schema()))
+                scan_func(first_file_ref, storage_options=storage_options).collect_schema()))
         except Exception as e:
             logger.warning(f"Could not read schema from first file in directory, using default schema: {e}")
 
@@ -542,7 +544,7 @@ class FlowDataEngine:
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
             if storage_options and is_directory:
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "parquet")
             else:
                 schema = None
             lf = pl.scan_parquet(**scan_kwargs)
@@ -610,7 +612,7 @@ class FlowDataEngine:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path=resource_path, file_format="csv")
                 scan_kwargs["source"] = resource_path
             if storage_options and read_settings.scan_mode == "directory":
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
+                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options, "csv")
             else:
                 schema = None
 
@@ -645,10 +647,6 @@ class FlowDataEngine:
 
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
-            if storage_options and is_directory:
-                schema = cls._get_schema_from_first_file_in_dir(resource_path, storage_options)
-            else:
-                schema = None
 
             lf = pl.scan_ndjson(**scan_kwargs)  # Using NDJSON for line-delimited JSON
 
@@ -657,7 +655,6 @@ class FlowDataEngine:
                 number_of_records=-1,
                 optimize_memory=True,
                 streamable=True,
-                schema=schema
             )
 
         except Exception as e:

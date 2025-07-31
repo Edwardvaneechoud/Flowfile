@@ -5,7 +5,7 @@ from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, C
 import re
 
 import polars as pl
-
+from polars._typing import (CsvEncoding)
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 
 from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
@@ -20,13 +20,11 @@ from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.utils import (_parse_inputs_as_iterable, create_flow_graph, stringify_values,
-                                  ensure_inputs_as_iterable)
+                                  ensure_inputs_as_iterable, generate_node_id)
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 from flowfile_frame.utils import _check_if_convertible_to_code
 from flowfile_frame.config import logger
-
-
-node_id_counter = 0
+from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
 
 
 def can_be_expr(param: inspect.Parameter) -> bool:
@@ -113,12 +111,6 @@ def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | 
             raise NotImplementedError("Cannot create a polars lambda expression without the groupby expression")
         if not all(isinstance(ge, pl.Expr) for ge in group_expr):
             raise NotImplementedError("Cannot create a polars lambda expression without the groupby expression")
-
-
-def generate_node_id() -> int:
-    global node_id_counter
-    node_id_counter += 1
-    return node_id_counter
 
 
 @add_lazyframe_methods
@@ -1074,7 +1066,7 @@ class FlowFrame:
 
     def write_parquet(
             self,
-            path: str|os.PathLike,
+            path: str | os.PathLike,
             *,
             description: str = None,
             convert_to_absolute_path: bool = True,
@@ -1242,6 +1234,107 @@ class FlowFrame:
             logger.debug(f"Generated Polars Code: {code}")
             self._add_polars_code(new_node_id, code, description)
 
+        return self._create_child_frame(new_node_id)
+
+    def write_parquet_to_cloud_storage(self,
+                                       path: str,
+                                       connection_name: Optional[str] = None,
+                                       compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy"
+                                       ) -> "FlowFrame":
+        """
+          Write the data frame to cloud storage in Parquet format.
+
+          Args:
+              path (str): The destination path in cloud storage where the Parquet file will be written.
+              connection_name (Optional[str], optional): The name of the storage connection
+                  that a user can create. If None, uses the default connection. Defaults to None.
+              compression (Literal["snappy", "gzip", "brotli", "lz4", "zstd"], optional):
+                  The compression algorithm to use for the Parquet file. Defaults to "snappy".
+
+          Returns:
+              FlowFrame: A new child data frame representing the written data.
+        """
+
+        new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
+                                                connection_name=connection_name,
+                                                depends_on_node_id=self.node_id,
+                                                parquet_compression=compression,
+                                                file_format="parquet")
+        return self._create_child_frame(new_node_id)
+
+    def write_csv_to_cloud_storage(self,
+                                   path: str,
+                                   connection_name: Optional[str] = None,
+                                   delimiter: str = ";",
+                                   encoding: CsvEncoding = "utf8",
+                                   ) -> "FlowFrame":
+        """
+        Write the data frame to cloud storage in CSV format.
+
+        Args:
+            path (str): The destination path in cloud storage where the CSV file will be written.
+            connection_name (Optional[str], optional): The name of the storage connection
+                that a user can create. If None, uses the default connection. Defaults to None.
+            delimiter (str, optional): The character used to separate fields in the CSV file.
+                Defaults to ";".
+            encoding (CsvEncoding, optional): The character encoding to use for the CSV file.
+                Defaults to "utf8".
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+        """
+        new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
+                                                connection_name=connection_name,
+                                                depends_on_node_id=self.node_id,
+                                                csv_delimiter=delimiter,
+                                                csv_encoding=encoding,
+                                                file_format="csv")
+        return self._create_child_frame(new_node_id)
+
+    def write_delta(self,
+                    path: str,
+                    connection_name: Optional[str] = None,
+                    write_mode: Literal["overwrite", "append"] = "overwrite",
+                    ) -> "FlowFrame":
+        """
+        Write the data frame to cloud storage in Delta Lake format.
+
+        Args:
+            path (str): The destination path in cloud storage where the Delta table will be written.
+            connection_name (Optional[str], optional): The name of the storage connection
+                that a user can create. If None, uses the default connection. Defaults to None.
+            write_mode (Literal["overwrite", "append"], optional): The write mode for the Delta table.
+                "overwrite" replaces existing data, "append" adds to existing data. Defaults to "overwrite".
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+        """
+        new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
+                                                connection_name=connection_name,
+                                                depends_on_node_id=self.node_id,
+                                                write_mode=write_mode,
+                                                file_format="delta")
+        return self._create_child_frame(new_node_id)
+
+    def write_json_to_cloud_storage(self,
+                                    path: str,
+                                    connection_name: Optional[str] = None,
+                                    ) -> "FlowFrame":
+        """
+        Write the data frame to cloud storage in JSON format.
+
+        Args:
+            path (str): The destination path in cloud storage where the JSON file will be written.
+            connection_name (Optional[str], optional): The name of the storage connection
+                that a user can create. If None, uses the default connection. Defaults to None.
+
+        Returns:
+            FlowFrame: A new child data frame representing the written data.
+        """
+        new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
+                                                connection_name=connection_name,
+                                                depends_on_node_id=self.node_id,
+                                                file_format="json")
         return self._create_child_frame(new_node_id)
 
     def group_by(self, *by, description: str = None, maintain_order=False, **named_by) -> GroupByFrame:

@@ -543,6 +543,10 @@ def test_schema():
     assert str(schema["active"]) == "Boolean"
 
 
+def test_write_csv_to_cloud_storage(df):
+    breakpoint()
+    df.write_parquet_to_cloud_storage("s3://flowfile-test/flowframe_test/parquet_output", connection_name="minio-s3")
+
 def test_read_csv_basic():
     """Test basic CSV reading functionality."""
     # Create a temporary CSV file
