@@ -6,6 +6,7 @@ from flowfile_frame import selectors as sc, FlowFrame
 
 from polars.testing import assert_frame_equal
 
+
 class TestExpressions:
     """Tests focusing specifically on expression functionality."""
 

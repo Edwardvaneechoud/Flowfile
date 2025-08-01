@@ -36,6 +36,11 @@ from flowfile_frame.flow_frame_methods import (  # noqa: F401
     scan_csv_from_cloud_storage,
     scan_delta)
 
+from flowfile_frame.cloud_storage.secret_manager import (del_cloud_storage_connection,
+                                                         create_cloud_storage_connection,
+                                                         get_all_available_cloud_storage_connections,
+                                                         create_cloud_storage_connection_if_not_exists)
+
 from polars.datatypes import (  # noqa: F401
     # Integer types
     Int8, Int16, Int32, Int64, Int128,

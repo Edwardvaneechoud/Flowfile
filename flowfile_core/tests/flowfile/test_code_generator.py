@@ -1,18 +1,28 @@
 import pytest
-import os
-from typing import Any, List, Tuple
+from typing import List, Tuple
 import polars as pl
 from polars.testing import assert_frame_equal
 from pathlib import Path
-
+from uuid import uuid4
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter, export_flow_to_polars
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-import itertools
 
 
-# Helper functions to create standard test data and flows
+try:
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
+    # noinspection PyUnresolvedReferences
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
+
+
 def create_flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
     """Create basic flow settings for tests"""
     return schemas.FlowSettings(
@@ -2487,3 +2497,61 @@ def test_text_to_rows_without_output_name():
     result_df = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def test_cloud_storage_reader():
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()
+
+    flow = create_basic_flow()
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+        file_format="parquet",
+        scan_mode="single_file",
+        connection_name=conn.connection_name
+    )
+    node_settings = input_schema.NodeCloudStorageReader(flow_id=flow.flow_id, node_id=1, user_id=1,
+                                                        cloud_storage_settings=read_settings)
+    flow.add_cloud_storage_reader(node_settings)
+    record_count_node = input_schema.NodeRecordCount(flow_id=1, node_id=2, depending_on_id=1)
+
+    flow.add_record_count(record_count_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    code = export_flow_to_polars(flow)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
+
+
+def test_cloud_storage_writer(tmp_path):
+    output_file_name = f"s3://flowfile-test/flowfile_generated_data_{uuid4()}.parquet"
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()
+    write_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path=output_file_name,
+        file_format="parquet",
+        connection_name=conn.connection_name
+    )
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path=output_file_name,
+        file_format="parquet",
+        connection_name=conn.connection_name
+    )
+
+    flow = create_basic_flow()
+
+    flow = create_sample_dataframe_node(flow)
+    record_count_node = input_schema.NodeRecordCount(flow_id=1, node_id=2, depending_on_id=1)
+    flow.add_record_count(record_count_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=flow.flow_id, node_id=3, user_id=1,
+                                                        cloud_storage_settings=write_settings,)
+    flow.add_cloud_storage_writer(node_settings)
+
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(2, 3))
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    fde = FlowDataEngine.from_cloud_storage_obj(
+        cloud_ss.CloudStorageReadSettingsInternal(read_settings=read_settings, connection=get_cloud_connection())
+    )
+    assert fde.collect()[0, 0] == 5

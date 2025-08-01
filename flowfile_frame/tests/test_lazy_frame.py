@@ -153,7 +153,7 @@ def test_gather_every() -> None:
 
 
 def test_agg() -> None:
-    df = pl.DataFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
+    df = FlowFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
     ldf = df.lazy().min()
     res = ldf.collect()
     assert res.shape == (1, 2)
@@ -161,19 +161,19 @@ def test_agg() -> None:
 
 
 def test_count_suffix_10783() -> None:
-    df = pl.DataFrame(
+    df = FlowFrame(
         {
             "a": [["a", "c", "b"], ["a", "b", "c"], ["a", "d", "c"], ["c", "a", "b"]],
             "b": [["a", "c", "b"], ["a", "b", "c"], ["a", "d", "c"], ["c", "a", "b"]],
         }
     )
     df_with_cnt = df.with_columns(
-        pl.len()
-        .over(pl.col("a").list.sort().list.join("").hash())
+        fl.len()
+        .over(fl.col("a").list.sort().list.join("").hash())
         .name.suffix("_suffix")
     )
-    df_expect = df.with_columns(pl.Series("len_suffix", [3, 3, 1, 3]))
-    assert_frame_equal(df_with_cnt, df_expect, check_dtypes=False)
+    df_expect = df.with_columns(fl.Series("len_suffix", [3, 3, 1, 3]))
+    assert_frame_equal(df_with_cnt.data, df_expect.data, check_dtypes=False)
 
 
 def test_or() -> None:

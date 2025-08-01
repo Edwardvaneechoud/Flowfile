@@ -20,7 +20,8 @@ from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.utils import (_parse_inputs_as_iterable, create_flow_graph, stringify_values,
-                                  ensure_inputs_as_iterable, generate_node_id)
+                                  ensure_inputs_as_iterable, generate_node_id,
+                                  set_node_id, data as node_id_data)
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 from flowfile_frame.utils import _check_if_convertible_to_code
 from flowfile_frame.config import logger
@@ -173,38 +174,41 @@ class FlowFrame:
             flow_graph = create_flow_graph()
 
         flow_id = flow_graph.flow_id
-        # Convert data to a polars DataFrame/LazyFrame
-        try:
-            # Use polars to convert from various types
-            pl_df = pl.DataFrame(
-                data,
-                schema=schema,
-                schema_overrides=schema_overrides,
-                strict=strict,
-                orient=orient,
-                infer_schema_length=infer_schema_length,
-                nan_to_null=nan_to_null,
+        # Convert data to a polars DataFrame/LazyFram
+        if isinstance(data, pl.LazyFrame):
+            flow_graph.add_dependency_on_polars_lazy_frame(data.lazy(), node_id)
+        else:
+            try:
+                # Use polars to convert from various types
+                pl_df = pl.DataFrame(
+                    data,
+                    schema=schema,
+                    schema_overrides=schema_overrides,
+                    strict=strict,
+                    orient=orient,
+                    infer_schema_length=infer_schema_length,
+                    nan_to_null=nan_to_null,
+                )
+                pl_data = pl_df.lazy()
+            except Exception as e:
+                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}")
+            # Create a FlowDataEngine to get data in the right format for manual input
+            flow_table = FlowDataEngine(raw_data=pl_data)
+            raw_data_format = input_schema.RawData(data=list(flow_table.to_dict().values()),
+                                                   columns=[c.get_minimal_field_info() for c in flow_table.schema])
+            # Create a manual input node
+            input_node = input_schema.NodeManualInput(
+                flow_id=flow_id,
+                node_id=node_id,
+                raw_data_format=raw_data_format,
+                pos_x=100,
+                pos_y=100,
+                is_setup=True,
+                description=description,
             )
-            pl_data = pl_df.lazy()
-        except Exception as e:
-            raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}")
-        # Create a FlowDataEngine to get data in the right format for manual input
-        flow_table = FlowDataEngine(raw_data=pl_data)
-        raw_data_format = input_schema.RawData(data=list(flow_table.to_dict().values()),
-                                               columns=[c.get_minimal_field_info() for c in flow_table.schema])
-        # Create a manual input node
-        input_node = input_schema.NodeManualInput(
-            flow_id=flow_id,
-            node_id=node_id,
-            raw_data_format=raw_data_format,
-            pos_x=100,
-            pos_y=100,
-            is_setup=True,
-            description=description,
-        )
-        # Add to graph
-        flow_graph.add_manual_input(input_node)
-        # Return new frame
+            # Add to graph
+            flow_graph.add_manual_input(input_node)
+        # Return new fram
         return FlowFrame(
             data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
             flow_graph=flow_graph,
@@ -213,70 +217,115 @@ class FlowFrame:
         )
 
     def __new__(
-        cls,
-        data: pl.LazyFrame | FrameInitTypes = None,
-        schema: SchemaDefinition | None = None,
-        *,
-        schema_overrides: SchemaDict | None = None,
-        strict: bool = True,
-        orient: Orientation | None = None,
-        infer_schema_length: int | None = 100,
-        nan_to_null: bool = False,
-        flow_graph=None,
-        node_id=None,
-        parent_node_id=None,
-    ):
-        """Create a new FlowFrame instance."""
-        # If data is not a LazyFrame, use the factory method
-        if data is not None and not isinstance(data, pl.LazyFrame):
-            return cls.create_from_any_type(
-                data=data,
-                schema=schema,
-                schema_overrides=schema_overrides,
-                strict=strict,
-                orient=orient,
-                infer_schema_length=infer_schema_length,
-                nan_to_null=nan_to_null,
-                flow_graph=flow_graph,
-                node_id=node_id,
-                parent_node_id=parent_node_id,
-            )
+            cls,
+            data: pl.LazyFrame | FrameInitTypes = None,
+            schema: SchemaDefinition | None = None,
+            *,
+            schema_overrides: SchemaDict | None = None,
+            strict: bool = True,
+            orient: Orientation | None = None,
+            infer_schema_length: int | None = 100,
+            nan_to_null: bool = False,
+            flow_graph: Optional[FlowGraph] = None,
+            node_id: Optional[int] = None,
+            parent_node_id: Optional[int] = None,
+            **kwargs, # Accept and ignore any other kwargs for API compatibility
+    ) -> "FlowFrame":
+        """
+        Unified constructor for FlowFrame.
 
-        instance = super().__new__(cls)
-        return instance
+        - If `flow_graph` and `node_id` are provided, it creates a lightweight Python
+          wrapper around an existing node in the graph.
+        - Otherwise, it creates a new source node in a new or existing graph
+          from the provided data.
+        """
+        # --- Path 1: Internal Wrapper Creation ---
+        # This path is taken by methods like .join(), .sort(), etc., which provide an existing graph.
+        if flow_graph is not None and node_id is not None:
+            instance = super().__new__(cls)
+            instance.data = data
+            instance.flow_graph = flow_graph
+            instance.node_id = node_id
+            instance.parent_node_id = parent_node_id
+            return instance
+        elif flow_graph is not None and not isinstance(data, pl.LazyFrame):
+            instance = cls.create_from_any_type(data=data, schema=schema, schema_overrides=schema_overrides,
+                                                strict=strict, orient=orient, infer_schema_length=infer_schema_length,
+                                                nan_to_null=nan_to_null, flow_graph=flow_graph, node_id=node_id,
+                                                parent_node_id=parent_node_id
+                                                )
+            return instance
 
-    def __init__(
-        self,
-        data: pl.LazyFrame | FrameInitTypes = None,
-        schema: SchemaDefinition | None = None,
-        *,
-        schema_overrides: SchemaDict | None = None,
-        strict: bool = True,
-        orient: Orientation | None = None,
-        infer_schema_length: int | None = 100,
-        nan_to_null: bool = False,
-        flow_graph=None,
-        node_id=None,
-        parent_node_id=None,
-    ):
-        """Initialize the FlowFrame with data and graph references."""
+        source_graph = create_flow_graph()
+        source_node_id = generate_node_id()
+
         if data is None:
             data = pl.LazyFrame()
         if not isinstance(data, pl.LazyFrame):
-            return
-        self.node_id = node_id or generate_node_id()
-        self.parent_node_id = parent_node_id
 
-        # Initialize graph
-        if flow_graph is None:
-            flow_graph = create_flow_graph()
-        self.flow_graph = flow_graph
-        # Set up data
-        if isinstance(data, FlowDataEngine):
-            self.data = data.data_frame
+            description = "Data imported from Python object"
+            try:
+                pl_df = pl.DataFrame(
+                    data, schema=schema, schema_overrides=schema_overrides,
+                    strict=strict, orient=orient, infer_schema_length=infer_schema_length,
+                    nan_to_null=nan_to_null
+                )
+                pl_data = pl_df.lazy()
+            except Exception as e:
+                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}")
+
+            flow_table = FlowDataEngine(raw_data=pl_data)
+            raw_data_format = input_schema.RawData(data=list(flow_table.to_dict().values()),
+                                                   columns=[c.get_minimal_field_info() for c in flow_table.schema])
+            input_node = input_schema.NodeManualInput(
+                flow_id=source_graph.flow_id, node_id=source_node_id,
+                raw_data_format=raw_data_format, pos_x=100, pos_y=100,
+                is_setup=True, description=description
+            )
+            source_graph.add_manual_input(input_node)
         else:
-            self.data = data
+            source_graph.add_dependency_on_polars_lazy_frame(data, source_node_id)
 
+        final_data = source_graph.get_node(source_node_id).get_resulting_data().data_frame
+        return cls(
+            data=final_data,
+            flow_graph=source_graph,
+            node_id=source_node_id,
+            parent_node_id=parent_node_id
+        )
+
+
+    def __init__(self, *args, **kwargs):
+        """
+        The __init__ method is intentionally left empty.
+        All initialization logic is handled in the `__new__` method to support
+        the flexible factory pattern and prevent state from being overwritten.
+        Python automatically calls __init__ after __new__, so this empty
+        method catches that call and safely does nothing.
+        """
+        pass
+
+    @staticmethod
+    def _from_existing_node(
+        data: pl.LazyFrame,
+        flow_graph: FlowGraph,
+        node_id: int,
+        parent_node_id: Optional[int] = None,
+    ) -> "FlowFrame":
+        """
+        Internal constructor to create a FlowFrame instance that wraps an
+        existing node in the graph. It bypasses the main __new__ logic.
+        """
+        # Create a blank instance, same as the first line of __new__
+        instance = super(FlowFrame, FlowFrame).__new__(FlowFrame)
+
+        # Manually set the attributes, same as the last part of __new__
+        instance.data = data
+        instance.flow_graph = flow_graph
+        instance.node_id = node_id
+        instance.parent_node_id = parent_node_id
+
+        return instance
     def __repr__(self):
         return str(self.data)
 
@@ -291,7 +340,7 @@ class FlowFrame:
         """Helper method to create a new FlowFrame that's a child of this one"""
         self._add_connection(self.node_id, new_node_id)
         try:
-            return FlowFrame(
+            return FlowFrame._from_existing_node(
                 data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
                 flow_graph=self.flow_graph,
                 node_id=new_node_id,
@@ -586,7 +635,6 @@ class FlowFrame:
         use_polars_code = self._should_use_polars_code_for_join(
             maintain_order, coalesce, nulls_equal, validate, suffix
         )
-
         # Step 2: Ensure both FlowFrames are in the same graph
         self._ensure_same_graph(other)
 
@@ -654,9 +702,7 @@ class FlowFrame:
             other.node_id = new_other_node_id
             self.flow_graph = combined_graph
             other.flow_graph = combined_graph
-
-            global node_id_counter
-            node_id_counter += len(combined_graph.nodes)
+            node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
 
     def _parse_join_columns(
             self,
@@ -773,7 +819,6 @@ class FlowFrame:
         # Create select inputs for both frames
         left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
         right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
-
         # Create appropriate join input based on join type
         if how == 'cross':
             join_input = transform_schema.CrossJoinInput(
@@ -803,9 +848,8 @@ class FlowFrame:
         # Add connections
         self._add_connection(self.node_id, new_node_id, "main")
         other._add_connection(other.node_id, new_node_id, "right")
-
         # Create and return result frame
-        return FlowFrame(
+        return FlowFrame._from_existing_node(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,
@@ -1239,7 +1283,8 @@ class FlowFrame:
     def write_parquet_to_cloud_storage(self,
                                        path: str,
                                        connection_name: Optional[str] = None,
-                                       compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy"
+                                       compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy",
+                                       description: Optional[str] = None,
                                        ) -> "FlowFrame":
         """
           Write the data frame to cloud storage in Parquet format.
@@ -1250,16 +1295,18 @@ class FlowFrame:
                   that a user can create. If None, uses the default connection. Defaults to None.
               compression (Literal["snappy", "gzip", "brotli", "lz4", "zstd"], optional):
                   The compression algorithm to use for the Parquet file. Defaults to "snappy".
+              description (Optional[str], optional): Description of this operation for the ETL graph.
 
           Returns:
               FlowFrame: A new child data frame representing the written data.
         """
 
         new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
-                                                connection_name=connection_name,
-                                                depends_on_node_id=self.node_id,
-                                                parquet_compression=compression,
-                                                file_format="parquet")
+                                                    connection_name=connection_name,
+                                                    depends_on_node_id=self.node_id,
+                                                    parquet_compression=compression,
+                                                    file_format="parquet",
+                                                    description=description)
         return self._create_child_frame(new_node_id)
 
     def write_csv_to_cloud_storage(self,
@@ -1267,6 +1314,7 @@ class FlowFrame:
                                    connection_name: Optional[str] = None,
                                    delimiter: str = ";",
                                    encoding: CsvEncoding = "utf8",
+                                   description: Optional[str] = None,
                                    ) -> "FlowFrame":
         """
         Write the data frame to cloud storage in CSV format.
@@ -1279,22 +1327,25 @@ class FlowFrame:
                 Defaults to ";".
             encoding (CsvEncoding, optional): The character encoding to use for the CSV file.
                 Defaults to "utf8".
+            description (Optional[str], optional): Description of this operation for the ETL graph.
 
         Returns:
             FlowFrame: A new child data frame representing the written data.
         """
         new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
-                                                connection_name=connection_name,
-                                                depends_on_node_id=self.node_id,
-                                                csv_delimiter=delimiter,
-                                                csv_encoding=encoding,
-                                                file_format="csv")
+                                                    connection_name=connection_name,
+                                                    depends_on_node_id=self.node_id,
+                                                    csv_delimiter=delimiter,
+                                                    csv_encoding=encoding,
+                                                    file_format="csv",
+                                                    description=description)
         return self._create_child_frame(new_node_id)
 
     def write_delta(self,
                     path: str,
                     connection_name: Optional[str] = None,
                     write_mode: Literal["overwrite", "append"] = "overwrite",
+                    description: Optional[str] = None,
                     ) -> "FlowFrame":
         """
         Write the data frame to cloud storage in Delta Lake format.
@@ -1305,20 +1356,22 @@ class FlowFrame:
                 that a user can create. If None, uses the default connection. Defaults to None.
             write_mode (Literal["overwrite", "append"], optional): The write mode for the Delta table.
                 "overwrite" replaces existing data, "append" adds to existing data. Defaults to "overwrite".
-
+            description (Optional[str], optional): Description of this operation for the ETL graph.
         Returns:
             FlowFrame: A new child data frame representing the written data.
         """
         new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
-                                                connection_name=connection_name,
-                                                depends_on_node_id=self.node_id,
-                                                write_mode=write_mode,
-                                                file_format="delta")
+                                                    connection_name=connection_name,
+                                                    depends_on_node_id=self.node_id,
+                                                    write_mode=write_mode,
+                                                    file_format="delta",
+                                                    description=description)
         return self._create_child_frame(new_node_id)
 
     def write_json_to_cloud_storage(self,
                                     path: str,
                                     connection_name: Optional[str] = None,
+                                    description: Optional[str] = None,
                                     ) -> "FlowFrame":
         """
         Write the data frame to cloud storage in JSON format.
@@ -1327,14 +1380,15 @@ class FlowFrame:
             path (str): The destination path in cloud storage where the JSON file will be written.
             connection_name (Optional[str], optional): The name of the storage connection
                 that a user can create. If None, uses the default connection. Defaults to None.
-
+            description (Optional[str], optional): Description of this operation for the ETL graph.
         Returns:
             FlowFrame: A new child data frame representing the written data.
         """
         new_node_id = add_write_ff_to_cloud_storage(path, flow_graph=self.flow_graph,
-                                                connection_name=connection_name,
-                                                depends_on_node_id=self.node_id,
-                                                file_format="json")
+                                                    connection_name=connection_name,
+                                                    depends_on_node_id=self.node_id,
+                                                    file_format="json",
+                                                    description=description)
         return self._create_child_frame(new_node_id)
 
     def group_by(self, *by, description: str = None, maintain_order=False, **named_by) -> GroupByFrame:
@@ -1385,7 +1439,7 @@ class FlowFrame:
             self.flow_graph.apply_layout()
         self.flow_graph.save_flow(file_path)
 
-    def collect(self, *args, **kwargs):
+    def collect(self, *args, **kwargs) -> pl.DataFrame:
         """Collect lazy data into memory."""
         if hasattr(self.data, "collect"):
             return self.data.collect(*args, **kwargs)
@@ -1707,8 +1761,7 @@ class FlowFrame:
             combined_graph, node_mappings = combine_flow_graphs_with_mapping(*all_graphs)
             for f in [self] + other:
                 f.node_id = node_mappings.get((f.flow_graph.flow_id, f.node_id), None)
-            global node_id_counter
-            node_id_counter += len(combined_graph.nodes)
+            node_id_data["c"] = node_id_data["c"] + len(combined_graph.nodes)
         else:
             combined_graph = self.flow_graph
         new_node_id = generate_node_id()

@@ -240,7 +240,6 @@ def test_running_unique(raw_data):
 def test_opening_parquet_file(flow_logger: FlowLogger):
     graph = create_graph()
     add_node_promise_on_type(graph, 'read', 1, 1)
-
     received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
                                                 path='flowfile_core/tests/support_files/data/table.parquet')
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
@@ -961,7 +960,7 @@ def test_empty_manual_input_should_run():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so cloud reader cannot be tested")
 def test_cloud_reader(flow_logger):
-    conn = ensure_cloud_storage_connection_is_available_and_get_connection()  # Just store it so you can
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()
     read_settings = cloud_ss.CloudStorageReadSettings(
         resource_path="s3://test-bucket/single-file-parquet/data.parquet",
         file_format="parquet",
@@ -1016,7 +1015,6 @@ def test_add_cloud_writer(flow_logger):
     read_settings = cloud_ss.CloudStorageWriteSettings(
         resource_path="s3://flowfile-test/flow_graph_data.parquet",
         file_format="parquet",
-        scan_mode="single_file",
         connection_name=conn.connection_name
     )
     graph = create_graph()

@@ -127,3 +127,8 @@ data = {"c": 0}
 def generate_node_id() -> int:
     data["c"] += 1
     return data["c"]
+
+
+def set_node_id(node_id):
+    """Set the node ID to a specific value."""
+    data["c"] = node_id

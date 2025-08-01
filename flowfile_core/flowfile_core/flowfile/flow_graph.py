@@ -87,7 +87,6 @@ def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start
 
 def get_cloud_connection_settings(connection_name: str, user_id: int, auth_mode: AuthMethod) -> FullCloudStorageConnection:
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
-    breakpoint()
     if cloud_connection_settings is None and auth_mode in ("env_vars", "auto"):
         # If the auth mode is aws-cli, we do not need connection settings
         cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
@@ -414,7 +413,6 @@ class FlowGraph:
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
-
         self.add_node_step(node_id=node_polars_code.node_id,
                            function=_func,
                            node_type='polars_code',
@@ -426,6 +424,29 @@ class FlowGraph:
         except Exception as e:
             node = self.get_node(node_id=node_polars_code.node_id)
             node.results.errors = str(e)
+
+    def add_dependency_on_polars_lazy_frame(self,
+                                            lazy_frame: pl.LazyFrame,
+                                            node_id: int):
+        """
+        Adds a dependency on a Polars LazyFrame to the FlowGraph. Because of this, the graph will not work in the
+        editor. However, it is a shortcut for supporting methods that are only implemented on the FlowGraph.
+        Parameters
+        ----------
+        lazy_frame
+        node_id
+
+        Returns
+        -------
+
+        """
+        def _func():
+            return FlowDataEngine(lazy_frame)
+        node_promise = input_schema.NodePromise(flow_id=self.flow_id,
+                                                node_id=node_id, node_type="polars_lazy_frame",
+                                                is_setup=True)
+        self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=_func,
+                           setting_input=node_promise)
 
     def add_unique(self, unique_settings: input_schema.NodeUnique):
 
@@ -691,9 +712,8 @@ class FlowGraph:
         if (
                 input_nodes is not None or
                 function.__name__ in ('placeholder', 'analysis_preparation') or
-                node_type == "cloud_storage_reader"
+                node_type in ("cloud_storage_reader", "polars_lazy_frame", "input_data")
         ):
-
             if not existing_node:
                 node = FlowNode(node_id=node_id,
                                 function=function,
@@ -714,8 +734,6 @@ class FlowGraph:
                                           setting_input=setting_input,
                                           schema_callback=schema_callback)
                 node = existing_node
-        elif node_type == 'input_data':
-            node = None
         else:
             raise Exception("No data initialized")
         self._node_db[node_id] = node
@@ -879,7 +897,6 @@ class FlowGraph:
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
 
         node_type = "cloud_storage_writer"
-
         def _func(df: FlowDataEngine):
             df.lazy = True
             execute_remote = self.execution_location != 'local'
@@ -894,7 +911,6 @@ class FlowGraph:
                 aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
                 **CloudStorageReader.get_storage_options(cloud_connection_settings)
             )
-            breakpoint()
             if execute_remote:
                 settings = get_cloud_storage_write_settings_worker_interface(
                     write_settings=node_cloud_storage_writer.cloud_storage_settings,

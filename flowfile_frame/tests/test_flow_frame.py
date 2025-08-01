@@ -1,8 +1,12 @@
-from flowfile_frame.flow_frame_methods import read_parquet, from_dict, concat
+from flowfile_frame.flow_frame_methods import (read_parquet, from_dict, concat,
+                                               scan_csv_from_cloud_storage,
+                                               scan_parquet_from_cloud_storage,
+                                               scan_json_from_cloud_storage,
+                                               scan_delta)
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.expr import col, lit, cum_count
 from flowfile_frame import selectors as sc
-
+from uuid import uuid4
 import os
 import io
 import pytest
@@ -11,6 +15,7 @@ import polars as pl
 from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame_methods import read_csv
 from flowfile_frame.expr import col
+
 
 @pytest.fixture
 def df():
@@ -51,7 +56,6 @@ def test_from_dict_factory():
         "name": ["Alice", "Bob", "Charlie"]
     }
     df = from_dict(data, description="Test data")
-
     # Check the instance
     assert isinstance(df, FlowFrame)
     assert isinstance(df.data, pl.LazyFrame)
@@ -542,10 +546,41 @@ def test_schema():
     assert str(schema["name"]) == "String"
     assert str(schema["active"]) == "Boolean"
 
+FORMAT_CONFIGS = {
+    "parquet": {
+        "extension": ".parquet",
+        "write_method": "write_parquet_to_cloud_storage",
+        "scan_function": "scan_parquet_from_cloud_storage"
+    },
+    "csv": {
+        "extension": ".csv",
+        "write_method": "write_csv_to_cloud_storage",
+        "scan_function": "scan_csv_from_cloud_storage"
+    },
+    "json": {
+        "extension": ".json",
+        "write_method": "write_json_to_cloud_storage",
+        "scan_function": "scan_json_from_cloud_storage"
+    },
+    "delta": {
+        "extension": ".delta",
+        "write_method": "write_delta",
+        "scan_function": "scan_delta"
+    }
+}
 
-def test_write_csv_to_cloud_storage(df):
-    breakpoint()
-    df.write_parquet_to_cloud_storage("s3://flowfile-test/flow_frame_parquet_output.parquet", connection_name="minio-test")
+
+@pytest.mark.parametrize("file_format", ["parquet", "csv", "json", "delta"])
+def test_write_to_cloud_storage(df, file_format):
+    config = FORMAT_CONFIGS[file_format]
+
+    write_method = getattr(df, config['write_method'])
+    scan_function = globals()[config['scan_function']]
+    source = f"s3://flowfile-test/flow_frame_{file_format}_output_{uuid4()}{config['extension']}"
+
+    write_method(source, connection_name="minio-flowframe-test")
+    new_df = scan_function(source, connection_name="minio-flowframe-test")
+    assert_frame_equal(df.collect(), new_df.collect())
 
 
 def test_read_csv_basic():

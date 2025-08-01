@@ -317,7 +317,6 @@ class FlowDataEngine:
 
         if write_settings.write_mode == 'append' and write_settings.file_format != "delta":
             raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
-        breakpoint()
         storage_options = CloudStorageReader.get_storage_options(connection)
         credential_provider = CloudStorageReader.get_credential_provider(connection)
         # Dispatch to the correct writer based on file format
@@ -365,14 +364,14 @@ class FlowDataEngine:
                 "path": resource_path,
                 "compression": write_settings.parquet_compression,
             }
-            breakpoint()
             if storage_options:
                 sink_kwargs["storage_options"] = storage_options
             if credential_provider:
                 sink_kwargs["credential_provider"] = credential_provider
             try:
                 self.data_frame.sink_parquet(**sink_kwargs)
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to sink the data, falling back to collecing and writing. \n {e}")
                 pl_df = self.collect()
                 sink_kwargs['file'] = sink_kwargs.pop("path")
                 pl_df.write_parquet(**sink_kwargs)
@@ -451,7 +450,7 @@ class FlowDataEngine:
         Returns:
             FlowDataEngine: New instance with data from cloud storage
 
-        Raises:
+        Raises:FlowDataEngine.from_cloud_storage_obj()
             ValueError: If storage type or file format is not supported
             Exception: If reading from cloud storage fails
         """

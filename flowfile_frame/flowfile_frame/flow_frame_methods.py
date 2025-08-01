@@ -461,7 +461,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     flow_graph.add_manual_input(input_node)
 
     # Return new frame
-    return FlowFrame(
+    return FlowFrame._from_existing_node(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
         flow_graph=flow_graph,
         node_id=node_id
