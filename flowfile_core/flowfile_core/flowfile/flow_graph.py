@@ -87,6 +87,7 @@ def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start
 
 def get_cloud_connection_settings(connection_name: str, user_id: int, auth_mode: AuthMethod) -> FullCloudStorageConnection:
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
+    breakpoint()
     if cloud_connection_settings is None and auth_mode in ("env_vars", "auto"):
         # If the auth mode is aws-cli, we do not need connection settings
         cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
@@ -882,19 +883,19 @@ class FlowGraph:
         def _func(df: FlowDataEngine):
             df.lazy = True
             execute_remote = self.execution_location != 'local'
+            cloud_connection_settings = get_cloud_connection_settings(
+                connection_name=node_cloud_storage_writer.cloud_storage_settings.connection_name,
+                user_id=node_cloud_storage_writer.user_id,
+                auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode
+            )
+            full_cloud_storage_connection = FullCloudStorageConnection(
+                storage_type=cloud_connection_settings.storage_type,
+                auth_method=cloud_connection_settings.auth_method,
+                aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
+                **CloudStorageReader.get_storage_options(cloud_connection_settings)
+            )
             breakpoint()
             if execute_remote:
-                cloud_connection_settings = get_cloud_connection_settings(
-                    connection_name=node_cloud_storage_writer.cloud_storage_settings.connection_name,
-                    user_id=node_cloud_storage_writer.user_id,
-                    auth_mode=node_cloud_storage_writer.cloud_storage_settings.auth_mode
-                )
-                full_cloud_storage_connection = FullCloudStorageConnection(
-                    storage_type=cloud_connection_settings.storage_type,
-                    auth_method=cloud_connection_settings.auth_method,
-                    aws_allow_unsafe_html=cloud_connection_settings.aws_allow_unsafe_html,
-                    **CloudStorageReader.get_storage_options(cloud_connection_settings)
-                )
                 settings = get_cloud_storage_write_settings_worker_interface(
                     write_settings=node_cloud_storage_writer.cloud_storage_settings,
                     connection=full_cloud_storage_connection,
@@ -905,8 +906,11 @@ class FlowGraph:
                 node._fetch_cached_df = external_database_writer
                 external_database_writer.get_result()
             else:
-                cloud_storage_write_settings_internal = CloudStorageReadSettingsInternal
-                df.to_cloud_storage_obj()
+                cloud_storage_write_settings_internal = CloudStorageWriteSettingsInternal(
+                    connection=full_cloud_storage_connection,
+                    write_settings=node_cloud_storage_writer.cloud_storage_settings,
+                )
+                df.to_cloud_storage_obj(cloud_storage_write_settings_internal)
             return df
 
         def schema_callback():

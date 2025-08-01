@@ -317,7 +317,7 @@ class FlowDataEngine:
 
         if write_settings.write_mode == 'append' and write_settings.file_format != "delta":
             raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
-
+        breakpoint()
         storage_options = CloudStorageReader.get_storage_options(connection)
         credential_provider = CloudStorageReader.get_credential_provider(connection)
         # Dispatch to the correct writer based on file format
@@ -365,6 +365,7 @@ class FlowDataEngine:
                 "path": resource_path,
                 "compression": write_settings.parquet_compression,
             }
+            breakpoint()
             if storage_options:
                 sink_kwargs["storage_options"] = storage_options
             if credential_provider:

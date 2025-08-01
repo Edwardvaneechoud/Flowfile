@@ -42,10 +42,9 @@ def create_cloud_storage_connection(connection: FullCloudStorageConnection) -> N
 
 
 def get_all_available_cloud_storage_connections() -> List[FullCloudStorageConnectionInterface]:
-    access_token = create_access_token(data={"sub": "local_user"})
     with get_db_context() as db:
         all_connections = get_all_cloud_connections_interface(
             db,
-            current_user_id
+            get_current_user_id()
         )
     return all_connections

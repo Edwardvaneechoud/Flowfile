@@ -545,7 +545,8 @@ def test_schema():
 
 def test_write_csv_to_cloud_storage(df):
     breakpoint()
-    df.write_parquet_to_cloud_storage("s3://flowfile-test/flowframe_test/parquet_output", connection_name="minio-s3")
+    df.write_parquet_to_cloud_storage("s3://flowfile-test/flow_frame_parquet_output.parquet", connection_name="minio-test")
+
 
 def test_read_csv_basic():
     """Test basic CSV reading functionality."""
