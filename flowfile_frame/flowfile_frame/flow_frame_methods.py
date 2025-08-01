@@ -279,6 +279,7 @@ def read_csv(
             node_id=node_id,
         )
 
+
 def _build_polars_code_args(
     source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
     separator: str,
@@ -461,7 +462,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
     flow_graph.add_manual_input(input_node)
 
     # Return new frame
-    return FlowFrame._from_existing_node(
+    return FlowFrame(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
         flow_graph=flow_graph,
         node_id=node_id

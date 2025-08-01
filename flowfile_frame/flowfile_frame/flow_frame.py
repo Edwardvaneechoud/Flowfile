@@ -294,7 +294,6 @@ class FlowFrame:
             parent_node_id=parent_node_id
         )
 
-
     def __init__(self, *args, **kwargs):
         """
         The __init__ method is intentionally left empty.
@@ -305,27 +304,6 @@ class FlowFrame:
         """
         pass
 
-    @staticmethod
-    def _from_existing_node(
-        data: pl.LazyFrame,
-        flow_graph: FlowGraph,
-        node_id: int,
-        parent_node_id: Optional[int] = None,
-    ) -> "FlowFrame":
-        """
-        Internal constructor to create a FlowFrame instance that wraps an
-        existing node in the graph. It bypasses the main __new__ logic.
-        """
-        # Create a blank instance, same as the first line of __new__
-        instance = super(FlowFrame, FlowFrame).__new__(FlowFrame)
-
-        # Manually set the attributes, same as the last part of __new__
-        instance.data = data
-        instance.flow_graph = flow_graph
-        instance.node_id = node_id
-        instance.parent_node_id = parent_node_id
-
-        return instance
     def __repr__(self):
         return str(self.data)
 
@@ -340,7 +318,7 @@ class FlowFrame:
         """Helper method to create a new FlowFrame that's a child of this one"""
         self._add_connection(self.node_id, new_node_id)
         try:
-            return FlowFrame._from_existing_node(
+            return FlowFrame(
                 data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
                 flow_graph=self.flow_graph,
                 node_id=new_node_id,
@@ -849,7 +827,7 @@ class FlowFrame:
         self._add_connection(self.node_id, new_node_id, "main")
         other._add_connection(other.node_id, new_node_id, "right")
         # Create and return result frame
-        return FlowFrame._from_existing_node(
+        return FlowFrame(
             data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
             flow_graph=self.flow_graph,
             node_id=new_node_id,

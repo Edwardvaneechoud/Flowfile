@@ -339,7 +339,7 @@ def generate_improved_type_stub(
         allowed_special_methods = {'__init__', '__new__', '__repr__', '__bool__', '__contains__', '__eq__', '__ne__', '__gt__', '__lt__', '__ge__', '__le__'}
         known_internal_methods = {"_add_connection", "_create_child_frame", "_generate_sort_polars_code",
                                   "_add_polars_code", "_comparison_error", "_detect_cum_count_record_id",
-                                  "_add_number_of_records", "_with_flowfile_formula", "_from_existing_node"}
+                                  "_add_number_of_records", "_with_flowfile_formula"}
 
         if name == '__init__' or name == '__new__':
             if not include_constructors:

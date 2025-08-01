@@ -56,5 +56,10 @@ def test_scan_csv_from_cloud_storage():
 
 
 def test_scan_delta():
-    flow_frame = ff.scan_json_from_cloud_storage("s3://test-bucket/multi-file-json/part_", connection_name="minio-flowframe-test")
+    flow_frame = ff.scan_delta("s3://test-bucket/delta-lake-table", connection_name="minio-flowframe-test")
+    flow_frame.count().collect()
+
+
+def test_scan_json_from_cloud_storage():
+    flow_frame = ff.scan_json_from_cloud_storage("s3://test-bucket/multi-file-json/", connection_name="minio-flowframe-test")
     flow_frame.count().collect()
