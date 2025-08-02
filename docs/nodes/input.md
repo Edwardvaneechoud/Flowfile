@@ -58,12 +58,19 @@ When a **Parquet** file is selected, no additional setup options are required. P
 
 ---
 
-### ![Cloud Storage](../assets/images/nodes/cloud_storage.png){ width="50" height="50" } Cloud Storage Reader
+### ![Cloud Storage](../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
 
 The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
 
+<details  markdown="1">
+<summary>Screenshot: Cloud Storage Reader Configuration</summary>
+
+![Screenshot of the Cloud Storage Reader configuration](../assets/images/ui/screenshot_cloud_reader_input.png)
+
+</details>
+
 #### **Connection Options:**
-- Use existing S3 connections configured in your workspace
+- Use existing S3 connections configured in your workspace (see [Manage Cloud Connections](../guides/manage_cloud_connections.md))
 - Use local AWS CLI credentials or environment variables
 
 #### **File Settings:**

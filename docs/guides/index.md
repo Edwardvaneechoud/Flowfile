@@ -24,6 +24,12 @@ Learn how to connect Flowfile to external databases:
 - *Coming soon: MySQL Integration* - Working with MySQL databases
 - *Coming soon: SQLite for Local Development* - Using SQLite for testing and development
 
+
+## Manage Cloud Storage Connections
+Manage Flowfile to cloud storage services:
+- [Manage cloud connections](manage_cloud_connections.md) - Set up AWS S3 connections to read data from cloud storage in your workflows
+
+
 ## Technical Architecture
 
 Explore the inner workings and design philosophy of Flowfile:

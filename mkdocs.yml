@@ -46,6 +46,7 @@ nav:
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md
+    - Manage Cloud Connections: guides/manage_cloud_connections.md
     - Technical architecture: guides/technical_architecture.md
     - Using Code to Flow: guides/flowfile_frame_api.md
     - Using Flow to Code: guides/code_generator.md
