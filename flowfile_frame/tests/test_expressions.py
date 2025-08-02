@@ -615,12 +615,7 @@ class TestAdvancedExpressions:
         assert result["id"][0] == 3
 
     def test_select_lambda_expression(self, sample_df):
-        breakpoint()
         res = sample_df.select(col("nested").map_elements(lambda x: x[0])).collect()
-
-        df = pl.LazyFrame({"nested": [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]],})
-        df.select(pl.col("nested").map_elements(lambda x: x[0])).collect()
-
         expected = sample_df.data.select(pl.col("nested").map_elements(lambda x: x[0])).collect()
         assert_frame_equal(res, expected)
 
