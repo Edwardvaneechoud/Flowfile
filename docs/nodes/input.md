@@ -1,6 +1,6 @@
 # Input Nodes
 
-Input nodes are the starting point for any data flow. Flowfile currently supports reading from **local files**, and **manual input**.
+Input nodes are the starting point for any data flow. Flowfile currently supports reading from **local files**, **cloud storage (S3)**, and **manual input**.
 
 ## Node Details
 
@@ -58,16 +58,41 @@ When a **Parquet** file is selected, no additional setup options are required. P
 
 ---
 
+### ![Cloud Storage](../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
+
+The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
+
+<details  markdown="1">
+<summary>Screenshot: Cloud Storage Reader Configuration</summary>
+
+![Screenshot of the Cloud Storage Reader configuration](../assets/images/ui/screenshot_cloud_reader_input.png)
+
+</details>
+
+#### **Connection Options:**
+- Use existing S3 connections configured in your workspace (see [Manage Cloud Connections](../guides/manage_cloud_connections.md))
+- Use local AWS CLI credentials or environment variables
+
+#### **File Settings:**
+
+| Parameter          | Description                                                                                              |
+|--------------------|----------------------------------------------------------------------------------------------------------|
+| **File Path**      | Path to the file or directory (e.g., `bucket-name/folder/file.csv`)                                    |
+| **File Format**    | Supported formats: CSV, Parquet, JSON, Delta Lake                                                       |
+| **Scan Mode**      | Single file or directory scan (reads all matching files in a directory)                                 |
+
+#### **Format-Specific Options:**
+
+**CSV Options:**
+- **Has Headers**: First row contains column headers
+- **Delimiter**: Character separating values (default: `,`)
+- **Encoding**: File encoding (UTF-8 or UTF-8 Lossy)
+
+**Delta Lake Options:**
+- **Version**: Specify a specific version to read (optional, defaults to latest)
+
+---
+
 ### ![Manual Input](../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
 
 The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
-
-#### **Key Features:**
-- Create data from scratch
-- Paste data from clipboard in the raw data section
-
-#### **Example Use Cases:**
-- Creating small lookup tables
-- Testing data transformations
-- Quick data prototyping
-- Adding configuration data to your flow
