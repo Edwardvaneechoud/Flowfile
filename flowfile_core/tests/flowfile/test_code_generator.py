@@ -2253,7 +2253,6 @@ def test_data_type_conversions():
 def test_csv_read_utf_8():
     """Test reading parquet files"""
     flow = create_basic_flow()
-    os.getcwd()
     flowfile_core_path = find_parent_directory('Flowfile')
 
     file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.csv'))
@@ -2279,9 +2278,7 @@ def test_csv_read_utf_8():
 def test_parquet_read():
     """Test reading parquet files"""
     flow = create_basic_flow()
-    os.getcwd()
     flowfile_core_path = find_parent_directory('Flowfile')
-
     file_path = str(
         (Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'))
     # Add parquet read node
