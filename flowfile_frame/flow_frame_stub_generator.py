@@ -20,6 +20,34 @@ PASSTHROUGH_METHODS = {
 }
 
 
+def format_default_value(param: inspect.Parameter) -> Optional[str]:
+    """
+    Properly format a parameter's default value for a .pyi stub file.
+
+    Parameters
+    ----------
+    param : inspect.Parameter
+        The parameter object to inspect.
+
+    Returns
+    -------
+    Optional[str]
+        A string representation of the default value, or None if there is no default.
+    """
+    if param.default is inspect.Parameter.empty:
+        return None
+
+    default = param.default
+
+    if isinstance(default, (str, int, float, bool, type(None))):
+        return repr(default)
+
+    type_name = type(default).__name__
+    if type_name == 'QueryOptFlags':
+        return "DEFAULT_QUERY_OPT_FLAGS"
+
+    return "..."
+
 def format_type_annotation(annotation_obj) -> str:
     """
     Properly format a type annotation object to a string representation.
@@ -51,15 +79,11 @@ def format_type_annotation(annotation_obj) -> str:
         # For known types like polars itself, prefix with pl if appropriate
         if module.startswith("polars.") and name not in ['DataFrame', 'LazyFrame', 'Series', 'Expr']:
             return f"pl.{name}"
-        if module.startswith("polars.") and name == "DataType": # Handle pl.DataType specifically
+        if module.startswith("polars.") and name == "DataType":  # Handle pl.DataType specifically
             return f"pl.{name}"
 
-
-        # For other types, use the qualified name if not too verbose, else just name
         return f"{name}"
 
-
-    # Handle string representations of class objects
     elif isinstance(annotation_obj, str):
         # Match patterns like <class 'module.submodule.ClassName'>
         class_match = re.match(r"<class '([^']+)'>", annotation_obj)
@@ -81,7 +105,8 @@ def format_type_annotation(annotation_obj) -> str:
     str_rep = str_rep.replace("polars.type_aliases.", "")
     str_rep = str_rep.replace("polars.lazyframe.frame.", "") # For LazyFrame, LazyGroupBy if directly referenced
     str_rep = str_rep.replace("flowfile_frame.group_frame.", "group_frame.")
-
+    if str_rep == "LazyFrame":
+        str_rep = "FlowFrame"
 
     # Special case for NoneType
     if str_rep == 'NoneType' or str_rep.endswith('.NoneType'):
@@ -147,8 +172,7 @@ def generate_improved_type_stub(
             sig = inspect.signature(member)
             if sig.return_annotation is not inspect.Signature.empty:
                 return_annotation_str = str(sig.return_annotation).lower()
-                if 'lazyframe' in return_annotation_str or \
-                   'polars.lazyframe.frame.lazyframe' in return_annotation_str:
+                if 'lazyframe' in return_annotation_str or 'polars.lazyframe.frame.lazyframe' in return_annotation_str:
                     lazyframe_returning_methods.add(name)
                 else:
                     non_lazyframe_methods.add(name)
@@ -176,12 +200,12 @@ def generate_improved_type_stub(
     print(f"Analysis complete: {len(lazyframe_returning_methods)} LazyFrame-returning methods, "
           f"{len(non_lazyframe_methods)} non-LazyFrame-returning methods from LazyFrame.")
 
-
     flowframe_specific_methods = {
         "cache", "rename", "pivot", "concat", "write_csv", "write_parquet",
         "sink_csv", "sink_parquet", "_create_child_frame", "text_to_rows",
         "_with_flowfile_formula", "_add_number_of_records", "clear", "clone",
-        "gather_every", "approx_n_unique", "set_sorted"
+        "gather_every", "approx_n_unique", "set_sorted", "write_json_to_cloud_storage",
+        "write_delta", "write_parquet_to_cloud_storage", "write_csv_to_cloud_storage"
     }
 
     if output_file is None:
@@ -200,16 +224,22 @@ def generate_improved_type_stub(
         "import sys",
         "import typing",
         "from io import IOBase",
-        "from typing import List, Optional, ForwardRef",
+        "from typing import List, Optional, ForwardRef, TypeVar, Any, Iterable, Sequence, Mapping, Collection, Callable, Literal, IO, Union",
+        "from datetime import timedelta",
+        "from pathlib import Path",
         "from collections.abc import Awaitable",
         "",
         "# Third-party imports",
         "import polars as pl",
-        "from polars._typing import * # Consider specifying needed imports",
+        "from polars._typing import *",
+        "from polars._typing import ParquetMetadata, PlanStage",
         "from polars._utils.async_ import _GeventDataFrameResult",
         "from polars.dependencies import polars_cloud as pc",
         "from polars.io.cloud import CredentialProviderFunction",
         "from polars.lazyframe.frame import LazyGroupBy",
+        "from polars import LazyFrame, DataFrame, QueryOptFlags",
+        "from polars.io.parquet import ParquetFieldOverwrites",
+        "from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS",
         "from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)",
         "",
         "# Local application/library specific imports",
@@ -218,10 +248,11 @@ def generate_improved_type_stub(
         "from flowfile_core.flowfile.flow_node.flow_node import FlowNode",
         "from flowfile_frame import group_frame",
         "from flowfile_frame.expr import Expr",
+        "from flowfile_core.schemas import transform_schema",
         "",
         "# Conditional imports",
         "if sys.version_info >= (3, 10):",
-        "    pass  # from typing import ParamSpec, Concatenate (if needed)",
+        "    from typing import Concatenate",
         "else:",
         "    from typing_extensions import Concatenate",
         "",
@@ -257,6 +288,7 @@ def generate_improved_type_stub(
         "parent_node_id": "Optional[int]"
     }
     try:
+
         class_annotations = get_type_hints(flowframe_class, getattr(flowframe_class, '__globals__', globals()), locals())
         if "data" in class_annotations:
             core_attr_types["data"] = format_type_annotation(class_annotations["data"])
@@ -285,6 +317,7 @@ def generate_improved_type_stub(
     def method_returns_flowframe(method_name: str, method_obj, class_obj) -> bool:
         if method_name in flowframe_specific_methods:
             return True
+
         try:
             hints = get_type_hints(method_obj, getattr(class_obj, '__globals__', globals()), locals())
             if 'return' in hints:
@@ -298,7 +331,6 @@ def generate_improved_type_stub(
         except Exception:
             pass
         return False
-
     flowframe_members_to_process = {}
     for name, member in inspect.getmembers(flowframe_class):
         if not (inspect.isfunction(member) or isinstance(member, property)):
@@ -318,8 +350,7 @@ def generate_improved_type_stub(
             if name not in known_internal_methods and not include_constructors:
                  continue
             elif name in known_internal_methods and not include_constructors and name not in flowframe_specific_methods: # if it's internal but not specifically marked as returning FlowFrame
-                 pass # Allow known internal methods even if constructors are off, if they are part of the flow
-
+                 pass
 
         if not include_inherited and name not in flowframe_class.__dict__:
             continue
@@ -357,9 +388,9 @@ def generate_improved_type_stub(
                         formatted_type = format_type_annotation(param.annotation)
                         param_str = f"{param_name}: {formatted_type}"
 
-                    if param.default is not inspect.Parameter.empty:
-                        default_repr = repr(param.default)
-                        param_str = f"{param_str}={default_repr}"
+                    default_str = format_default_value(param)
+                    if default_str is not None:
+                        param_str = f"{param_str} = {default_str}"
 
                     if param.kind == inspect.Parameter.VAR_KEYWORD:
                         has_var_keyword = True
@@ -400,13 +431,11 @@ def generate_improved_type_stub(
                         final_return_type = annotated_return
                 elif method_returns_flowframe(name, method, flowframe_class):
                     final_return_type = f"'{class_name}'"
-
                 params_prefix = "cls" if is_new_method else "self"
                 params_str = ", ".join(processed_params)
                 method_sig_str = f"    def {name}({params_prefix}, {params_str}) -> {final_return_type}: ..."
                 if not processed_params and not params_str : # Methods like __repr__ might have no other params
                      method_sig_str = f"    def {name}({params_prefix}) -> {final_return_type}: ..."
-
 
                 if method.__doc__:
                     doc_lines = method.__doc__.strip().split('\n')
@@ -504,7 +533,6 @@ def generate_improved_type_stub(
 
                 if var_keyword_param:
                     processed_params.append(var_keyword_param)
-
                 return_type = f"'{class_name}'"
                 if name in non_lazyframe_methods or name in PASSTHROUGH_METHODS:
                     if sig.return_annotation is not inspect.Signature.empty:
@@ -591,14 +619,6 @@ if __name__ == "__main__":
             # Heuristic for output path based on common project structures
             # Assuming flow_frame.py is in a module directory like 'flowfile_frame'
             module_path_part = args.module.replace('.', os.sep) # e.g., flowfile_frame/flow_frame
-
-            # Try to find the module's base directory relative to the script or CWD
-            # This is complex. A simpler approach: if module is 'a.b.c', output to 'a/b/c.pyi' relative to a sensible root.
-            # For now, defaulting to a more predictable location if complex pathing fails.
-
-            # Default to placing it next to where the class module might be, or in CWD.
-            # This logic can be highly specific to the user's layout.
-            # The original script had a fixed relative path.
 
             # Check if the target class's module path can be determined
             class_module_file = getattr(module_obj, '__file__', None)

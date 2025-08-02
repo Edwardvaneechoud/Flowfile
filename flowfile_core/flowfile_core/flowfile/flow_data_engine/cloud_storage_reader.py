@@ -233,7 +233,7 @@ def _create_s3_client(storage_options: Optional[Dict[str, Any]]):
     if 'aws_region' in client_options:
         client_options['region_name'] = client_options.pop('aws_region')
 
-    return boto3.client('s3', **client_options)
+    return boto3.client('s3', **{k: v for k, v in client_options.items() if k != "aws_allow_http"})
 
 
 def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extension: str) -> Dict[Any, Any]:

@@ -96,3 +96,4 @@ node_defaults = {node.item: NodeDefault(node_name=node.name,
                                         ) for node in nodes_list}
 
 node_dict = {n.item: n for n in nodes_list}
+node_dict["polars_lazy_frame"] = NodeTemplate(name='LazyFrame node', item='polars_lazy_frame', input=0, output=1, node_group="special", image="",)

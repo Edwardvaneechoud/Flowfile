@@ -20,7 +20,15 @@ from flowfile.api import (open_graph_in_editor)
 from flowfile_frame.flow_frame import (
     FlowFrame
 )
-from flowfile_frame import read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet
+from flowfile_frame import (read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet,
+                            scan_delta,
+                            scan_parquet_from_cloud_storage,
+                            scan_json_from_cloud_storage,
+                            scan_csv_from_cloud_storage,
+                            get_all_available_cloud_storage_connections,
+                            create_cloud_storage_connection,
+                            del_cloud_storage_connection,
+                            create_cloud_storage_connection_if_not_exists)
 from flowfile_frame.expr import (
     col, lit, column, cum_count, len,
     sum, min, max, mean, count, when
@@ -50,7 +58,10 @@ __all__ = [
     'FlowFrame', 'GroupByFrame',
 
     # Main creation functions
-    'read_csv', 'read_parquet', 'from_dict', 'concat', 'scan_csv', 'scan_parquet',
+    'read_csv', 'read_parquet', 'from_dict', 'concat', 'scan_csv', 'scan_parquet', 'scan_delta',
+    'scan_parquet_from_cloud_storage', 'scan_json_from_cloud_storage',
+    'scan_csv_from_cloud_storage', 'get_all_available_cloud_storage_connections', 'create_cloud_storage_connection',
+    'del_cloud_storage_connection', 'create_cloud_storage_connection_if_not_exists'
 
     # Expression API
     'col', 'lit', 'column', 'cum_count', 'len',

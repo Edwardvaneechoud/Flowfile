@@ -31,7 +31,15 @@ from flowfile_frame.series import Series
 
 # File I/O
 from flowfile_frame.flow_frame_methods import (  # noqa: F401
-    read_csv, read_parquet, from_dict, concat,  scan_csv, scan_parquet)
+    read_csv, read_parquet, from_dict, concat,  scan_csv, scan_parquet, scan_json_from_cloud_storage,
+    scan_parquet_from_cloud_storage,
+    scan_csv_from_cloud_storage,
+    scan_delta)
+
+from flowfile_frame.cloud_storage.secret_manager import (del_cloud_storage_connection,
+                                                         create_cloud_storage_connection,
+                                                         get_all_available_cloud_storage_connections,
+                                                         create_cloud_storage_connection_if_not_exists)
 
 from polars.datatypes import (  # noqa: F401
     # Integer types

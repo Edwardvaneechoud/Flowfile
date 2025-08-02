@@ -151,6 +151,7 @@ class GroupByFrame:
     def _create_agg_node(self, node_id_to_use: int, can_be_converted: bool, agg_cols: list, agg_expressions,
                          named_agg_exprs, convertable_to_code: bool, description: str):
         """Create node for explicit aggregations via self.agg()."""
+
         if can_be_converted:
             group_by_settings = input_schema.NodeGroupBy(
                 flow_id=self.parent.flow_graph.flow_id,

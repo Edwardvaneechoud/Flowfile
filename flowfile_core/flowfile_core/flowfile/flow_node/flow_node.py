@@ -458,7 +458,6 @@ class FlowNode:
             flow_logger.info('Node has not run, needs to run')
             return True
         if self.node_settings.cache_results and cache_result_exists:
-
             return False
         elif self.node_settings.cache_results and not cache_result_exists:
             return True
@@ -575,7 +574,7 @@ class FlowNode:
             self.node_stats.has_completed_last_run = False
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
-            if self.needs_run(performance_mode, node_logger, run_location):
+            if self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output":
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
@@ -637,6 +636,7 @@ class FlowNode:
             self.node_schema.predicted_schema = None
             self._hash = None
             self.node_information.is_setup = None
+            self.results.errors = None
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
 
