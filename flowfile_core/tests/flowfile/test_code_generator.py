@@ -9,8 +9,8 @@ from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter, export_flow_to_polars
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
-
 try:
+    import os
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 except ModuleNotFoundError:
