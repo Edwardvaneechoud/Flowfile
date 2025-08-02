@@ -66,12 +66,7 @@ jobs:
       - name: Install Python dependencies
         shell: pwsh
         run: |
-          poetry install # If polars-sim is a poetry dependency, it might still be installed here unless removed from pyproject.toml
-
-      # Removed: Check for cached polars-sim wheel
-      # Removed: Check if wheel files exist
-      # Removed: Build polars-sim wheel if needed
-      # Removed: Install polars-sim into Poetry environment
+          poetry install
 
       - name: Build Python services
         shell: pwsh
