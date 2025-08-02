@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.3.6"
+version = "0.3.7"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -29,7 +29,7 @@ pyarrow = "^18.0.0"
 python-multipart = "~0.0.12"
 polars = [
     { version = ">=1.8.2, <=1.25.2", markers = "sys_platform == 'win32'" }, # For Windows, max version 1.25.2 due to failing issues in greater versions
-    { version = ">=1.8.2, <2.0.0", markers = "sys_platform != 'win32'" }
+    { version = ">=1.8.2, <1.32", markers = "sys_platform != 'win32'" }
 ]
 methodtools = "~0.4.7"
 faker = "~23.1.0"

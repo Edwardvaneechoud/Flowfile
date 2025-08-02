@@ -130,6 +130,42 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    skip_rows={file_settings.starting_from_line},')
             self._add_code(").lazy()")
 
+    def _handle_cloud_storage_reader(self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: Dict[str, str]):
+        cloud_read_settings = settings.cloud_storage_settings
+        self.imports.add(
+            "import flowfile as ff"
+        )
+        if cloud_read_settings.file_format == "csv":
+            self._add_code(f"{var_name} = ff.scan_csv_from_cloud_storage(")
+            self._add_code(f'    "{cloud_read_settings.resource_path}",')
+            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
+            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
+            self._add_code(f'    delimiter="{cloud_read_settings.csv_delimiter}",')
+            self._add_code(f'    has_header={cloud_read_settings.csv_has_header},')
+            self._add_code(f'    encoding="{cloud_read_settings.csv_encoding}",')
+
+        elif cloud_read_settings.file_format == "parquet":
+            self._add_code(f"{var_name} = ff.scan_parquet_from_cloud_storage(")
+            self._add_code(f'    "{cloud_read_settings.resource_path}",')
+            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
+            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
+
+        elif cloud_read_settings.file_format == "json":
+            self._add_code(f"{var_name} = ff.scan_json_from_cloud_storage(")
+            self._add_code(f'    "{cloud_read_settings.resource_path}",')
+            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
+            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
+
+        elif cloud_read_settings.file_format == "delta":
+            self._add_code(f"{var_name} = ff.scan_delta(")
+            self._add_code(f'    "{cloud_read_settings.resource_path}",')
+            self._add_code(f'    connection_name="{cloud_read_settings.connection_name}",')
+            self._add_code(f'    scan_mode="{cloud_read_settings.scan_mode}",')
+            self._add_code(f'    version_id={cloud_read_settings.delta_version},')
+        else:
+            return
+        self._add_code(").data")
+
     def _handle_read(self, settings: input_schema.NodeRead, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle file reading nodes."""
         file_settings = settings.received_file
@@ -647,6 +683,7 @@ class FlowGraphToPolarsConverter:
             self._add_code(f".lazy()")
 
         self._add_code(")")
+
     def _handle_group_by(self, settings: input_schema.NodeGroupBy, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle group by nodes."""
         input_df = input_vars.get('main', 'df')
@@ -845,6 +882,40 @@ class FlowGraphToPolarsConverter:
 
         self._add_code(f"{var_name} = {left_df}.join({right_df}, how='cross')")
         self._add_code("")
+
+    def _handle_cloud_storage_writer(self, settings: input_schema.NodeCloudStorageWriter, var_name: str, input_vars: Dict[str, str]) -> None:
+        """Handle cloud storage writer nodes."""
+        input_df = input_vars.get('main', 'df')
+        # def write_csv_to_cloud_storage(self, path: str, connection_name: typing.Optional[str] = None, delimiter: str = ';', encoding: typing.Literal['utf8', 'utf8-lossy'] = 'utf8', description: Optional[str] = None) -> 'FlowFrame': ...
+
+        output_settings = settings.cloud_storage_settings
+        self.imports.add("import flowfile as ff")
+        self._add_code(f"(ff.FlowFrame({input_df})")
+        if output_settings.file_format == "csv":
+            self._add_code(f'    .write_csv_to_cloud_storage(')
+            self._add_code(f'        path="{output_settings.resource_path}",')
+            self._add_code(f'        connection_name="{output_settings.connection_name}",')
+            self._add_code(f'        delimiter="{output_settings.output_csv_table.delimiter}",')
+            self._add_code(f'        encoding="{output_settings.output_csv_table.encoding}",')
+            self._add_code(f'        description="{settings.description}"')
+        elif output_settings.file_format == "parquet":
+            self._add_code(f'    .write_parquet_to_cloud_storage(')
+            self._add_code(f'        path="{output_settings.resource_path}",')
+            self._add_code(f'        connection_name="{output_settings.connection_name}",')
+            self._add_code(f'        description="{settings.description}"')
+        elif output_settings.file_format == "json":
+            self._add_code(f'    .write_json_to_cloud_storage(')
+            self._add_code(f'        path="{output_settings.resource_path}",')
+            self._add_code(f'        connection_name="{output_settings.connection_name}",')
+            self._add_code(f'        description="{settings.description}"')
+        elif output_settings.file_format == "delta":
+            self._add_code(f'    .write_delta(')
+            self._add_code(f'        path="{output_settings.resource_path}",')
+            self._add_code(f'        write_mode="{output_settings.write_mode}",')
+            self._add_code(f'        connection_name="{output_settings.connection_name}",')
+            self._add_code(f'        description="{settings.description}"')
+        self._add_code('    )')
+        self._add_code(')')
 
     def _handle_output(self, settings: input_schema.NodeOutput, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle output nodes."""

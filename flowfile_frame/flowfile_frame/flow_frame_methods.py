@@ -1,7 +1,7 @@
 import io
 import os
 from pathlib import Path
-from typing import Any, List, Optional, Union, Dict, Callable
+from typing import Any, List, Optional, Union, Dict, Callable, Literal
 
 import polars as pl
 from polars._typing import (SchemaDict, IO, PolarsDataType,
@@ -9,12 +9,13 @@ from polars._typing import (SchemaDict, IO, PolarsDataType,
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas import input_schema, transform_schema, cloud_storage_schemas
 from flowfile_frame.config import logger
 from flowfile_frame.expr import col
-from flowfile_frame.flow_frame import generate_node_id, FlowFrame
+from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.utils import create_flow_graph
-
+from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
+from flowfile_frame.utils import generate_node_id
 
 def sum(expr):
     """Sum aggregation function."""
@@ -278,6 +279,7 @@ def read_csv(
             node_id=node_id,
         )
 
+
 def _build_polars_code_args(
     source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
     separator: str,
@@ -377,13 +379,13 @@ def _build_polars_code_args(
     return polars_code
 
 
-def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = None,
+def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = None,
                  convert_to_absolute_path: bool = True, **options) -> FlowFrame:
     """
     Read a Parquet file into a FlowFrame.
 
     Args:
-        file_path: Path to Parquet file
+        source: Path to Parquet file
         flow_graph: if you want to add it to an existing graph
         description: if you want to add a readable name in the frontend (advised)
         convert_to_absolute_path: If the path needs to be set to a fixed location
@@ -392,8 +394,8 @@ def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = 
     Returns:
         A FlowFrame with the Parquet data
     """
-    if '~' in file_path:
-        file_path = os.path.expanduser(file_path)
+    if '~' in source:
+        file_path = os.path.expanduser(source)
     node_id = generate_node_id()
 
     if flow_graph is None:
@@ -403,8 +405,8 @@ def read_parquet(file_path, *, flow_graph: FlowGraph = None, description: str = 
 
     received_table = input_schema.ReceivedTable(
         file_type='parquet',
-        path=file_path,
-        name=Path(file_path).name,
+        path=source,
+        name=Path(source).name,
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path
@@ -592,7 +594,7 @@ def scan_csv(
 
 
 def scan_parquet(
-        file_path,
+        source,
         *,
         flow_graph: FlowGraph = None,
         description: str = None,
@@ -608,10 +610,144 @@ def scan_parquet(
     See read_parquet for full documentation.
     """
     return read_parquet(
-        file_path=file_path,
+        source=source,
         flow_graph=flow_graph,
         description=description,
         convert_to_absolute_path=convert_to_absolute_path,
         **options
+    )
+
+
+def scan_parquet_from_cloud_storage(
+        source: str,
+        *,
+        flow_graph: Optional[FlowGraph] = None,
+        connection_name: Optional[str] = None,
+        scan_mode: Literal["single_file", "directory", None] = None,
+) -> FlowFrame:
+    node_id = generate_node_id()
+
+    if scan_mode is None:
+        if source[-1] in ("*", "/"):
+            scan_mode: Literal["single_file", "directory"] = "directory"
+        else:
+            scan_mode: Literal["single_file", "directory"] = "single_file"
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
+                                                                              scan_mode=scan_mode,
+                                                                              connection_name=connection_name,
+                                                                              file_format="parquet"),
+        user_id=get_current_user_id())
+    flow_graph.add_cloud_storage_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id
+    )
+
+
+def scan_csv_from_cloud_storage(
+        source: str,
+        *,
+        flow_graph: Optional[FlowGraph] = None,
+        connection_name: Optional[str] = None,
+        scan_mode: Literal["single_file", "directory", None] = None,
+        delimiter: str = ";",
+        has_header: Optional[bool] = True,
+        encoding: Optional[CsvEncoding] = "utf8") -> FlowFrame:
+    node_id = generate_node_id()
+
+    if scan_mode is None:
+        if source[-1] in ("*", "/"):
+            scan_mode: Literal["single_file", "directory"] = "directory"
+        else:
+            scan_mode: Literal["single_file", "directory"] = "single_file"
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
+                                                                              scan_mode=scan_mode,
+                                                                              connection_name=connection_name,
+                                                                              csv_delimiter=delimiter,
+                                                                              csv_encoding=encoding,
+                                                                              csv_has_header=has_header,
+                                                                              file_format="csv"),
+        user_id=get_current_user_id())
+    flow_graph.add_cloud_storage_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id
+    )
+
+
+def scan_delta(
+        source: str,
+        *,
+        flow_graph: Optional[FlowGraph] = None,
+        connection_name: Optional[str] = None,
+        version: int = None) -> FlowFrame:
+    node_id = generate_node_id()
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
+                                                                              connection_name=connection_name,
+                                                                              file_format="delta",
+                                                                              delta_version=version),
+        user_id=get_current_user_id())
+    flow_graph.add_cloud_storage_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id
+    )
+
+
+def scan_json_from_cloud_storage(
+        source: str,
+        *,
+        flow_graph: Optional[FlowGraph] = None,
+        connection_name: Optional[str] = None,
+        scan_mode: Literal["single_file", "directory", None] = None,
+) -> FlowFrame:
+    node_id = generate_node_id()
+
+    if scan_mode is None:
+        if source[-1] in ("*", "/"):
+            scan_mode: Literal["single_file", "directory"] = "directory"
+        else:
+            scan_mode: Literal["single_file", "directory"] = "single_file"
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
+                                                                              scan_mode=scan_mode,
+                                                                              connection_name=connection_name,
+                                                                              file_format="json"),
+        user_id=get_current_user_id())
+    flow_graph.add_cloud_storage_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
+        flow_graph=flow_graph,
+        node_id=node_id
     )
 

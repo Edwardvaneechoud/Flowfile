@@ -1,12 +1,23 @@
 import flowfile_frame as ff
 from pathlib import Path
+import pytest
+
+try:
+    # noinspection PyUnresolvedReferences
+    from tests.utils import is_docker_available
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_frame/tests/utils.py")))
+    # noinspection PyUnresolvedReferences
+    from utils import is_docker_available
 
 
 def create_flow_frame_with_parquet_read() -> ff.FlowFrame:
     flow_graph = ff.create_flow_graph()
     flow_graph.execution_location = 'local'
     file_path = str(Path('flowfile_core') / 'tests' / 'support_files' / 'data' / 'fake_data.parquet')
-    input_df = ff.read_parquet(file_path=file_path, description="fake_data_df", flow_graph=flow_graph)
+    input_df = ff.read_parquet(source=file_path, description="fake_data_df", flow_graph=flow_graph)
 
     sorted_df = input_df.sort(by=ff.col('sales_data'), descending=True, description='cached_df').cache()
     filtered_df = sorted_df.filter(flowfile_formula='contains([Email],"@")', description='filter with flowfile formula')
@@ -43,3 +54,27 @@ def test_read_from_parquet_in_performance():
     # You could also check that the data was actually loaded correctly
     result_df = output_node.get_resulting_data().data_frame
     assert len(result_df.collect())>0, "The resulting dataframe should not be empty"
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_scan_parquet_from_cloud_storage():
+    source = "s3://test-bucket/multi-file-parquet/"
+    ff.scan_parquet_from_cloud_storage(source, connection_name="minio-flowframe-test")
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_scan_csv_from_cloud_storage():
+    flow_frame = ff.scan_csv_from_cloud_storage("s3://test-bucket/multi-file-csv/", connection_name="minio-flowframe-test", delimiter=",")
+    flow_frame.count().collect()
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_scan_delta():
+    flow_frame = ff.scan_delta("s3://test-bucket/delta-lake-table", connection_name="minio-flowframe-test")
+    flow_frame.count().collect()
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+def test_scan_json_from_cloud_storage():
+    flow_frame = ff.scan_json_from_cloud_storage("s3://test-bucket/multi-file-json/", connection_name="minio-flowframe-test")
+    flow_frame.count().collect()

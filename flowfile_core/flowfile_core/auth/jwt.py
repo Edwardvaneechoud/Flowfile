@@ -38,6 +38,45 @@ def get_jwt_secret():
         return key
 
 
+def get_current_user_sync(token: str, db: Session):
+    """Synchronous version of get_current_user for non-FastAPI contexts"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if not token:
+        raise credentials_exception
+
+    try:
+        # Decode token in all modes (Electron and Docker)
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+
+    # In Electron mode, if token is valid, return default user
+    if os.environ.get("FLOWFILE_MODE") == "electron":
+        if token_data.username == "local_user":
+            electron_user = User(username="local_user", id=1, disabled=False)
+            return electron_user
+        else:
+            # Invalid username in token
+            raise credentials_exception
+    else:
+        # In Docker mode, get user from database
+        user = db.query(db_models.User).filter(db_models.User.username == token_data.username).first()
+        if user is None:
+            raise credentials_exception
+        if user.disabled:
+            raise HTTPException(status_code=400, detail="Inactive user")
+        return user
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     # Require token in all modes
     credentials_exception = HTTPException(
