@@ -1,5 +1,16 @@
 import flowfile_frame as ff
 from pathlib import Path
+import pytest
+
+try:
+    # noinspection PyUnresolvedReferences
+    from tests.utils import is_docker_available
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_frame/tests/utils.py")))
+    # noinspection PyUnresolvedReferences
+    from utils import is_docker_available
 
 
 def create_flow_frame_with_parquet_read() -> ff.FlowFrame:
@@ -45,21 +56,25 @@ def test_read_from_parquet_in_performance():
     assert len(result_df.collect())>0, "The resulting dataframe should not be empty"
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_scan_parquet_from_cloud_storage():
     source = "s3://test-bucket/multi-file-parquet/"
     ff.scan_parquet_from_cloud_storage(source, connection_name="minio-flowframe-test")
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_scan_csv_from_cloud_storage():
     flow_frame = ff.scan_csv_from_cloud_storage("s3://test-bucket/multi-file-csv/", connection_name="minio-flowframe-test", delimiter=",")
     flow_frame.count().collect()
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_scan_delta():
     flow_frame = ff.scan_delta("s3://test-bucket/delta-lake-table", connection_name="minio-flowframe-test")
     flow_frame.count().collect()
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_scan_json_from_cloud_storage():
     flow_frame = ff.scan_json_from_cloud_storage("s3://test-bucket/multi-file-json/", connection_name="minio-flowframe-test")
     flow_frame.count().collect()

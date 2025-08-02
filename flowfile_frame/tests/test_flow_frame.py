@@ -17,6 +17,17 @@ from flowfile_frame.flow_frame_methods import read_csv
 from flowfile_frame.expr import col
 
 
+try:
+    # noinspection PyUnresolvedReferences
+    from tests.utils import is_docker_available
+except ModuleNotFoundError:
+    import os
+    import sys
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_frame/tests/utils.py")))
+    # noinspection PyUnresolvedReferences
+    from utils import is_docker_available
+
+
 @pytest.fixture
 def df():
     data = {
@@ -546,6 +557,7 @@ def test_schema():
     assert str(schema["name"]) == "String"
     assert str(schema["active"]) == "Boolean"
 
+
 FORMAT_CONFIGS = {
     "parquet": {
         "extension": ".parquet",
@@ -569,7 +581,7 @@ FORMAT_CONFIGS = {
     }
 }
 
-
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 @pytest.mark.parametrize("file_format", ["parquet", "csv", "json", "delta"])
 def test_write_to_cloud_storage(df, file_format):
     config = FORMAT_CONFIGS[file_format]
