@@ -2496,6 +2496,7 @@ def test_text_to_rows_without_output_name():
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_cloud_storage_reader():
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()
 
@@ -2520,6 +2521,7 @@ def test_cloud_storage_reader():
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_cloud_storage_writer(tmp_path):
     output_file_name = f"s3://flowfile-test/flowfile_generated_data_{uuid4()}.parquet"
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()
