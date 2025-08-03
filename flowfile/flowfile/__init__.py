@@ -61,7 +61,7 @@ __all__ = [
     'read_csv', 'read_parquet', 'from_dict', 'concat', 'scan_csv', 'scan_parquet', 'scan_delta',
     'scan_parquet_from_cloud_storage', 'scan_json_from_cloud_storage',
     'scan_csv_from_cloud_storage', 'get_all_available_cloud_storage_connections', 'create_cloud_storage_connection',
-    'del_cloud_storage_connection', 'create_cloud_storage_connection_if_not_exists'
+    'del_cloud_storage_connection', 'create_cloud_storage_connection_if_not_exists',
 
     # Expression API
     'col', 'lit', 'column', 'cum_count', 'len',
