@@ -265,6 +265,7 @@ def test_read_from_s3_with_aws_keys(test_case: S3TestReadCase, aws_access_key_co
     logger.info(f"Resource path: {test_case.read_settings.resource_path}")
     logger.info(f"File format: {test_case.read_settings.file_format}")
     # Create FlowDataEngine
+
     flow_data_engine = FlowDataEngine.from_cloud_storage_obj(settings)
     # Basic assertions
     assert flow_data_engine is not None

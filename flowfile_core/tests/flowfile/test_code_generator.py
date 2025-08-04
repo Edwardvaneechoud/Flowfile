@@ -2574,7 +2574,6 @@ def test_cloud_storage_writer(file_format):
         file_format=file_format,
         connection_name=conn.connection_name
     )
-    breakpoint()
     flow = create_basic_flow()
 
     flow = create_sample_dataframe_node(flow)

@@ -638,15 +638,14 @@ class FlowDataEngine:
                               is_directory: bool) -> "FlowDataEngine":
         """Read JSON file(s) from cloud storage."""
         try:
+            if is_directory:
+                resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
             scan_kwargs = {"source": resource_path}
 
             if storage_options:
                 scan_kwargs["storage_options"] = storage_options
             if credential_provider:
                 scan_kwargs["credential_provider"] = credential_provider
-
-            if is_directory:
-                resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
 
             lf = pl.scan_ndjson(**scan_kwargs)  # Using NDJSON for line-delimited JSON
 
