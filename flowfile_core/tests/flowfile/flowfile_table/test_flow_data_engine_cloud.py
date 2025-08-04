@@ -109,22 +109,22 @@ def aws_access_key_connection():
 
 # Bundle test cases with CloudStorageReadSettings
 S3_READ_TEST_CASES = [
-    # S3TestReadCase(
-    #     id="single_parquet_file",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/single-file-parquet/data.parquet",
-    #         file_format="parquet",
-    #         scan_mode="single_file"
-    #     ),
-    # ),
-    # S3TestReadCase(
-    #     id="directory_parquet_scan",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/multi-file-parquet",
-    #         file_format="parquet",
-    #         scan_mode="directory"
-    #     ),
-    # ),
+    S3TestReadCase(
+        id="single_parquet_file",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/single-file-parquet/data.parquet",
+            file_format="parquet",
+            scan_mode="single_file"
+        ),
+    ),
+    S3TestReadCase(
+        id="directory_parquet_scan",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/multi-file-parquet",
+            file_format="parquet",
+            scan_mode="directory"
+        ),
+    ),
     S3TestReadCase(
         id="nested_directory_scan",
         read_settings=CloudStorageReadSettings(
@@ -133,75 +133,64 @@ S3_READ_TEST_CASES = [
             scan_mode="directory"
         ),
     ),
-    # S3TestReadCase(
-    #     id="csv_single_file",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/single-file-csv/data.csv",
-    #         file_format="csv",
-    #         scan_mode="single_file",
-    #         csv_has_header=True,
-    #         csv_delimiter=",",
-    #         csv_encoding="utf8"
-    #     ),
-    # ),
-    # S3TestReadCase(
-    #     id="csv_directory_scan",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/multi-file-csv",
-    #         file_format="csv",
-    #         scan_mode="directory",
-    #         csv_has_header=True,
-    #         csv_delimiter=",",
-    #         csv_encoding="utf8"
-    #     )
-    # ),
-    # S3TestReadCase(
-    #     id="single_json_file",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/single-file-json/data.json",
-    #         file_format="json",
-    #         scan_mode="single_file",
-    #     ),
-    #     expected_columns=None,
-    #     expected_lazy_records=-1,
-    #     expected_actual_records=None,
-    #     expected_sample_size=10,
-    # ),
-    # S3TestReadCase(
-    #     id="multi_json_file",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/multi-file-json",
-    #         file_format="json",
-    #         scan_mode="directory",
-    #     ),
-    #     expected_columns=None,
-    #     expected_lazy_records=-1,
-    #     expected_actual_records=None,
-    #     expected_sample_size=10,
-    # ),
-    #
-    # S3TestReadCase(
-    #     id="delta_scan",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/delta-lake-table",
-    #         file_format="delta",
-    #     ),
-    #     expected_columns=None,
-    #     expected_lazy_records=-1,
-    #     expected_actual_records=None,
-    #     expected_sample_size=10,
-    # ),
-    # S3TestReadCase(
-    #     id="iceberg_scan",
-    #     read_settings=CloudStorageReadSettings(
-    #         resource_path="s3://test-bucket/delta-lake-table",
-    #         file_format="iceberg",
-    #     ),
-    #     expected_columns=None,
-    #     expected_lazy_records=-1,
-    #     expected_actual_records=None,
-    #     expected_sample_size=10,
-    # ),
+    S3TestReadCase(
+        id="csv_single_file",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/single-file-csv/data.csv",
+            file_format="csv",
+            scan_mode="single_file",
+            csv_has_header=True,
+            csv_delimiter=",",
+            csv_encoding="utf8"
+        ),
+    ),
+    S3TestReadCase(
+        id="csv_directory_scan",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/multi-file-csv",
+            file_format="csv",
+            scan_mode="directory",
+            csv_has_header=True,
+            csv_delimiter=",",
+            csv_encoding="utf8"
+        )
+    ),
+    S3TestReadCase(
+        id="single_json_file",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/single-file-json/data.json",
+            file_format="json",
+            scan_mode="single_file",
+        ),
+        expected_columns=None,
+        expected_lazy_records=-1,
+        expected_actual_records=None,
+        expected_sample_size=10,
+    ),
+    S3TestReadCase(
+        id="multi_json_file",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/multi-file-json",
+            file_format="json",
+            scan_mode="directory",
+        ),
+        expected_columns=None,
+        expected_lazy_records=-1,
+        expected_actual_records=None,
+        expected_sample_size=10,
+    ),
+
+    S3TestReadCase(
+        id="delta_scan",
+        read_settings=CloudStorageReadSettings(
+            resource_path="s3://test-bucket/delta-lake-table",
+            file_format="delta",
+        ),
+        expected_columns=None,
+        expected_lazy_records=-1,
+        expected_actual_records=None,
+        expected_sample_size=10,
+    ),
 ]
 
 S3_WRITE_TEST_CASES = [
