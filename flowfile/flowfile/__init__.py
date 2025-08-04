@@ -20,6 +20,7 @@ from flowfile.api import (open_graph_in_editor)
 from flowfile_frame.flow_frame import (
     FlowFrame
 )
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 from flowfile_frame import (read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet,
                             scan_delta,
                             scan_parquet_from_cloud_storage,
@@ -55,7 +56,7 @@ from polars.datatypes import (
 
 __all__ = [
     # Core FlowFrame classes
-    'FlowFrame', 'GroupByFrame',
+    'FlowFrame', 'GroupByFrame', 'FullCloudStorageConnection',
 
     # Main creation functions
     'read_csv', 'read_parquet', 'from_dict', 'concat', 'scan_csv', 'scan_parquet', 'scan_delta',
