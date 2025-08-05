@@ -40,7 +40,7 @@ class FlowfileHandler:
             raise 'flow already registered'
         else:
             name = flow_settings.name if flow_settings.name else flow_settings.flow_id
-            self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_id=flow_settings.flow_id, flow_settings=flow_settings)
+            self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_settings=flow_settings)
         return self.get_flow(flow_settings.flow_id)
 
     def get_flow(self, flow_id: int) -> FlowGraph | None:

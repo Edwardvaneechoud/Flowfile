@@ -70,8 +70,7 @@ def open_flow(flow_path: Path) -> FlowGraph:
     flow_storage_obj.flow_name = str(flow_path.stem)
     ensure_compatibility(flow_storage_obj, str(flow_path))
     ingestion_order = determine_insertion_order(flow_storage_obj)
-    new_flow = FlowGraph(flow_id=flow_storage_obj.flow_id, name=flow_storage_obj.flow_name,
-                         flow_settings=flow_storage_obj.flow_settings)
+    new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
         node_promise = input_schema.NodePromise(flow_id=new_flow.flow_id, node_id=node_info.id,

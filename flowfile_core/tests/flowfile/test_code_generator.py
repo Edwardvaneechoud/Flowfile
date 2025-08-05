@@ -64,7 +64,7 @@ def get_result_from_generated_code(code: str) -> pl.DataFrame | pl.LazyFrame | L
 
 def create_basic_flow(flow_id: int = 1, name: str = "test_flow") -> FlowGraph:
     """Create a basic flow graph for testing"""
-    return FlowGraph(flow_id=flow_id, flow_settings=create_flow_settings(flow_id), name=name)
+    return FlowGraph(flow_settings=create_flow_settings(flow_id), name=name)
 
 
 def generate_parameterized_join_tests():

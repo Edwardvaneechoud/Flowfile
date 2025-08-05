@@ -15,7 +15,7 @@ def combine_flow_graphs_with_mapping(
         target_flow_id = _generate_unique_flow_id(flow_graphs)
 
     flow_settings = _create_flow_settings(flow_graphs[0], target_flow_id)
-    combined_graph = FlowGraph(flow_id=target_flow_id, flow_settings=flow_settings)
+    combined_graph = FlowGraph(flow_settings=flow_settings)
     node_id_mapping = _create_node_id_mapping(flow_graphs)
     _add_nodes_to_combined_graph(flow_graphs, combined_graph, node_id_mapping, target_flow_id)
     _add_connections_to_combined_graph(flow_graphs, combined_graph, node_id_mapping)
@@ -44,7 +44,7 @@ def combine_flow_graphs(*flow_graphs: FlowGraph, target_flow_id: Optional[int] =
         target_flow_id = _generate_unique_flow_id(flow_graphs)
 
     flow_settings = _create_flow_settings(flow_graphs[0], target_flow_id)
-    combined_graph = FlowGraph(flow_id=target_flow_id, flow_settings=flow_settings)
+    combined_graph = FlowGraph(flow_settings=flow_settings)
     node_id_mapping = _create_node_id_mapping(flow_graphs)
     _add_nodes_to_combined_graph(flow_graphs, combined_graph, node_id_mapping, target_flow_id)
     _add_connections_to_combined_graph(flow_graphs, combined_graph, node_id_mapping)
