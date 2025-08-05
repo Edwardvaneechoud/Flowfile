@@ -2,7 +2,7 @@ import os
 import json
 import shutil
 
-from datetime import datetime, date, time
+import datetime
 from typing import List
 from decimal import Decimal
 import time
@@ -30,11 +30,11 @@ def snake_case_to_camel_case(text: str) -> str:
 
 
 def json_default(val):
-    if isinstance(val, datetime):
+    if isinstance(val, datetime.datetime):
         return val.isoformat(timespec='microseconds')
-    elif isinstance(val, date):
+    elif isinstance(val, datetime.date):
         return val.isoformat()
-    elif isinstance(val, time):
+    elif isinstance(val, datetime.time):
         return val.isoformat()
     elif hasattr(val, '__dict__'):
         return val.__dict__
