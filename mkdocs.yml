@@ -43,6 +43,7 @@ nav:
   - Home: index.html
   - Quickstart: quickstart.md
   - Building Flows: flows/building.md
+  - Flowfile API: flowfile_api/index.md
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md

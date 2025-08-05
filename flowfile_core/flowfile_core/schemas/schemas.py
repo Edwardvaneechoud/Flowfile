@@ -1,19 +1,19 @@
 from typing import List, Dict, Tuple, Optional, Any, Literal, Annotated
-
+from random import randint
 from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints
-
+from flowfile_core.flowfile.utils import create_unique_id
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
 
 
 class FlowSettings(BaseModel):
-    flow_id: int
+    flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
     description: Optional[str] = None
     save_location: Optional[str] = None
     auto_save: bool = False
     name: str = ''
     modified_on: Optional[float] = None
-    path: str
+    path: str = ''
     execution_mode: ExecutionModeLiteral = 'Performance'
     show_detailed_progress: bool = True
     is_running: bool = False
