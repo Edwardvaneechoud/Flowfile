@@ -1494,7 +1494,18 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     return copied_setting_input
 
 
-def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection):
+def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
+    """
+    Convenience function to add a connection between two nodes in the flow graph.
+    Parameters
+    ----------
+    flow
+    node_connection
+
+    Returns
+    -------
+
+    """
     logger.info('adding a connection')
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
