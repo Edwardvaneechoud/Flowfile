@@ -269,6 +269,24 @@ class FlowGraph:
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
+    def print_tree(self):
+        """
+        Print flow_graph as a tree.
+        """
+
+        str_repr = result.flow_graph._node_db
+        last_key = len(str_repr.keys())
+        tree= ""
+
+        for k, v in str_repr.items():
+            operation = str(v).split("(")[1][:-1].replace("_", " ").title()
+            tree += str(operation) + " (id=" + str(k) + "):" 
+            # This is still missing the operation type. Need to check how to access FlowFile object
+            if k < last_key:
+                tree += "\n" + "# " + "\t"*(k-1) + "|___ "
+
+        return print(tree)
+        
     def get_nodes_overview(self):
         output = []
         for v in self._node_db.values():
