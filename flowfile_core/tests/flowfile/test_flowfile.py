@@ -1,7 +1,7 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_graph import (FlowGraph, add_connection, RunInformation)
-from flowfile_core.schemas import input_schema, transform_schema, schema_helpers, cloud_storage_schemas as cloud_ss
+from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger

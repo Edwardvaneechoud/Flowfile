@@ -1,6 +1,6 @@
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_graph import RunInformation
-from flowfile_core.schemas import schema_helpers
+from flowfile_core.schemas import schemas
 
 from time import sleep
 from flowfile_core.configs.flow_logger import FlowLogger

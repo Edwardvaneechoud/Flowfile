@@ -31,7 +31,7 @@ from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 # Schema and models
-from flowfile_core.schemas import input_schema, schema_helpers, output_model
+from flowfile_core.schemas import input_schema, schemas, output_model
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir, remove_paths
 from flowfile_core.utils.utils import camel_case_to_snake_case

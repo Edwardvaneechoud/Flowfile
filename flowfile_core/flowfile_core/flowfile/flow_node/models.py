@@ -4,7 +4,7 @@ from typing import List, Union, Callable, Optional, Literal
 
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.schemas import schema_helpers
+from flowfile_core.schemas import schemas
 from dataclasses import dataclass
 
 

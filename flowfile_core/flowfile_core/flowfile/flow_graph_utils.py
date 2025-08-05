@@ -1,6 +1,6 @@
 from typing import Dict, Tuple, Optional, List, Set, Callable
 from copy import deepcopy
-from flowfile_core.schemas import input_schema, schema_helpers
+from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 
 
@@ -93,7 +93,7 @@ def _create_flow_settings(base_flow_graph: FlowGraph, target_flow_id: int) -> sc
         target_flow_id: The new flow ID
 
     Returns:
-        schema_helpers.FlowSettings: Flow settings for the combined graph
+        schemas.FlowSettings: Flow settings for the combined graph
     """
     flow_settings = deepcopy(base_flow_graph.flow_settings)
     flow_settings.flow_id = target_flow_id

@@ -5,7 +5,7 @@ from polars.testing import assert_frame_equal
 from pathlib import Path
 from uuid import uuid4
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, transform_schema, schema_helpers, cloud_storage_schemas as cloud_ss
+from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter, export_flow_to_polars
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 

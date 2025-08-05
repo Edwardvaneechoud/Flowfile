@@ -15,7 +15,7 @@ from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.auth.jwt import get_current_active_user, get_current_user_from_query
 
 # Schema and models
-from flowfile_core.schemas import schema_helpers
+from flowfile_core.schemas import schemas
 
 router = APIRouter()
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas.schema_helpers import FlowSettings
+from flowfile_core.schemas.schemas import FlowSettings
 from flowfile_core.flowfile.utils import create_unique_id
 
 

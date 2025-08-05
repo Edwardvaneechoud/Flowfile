@@ -4,7 +4,7 @@ from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.utils.arrow_reader import get_read_top_n
-from flowfile_core.schemas import input_schema, schema_helpers
+from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.configs.flow_logger import NodeLogger
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
