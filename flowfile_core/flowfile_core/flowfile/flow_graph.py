@@ -131,7 +131,7 @@ class FlowGraph:
     flow_settings: schemas.FlowSettings = None
     flow_logger: FlowLogger
 
-    def __init__(self, flow_id: int,
+    def __init__(self,
                  flow_settings: schemas.FlowSettings,
                  name: str = None, input_cols: List[str] = None,
                  output_cols: List[str] = None,
@@ -145,8 +145,8 @@ class FlowGraph:
         self.end_datetime = None
         self.latest_run_info = None
         self.node_results = []
-        self._flow_id = flow_id
-        self.flow_logger = FlowLogger(flow_id)
+        self._flow_id = flow_settings.flow_id
+        self.flow_logger = FlowLogger(flow_settings.flow_id)
         self._flow_starts: List[FlowNode] = []
         self._results = None
         self.schema = None
