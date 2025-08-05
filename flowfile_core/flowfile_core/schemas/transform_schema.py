@@ -109,7 +109,7 @@ class FunctionInput:
 @dataclass
 class BasicFilter:
     field: str = ''
-    filter_type: str = ''  # equals, in, not in, smaller, larger
+    filter_type: str = ''
     filter_value: str = ''
 
 

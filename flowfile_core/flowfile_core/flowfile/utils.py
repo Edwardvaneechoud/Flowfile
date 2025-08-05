@@ -5,11 +5,11 @@ import shutil
 from datetime import datetime, date, time
 from typing import List
 from decimal import Decimal
-import time
 import random
 import uuid
 import socket
 import hashlib
+import time as time_lib
 
 
 def generate_sha256_hash(data: bytes):
@@ -126,7 +126,7 @@ def create_unique_id() -> int:
         int: unique id within 32 bits (4 bytes)
     """
     # Get various entropy sources
-    time_ms = int(time.time() * 1000)
+    time_ms = int(time_lib.time() * 1000)
     pid = os.getpid()
     random_bytes = random.getrandbits(32)
     mac_addr = uuid.getnode()  # MAC address as integer
