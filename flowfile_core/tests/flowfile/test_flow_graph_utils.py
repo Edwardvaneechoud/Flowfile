@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 from copy import deepcopy
 
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+from flowfile_core.schemas import input_schema, transform_schema, schema_helpers
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import (
     combine_flow_graphs,

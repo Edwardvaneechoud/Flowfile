@@ -1,4 +1,4 @@
-from flowfile_core.schemas import schemas, input_schema
+from flowfile_core.schemas import schema_helpers, input_schema
 from typing import List, Tuple
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility
 import pickle

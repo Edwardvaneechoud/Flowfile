@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
-from flowfile_core.schemas.schemas import SecretRef
+from flowfile_core.schemas.schema_helpers import SecretRef
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
 import polars as pl

@@ -1,4 +1,4 @@
-from flowfile_core.schemas import schemas, input_schema
+from flowfile_core.schemas import schema_helpers, input_schema
 
 
 def ensure_compatibility_node_read(node_read: input_schema.NodeRead):

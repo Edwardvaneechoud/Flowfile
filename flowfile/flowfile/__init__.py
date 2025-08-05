@@ -26,7 +26,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.schemas import FlowSettings, FlowInformation
+from flowfile_core.schemas.schema_helpers import FlowSettings, FlowInformation
 from flowfile_core.schemas import transform_schema
 from flowfile_frame import (read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet,
                             scan_delta,

@@ -4,7 +4,7 @@
 # Import from your existing project
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import input_schema, schema_helpers, transform_schema
 
 # Export these for use in FlowFrame
 __all__ = [
@@ -12,6 +12,6 @@ __all__ = [
     'add_connection',
     'FlowDataEngine',
     'input_schema',
-    'schemas',
+    'schema_helpers.py',
     'transform_schema'
 ]

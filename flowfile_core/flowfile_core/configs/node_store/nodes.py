@@ -1,5 +1,5 @@
 from typing import List
-from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault, TransformTypeLiteral, NodeTypeLiteral
+from flowfile_core.schemas.schema_helpers import NodeTemplate, NodeDefault, TransformTypeLiteral, NodeTypeLiteral
 
 nodes_list: List[NodeTemplate] = [
     NodeTemplate(name='External source', item='external_source', input=0, output=1,

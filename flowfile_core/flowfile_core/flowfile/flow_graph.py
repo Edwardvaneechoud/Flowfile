@@ -22,7 +22,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_xlsx_datatypes, \
     get_calamine_xlsx_data_types
 from flowfile_core.flowfile.sources import external_sources
-from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas import input_schema, schema_helpers, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal,
                                                          CloudStorageWriteSettingsInternal,

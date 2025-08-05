@@ -1,6 +1,6 @@
 
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schema_helpers
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.schemas import transform_schema
 import pytest
