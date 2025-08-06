@@ -11,6 +11,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                delete_cloud_connection,
                                                                                get_all_cloud_connections_interface)
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
 
 import pytest
 from pathlib import Path
@@ -492,12 +494,49 @@ def test_add_pivot():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_sum', '3_sum', '2_sum',
-                                         '1_sum'}, 'Columns should be Country, 0_sum, 3_sum, 2_sum, 1_sum'
+    assert set(predicted_df.columns) == {'Country', '0', '3', '2', '1'}, 'Columns should be Country, 0, 3, 2, 1'
     assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+
+def test_pivot_schema_callback():
+    graph = create_graph()
+    input_data = (FlowDataEngine.create_random(10000).apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'sales_data']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'pivot', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    pivot_input = transform_schema.PivotInput(pivot_column='groups', value_col='sales_data', index_columns=['Country'],
+                                              aggregations=['sum'])
+    pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
+    graph.add_pivot(pivot_settings)
+
+
+def test_schema_callback_in_graph():
+    pivot_input = transform_schema.PivotInput(index_columns=['Country'], pivot_column='groups',
+                                              value_col='sales_data', aggregations=['sum'])
+
+    data = (FlowDataEngine.create_random(10000)
+            .apply_flowfile_formula('random_int(0, 4)', 'groups')
+            .select_columns(['groups', 'Country', 'Work', 'sales_data']))
+    node_input_schema = data.schema
+    input_lf = data.data_frame
+    result_schema = pre_calculate_pivot_schema(node_input_schema=node_input_schema,
+                                               pivot_input=pivot_input,
+                                               input_lf=input_lf,)
+    result_data = FlowDataEngine.create_from_schema(result_schema)
+    expected_schema = [input_schema.MinimalFieldInfo(name="Country", data_type="String"),
+                       input_schema.MinimalFieldInfo(name='0', data_type='Float64'),
+                       input_schema.MinimalFieldInfo(name='1', data_type='Float64'),
+                       input_schema.MinimalFieldInfo(name='2', data_type='Float64'),
+                       input_schema.MinimalFieldInfo(name='3', data_type='Float64')]
+    expected_data = FlowDataEngine.create_from_schema([FlowfileColumn.create_from_minimal_field_info(mfi)
+                                                       for mfi in expected_schema])
+    result_data.assert_equal(expected_data)
+
 
 
 def test_add_pivot_string_count():
