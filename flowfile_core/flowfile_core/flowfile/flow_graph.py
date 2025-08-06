@@ -14,13 +14,14 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
-                                                                                       pre_calculate_pivot_schema)
+
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_xlsx_datatypes, \
-    get_calamine_xlsx_data_types
+from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (get_open_xlsx_datatypes,
+                                                                       get_calamine_xlsx_data_types)
+
+from flowfile_core.flowfile.schema_callbacks import (calculate_fuzzy_match_schema, pre_calculate_pivot_schema)
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
