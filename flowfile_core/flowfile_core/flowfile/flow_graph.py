@@ -269,7 +269,7 @@ class FlowGraph:
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
-    def print_tree(self, show_schema=False, show_descriptions=False)::
+    def print_tree(self, show_schema=False, show_descriptions=False):
         """
         Print flow_graph as a tree.
         """
