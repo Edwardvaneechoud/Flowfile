@@ -136,7 +136,8 @@ def create_unique_id() -> int:
     seed = f"{time_ms}-{pid}-{random_bytes}-{mac_addr}-{hostname}-{uuid.uuid4()}"
 
     # Create a hash of all entropy sources
-    hash_obj = hashlib.md5(seed.encode())  # not a security hash, but sufficient for uniqueness in this context
+
+    hash_obj = hashlib.sha256(seed.encode())
     hash_int = int(hash_obj.hexdigest(), 16)
 
     # Ensure the result fits within 32 bits (4 bytes)
