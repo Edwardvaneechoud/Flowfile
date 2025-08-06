@@ -203,7 +203,7 @@ class FlowGraph:
                     else:
                         self.flow_logger.warning(f"Node {node_id} setting_input ({type(setting)}) lacks pos_x/pos_y attributes.")
                 elif node:
-                     self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
+                    self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
                 # else: Node not found, already warned by calculate_layered_layout
 
             end_time = time()

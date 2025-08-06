@@ -6,6 +6,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.configs.settings import SINGLE_FILE_MODE
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
@@ -437,21 +438,15 @@ class FlowNode:
         except:
             return []
 
-    def load_from_cache(self) -> FlowDataEngine:
-        if results_exists(self.hash):
-            try:
-                return FlowDataEngine(self._fetch_cached_df.get_result())
-            except Exception as e:
-                logger.error(e)
-
     def remove_cache(self):
         if results_exists(self.hash):
             logger.warning('Not implemented')
 
     def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None,
                   execution_location: schemas.ExecutionLocationsLiteral = "auto") -> bool:
-        if execution_location == "local":
+        if execution_location == "local" or SINGLE_FILE_MODE:
             return False
+
         flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run_with_current_setup:
@@ -574,6 +569,7 @@ class FlowNode:
             self.node_stats.has_completed_last_run = False
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
+            breakpoint()
             if self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output":
                 self.prepare_before_run()
                 try:

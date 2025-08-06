@@ -150,9 +150,9 @@ class OutputSettings(BaseModel):
     file_type: str
     fields: Optional[List[str]] = Field(default_factory=list)
     write_mode: str = 'overwrite'
-    output_csv_table: OutputCsvTable
-    output_parquet_table: OutputParquetTable
-    output_excel_table: OutputExcelTable
+    output_csv_table: Optional[OutputCsvTable] = Field(default_factory=OutputCsvTable)
+    output_parquet_table: OutputParquetTable = Field(default_factory=OutputCsvTable)
+    output_excel_table: OutputExcelTable = Field(default_factory=OutputCsvTable)
     abs_file_path: Optional[str] = None
 
     def set_absolute_filepath(self):

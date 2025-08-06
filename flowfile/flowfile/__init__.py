@@ -12,8 +12,8 @@ __version__ = "0.3.7"
 import os
 import logging
 
-os.environ['WORKER_PORT'] = "63578"
-os.environ['SINGLE_FILE_MODE'] = "1"
+os.environ['FLOWFILE_WORKER_PORT'] = "63578"
+os.environ['FLOWFILE_SINGLE_FILE_MODE'] = "1"
 
 from flowfile.web import start_server as start_web_ui
 from flowfile.api import (open_graph_in_editor)
@@ -25,7 +25,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.schemas import input_schema as nodes
+from flowfile_core.schemas import input_schema as node_interface
 from flowfile_core.schemas.schemas import FlowSettings, FlowInformation
 from flowfile_core.schemas import transform_schema
 from flowfile_frame import (read_csv, read_parquet, from_dict, concat, scan_csv, scan_parquet,
@@ -70,7 +70,7 @@ __all__ = [
     'scan_parquet_from_cloud_storage', 'scan_json_from_cloud_storage',
     'scan_csv_from_cloud_storage', 'get_all_available_cloud_storage_connections', 'create_cloud_storage_connection',
     'del_cloud_storage_connection', 'create_cloud_storage_connection_if_not_exists',
-    'FlowGraph', 'FlowDataEngine', 'nodes', 'FlowSettings', 'transform_schema',
+    'FlowGraph', 'FlowDataEngine', 'node_interface', 'FlowSettings', 'transform_schema',
     'FlowNode', 'FlowfileColumn', 'FlowInformation',
 
     # Expression API
