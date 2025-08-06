@@ -363,9 +363,6 @@ def test_join_input_overlapping_columns():
     output = left_data.join(other=right_data, join_input=join_input, auto_generate_selection=True, verify_integrity=False)
 
 
-
-
-
 def test_join_no_selection(join_df: FlowDataEngine):
     join_input = transform_schema.JoinInput(
         join_mapping='id',
@@ -408,6 +405,21 @@ def test_join_non_selecting_join_keys_right(join_df: FlowDataEngine):
     expected = FlowDataEngine({'category': 'A',
                                'category_right': 'A'})
     result.assert_equal(expected)
+
+
+def test_join_non_selecting_renamed_keys_right(join_df: FlowDataEngine):
+    join_input = transform_schema.JoinInput(
+        join_mapping='id',
+        left_select=[transform_schema.SelectInput(old_name='id', keep=False),
+                     transform_schema.SelectInput('category')],
+        right_select=[transform_schema.SelectInput(old_name='id', keep=False, new_name="id_right"),
+                      transform_schema.SelectInput('category', keep=False, new_name="category_right")],
+        how='left'
+    )
+    right_df = join_df.get_sample(1)
+    result = join_df.join(other=right_df, join_input=join_input, auto_generate_selection=True,
+                          verify_integrity=False)
+    result.assert_equal(join_df.select_columns("category"))
 
 
 def test_join_select_join_key_right(join_df: FlowDataEngine):
