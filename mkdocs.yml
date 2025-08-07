@@ -1,6 +1,11 @@
+# mkdocs.yml
+
 site_name: Flowfile
 site_description: A visual ETL tool combining drag-and-drop workflow building with Polars dataframes
 site_url: https://edwardvaneechoud.github.io/Flowfile/
+
+# Explicitly set the URL style for consistency and planning
+use_directory_urls: false
 
 theme:
   name: material
@@ -39,11 +44,14 @@ markdown_extensions:
   - pymdownx.details
   - pymdownx.superfences
 
+# Corrected nav section - always use .md files
 nav:
   - Home: index.html
   - Quickstart: quickstart.md
   - Building Flows: flows/building.md
-  - Flowfile API: flowfile_api/index.md
+  - Flowfile for Developers:
+    - Index:  flowfile_api/index.md
+    - Philosophy: flowfile_api/flowfile-for-developers.md
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md
