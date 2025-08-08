@@ -1,3 +1,4 @@
+
 import pyarrow as pa
 from typing import List, Union, Callable, Optional, Literal
 from dataclasses import dataclass
@@ -131,14 +132,13 @@ class NodeStepInputs:
     main_inputs: List["FlowNode"] = None
 
     @property
-    def input_ids(self) -> List[int]:
+    def input_ids(self) -> List[int] | None:
         """
         Gets the IDs of all connected input nodes.
         :return: A list of integer node IDs.
         """
         if self.main_inputs is not None:
             return [node_input.node_information.id for node_input in self.get_all_inputs()]
-        return []
 
     def get_all_inputs(self) -> List["FlowNode"]:
         """
@@ -171,9 +171,8 @@ class NodeStepInputs:
             return any(node_input.node_information.id == node_input_id for node_input in self.main_inputs)
         if connection_name == 'left' and self.left_input:
             return self.left_input.node_information.id == node_input_id
-        if connection_name == 'right' and self.right_input:
+        if connection_name == 'right':
             return self.right_input.node_information.id == node_input_id
-        return False
 
 
 class NodeSchemaInformation:
@@ -208,8 +207,13 @@ class NodeResults:
     analysis_data_generator: Optional[Callable[[], pa.Table]] = None
 
     def __init__(self):
-        """Initializes the results object to a clean state."""
-        self.reset()
+        self._resulting_data = None
+        self.example_data = None
+        self.run_time = -1
+        self.errors = None
+        self.warnings = None
+        self.example_data_generator = None
+        self.analysis_data_generator = None
 
     def get_example_data(self) -> Optional[pa.Table]:
         """
@@ -218,7 +222,6 @@ class NodeResults:
         """
         if self.example_data_generator:
             return self.example_data_generator()
-        return None
 
     @property
     def resulting_data(self) -> Optional[FlowDataEngine]:
@@ -239,10 +242,4 @@ class NodeResults:
     def reset(self):
         """Resets all result attributes to their default, empty state."""
         self._resulting_data = None
-        self.example_data = None
-        self.example_data_path = None
-        self.example_data_generator = None
-        self.analysis_data_generator = None
         self.run_time = -1
-        self.errors = None
-        self.warnings = None
