@@ -134,7 +134,7 @@ class SelectInputs:
 
     @property
     def rename_table(self):
-        return {v.old_name: v.new_name for v in self.renames if v.is_available}
+        return {v.old_name: v.new_name for v in self.renames if v.is_available and (v.keep or v.join_key)}
 
     def get_select_cols(self, include_join_key: bool = True):
         return [v.old_name for v in self.renames if v.keep or (v.join_key and include_join_key)]

@@ -96,7 +96,7 @@ def create_flow_graph() -> FlowGraph:
         path=f"flow_{flow_id}"
     )
     flow_graph = FlowGraph(flow_settings=flow_settings)
-    flow_graph.flow_settings.execution_location = 'local'
+    flow_graph.flow_settings.execution_location = 'local'  # always create a local frame so that the run time does not attempt to use the flowfile_worker process
     return flow_graph
 
 

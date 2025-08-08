@@ -2,14 +2,14 @@ import os
 import json
 import shutil
 
-from datetime import datetime, date, time
+import datetime
 from typing import List
 from decimal import Decimal
+import time
 import random
 import uuid
 import socket
 import hashlib
-import time as time_lib
 
 
 def generate_sha256_hash(data: bytes):
@@ -30,11 +30,11 @@ def snake_case_to_camel_case(text: str) -> str:
 
 
 def json_default(val):
-    if isinstance(val, datetime):
+    if isinstance(val, datetime.datetime):
         return val.isoformat(timespec='microseconds')
-    elif isinstance(val, date):
+    elif isinstance(val, datetime.date):
         return val.isoformat()
-    elif isinstance(val, time):
+    elif isinstance(val, datetime.time):
         return val.isoformat()
     elif hasattr(val, '__dict__'):
         return val.__dict__
@@ -126,7 +126,7 @@ def create_unique_id() -> int:
         int: unique id within 32 bits (4 bytes)
     """
     # Get various entropy sources
-    time_ms = int(time_lib.time() * 1000)
+    time_ms = int(time.time() * 1000)
     pid = os.getpid()
     random_bytes = random.getrandbits(32)
     mac_addr = uuid.getnode()  # MAC address as integer
@@ -136,7 +136,8 @@ def create_unique_id() -> int:
     seed = f"{time_ms}-{pid}-{random_bytes}-{mac_addr}-{hostname}-{uuid.uuid4()}"
 
     # Create a hash of all entropy sources
-    hash_obj = hashlib.md5(seed.encode())
+
+    hash_obj = hashlib.sha256(seed.encode())
     hash_int = int(hash_obj.hexdigest(), 16)
 
     # Ensure the result fits within 32 bits (4 bytes)
