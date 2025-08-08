@@ -37,12 +37,31 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
 
+extra_css:
+  - stylesheets/extra.css
+
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            # Make headings for objects one level lower than the page title
+            heading_level: 3
+            enable_inventory: true
+
 markdown_extensions:
   - attr_list
   - md_in_html
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
 
 # Corrected nav section - always use .md files
 nav:
@@ -52,6 +71,9 @@ nav:
   - Flowfile for Developers:
     - Index:  flowfile_api/index.md
     - Philosophy: flowfile_api/flowfile-for-developers.md
+    - Flowfile-api:
+        flowfile-core: flowfile_api/core/flowfile-core.md
+
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md
