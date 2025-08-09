@@ -41,6 +41,8 @@ print(graph)
 
 <details markdown="1">
 <summary>Output of <code>print(graph)</code></summary>
+
+```
 FlowGraph(
 Nodes: {}                                #<-- An empty dictionary. No nodes yet!
 
@@ -58,12 +60,14 @@ Settings:                                #<-- The FlowSettings object you provid
   -is_running: False                     #<-- Is the flow currently running?
   -is_canceled: False                    #<-- Was a cancellation requested?
 )
+```
 </details>
 
 ```python 
 print(graph.run_graph())
+# flow_id=1 start_time=datetime.datetime(...) end_time=datetime.datetime(...) success=True nodes_completed=0 number_of_nodes=0 node_step_result=[]
+
 ```
-```# flow_id=1 start_time=datetime.datetime(...) end_time=datetime.datetime(...) success=True nodes_completed=0 number_of_nodes=0 node_step_result=[]```
 
 
 It runs successfully but does nothing, as expected. The FlowGraph's job is to:
