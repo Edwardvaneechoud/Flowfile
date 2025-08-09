@@ -1,34 +1,41 @@
 # Python API Reference
 
-This section provides a detailed API reference for the core Python objects in `flowfile-core`. The documentation is generated directly from the source code docstrings.
+This section provides a detailed API reference for the core Python objects, data models, and API routes in `flowfile-core`. The documentation is generated directly from the source code docstrings.
 
 ---
-## ::: flowfile_core.flowfile.flow_graph.FlowGraph
+
+## Core Objects
+
+This section covers the fundamental classes that manage the state and execution of data pipelines.
+
+### ::: flowfile_core.main
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.flowfile.flow_graph.FlowGraph
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 ---
-## ::: flowfile_core.flowfile.flow_node.flow_node.FlowNode
+### ::: flowfile_core.flowfile.flow_node.flow_node.FlowNode
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 ---
 
-## ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
+### ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
-      # We will select members manually to group them logically
       members:
         - __init__
 
-### 📈 Core Properties & State
-
-These properties provide access to the underlying data and metadata of the `FlowDataEngine`.
-
+#### 📈 Core Properties & State
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
@@ -50,10 +57,7 @@ These properties provide access to the underlying data and metadata of the `Flow
         - count
         - cache
 
-### 🏭 Creation Methods
-
-Use these class methods to create a `FlowDataEngine` from various sources.
-
+#### 🏭 Creation Methods
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
@@ -67,10 +71,7 @@ Use these class methods to create a `FlowDataEngine` from various sources.
         - create_random
         - generate_enumerator
 
-### 💾 Data I/O and Conversion
-
-Methods for reading from and writing to external systems, or converting the data to other formats.
-
+#### 💾 Data I/O and Conversion
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
@@ -84,10 +85,7 @@ Methods for reading from and writing to external systems, or converting the data
         - to_raw_data
         - to_dict
 
-### 🔬 Data Sampling & Access
-
-Methods for inspecting the data by collecting all or a subset of records.
-
+#### 🔬 Data Sampling & Access
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
@@ -99,15 +97,12 @@ Methods for inspecting the data by collecting all or a subset of records.
         - get_output_sample
         - iter_batches
 
-### ✨ Data Transformations
-
-These methods form the core of your data manipulation pipelines.
-
-#### Shaping & Restructuring
+#### ✨ Data Transformations
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
       show_source: false
+      heading_level: 4
       members:
         - do_group_by
         - do_pivot
@@ -116,44 +111,23 @@ These methods form the core of your data manipulation pipelines.
         - split
         - make_unique
         - concat
-
-#### Joining
-::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
-    options:
-      show_root_heading: false
-      show_source: false
-      members:
         - join
         - do_cross_join
         - do_fuzzy_join
         - fuzzy_match
         - start_fuzzy_join
-
-#### Filtering & Column Selection
-::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
-    options:
-      show_root_heading: false
-      show_source: false
-      members:
         - do_filter
         - select_columns
         - do_select
         - drop_columns
         - reorganize_order
-
-#### Column Operations & Formulas
-::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
-    options:
-      show_root_heading: false
-      show_source: false
-      members:
         - apply_flowfile_formula
         - apply_sql_formula
         - add_record_id
         - change_column_types
         - add_new_values
 
-### 🌐 Graph Operations
+#### 🌐 Graph Operations
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
@@ -161,7 +135,7 @@ These methods form the core of your data manipulation pipelines.
       members:
         - solve_graph
 
-### 🛠️ Utility & Testing
+#### 🛠️ Utility & Testing
 ::: flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine
     options:
       show_root_heading: false
@@ -171,6 +145,85 @@ These methods form the core of your data manipulation pipelines.
         - get_estimated_file_size
         - assert_equal
         - set_streamable
+
+---
+## Schema and Data Models
+
+This section documents the Pydantic models that define the structure of settings and data throughout Flowfile. These models are the "nouns" of the system—they represent the configuration objects that are passed to `FlowDataEngine` methods and define the structure of nodes in the `FlowGraph`.
+
+Understanding these models is key to understanding how to programmatically build and configure data pipelines.
+
+### ::: flowfile_core.schemas.schemas
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.schemas.input_schema
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.schemas.transform_schema
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.schemas.cloud_storage_schemas
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.schemas.output_model
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+---
+
+## API Routes
+
+This section documents the FastAPI routes that expose the functionality of `flowfile-core` over HTTP.
+
+### ::: flowfile_core.routes.routes
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.routes.auth
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.routes.cloud_connections
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.routes.logs
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.routes.public
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+
+### ::: flowfile_core.routes.secrets
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
 
 ---
 ## External Functions

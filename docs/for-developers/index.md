@@ -64,8 +64,8 @@ When you write df.filter(...), you are programmatically constructing a FlowNode 
 
 ## **Where to Go Next**
 
-- **🚀 First Pipeline Tutorial:** A hands-on, step-by-step guide to building a complete ETL pipeline with the Python API.
+- **🚀 First Pipeline Tutorial:** A hands-on, step-by-step guide to building a complete ETL pipeline with the Flowframe API [design-concepts](python-api/design-concepts.md).
 
-- **📖 API Guides:** Detailed documentation on core functionalities like [Reading & Writing Data](https://www.google.com/search?q=api/reading-data.md), transformations, and cloud connections.
+- **📖 API Guides:** Detailed documentation on core functionalities like reading and writing data, building transformations [python-api](python-api/index.md)
 
-- **💡 Architectural Deep Dive:** For those who want to contribute or understand the internals, explore our guides on the [Core Architecture](https://www.google.com/search?q=core/flowfile-core.md) and the [Dual Interface Philosophy](https://www.google.com/search?q=how-it-works.md).
+- **💡 Architectural Deep Dive:** For those who want to contribute or understand the internals, explore our guides on the [Core Architecture](core/flowfile-core.md) and the [Dual Interface Philosophy](flowfile-for-developers.md).

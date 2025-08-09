@@ -1,6 +1,6 @@
 # Flowfile Core: A Developer's Guide
 
-Welcome! This guide is for developers who want to understand, use, and contribute to `flowfile-core`. We'll dive into the architecture, see how data flows, and learn how to build powerful data pipelines. We'll take inspiration from FastAPI's documentation style: clear, simple, and interactive.
+Welcome! This guide is for developers who want to understand, use, and contribute to `flowfile-core`. We'll dive into the architecture, see how data flows, and learn how to build powerful data pipelines.
 
 Ready? Let's build something!
 
@@ -367,3 +367,20 @@ Let's recap the entire lifecycle:
 
 
 This architecture provides a powerful combination of flexibility, introspection, and performance, bridging the gap between a visual, no-code interface and a powerful, code-driven engine.
+
+
+
+---
+
+## The FastAPI Service: Your API Layer
+
+While `FlowGraph`, `FlowNode`, and `FlowDataEngine` power the core pipeline logic, the **FastAPI service** is what makes it accessible from the outside world.
+
+Think of it as the **control panel** for your pipelines:
+
+- **HTTP interface** – Wraps the core Python objects in a REST API so UIs (like Flowfile’s) or other systems can create, run, and inspect flows via standard web requests.
+- **State management** – Keeps track of all active `FlowGraph` sessions. When the UI triggers a change, it’s really calling one of these endpoints, which updates the in-memory graph.
+- **Security** – Handles authentication and authorization so only the right users can access or modify flows.
+- **Data previews** – When you view a node’s output in the UI, the API calls `.get_resulting_data()` on the corresponding `FlowNode` and returns a sample to the client.
+
+In short: **FastAPI turns the in-memory power of `flowfile-core` into a secure, interactive web service**, enabling rich, real-time applications to be built on top of your pipelines.

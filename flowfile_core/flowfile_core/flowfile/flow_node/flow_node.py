@@ -110,7 +110,7 @@ class FlowNode:
         self._state_needs_reset = False
 
     @property
-    def state_needs_reset(self):
+    def state_needs_reset(self) -> bool:
         """Checks if the node's state needs to be reset.
 
         Returns:
@@ -259,7 +259,7 @@ class FlowNode:
         self.setting_input = setting_input  # wait until the end so that the hash is calculated correctly
 
     @property
-    def name(self):
+    def name(self) -> str:
         """Gets the name of the node.
 
         Returns:
@@ -278,7 +278,7 @@ class FlowNode:
         self.__name__ = name
 
     @property
-    def setting_input(self):
+    def setting_input(self) -> Any:
         """Gets the node's specific configuration settings.
 
         Returns:
@@ -310,7 +310,7 @@ class FlowNode:
             self.reset()
 
     @property
-    def node_id(self):
+    def node_id(self) -> Union[str, int]:
         """Gets the unique identifier of the node.
 
         Returns:
@@ -319,7 +319,7 @@ class FlowNode:
         return self.node_information.id
 
     @property
-    def left_input(self):
+    def left_input(self) -> Optional["FlowNode"]:
         """Gets the node connected to the left input port.
 
         Returns:
@@ -328,7 +328,7 @@ class FlowNode:
         return self.node_inputs.left_input
 
     @property
-    def right_input(self):
+    def right_input(self) -> Optional["FlowNode"]:
         """Gets the node connected to the right input port.
 
         Returns:
@@ -346,7 +346,7 @@ class FlowNode:
         return self.node_inputs.main_inputs
 
     @property
-    def is_correct(self):
+    def is_correct(self) -> bool:
         """Checks if the node's input connections satisfy its template requirements.
 
         Returns:
@@ -386,7 +386,7 @@ class FlowNode:
         return self.node_information
 
     @property
-    def function(self):
+    def function(self) -> Callable:
         """Gets the core processing function of the node.
 
         Returns:
@@ -412,7 +412,7 @@ class FlowNode:
         """
         return self.node_inputs.get_all_inputs()
 
-    def calculate_hash(self, setting_input: Any):
+    def calculate_hash(self, setting_input: Any) -> str:
         """Calculates a hash based on settings and input node hashes.
 
         Args:
@@ -426,7 +426,7 @@ class FlowNode:
         return get_hash(depends_on_hashes + [node_data_hash, self.parent_uuid])
 
     @property
-    def hash(self):
+    def hash(self) -> str:
         """Gets the cached hash for the node, calculating it if it doesn't exist.
 
         Returns:
@@ -715,11 +715,10 @@ class FlowNode:
         """Makes the node instance callable, acting as an alias for execute_node."""
         self.execute_node(*args, **kwargs)
 
-    def execute_full_local(self, performance_mode: bool = False):
+    def execute_full_local(self, performance_mode: bool = False) -> None:
         """Executes the node's logic locally, including example data generation.
 
         Args:
-            flow_id: The ID of the parent flow.
             performance_mode: If True, skips generating example data.
 
         Raises:
@@ -1011,7 +1010,7 @@ class FlowNode:
             self.reset()
         return deleted
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Provides a string representation of the FlowNode instance.
 
         Returns:
@@ -1019,7 +1018,7 @@ class FlowNode:
         """
         return f"Node id: {self.node_id} ({self.node_type})"
 
-    def _get_readable_schema(self):
+    def _get_readable_schema(self) -> List[dict] | None:
         """Helper to get a simplified, dictionary representation of the output schema.
 
         Returns:
@@ -1031,7 +1030,7 @@ class FlowNode:
                 output.append(dict(column_name=s.column_name, data_type=s.data_type))
             return output
 
-    def get_repr(self):
+    def get_repr(self) -> dict:
         """Gets a detailed dictionary representation of the node's state.
 
         Returns:

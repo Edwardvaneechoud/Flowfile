@@ -1,3 +1,11 @@
+"""
+Main API router and endpoint definitions for the Flowfile application.
+
+This module sets up the FastAPI router, defines all the API endpoints for interacting
+with flows, nodes, files, and other core components of the application. It handles
+the logic for creating, reading, updating, and deleting these resources.
+"""
+
 import asyncio
 import inspect
 import logging
@@ -43,7 +51,6 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (s
 from flowfile_core.database.connection import get_db
 
 
-
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 # Initialize services
@@ -51,6 +58,7 @@ file_explorer = FileExplorer('/app/shared' if IS_RUNNING_IN_DOCKER else None)
 
 
 def get_node_model(setting_name_ref: str):
+    """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
     logger.info("Getting node model for: " + setting_name_ref)
     for ref_name, ref in inspect.getmodule(input_schema).__dict__.items():
         if ref_name.lower() == setting_name_ref:
@@ -59,7 +67,15 @@ def get_node_model(setting_name_ref: str):
 
 
 @router.post("/upload/")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
+    """Uploads a file to the server's 'uploads' directory.
+
+    Args:
+        file: The file to be uploaded.
+
+    Returns:
+        A JSON response containing the filename and the path where it was saved.
+    """
     file_location = f"uploads/{file.filename}"
     with open(file_location, "wb+") as file_object:
         file_object.write(file.file.read())
@@ -68,6 +84,17 @@ async def upload_file(file: UploadFile = File(...)):
 
 @router.get('/files/files_in_local_directory/', response_model=List[FileInfo], tags=['file manager'])
 async def get_local_files(directory: str) -> List[FileInfo]:
+    """Retrieves a list of files from a specified local directory.
+
+    Args:
+        directory: The absolute path of the directory to scan.
+
+    Returns:
+        A list of `FileInfo` objects for each item in the directory.
+
+    Raises:
+        HTTPException: 404 if the directory does not exist.
+    """
     files = get_files_from_directory(directory)
     if files is None:
         raise HTTPException(404, 'Directory does not exist')
@@ -76,36 +103,51 @@ async def get_local_files(directory: str) -> List[FileInfo]:
 
 @router.get('/files/tree/', response_model=List[FileInfo], tags=['file manager'])
 async def get_current_files() -> List[FileInfo]:
+    """Gets the contents of the file explorer's current directory."""
     f = file_explorer.list_contents()
     return f
 
 
 @router.post('/files/navigate_up/', response_model=str, tags=['file manager'])
 async def navigate_up() -> str:
+    """Navigates the file explorer one directory level up."""
     file_explorer.navigate_up()
     return str(file_explorer.current_path)
 
 
 @router.post('/files/navigate_into/', response_model=str, tags=['file manager'])
 async def navigate_into_directory(directory_name: str) -> str:
+    """Navigates the file explorer into a specified subdirectory."""
     file_explorer.navigate_into(directory_name)
     return str(file_explorer.current_path)
 
 
 @router.post('/files/navigate_to/', tags=['file manager'])
 async def navigate_to_directory(directory_name: str) -> str:
+    """Navigates the file explorer to an absolute directory path."""
     file_explorer.navigate_to(directory_name)
     return str(file_explorer.current_path)
 
 
 @router.get('/files/current_path/', response_model=str, tags=['file manager'])
 async def get_current_path() -> str:
+    """Returns the current absolute path of the file explorer."""
     return str(file_explorer.current_path)
 
 
 @router.get('/files/directory_contents/', response_model=List[FileInfo], tags=['file manager'])
 async def get_directory_contents(directory: str, file_types: List[str] = None,
                                  include_hidden: bool = False) -> List[FileInfo]:
+    """Gets the contents of an arbitrary directory path.
+
+    Args:
+        directory: The absolute path to the directory.
+        file_types: An optional list of file extensions to filter by.
+        include_hidden: If True, includes hidden files and directories.
+
+    Returns:
+        A list of `FileInfo` objects representing the directory's contents.
+    """
     directory_explorer = FileExplorer(directory)
     try:
         return directory_explorer.list_contents(show_hidden=include_hidden, file_types=file_types)
@@ -116,11 +158,20 @@ async def get_directory_contents(directory: str, file_types: List[str] = None,
 
 @router.get('/files/current_directory_contents/', response_model=List[FileInfo], tags=['file manager'])
 async def get_current_directory_contents(file_types: List[str] = None, include_hidden: bool = False) -> List[FileInfo]:
+    """Gets the contents of the file explorer's current directory."""
     return file_explorer.list_contents(file_types=file_types, show_hidden=include_hidden)
 
 
 @router.post('/files/create_directory', response_model=output_model.OutputDir, tags=['file manager'])
 def create_directory(new_directory: input_schema.NewDirectory) -> bool:
+    """Creates a new directory at the specified path.
+
+    Args:
+        new_directory: An `input_schema.NewDirectory` object with the path and name.
+
+    Returns:
+        `True` if the directory was created successfully.
+    """
     result, error = create_dir(new_directory)
     if result:
         return True
@@ -129,17 +180,35 @@ def create_directory(new_directory: input_schema.NewDirectory) -> bool:
 
 
 @router.post('/flow/register/', tags=['editor'])
-def register_flow(flow_data: schemas.FlowSettings):
+def register_flow(flow_data: schemas.FlowSettings) -> int:
+    """Registers a new flow session with the application.
+
+    Args:
+        flow_data: The `FlowSettings` for the new flow.
+
+    Returns:
+        The ID of the newly registered flow.
+    """
     return flow_file_handler.register_flow(flow_data)
 
 
 @router.get('/active_flowfile_sessions/', response_model=List[schemas.FlowSettings])
 async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
+    """Retrieves a list of all currently active flow sessions."""
     return [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
 
 
 @router.post('/flow/run/', tags=['editor'])
-async def run_flow(flow_id: int, background_tasks: BackgroundTasks):
+async def run_flow(flow_id: int, background_tasks: BackgroundTasks) -> JSONResponse:
+    """Executes a flow in a background task.
+
+    Args:
+        flow_id: The ID of the flow to execute.
+        background_tasks: FastAPI's background task runner.
+
+    Returns:
+        A JSON response indicating that the flow has started.
+    """
     logger.info('starting to run...')
     flow = flow_file_handler.get_flow(flow_id)
     lock = get_flow_run_lock(flow_id)
@@ -147,11 +216,12 @@ async def run_flow(flow_id: int, background_tasks: BackgroundTasks):
         if flow.flow_settings.is_running:
             raise HTTPException(422, 'Flow is already running')
         background_tasks.add_task(flow.run_graph)
-    JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_202_ACCEPTED)
+    return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_202_ACCEPTED)
 
 
 @router.post('/flow/cancel/', tags=['editor'])
 def cancel_flow(flow_id: int):
+    """Cancels a currently running flow execution."""
     flow = flow_file_handler.get_flow(flow_id)
     if not flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is not running')
@@ -161,6 +231,10 @@ def cancel_flow(flow_id: int):
 @router.get('/flow/run_status/', tags=['editor'],
             response_model=output_model.RunInformation)
 def get_run_status(flow_id: int, response: Response):
+    """Retrieves the run status information for a specific flow.
+
+    Returns a 202 Accepted status while the flow is running, and 200 OK when finished.
+    """
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
@@ -189,15 +263,12 @@ def add_flow_input(input_data: input_schema.NodeDatasource):
 
 @router.post('/editor/copy_node', tags=['editor'])
 def copy_node(node_id_to_copy_from: int, flow_id_to_copy_from: int, node_promise: input_schema.NodePromise):
-    """
-    Add a node to the flow.
-    Parameters
-    ----------
-    node_id_to_copy_from: int, the id of the node to copy
-    flow_id_to_copy_from: int, the id of the flow to copy from
-    node_promise: NodePromise, the node promise that contains all the data
-    Returns
-    -------
+    """Copies an existing node's settings to a new node promise.
+
+    Args:
+        node_id_to_copy_from: The ID of the node to copy the settings from.
+        flow_id_to_copy_from: The ID of the flow containing the source node.
+        node_promise: A `NodePromise` representing the new node to be created.
     """
     try:
         flow_to_copy_from = flow_file_handler.get_flow(flow_id_to_copy_from)
@@ -227,19 +298,14 @@ def copy_node(node_id_to_copy_from: int, flow_id_to_copy_from: int, node_promise
 
 @router.post('/editor/add_node/', tags=['editor'])
 def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: int = 0):
-    """
-    Add a node to the flow.
-    Parameters
-    ----------
-    flow_id: int, the flow id
-    node_id: int, the node id
-    node_type: str, the node type
-    pos_x: int, the x position of the node
-    pos_y: int, the y position of the node
+    """Adds a new, unconfigured node (a "promise") to the flow graph.
 
-    Returns
-    -------
-
+    Args:
+        flow_id: The ID of the flow to add the node to.
+        node_id: The client-generated ID for the new node.
+        node_type: The type of the node to add (e.g., 'filter', 'join').
+        pos_x: The X coordinate for the node's position in the UI.
+        pos_y: The Y coordinate for the node's position in the UI.
     """
     flow = flow_file_handler.get_flow(flow_id)
     logger.info(f'Adding a promise for {node_type}')
@@ -270,6 +336,7 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
 
 @router.post('/editor/delete_node/', tags=['editor'])
 def delete_node(flow_id: Optional[int], node_id: int):
+    """Deletes a node from the flow graph."""
     logger.info('Deleting node')
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
@@ -279,6 +346,7 @@ def delete_node(flow_id: Optional[int], node_id: int):
 
 @router.post('/editor/delete_connection/', tags=['editor'])
 def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConnection = None):
+    """Deletes a connection (edge) between two nodes."""
     flow_id = int(flow_id)
     logger.info(
         f'Deleting connection node {node_connection.output_connection.node_id} to node {node_connection.input_connection.node_id}')
@@ -293,9 +361,7 @@ def create_db_connection(input_connection: input_schema.FullDatabaseConnection,
                          current_user=Depends(get_current_active_user),
                          db: Session = Depends(get_db)
                          ):
-    """
-    Create a database connection.
-    """
+    """Creates and securely stores a new database connection."""
     logger.info(f'Creating database connection {input_connection.connection_name}')
     try:
         store_database_connection(db, input_connection, current_user.id)
@@ -312,9 +378,7 @@ def delete_db_connection(connection_name: str,
                          current_user=Depends(get_current_active_user),
                          db: Session = Depends(get_db)
                          ):
-    """
-    Delete a database connection.
-    """
+    """Deletes a stored database connection."""
     logger.info(f'Deleting database connection {connection_name}')
     db_connection = get_database_connection(db, connection_name, current_user.id)
     if db_connection is None:
@@ -328,11 +392,13 @@ def delete_db_connection(connection_name: str,
 def get_db_connections(
         db: Session = Depends(get_db),
         current_user=Depends(get_current_active_user)) -> List[input_schema.FullDatabaseConnectionInterface]:
+    """Retrieves all stored database connections for the current user (without passwords)."""
     return get_all_database_connections_interface(db, current_user.id)
 
 
 @router.post('/editor/connect_node/', tags=['editor'])
 def connect_node(flow_id: int, node_connection: input_schema.NodeConnection):
+    """Creates a connection (edge) between two nodes in the flow graph."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         logger.info('could not find the flow')
@@ -344,16 +410,19 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection):
 
 @router.get('/editor/expression_doc', tags=['editor'], response_model=List[output_model.ExpressionsOverview])
 def get_expression_doc() -> List[output_model.ExpressionsOverview]:
+    """Retrieves documentation for available Polars expressions."""
     return get_expression_overview()
 
 
 @router.get('/editor/expressions', tags=['editor'], response_model=List[str])
 def get_expressions() -> List[str]:
+    """Retrieves a list of all available Flowfile expression names."""
     return get_all_expressions()
 
 
 @router.get('/editor/flow', tags=['editor'], response_model=schemas.FlowSettings)
 def get_flow(flow_id: int):
+    """Retrieves the settings for a specific flow."""
     flow_id = int(flow_id)
     result = get_flow_settings(flow_id)
     return result
@@ -361,6 +430,7 @@ def get_flow(flow_id: int):
 
 @router.get("/editor/code_to_polars", tags=[], response_model=str)
 def get_generated_code(flow_id: int) -> str:
+    """Generates and returns a Python script with Polars code representing the flow."""
     flow_id = int(flow_id)
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
@@ -370,6 +440,7 @@ def get_generated_code(flow_id: int) -> str:
 
 @router.post('/editor/create_flow/', tags=['editor'])
 def create_flow(flow_path: str):
+    """Creates a new, empty flow file at the specified path and registers a session for it."""
     flow_path = Path(flow_path)
     logger.info('Creating flow')
     return flow_file_handler.add_flow(name=flow_path.stem, flow_path=str(flow_path))
@@ -377,11 +448,17 @@ def create_flow(flow_path: str):
 
 @router.post('/editor/close_flow/', tags=['editor'])
 def close_flow(flow_id: int) -> None:
+    """Closes an active flow session."""
     flow_file_handler.delete_flow(flow_id)
 
 
 @router.post('/update_settings/', tags=['transform'])
 def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)):
+    """A generic endpoint to update the settings of any node.
+
+    This endpoint dynamically determines the correct Pydantic model and update
+    function based on the `node_type` parameter.
+    """
     input_data['user_id'] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
@@ -413,6 +490,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
 
 @router.get('/files/available_flow_files', tags=['editor'], response_model=List[FileInfo])
 def get_list_of_saved_flows(path: str):
+    """Scans a directory for saved flow files (`.flowfile`)."""
     try:
         return get_files_from_directory(path, types=['flowfile'])
     except:
@@ -420,26 +498,13 @@ def get_list_of_saved_flows(path: str):
 
 @router.get('/node_list', response_model=List[nodes.NodeTemplate])
 def get_node_list() -> List[nodes.NodeTemplate]:
+    """Retrieves the list of all available node types and their templates."""
     return nodes.nodes_list
-
-
-# @router.post('/reset')
-# def reset():
-#     flow_file_handler.delete_flow(1)
-#     register_flow(schemas.FlowSettings(flow_id=1))
-
-
-@router.post('/files/remove_items', tags=['file manager'])
-def remove_items(remove_items_input: input_schema.RemoveItemsInput):
-    result, error = remove_paths(remove_items_input)
-    if result:
-        return result
-    else:
-        raise error
 
 
 @router.get('/node', response_model=output_model.NodeData, tags=['editor'])
 def get_node(flow_id: int, node_id: int, get_data: bool = False):
+    """Retrieves the complete state and data preview for a single node."""
     logging.info(f'Getting node {node_id} from flow {flow_id}')
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
@@ -451,6 +516,7 @@ def get_node(flow_id: int, node_id: int, get_data: bool = False):
 
 @router.post('/node/description/', tags=['editor'])
 def update_description_node(flow_id: int, node_id: int, description: str = Body(...)):
+    """Updates the description text for a specific node."""
     try:
         node = flow_file_handler.get_flow(flow_id).get_node(node_id)
     except:
@@ -461,6 +527,7 @@ def update_description_node(flow_id: int, node_id: int, description: str = Body(
 
 @router.get('/node/description', tags=['editor'])
 def get_description_node(flow_id: int, node_id: int):
+    """Retrieves the description text for a specific node."""
     try:
         node = flow_file_handler.get_flow(flow_id).get_node(node_id)
     except:
@@ -472,6 +539,7 @@ def get_description_node(flow_id: int, node_id: int):
 
 @router.get('/node/data', response_model=output_model.TableExample, tags=['editor'])
 def get_table_example(flow_id: int, node_id: int):
+    """Retrieves a data preview (schema and sample rows) for a node's output."""
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     return node.get_table_example(True)
@@ -479,6 +547,7 @@ def get_table_example(flow_id: int, node_id: int):
 
 @router.get('/node/downstream_node_ids', response_model=List[int], tags=['editor'])
 async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
+    """Gets a list of all node IDs that are downstream dependencies of a given node."""
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     return list(node.get_all_dependent_node_ids())
@@ -486,6 +555,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
+    """Imports a flow from a saved `.flowfile` and registers it as a new session."""
     flow_path = Path(flow_path)
     if not flow_path.exists():
         raise HTTPException(404, 'File not found')
@@ -494,12 +564,14 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
+    """Saves the current state of a flow to a `.flowfile`."""
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
 
 @router.get('/flow_data', tags=['manager'])
 def get_flow_frontend_data(flow_id: Optional[int] = 1):
+    """Retrieves the data needed to render the flow graph in the frontend."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
@@ -508,6 +580,7 @@ def get_flow_frontend_data(flow_id: Optional[int] = 1):
 
 @router.get('/flow_settings', tags=['manager'], response_model=schemas.FlowSettings)
 def get_flow_settings(flow_id: Optional[int] = 1) -> schemas.FlowSettings:
+    """Retrieves the main settings for a flow."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
@@ -516,6 +589,7 @@ def get_flow_settings(flow_id: Optional[int] = 1) -> schemas.FlowSettings:
 
 @router.post('/flow_settings', tags=['manager'])
 def update_flow_settings(flow_settings: schemas.FlowSettings):
+    """Updates the main settings for a flow."""
     flow = flow_file_handler.get_flow(flow_settings.flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
@@ -524,6 +598,7 @@ def update_flow_settings(flow_settings: schemas.FlowSettings):
 
 @router.get('/flow_data/v2', tags=['manager'])
 def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
+    """Retrieves the flow data formatted for the Vue-based frontend."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
@@ -533,6 +608,7 @@ def get_vue_flow_data(flow_id: int) -> schemas.VueFlowInput:
 
 @router.get('/analysis_data/graphic_walker_input', tags=['analysis'], response_model=input_schema.NodeExploreData)
 def get_graphic_walker_input(flow_id: int, node_id: int):
+    """Gets the data and configuration for the Graphic Walker data exploration tool."""
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
     if node.results.analysis_data_generator is None:
@@ -543,6 +619,7 @@ def get_graphic_walker_input(flow_id: int, node_id: int):
 
 @router.get('/custom_functions/instant_result', tags=[])
 async def get_instant_function_result(flow_id: int, node_id: int, func_string: str):
+    """Executes a simple, instant function on a node's data and returns the result."""
     try:
         node = flow_file_handler.get_node(flow_id, node_id)
         result = await asyncio.to_thread(get_instant_func_results, node, func_string)
@@ -553,6 +630,7 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=List[str])
 async def get_excel_sheet_names(path: str) -> List[str] | None:
+    """Retrieves the sheet names from an Excel file."""
     sheet_names = excel_file_manager.get_sheet_names(path)
     if sheet_names:
         return sheet_names
@@ -565,9 +643,7 @@ async def validate_db_settings(
         database_settings: input_schema.DatabaseSettings,
         current_user=Depends(get_current_active_user)
 ):
-    """
-    Validate the query settings for a database connection.
-    """
+    """Validates that a connection can be made to a database with the given settings."""
     # Validate the query settings
     try:
         sql_source = create_sql_source_from_db_settings(database_settings, user_id=current_user.id)

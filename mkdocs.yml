@@ -62,23 +62,26 @@ markdown_extensions:
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
 
-
-# Corrected nav section - always use .md files
 nav:
   - Home: index.html
   - Quickstart: quickstart.md
   - Building Flows: flows/building.md
   - Flowfile for Developers:
     - Introduction: for-developers/index.md
+    - The Core Philosophy: for-developers/flowfile-for-developers.md
+    - A Developer's Guide to the Core: for-developers/core/flowfile-core.md
     - Python API:
-        - Index: for-developers/python-api/index.md
-        - Design Concepts FlowFrame: for-developers/python-api/design-concepts.md
-
-    - Core Architecture & Concepts:
-        - Flowfile Core Api Reference: for-developers/core/python-api-reference.md
-        - The Core Philosophy: for-developers/flowfile-for-developers.md
-        - A Developer's Guide: for-developers/core/flowfile-core.md
-
+        - Overview: for-developers/python-api/index.md
+        - Design Concepts: for-developers/python-api/design-concepts.md
+        - Reading & Writing Data: for-developers/python-api/reading-data.md
+        - DataFrame Operations: for-developers/python-api/flowframe-operations.md
+        - Expressions: for-developers/python-api/expressions.md
+        - Joins: for-developers/python-api/joins.md
+        - Aggregations: for-developers/python-api/aggregations.md
+        - Cloud Connections: for-developers/python-api/cloud-connection-management.md
+        - Visual UI Integration: for-developers/python-api/visual-ui.md
+        - Data Types: for-developers/python-api/data-types.md
+    - API Reference: for-developers/core/python-api-reference.md
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md

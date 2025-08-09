@@ -10,7 +10,7 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 - [**Data Types**](data-types.md) - Supported data types
 
 ### Transformations
-- [**DataFrame Operations**](dataframe-operations.md) - Filter, select, sort
+- [**FlowFrame Operations**](flowframe-operations.md) - Filter, select, sort
 - [**Expressions**](expressions.md) - Column operations
 - [**Aggregations**](aggregations.md) - Group by and summarize
 - [**Joins**](joins.md) - Combining datasets
