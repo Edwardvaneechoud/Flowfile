@@ -1499,12 +1499,10 @@ class FlowDataEngine:
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
         if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')
-
         if auto_generate_selection:
             join_input.auto_rename()
         left = self.data_frame.select(get_select_columns(join_input.left_select.renames)).rename(join_input.left_select.rename_table)
         right = other.data_frame.select(get_select_columns(join_input.right_select.renames)).rename(join_input.right_select.rename_table)
-
         if verify_integrity and join_input.how != 'right':
             n_records = get_join_count(left, right, left_on_keys=join_input.left_join_keys,
                                        right_on_keys=join_input.right_join_keys, how=join_input.how)
