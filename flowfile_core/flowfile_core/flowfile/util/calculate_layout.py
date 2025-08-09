@@ -4,7 +4,6 @@ from collections import defaultdict, deque
 from typing import List, Dict, Set, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    # Make sure this import path is correct for your project structure
     from flowfile_core.flowfile.flow_graph import FlowGraph
 
 
@@ -64,7 +63,6 @@ def calculate_layered_layout(
                 if child_node.node_id in node_ids:
                     if child_node.node_id not in adj[node.node_id]:
                         adj[node.node_id].append(child_node.node_id)
-                    # Assuming primary method works or in_degree is handled elsewhere
                     in_degree[child_node.node_id] += 1
 
     stages: Dict[int, List[int]] = defaultdict(list)

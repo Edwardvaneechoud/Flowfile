@@ -94,8 +94,8 @@ For advanced users who need to customize the server behavior:
 - `FLOWFILE_HOST`: Host to bind the server to (default: "127.0.0.1")
 - `FLOWFILE_PORT`: Port to bind the server to (default: 63578)
 - `FLOWFILE_MODE`: Set to "electron" to enable browser auto-opening behavior
-- `WORKER_URL`: URL for the worker service
-- `SINGLE_FILE_MODE`: Set to "1" to run in unified mode with worker functionality
+- `FLOWFILE_WORKER_URL`: URL for the worker service
+- `FLOWFILE_SINGLE_FILE_MODE`: Set to "1" to run in unified mode with worker functionality
 - `FLOWFILE_MODULE_NAME`: Module name to run (default: "flowfile")
 
 ### Running Individual Components

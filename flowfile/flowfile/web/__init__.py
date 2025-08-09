@@ -50,8 +50,8 @@ def extend_app(app: FastAPI):
         return Response(status_code=404)
 
     @app.get("/single_mode")
-    async def in_single_mode():
-        return os.environ.get('SINGLE_FILE_MODE', "0")
+    async def in_single_mode() -> bool:
+        return os.environ.get('FLOWFILE_SINGLE_FILE_MODE', "0") == "1"
 
     @app.get("/ui", include_in_schema=False)
     async def web_ui_root():

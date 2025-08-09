@@ -88,8 +88,17 @@ def _generate_id() -> int:
     return int(uuid.uuid4().int % 100000)
 
 
-def create_flow_graph() -> FlowGraph:
-    flow_id = _generate_id()
+def create_flow_graph(flow_id: int = None) -> FlowGraph:
+    """
+    Create a new FlowGraph instance with a unique flow ID.
+    Parameters
+       - flow_id (int): Optional flow ID. If not provided, a new unique ID will be generated.
+    Returns
+       - FlowGraph: A new instance of FlowGraph with the specified or generated flow ID.
+
+    """
+    if flow_id is None:
+        flow_id = _generate_id()
     flow_settings = schemas.FlowSettings(
         flow_id=flow_id,
         name=f"Flow_{flow_id}",

@@ -27,7 +27,11 @@ server_instance = None
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
-    """Handle graceful shutdown of the application."""
+    """Handles the graceful startup and shutdown of the FastAPI application.
+
+    This context manager ensures that resources, such as log files, are cleaned
+    up properly when the application is terminated.
+    """
     print('Starting core application...')
     try:
         yield
@@ -77,31 +81,46 @@ app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=[
 
 @app.post("/shutdown")
 async def shutdown():
-    """Endpoint to handle graceful shutdown"""
-    ServerRun.exit = True
-    print(f"ServerRun.exit = {ServerRun.exit}")
-    if server_instance:
-        # Schedule the shutdown
-        await asyncio.create_task(trigger_shutdown())
-    return {"message": "Shutting down"}
+    """An API endpoint to gracefully shut down the server.
+
+    This endpoint sets a flag that the Uvicorn server checks, allowing it
+    to terminate cleanly. A background task is used to trigger the shutdown
+    after the HTTP response has been sent.
+    """
+    # Use a background task to trigger the shutdown after the response is sent
+    background_tasks = ServerRun()
+    background_tasks.add_task(trigger_shutdown)
+    return {"message": "Server is shutting down"}
 
 
 async def trigger_shutdown():
-    """Trigger the actual shutdown after responding to the client"""
-    await asyncio.sleep(1)  # Give time for the response to be sent
+    """(Internal) Triggers the actual server shutdown.
+
+    Waits for a moment to allow the `/shutdown` response to be sent before
+    telling the Uvicorn server instance to exit.
+    """
+    await asyncio.sleep(1)
     if server_instance:
         server_instance.should_exit = True
 
 
 def signal_handler(signum, frame):
-    """Handle shutdown signals"""
+    """Handles OS signals like SIGINT (Ctrl+C) and SIGTERM for graceful shutdown."""
     print(f"Received signal {signum}")
     if server_instance:
         server_instance.should_exit = True
 
 
 def run(host: str = None, port: int = None):
-    """Run the FastAPI app with graceful shutdown"""
+    """Runs the FastAPI application using Uvicorn.
+
+    This function configures and starts the Uvicorn server, setting up
+    signal handlers to ensure a graceful shutdown.
+
+    Args:
+        host: The host to bind the server to. Defaults to `SERVER_HOST` from settings.
+        port: The port to bind the server to. Defaults to `SERVER_PORT` from settings.
+    """
     global server_instance
 
     # Use values from settings if not explicitly provided
@@ -134,7 +153,7 @@ def run(host: str = None, port: int = None):
         print("Received interrupt signal, shutting down...")
     finally:
         server_instance = None
-        print("Core server shutdown complete")
+        print("Server has shut down.")
 
 
 if __name__ == "__main__":
