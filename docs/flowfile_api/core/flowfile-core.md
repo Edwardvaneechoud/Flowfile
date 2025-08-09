@@ -1,743 +1,369 @@
-# Flowfile Core for Developers
+# Flowfile Core: A Developer's Guide
 
-The core functionality of Flowfile contains the HTTP interface, Graph, Nodes, Engine, and workers. 
-Here it is described how the engine works, how you can integrate it with your system and where you can find what.
+Welcome! This guide is for developers who want to understand, use, and contribute to `flowfile-core`. We'll dive into the architecture, see how data flows, and learn how to build powerful data pipelines. We'll take inspiration from FastAPI's documentation style: clear, simple, and interactive.
 
-## FlowGraph
+Ready? Let's build something!
 
-A flow graph is an object that manages the execution, connection of nodes, and addition of nodes. 
-It ensures that a process starts, is executing in the right order and in case of cancelling every process is cancelled.
+---
 
-### Creating a Flow Graph
+## The Core Architecture
 
-You can construct a graph and start adding settings to it to see it evolve:
+At its heart, `flowfile-core` is composed of three main objects:
+
+1.  **`FlowGraph`**: The central orchestrator. It holds your pipeline, manages the nodes, and controls the execution flow.
+2.  **`FlowNode`**: An individual step in your pipeline. It's a wrapper around your settings and logic, making it an executable part of the graph.
+3.  **`FlowDataEngine`**: The data itself, which flows between nodes. It's a smart wrapper around a [Polars LazyFrame](https://pola-rs.github.io/polars/py-polars/html/reference/lazyframe/index.html), carrying both the data and its schema.
+
+Let's see these in action.
+
+---
+
+## 1. The FlowGraph: Your Pipeline Orchestrator
+
+Everything starts with the `FlowGraph`. Think of it as the canvas for your data pipeline.
+
+Let's create one:
 
 ```python
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.schemas import FlowSettings
 
-# Config of how and where the flow should execute, what it is named and where it is stored
-flow_settings = FlowSettings(
-    flow_id=1,
-    name="My ETL Pipeline",
-    execution_location='local',  # 'local', 'remote', or 'auto'
-    execution_mode='Development'  # 'Development' or 'Performance'
+# Initialize the graph with some basic settings
+graph = FlowGraph(
+    flow_settings=FlowSettings(
+        flow_id=1,
+        name="My First Pipeline"
+    )
 )
 
-graph = FlowGraph(flow_settings=flow_settings)
+print(graph)
 ```
 
-### Adding Nodes to the Graph
+<details markdown="1">
+<summary>Output of <code>print(graph)</code></summary>
+FlowGraph(
+Nodes: {}                                #<-- An empty dictionary. No nodes yet!
 
-The FlowGraph provides methods to add different types of nodes. Each node represents a transformation or data operation:
+Settings:                                #<-- The FlowSettings object you provided.
+  -flow_id: 1                            #<-- A unique ID for this flow.
+  -description: None                     #<-- An optional description.
+  -save_location: None                   #<-- Where the flow definition is saved.
+  -name: My First Pipeline               #<-- The name of our flow.
+  -path:                                 #<-- Path to the flow file.
+  -execution_mode: Development           #<-- 'Development' for debugging or 'Performance' for speed.
+  -execution_location: local             #<-- Where the flow runs ('local' or 'remote').
+  -auto_save: False                      #<-- Auto-save changes (feature in development).
+  -modified_on: None                     #<-- Last modified timestamp (feature in development).
+  -show_detailed_progress: True          #<-- If True, shows detailed logs in the UI.
+  -is_running: False                     #<-- Is the flow currently running?
+  -is_canceled: False                    #<-- Was a cancellation requested?
+)
+</details>
+
+```python 
+print(graph.run_graph())
+```
+```# flow_id=1 start_time=datetime.datetime(...) end_time=datetime.datetime(...) success=True nodes_completed=0 number_of_nodes=0 node_step_result=[]```
+
+
+It runs successfully but does nothing, as expected. The FlowGraph's job is to:
+
+* **Contain** all the nodes.
+* **Manage** the connections between them.
+* **Calculate** the optimal execution order.
+* **Orchestrate** the entire run lifecycle.
+
+
+Let's give it a node to manage.
+
+## 2. Adding a Node: Where Settings Come to Life
+You don't add raw functions or data directly to the graph. Instead, you provide **settings objects** (which are just Pydantic models). The graph then transforms these settings into executable `FlowNodes`.
+
+Watch this:
 
 ```python
 from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.transform_schema import FilterInput, BasicFilter
 
-# Add a data source
-manual_input = input_schema.NodeManualInput(
-    flow_id=graph.flow_id,
+# 1. Define your data using a settings object.
+# This is just a Pydantic model holding configuration.
+manual_input_settings = input_schema.NodeManualInput(
+    flow_id=1,
     node_id=1,
     raw_data_format=input_schema.RawData.from_pylist([
-        {"name": "Alice", "age": 30, "city": "NYC"},
-        {"name": "Bob", "age": 25, "city": "LA"},
-        {"name": "Charlie", "age": 35, "city": "NYC"}
+        {"name": "Alice", "age": 30},
+        {"name": "Bob", "age": 25}
     ])
 )
-graph.add_manual_input(manual_input)
 
-# Add a filter node
-filter_node = input_schema.NodeFilter(
-    flow_id=graph.flow_id,
+# 2. Add the settings to the graph.
+graph.add_manual_input(manual_input_settings)
+```
+So, what did the graph just do? It didn't just store our settings. It created a FlowNode.
+
+```python
+# Let's retrieve the object the graph created
+node = graph.get_node(1)
+
+print(type(node))
+# <class 'flowfile_core.flowfile.flow_node.flow_node.FlowNode'>
+```
+
+The `FlowNode` is the magic wrapper that makes your settings operational. It holds your original settings but also adds the machinery needed for execution.
+
+<details markdown="1">
+<summary>Peek inside the <code>FlowNode</code></summary>
+
+```python
+
+# The FlowNode keeps your original settings
+print(node.setting_input == manual_input_settings)
+# True
+
+# But it also contains the execution logic...
+print(f"Has a function to run: {node._function is not None}")
+# Has a function to run: True
+
+# ...state tracking...
+print(f"Can track its state: {hasattr(node, 'node_stats')}")
+# Can track its state: True
+
+# ...connections to other nodes...
+print(f"Can connect to other nodes: {hasattr(node, 'leads_to_nodes')}")
+# Can connect to other nodes: True
+
+# ...and a place to store its results.
+print(f"Has a place for results: {hasattr(node, 'results')}")
+# Has a place for results: True
+```
+
+</details>
+
+
+This separation is key: **Settings** define _what_ to do, and the **FlowNode** figures out _how_ to do it within the graph.
+
+
+## 3. Connections: The Key to a Flowing Pipeline
+
+
+```python
+from flowfile_core.schemas.transform_schema import FilterInput
+
+# 1. Define settings for a filter node
+filter_settings = input_schema.NodeFilter(
+    flow_id=1,
     node_id=2,
     filter_input=FilterInput(
         filter_type="advanced",
-        advanced_filter="[age] > 28"
+        advanced_filter="[age] > 28" # Polars expression syntax
     )
 )
-graph.add_filter(filter_node)
+graph.add_filter(filter_settings)
+
+# 2. Run the graph
+result = graph.run_graph()
+print(f"Nodes executed: {result.nodes_completed}/{len(graph.nodes)}")
+# Nodes executed: 1/2
 ```
 
-### Connecting Nodes
+Only one node ran! Why? The graph is smart; it knows the filter node has no input, thus will never succeed running.
 
-Nodes must be connected to define the data flow:
+<details markdown="1">
+<summary>Why the filter node was skipped</summary>
 
 ```python
+filter_node = graph.get_node(2)
+
+# The graph checks if a node is a "start" node (has no inputs)
+print(f"Is filter_node a start node? {filter_node.is_start}")
+# Is filter_node a start node? False
+
+# It sees that the filter node is missing an input connection
+print(f"Does filter_node have an input? {filter_node.has_input}")
+# Does filter_node have an input? False
+
+# The graph's execution plan only includes nodes it can reach from a start node
+print(f"Graph start nodes: {graph._flow_starts}")
+# Graph start nodes: [Node id: 1 (manual_input)]
+```
+
+</details>
+
+The execution engine works like this:
+
+1. It identifies all start nodes (like our manual input).
+2. It builds an execution plan by following the connections from those start nodes.
+3. Any node not connected to this flow is ignored.
+
+Let's fix that by adding a connection.
+
+```python
+
 from flowfile_core.flowfile.flow_graph import add_connection
-
-# Connect node 1 (manual input) to node 2 (filter)
+# Create a connection object
 connection = input_schema.NodeConnection.create_from_simple_input(
-    from_id=1,
-    to_id=2,
-    input_type="main"  # "main", "left", or "right"
+    from_id=1, # From our manual input node
+    to_id=2,   # To our filter node
+    input_type="main"
 )
+
+# Add it to the graph
 add_connection(graph, connection)
+
+# Let's check what changed
+print(f"Node 1 now leads to: {graph.get_node(1).leads_to_nodes}")
+# Node 1 now leads to: [Node id: 2 (filter)]
+
+print(f"Node 2 now receives from: {graph.get_node(2).node_inputs.main_inputs}")
+# Node 2 now receives from: [Node id: 1 (manual_input)]
 ```
 
-### Executing the Graph
-
-Once your graph is built, you can execute it:
+Now that they are connected, let's run the graph again.
 
 ```python
-# Run the entire graph
-graph.run_graph()
+result = graph.run_graph()
 
-# Check execution status
-run_info = graph.get_run_info()
-print(f"Success: {run_info.success}")
-print(f"Nodes completed: {run_info.nodes_completed}/{run_info.number_of_nodes}")
-
-# Cancel execution if needed
-if graph.flow_settings.is_running:
-    graph.cancel()
+# The graph determines the correct execution order
+print("Execution Order:")
+for node_result in result.node_step_result:
+    print(f"  - Node {node_result.node_id} ran successfully: {node_result.success}")
+# Execution Order:
+#   - Node 1 ran successfully: True
+#   - Node 2 ran successfully: True
 ```
 
-### Inspecting the Graph
+Success! Both nodes executed. The connection allowed data to flow from the input to the filter.
 
-The FlowGraph provides various methods to inspect its structure:
+## 4. The FlowDataEngine: The Data Carrier
+When data moves from one node to another, it's bundled up in a FlowDataEngine object. This isn't just raw data; it's an enhanced wrapper around a Polars LazyFrame.
 
 ```python
-# Get all nodes
-nodes = graph.nodes  # List of FlowNode objects
+# Let's inspect the data after the run
+node1 = graph.get_node(1)
+node2 = graph.get_node(2)
 
-# Get a specific node
-node = graph.get_node(node_id=2)
+# Get the resulting data from each node
+data_engine1 = node1.get_resulting_data()
+data_engine2 = node2.get_resulting_data()
 
-# Get node connections
-connections = graph.node_connections  # List of (source_id, target_id) tuples
+print(f"Type of object passed between nodes: {type(data_engine1)}")
+# Type of object passed between nodes: <class 'flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine'>
 
-# Get starting nodes
-start_nodes = graph._flow_starts
+# Let's see the transformation
+print(f"Rows from Node 1 (Input): {len(data_engine1.collect())}")
+# Rows from Node 1 (Input): 2
 
-# Visualize the graph structure
-for node in graph.nodes:
-    print(f"Node {node.node_id}: {node.node_type}")
-    if node.leads_to_nodes:
-        for target in node.leads_to_nodes:
-            print(f"  → Node {target.node_id}")
+print(f"Rows from Node 2 (Filter): {len(data_engine2.collect())}")
+# Rows from Node 2 (Filter): 1  <-- Success! Bob (age 25) was filtered out.
+
 ```
 
-### Saving and Loading Graphs
+The `FlowDataEngine` is the boundary between `flowfile-core` and Polars. It:
+* Carries the data (as a LazyFrame).
+* Maintains schema information.
+* Tracks metadata like record counts.
+* Manages lazy vs. eager execution.
 
-Graphs can be persisted and loaded:
+## 5. The Hash System: Smart Change Detection
+How does the graph know when to re-run a node? Every `FlowNode` has a unique hash based on its configuration and its inputs.
 
 ```python
-# Save the graph
-graph.save_flow(flow_path="my_pipeline.flowfile")
+node2 = graph.get_node(2)
+original_hash = node2.hash
+print(f"Original hash of filter node: {original_hash[:10]}...")
+# Original hash of filter node: ...
 
-# Load a graph
-import pickle
-with open("my_pipeline.flowfile", "rb") as f:
-    flow_info = pickle.load(f)
-    # Reconstruct the graph from flow_info
+# Now, let's change the filter's settings
+node2.setting_input.filter_input.advanced_filter = "[age] > 20"
+
+# The node instantly knows it's been changed
+print(f"Settings changed, needs reset: {node2.needs_reset()}")
+# Settings changed, needs reset: True
+
+# Resetting recalculates the hash
+node2.reset()
+new_hash = node2.hash
+print(f"New hash of filter node: {new_hash[:10]}...")
+# New hash of filter node: ...
+
+print(f"Hash changed: {original_hash != new_hash}")
+# Hash changed: True
 ```
 
-## FlowNode
+This hash is calculated from:
 
-FlowNodes are the building blocks of a FlowGraph. Each node represents a single transformation or operation in your data pipeline.
+* The node's own settings.
+* The hashes of all its direct parent nodes.
 
-### Node Structure
+This creates a chain of **dependency**. If you change a node, `flowfile-core` knows that it and all downstream nodes need to be re-run, while upstream nodes can use their cached results. This is crucial for efficiency.
 
-Every FlowNode contains:
 
-```python
-class FlowNode:
-    # Identity
-    node_id: Union[str, int]           # Unique identifier
-    node_type: str                      # Type of operation (filter, join, etc.)
-    
-    # Configuration
-    setting_input: Any                  # Pydantic model with node settings
-    _function: Callable                 # The transformation function
-    
-    # Connections
-    node_inputs: NodeStepInputs         # Input nodes (main, left, right)
-    leads_to_nodes: List[FlowNode]      # Output nodes
-    
-    # State
-    results: NodeResults                # Execution results and cache
-    node_stats: NodeStepStats           # Execution statistics
-    schema: List[FlowfileColumn]        # Output schema
-```
+## 6. Schema Prediction: See the Future
+One of the most powerful features for interactive UI is **schema prediction**. A node can predict its output schema _without_ processing any data.
 
-### Creating Custom Nodes
-
-You can create custom nodes by defining a transformation function and settings:
+Let's add a "formula" node to create a new column.
 
 ```python
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from pydantic import BaseModel
+from flowfile_core.schemas.transform_schema import FunctionInput, FieldInput
 
-# Define settings for your custom node
-class CustomTransformSettings(BaseModel):
-    flow_id: int
-    node_id: int
-    multiplier: float = 2.0
-    column_name: str = "value"
-
-# Define the transformation function
-def custom_transform(df: FlowDataEngine) -> FlowDataEngine:
-    return df.apply_flowfile_formula(
-        func=f"[{settings.column_name}] * {settings.multiplier}",
-        col_name=f"{settings.column_name}_scaled"
-    )
-
-# Add the custom node to a graph
-settings = CustomTransformSettings(
-    flow_id=graph.flow_id,
-    node_id=3,
-    multiplier=1.5,
-    column_name="age"
-)
-
-node = graph.add_node_step(
-    node_id=settings.node_id,
-    function=custom_transform,
-    node_type="custom_transform",
-    setting_input=settings,
-    input_node_ids=[2]  # Connect to node 2
-)
-```
-
-### Node Execution
-
-Nodes execute in a specific order based on their dependencies:
-
-```python
-# Individual node execution
-node = graph.get_node(2)
-
-# Execute the node
-node.execute_node(
-    run_location='local',
-    performance_mode=False,
-    node_logger=graph.flow_logger.get_node_logger(2)
-)
-
-# Check results
-if node.results.errors:
-    print(f"Error: {node.results.errors}")
-else:
-    data = node.get_resulting_data()
-    print(f"Output shape: {data.number_of_records} rows, {data.number_of_fields} columns")
-```
-
-### Schema Prediction
-
-Nodes can predict their output schema without executing:
-
-```python
-# Get predicted schema
-node = graph.get_node(2)
-schema = node.get_predicted_schema()
-
-for column in schema:
-    print(f"Column: {column.column_name}, Type: {column.data_type}")
-
-# Schema callbacks for dynamic schema
-def schema_callback():
-    input_schema = node.singular_main_input.schema
-    # Calculate output schema based on input
-    return [
-        FlowfileColumn.from_input("new_column", "Float64"),
-        *input_schema  # Keep all input columns
-    ]
-
-node.schema_callback = schema_callback
-```
-
-### Node Caching
-
-Nodes can cache their results for faster re-execution:
-
-```python
-# Enable caching for a node
-node.node_settings.cache_results = True
-
-# Check if cache exists
-if results_exists(node.hash):
-    print("Cache available")
-
-# Force cache refresh
-node.reset(deep=True)
-```
-
-## FlowDataEngine
-
-The FlowDataEngine is the data carrier that wraps Polars DataFrames/LazyFrames and provides additional functionality for the Flowfile ecosystem.
-
-### Creating a FlowDataEngine
-
-```python
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-import polars as pl
-
-# From a dictionary
-data = FlowDataEngine({
-    "id": [1, 2, 3],
-    "name": ["Alice", "Bob", "Charlie"],
-    "score": [95, 87, 92]
-})
-
-# From a list of dictionaries
-data = FlowDataEngine([
-    {"id": 1, "name": "Alice", "score": 95},
-    {"id": 2, "name": "Bob", "score": 87}
-])
-
-# From a Polars DataFrame/LazyFrame
-df = pl.DataFrame({"col1": [1, 2, 3]})
-data = FlowDataEngine(df)
-
-# From a file
-data = FlowDataEngine.create_from_path(
-    input_schema.ReceivedCsvTable(
-        path="data.csv",
-        delimiter=",",
-        has_headers=True
-    )
-)
-```
-
-### Data Transformations
-
-FlowDataEngine provides a rich API for transformations:
-
-```python
-# Filtering
-filtered = data.do_filter("[score] > 90")
-
-# Selecting columns
-selected = data.select_columns(["id", "name"])
-
-# Adding computed columns
-with_computed = data.apply_flowfile_formula(
-    func="[score] * 1.1",
-    col_name="adjusted_score"
-)
-
-# Grouping and aggregation
-from flowfile_core.schemas.transform_schema import GroupByInput, AggColl
-
-grouped = data.do_group_by(
-    GroupByInput(
-        agg_cols=[
-            AggColl("department", "groupby"),
-            AggColl("score", "mean", "avg_score"),
-            AggColl("id", "count", "count")
-        ]
-    )
-)
-
-# Joining
-join_result = data.join(
-    join_input=JoinInput(
-        join_mapping=[JoinMap("id", "user_id")],
-        left_select=["id", "name"],
-        right_select=["user_id", "department"],
-        how="left"
-    ),
-    other=other_data,
-    auto_generate_selection=True,
-    verify_integrity=True
-)
-```
-
-### Lazy vs Eager Evaluation
-
-FlowDataEngine supports both lazy and eager evaluation:
-
-```python
-# Check if lazy
-if data.lazy:
-    print("Data is lazy (not materialized)")
-
-# Convert between lazy and eager
-data.lazy = True   # Make lazy
-data.lazy = False  # Materialize
-
-# Collect data (materialize if lazy)
-df = data.collect(n_records=100)  # Get first 100 records
-df_all = data.collect()            # Get all records
-
-# Get sample without full materialization
-sample = data.get_sample(n_rows=10, random=True)
-```
-
-### Schema Management
-
-FlowDataEngine provides rich schema information:
-
-```python
-# Get schema
-schema = data.schema
-for col in schema:
-    print(f"{col.column_name}: {col.data_type}")
-    print(f"  Unique values: {col.number_of_unique_values}")
-    print(f"  Null values: {col.number_of_empty_values}")
-    
-# Calculate detailed schema statistics
-data._calculate_schema_stats = True
-detailed_schema = data.calculate_schema()
-
-# Access specific column info
-col_info = data.get_schema_column("score")
-print(f"Is unique: {col_info.is_unique}")
-print(f"Percentage unique: {col_info.perc_unique}")
-```
-
-### Cloud Storage Integration
-
-FlowDataEngine seamlessly integrates with cloud storage:
-
-```python
-from flowfile_core.schemas.cloud_storage_schemas import (
-    CloudStorageReadSettingsInternal,
-    CloudStorageWriteSettingsInternal,
-    FullCloudStorageConnection, CloudStorageWriteSettings, CloudStorageReadSettings
-)
-
-# Read from S3
-connection = FullCloudStorageConnection(
-    storage_type="s3",
-    auth_method="access_key",
-    aws_access_key_id="your_key",
-    aws_secret_access_key="your_secret",
-    aws_region="us-east-1"
-)
-
-settings = CloudStorageReadSettingsInternal(
-    read_settings=CloudStorageReadSettings(
-        resource_path="s3://bucket/data.parquet",
-        file_format="parquet"
-    ),
-    connection=connection
-)
-
-data = FlowDataEngine.from_cloud_storage_obj(settings)
-
-# Write to cloud storage
-write_settings = CloudStorageWriteSettingsInternal(
-    write_settings=CloudStorageWriteSettings(
-        resource_path="s3://bucket/output.parquet",
-        file_format="parquet",
-        write_mode="overwrite"
-    ),
-    connection=connection
-)
-
-data.to_cloud_storage_obj(write_settings)
-```
-
-### External Processing
-
-For large operations, FlowDataEngine can offload processing to workers:
-
-```python
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    ExternalDfFetcher,
-    ExternalSampler
-)
-
-# Offload heavy computation to worker
-fetcher = ExternalDfFetcher(
-    lf=data.data_frame,
+# 1. Add a formula node to double the age
+formula_settings = input_schema.NodeFormula(
     flow_id=1,
-    node_id=1,
-    wait_on_completion=False
-)
-
-# Check status
-status = fetcher.status
-print(f"Processing status: {status.status}")
-
-# Get result when ready
-result = fetcher.get_result()
-```
-
-## Advanced Topics
-
-### Custom Node Types
-
-Create a complete custom node type with UI support:
-
-```python
-from flowfile_core.configs.node_store import nodes
-from pydantic import BaseModel
-
-# 1. Define the settings model
-class MyCustomSettings(BaseModel):
-    flow_id: int
-    node_id: int
-    threshold: float
-    operation: str = "filter"
-
-# 2. Register the node template
-nodes.add_node_template(
-    nodes.NodeTemplate(
-        name="My Custom Node",
-        item="custom_operation",
-        input=1,
-        output=1,
-        image="custom.svg",
-        node_group="transform",
-        can_be_start=False
+    node_id=3,
+    function=FunctionInput(
+        field=FieldInput(name="age_doubled", data_type="Int64"),
+        function="[age] * 2" # Polars expression
     )
 )
+graph.add_formula(formula_settings)
 
-# 3. Add the transformation method to FlowGraph
-def add_custom_operation(graph, settings: MyCustomSettings):
-    def transform(df: FlowDataEngine) -> FlowDataEngine:
-        if settings.operation == "filter":
-            return df.do_filter(f"[value] > {settings.threshold}")
-        else:
-            return df
-    
-    graph.add_node_step(
-        node_id=settings.node_id,
-        function=transform,
-        node_type="custom_operation",
-        setting_input=settings
-    )
+# 2. Connect the filter node to our new formula node
+add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
 
-# Monkey-patch the method onto FlowGraph
-FlowGraph.add_custom_operation = add_custom_operation
+# 3. Predict the schema
+formula_node = graph.get_node(3)
+predicted_schema = formula_node.get_predicted_schema()
+
+print("Predicted columns for Node 3:")
+for col in predicted_schema:
+    print(f"  - {col.column_name} (Type: {col.data_type})")
+
+# This works even though the node has not run yet!
+print(f"\nHas the formula node run? {formula_node.node_stats.has_run_with_current_setup}")
 ```
 
-### Execution Strategies
+<details markdown="1">
+<summary>Output of Schema Prediction</summary>
 
-Different execution strategies for different scenarios:
-
-```python
-# Development mode: Step-by-step with caching
-graph.flow_settings.execution_mode = 'Development'
-graph.flow_settings.execution_location = 'local'
-graph.run_graph()  # Each node caches results
-
-# Performance mode: Optimized lazy execution
-graph.flow_settings.execution_mode = 'Performance'
-graph.flow_settings.execution_location = 'remote'
-graph.run_graph()  # Builds complete Polars plan
-
-# Hybrid: Auto-select based on operation
-graph.flow_settings.execution_location = 'auto'
-# Wide operations (joins, sorts) → remote
-# Narrow operations (filters, projections) → local
 ```
-
-### Error Handling and Recovery
-
-Robust error handling patterns:
-
-```python
-# Node-level error handling
-node = graph.get_node(2)
-try:
-    node.execute_node(
-        run_location='local',
-        retry=True,  # Auto-retry on failure
-        node_logger=logger
-    )
-except Exception as e:
-    # Check node state
-    if node.results.errors:
-        print(f"Node error: {node.results.errors}")
-    
-    # Attempt recovery
-    node.reset(deep=True)
-    node.execute_node(run_location='local', retry=False)
-
-# Graph-level error handling
-try:
-    graph.run_graph()
-except Exception as e:
-    # Get detailed run info
-    run_info = graph.get_run_info()
-    for node_result in run_info.node_step_result:
-        if not node_result.success:
-            print(f"Failed node {node_result.node_id}: {node_result.error}")
+Predicted columns for Node 3:
+  - name (Type: String)
+  - age (Type: Int64)
+  - city (Type: String)
+  - age_doubled (Type: Int64)
 ```
+</details>
 
-### Memory Management
+How does this work? The node simply:
 
-Optimize memory usage for large datasets:
+1. Asks its parent node(s) for their output schema.
+2. Applies its own transformation logic to that schema (not the data).
+3. Returns the resulting new schema.
 
-```python
-# Use streaming execution for large datasets
-data = FlowDataEngine(large_dataset, streamable=True)
+This allows a UI to show you how your data will be transformed in real-time, as you build the pipeline.
 
-# Process in batches
-for batch in data.iter_batches(batch_size=10000):
-    processed = batch.apply_flowfile_formula(
-        func="[value] * 2",
-        col_name="doubled"
-    )
-    processed.save("output_batch.parquet")
+## The Complete Picture: A Summary
+Let's recap the entire lifecycle:
 
-# Clear caches when done
-for node in graph.nodes:
-    node.remove_cache()
-```
+* **You provide Settings:** You define steps using simple Pydantic models (`NodeManualInput`, `NodeFilter`, etc.).
+* **Graph Creates FlowNodes:** The `FlowGraph` takes your settings and wraps them in `FlowNode` objects, adding execution logic, state, and connection points.
+* **You Connect Nodes:** You create `NodeConnection` objects. This builds the pipeline topology, which the graph uses to determine the execution order.
+* **You Run the Graph:** When `graph.run_graph()` is called:
+    * An execution plan is created via topological sort.
+    * Execution starts from the "start nodes".
+    * Each node receives a `FlowDataEngine` from its parent.
+    * It applies its transformation logic.
+    * It returns a new `FlowDataEngine` to its children.
+* **Results Flow Through:** The data, wrapped in the `FlowDataEngine`, moves down the pipeline, getting transformed at each step.
 
-## Testing Your Pipelines
 
-### Unit Testing Nodes
-
-```python
-import pytest
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-
-def test_custom_transform():
-    # Arrange
-    input_data = FlowDataEngine({
-        "value": [1, 2, 3, 4, 5]
-    })
-    
-    # Act
-    result = input_data.apply_flowfile_formula(
-        func="[value] * 2",
-        col_name="doubled"
-    )
-    
-    # Assert
-    output = result.collect()
-    assert output["doubled"].to_list() == [2, 4, 6, 8, 10]
-
-def test_schema_prediction():
-    # Test that schema is correctly predicted
-    node = create_test_node()
-    schema = node.get_predicted_schema()
-    
-    assert len(schema) == 3
-    assert schema[0].column_name == "id"
-    assert schema[0].data_type == "Int64"
-```
-
-### Integration Testing Graphs
-
-```python
-def test_complete_pipeline():
-    # Build test graph
-    graph = FlowGraph(FlowSettings(flow_id=1))
-    
-    # Add test data
-    test_data = create_test_data()
-    graph.add_manual_input(test_data)
-    
-    # Add transformations
-    graph.add_filter(create_filter_node())
-    graph.add_group_by(create_groupby_node())
-    
-    # Connect nodes
-    add_connection(graph, NodeConnection.create_from_simple_input(1, 2))
-    add_connection(graph, NodeConnection.create_from_simple_input(2, 3))
-    
-    # Execute
-    run_info = graph.run_graph()
-    
-    # Verify
-    assert run_info.success
-    assert run_info.nodes_completed == 3
-    
-    # Check output
-    final_node = graph.get_node(3)
-    result = final_node.get_resulting_data()
-    assert result.number_of_records == expected_count
-```
-
-## Performance Optimization
-
-### Query Plan Optimization
-
-```python
-# Inspect the Polars query plan
-node = graph.get_node(5)
-data = node.get_resulting_data()
-print(data.data_frame.explain())  # Show optimized plan
-
-# Force optimization hints
-data.data_frame = data.data_frame.with_optimizations(
-    projection_pushdown=True,
-    predicate_pushdown=True,
-    type_coercion=True,
-    simplify_expression=True
-)
-```
-
-### Parallel Processing
-
-```python
-from concurrent.futures import ThreadPoolExecutor
-
-# Process multiple graphs in parallel
-graphs = [create_graph(i) for i in range(5)]
-
-with ThreadPoolExecutor(max_workers=3) as executor:
-    futures = [executor.submit(g.run_graph) for g in graphs]
-    results = [f.result() for f in futures]
-```
-
-## Debugging
-
-### Enable Detailed Logging
-
-```python
-import logging
-from flowfile_core.configs import logger
-
-# Set log level
-logger.setLevel(logging.DEBUG)
-
-# Add custom handler
-handler = logging.FileHandler('flowfile_debug.log')
-handler.setLevel(logging.DEBUG)
-logger.addHandler(handler)
-
-# Node-specific logging
-node_logger = graph.flow_logger.get_node_logger(node_id=2)
-node_logger.info("Starting custom transformation")
-```
-
-### Inspect Intermediate Results
-
-```python
-# Enable caching for all nodes
-for node in graph.nodes:
-    node.node_settings.cache_results = True
-
-# Run graph
-graph.run_graph()
-
-# Inspect cached results
-for node in graph.nodes:
-    if node.results.example_data_path:
-        # Read cached Arrow file
-        import pyarrow.parquet as pq
-        table = pq.read_table(node.results.example_data_path)
-        df = table.to_pandas()
-        print(f"Node {node.node_id}: {df.shape}")
-        print(df.head())
-```
-
-## Best Practices
-
-1. **Always validate inputs**: Use Pydantic models for settings validation
-2. **Handle schema changes explicitly**: Use schema callbacks for dynamic schemas
-3. **Cache judiciously**: Cache expensive operations, not simple filters
-4. **Use lazy evaluation**: Keep data lazy as long as possible
-5. **Test schema prediction**: Verify schemas before execution
-6. **Monitor memory**: Use streaming for large datasets
-7. **Log appropriately**: Use node loggers for debugging
-
-## Next Steps
-
-- Explore the [node catalog](./node-catalog.md) for all available transformations
-- Learn about [custom node development](./custom-nodes.md)
-- Understand [worker architecture](./workers.md) for distributed processing
-- Review [API endpoints](./api-reference.md) for HTTP integration
-
-# Reference
-::: flowfile_core.flowfile.flow_graph.FlowGraph
-::: flowfile_core.flowfile.flow_graph
-::: flowfile_core.flowfile.flow_node.flow_node.FlowNode
+This architecture provides a powerful combination of flexibility, introspection, and performance, bridging the gap between a visual, no-code interface and a powerful, code-driven engine.

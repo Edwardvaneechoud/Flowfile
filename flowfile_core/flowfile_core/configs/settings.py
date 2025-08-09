@@ -18,7 +18,7 @@ DEFAULT_WORKER_PORT = 63579
 SINGLE_FILE_MODE: bool = os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1"
 
 
-OFFLOAD_TO_WORKER = MutableBool(True)
+OFFLOAD_TO_WORKER = MutableBool(not SINGLE_FILE_MODE)
 
 
 def parse_args():

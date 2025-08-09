@@ -12,6 +12,7 @@ import polars as pl
 from polars.exceptions import PanicException
 from polars_grouper import graph_solver
 from polars_expr_transformer import simple_function_to_expr as to_expr
+from pyarrow import Table as PaTable
 from pyarrow.parquet import ParquetFile
 
 # Local imports - Core
@@ -919,6 +920,12 @@ class FlowDataEngine:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
+    def to_arrow(self) -> PaTable:
+        if self.lazy:
+            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_arrow()
+        else:
+            return self.data_frame.to_arrow()
+
     def to_raw_data(self) -> input_schema.RawData:
         """Convert the DataFrame to a list of values."""
         columns = [c.get_minimal_field_info() for c in self.schema]
@@ -1207,7 +1214,7 @@ class FlowDataEngine:
 
     def __repr__(self) -> str:
         """Return string representation of the FlowDataEngine."""
-        return f'flowfile table\n{self.data_frame.__repr__()}'
+        return f'flow data engine\n{self.data_frame.__repr__()}'
 
     def __call__(self) -> "FlowDataEngine":
         """Make the class callable, returning self."""
@@ -1293,8 +1300,9 @@ class FlowDataEngine:
         Returns:
             FlowDataEngine: New instance with sampled data
         """
-        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=True))
+        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=OFFLOAD_TO_WORKER))
         logging.info(f'Getting sample of {n_rows} rows')
+
         if random:
             if self.lazy and self.external_source is not None:
                 self.collect_external()
@@ -1670,15 +1678,18 @@ class FlowDataEngine:
 
             if self.lazy:
                 if calculate_in_worker_process:
-                    self.number_of_records = self._calculate_number_of_records_in_worker()
-                else:
-                    if warn:
-                        logger.warning('Calculating the number of records this can be expensive on a lazy frame')
                     try:
-                        self.number_of_records = self.data_frame.select(pl.len()).collect(
-                            engine="streaming" if self._streamable else "auto")[0, 0]
-                    except Exception:
-                        raise ValueError('Could not get number of records')
+                        self.number_of_records = self._calculate_number_of_records_in_worker()
+                        return self.number_of_records
+                    except Exception as e:
+                        logger.error(f"Error: {e}")
+                if warn:
+                    logger.warning('Calculating the number of records this can be expensive on a lazy frame')
+                try:
+                    self.number_of_records = self.data_frame.select(pl.len()).collect(
+                        engine="streaming" if self._streamable else "auto")[0, 0]
+                except Exception:
+                    raise ValueError('Could not get number of records')
             else:
                 self.number_of_records = self.data_frame.__len__()
         return self.number_of_records

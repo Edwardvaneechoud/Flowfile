@@ -715,6 +715,21 @@ class FlowNode:
         """Makes the node instance callable, acting as an alias for execute_node."""
         self.execute_node(*args, **kwargs)
 
+    def execute_full_local(self, performance_mode: bool = False):
+        """Executes the node's logic locally, including example data generation.
+
+        Args:
+            flow_id: The ID of the parent flow.
+            performance_mode: If True, skips generating example data.
+
+        Raises:
+            Exception: Propagates exceptions from the execution.
+        """
+        if self.results.resulting_data is None and not performance_mode:
+            self.results.resulting_data = self.get_resulting_data()
+            self.results.example_data_generator = lambda: self.get_resulting_data().get_sample(100).to_arrow()
+            self.node_schema.result_schema = self.results.resulting_data
+
     def execute_local(self, flow_id: int, performance_mode: bool = False):
         """Executes the node's logic locally.
 
@@ -853,7 +868,8 @@ class FlowNode:
             self.node_stats.has_completed_last_run = False
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
-            if self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output":
+            if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
+                    and not (run_location == 'local' or SINGLE_FILE_MODE)):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
@@ -883,7 +899,14 @@ class FlowNode:
                     else:
                         self.results.errors = str(e)
                         node_logger.error(f'Error with running the node: {e}')
-
+            elif ((run_location == 'local' or SINGLE_FILE_MODE) and (not self.node_stats.has_run_with_current_setup
+                                                                     or self.node_template.node_group == "output")):
+                try:
+                    node_logger.info('Executing fully locally')
+                    self.execute_full_local(performance_mode)
+                except Exception as e:
+                    self.results.errors = str(e)
+                    node_logger.error(f'Error with running the node: {e}')
             else:
                 node_logger.info('Node has already run, not running the node')
         else:

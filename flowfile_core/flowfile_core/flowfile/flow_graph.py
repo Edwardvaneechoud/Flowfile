@@ -11,6 +11,7 @@ from uuid import uuid1
 from copy import deepcopy
 from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
@@ -1491,7 +1492,7 @@ class FlowGraph:
         """
         self.flow_settings.execution_location = execution_location
 
-    def run_graph(self):
+    def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
         It determines the correct execution order, runs each node,
@@ -1524,6 +1525,8 @@ class FlowGraph:
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
+            if self.flow_settings.execution_location == 'local':
+                OFFLOAD_TO_WORKER.value = False
             for node in execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
