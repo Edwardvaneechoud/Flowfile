@@ -294,18 +294,3 @@ pipeline = (
 # View the complete pipeline
 ff.open_graph_in_editor(pipeline.flow_graph)
 ```
-
-## Error Handling
-
-```python
-# Handle write permissions and connection issues
-try:
-    df.write_parquet_to_cloud_storage(
-        "s3://protected-bucket/data.parquet",
-        connection_name="my-connection"
-    )
-except Exception as e:
-    print(f"Write failed: {e}")
-    # Fallback to local write
-    df.write_parquet("local_backup.parquet")
-```

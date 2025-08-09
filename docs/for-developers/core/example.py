@@ -192,3 +192,144 @@ def test_case():
     graph.run_graph()
 
     graph.get_node(3).results.resulting_data  # This now does not contain any data since the
+
+
+
+def test_new():
+
+    flow_settings_config = FlowGraphConfig(flow_id=1,
+        name="My ETL Pipeline",
+        execution_location='local',  # 'local', 'remote', or 'auto'
+        execution_mode='Development'
+                                           )
+    graph = FlowGraph(flow_settings=flow_settings_config)
+
+    print(graph)
+
+
+    print(graph.run_graph())
+
+    from flowfile_core.schemas import input_schema
+    from flowfile_core.schemas.transform_schema import FilterInput, BasicFilter, FunctionInput
+
+    # Add a data source
+    manual_input = input_schema.NodeManualInput(
+        flow_id=graph.flow_id,
+        node_id=1,
+        raw_data_format=input_schema.RawData.from_pylist([
+            {"name": "Alice", "age": 30, "city": "NYC"},
+            {"name": "Bob", "age": 25, "city": "LA"},
+            {"name": "Charlie", "age": 35, "city": "NYC"}
+        ])
+    )
+    graph.add_manual_input(manual_input)
+
+
+def test_another_implementation():
+    import flowfile as ff
+    raw_data = [
+        {"id": 1, "region": "North", "quantity": 10, "price": 150},
+        {"id": 2, "region": "South", "quantity": 5, "price": 300},
+        {"id": 3, "region": "East", "quantity": 8, "price": 200},
+        {"id": 4, "region": "West", "quantity": 12, "price": 100},
+        {"id": 5, "region": "North", "quantity": 20, "price": 250},
+        {"id": 6, "region": "South", "quantity": 15, "price": 400},
+        {"id": 7, "region": "East", "quantity": 18, "price": 350},
+        {"id": 8, "region": "West", "quantity": 25, "price": 500},]
+
+    from flowfile_core.flowfile.flow_graph import FlowGraph
+    graph: FlowGraph = ff.create_flow_graph(1)
+    df_1 = ff.FlowFrame(
+    raw_data, flow_graph=graph)
+    df_2 = df_1.with_columns(flowfile_formulas=['[quantity] * [price]'], output_column_names=["total"])
+    df_3 = df_2.filter(flowfile_formula="[total]>1500")
+    df_4 = df_3.group_by(['region']).agg([
+        ff.col("total").sum().alias("total_revenue"),
+        ff.col("total").mean().alias("total_quantity"),
+    ])
+    print(df_4.get_node_settings().setting_input)
+    # flow_id=1 node_id=5 cache_results=False pos_x=200.0 pos_y=200.0 is_setup=True description='Aggregate after grouping by "region"' user_id=None is_flow_output=False depending_on_id=4 groupby_input=GroupByInput(agg_cols=[AggColl(old_name='region', agg='groupby', new_name='region', output_type=None), AggColl(old_name='total', agg='sum', new_name='total_revenue', output_type=None), AggColl(old_name='total', agg='mean', new_name='total_quantity', output_type='Float64')])
+    df_5 = df_3.group_by([(ff.col("region").str.to_uppercase() + ff.lit("test"))]).agg(
+                         ff.col("total").sum().alias("total_revenue"),
+                         ff.col("total").mean().alias("total_quantity"),
+                         )
+    df_5.collect()
+    print(df_5.get_node_settings())
+    # Node id: 6 (polars_code)
+    print(df_5.get_node_settings().setting_input)
+    # flow_id=1 node_id=6 cache_results=False pos_x=0 pos_y=0 is_setup=True description="Aggregate after grouping by (pl.col('region').str.to_uppercase() + pl.lit('test'))" user_id=None is_flow_output=False depending_on_ids=[4] polars_code_input=PolarsCodeInput(polars_code="input_df.group_by([(pl.col('region').str.to_uppercase() + pl.lit('test'))], maintain_order=False).agg(pl.col('total').sum().alias('total_revenue'), pl.col('total').mean().alias('total_quantity'))")
+    # THIS IS THE OUTPUT OF THE NODE SETTINGS,
+    # IT CONVERTED TO POLARS CODE SINCE THERE IS NO MAPPING TO A UI COMPONENT
+
+
+def test_another():
+    import flowfile as ff
+    import polars as pl
+    breakpoint()
+    test = ff.col("signup_date").str.strptime(ff.Date, "%Y-%m-%d")
+    test.get_polars_code()
+    df =  ff.FlowFrame({
+            "customer_id": [1, 2, 3, 4, 5],
+            "status": ["active", "inactive", "active", "active", "inactive"],
+            "signup_date": ["2024-01-15", "2023-12-10", "2024-02-20", "2023-11-05", "2024-03-01"],
+            "customer_segment": ["premium", "basic", "premium", "basic", "premium"],
+            "text": ["This is a sample text with pattern", "Another text without it",
+                     "Pattern is here too", "No pattern here", "Just some random text"],
+            "revenue": [1000, 500, 1500, 300, 2000],
+            "quantity": [10, 5, 15, 3, 20],
+            "price": [100, 100, 100, 100, 100],
+            "total": [1000, 500, 1500, 300, 2000],
+            "count": [1, 2, 12, 112, 5]},)
+    df = df.with_columns(
+        flowfile_formulas=[
+            "[price] * [quantity]",
+            "[price] * 1.1",
+            "[total] / [count]"
+        ],
+        output_column_names=["revenue", "price_with_tax", "average"]
+    )
+    df = df.with_columns([
+        ff.col("text").str.to_uppercase().alias("name_upper"),
+        ff.col("text").str.slice(0, 3).alias("prefix"),
+        ff.col("text").str.contains("pattern").alias("has_pattern")
+    ])
+
+
+
+    raw_data = [
+        {"id": 1, "region": "North", "quantity": 10, "price": 150, "total": 1500},
+        {"id": 2, "region": "South", "quantity": 5, "price": 300, "total": 1500},
+        {"id": 3, "region": "East", "quantity": 8, "price": 200, "total": 1600},
+        {"id": 4, "region": "West", "quantity": 12, "price": 100, "total": 1200},
+        {"id": 5, "region": "North", "quantity": 20, "price": 250, "total": 5000},
+        {"id": 6, "region": "South", "quantity": 15, "price": 400, "total": 6000},
+        {"id": 7, "region": "East", "quantity": 18, "price": 350, "total": 6300},
+        {"id": 8, "region": "West", "quantity": 25, "price": 500, "total": 12500},
+    ]
+    df = ff.FlowFrame(
+        raw_data, flow_graph=df.flow_graph
+    )
+
+    df = df.with_columns([
+        ff.when(ff.col("price") > 100)
+        .then(ff.lit("Premium"))
+        .when(ff.col("price") > 50)
+        .then(ff.lit("Standard"))
+        .otherwise(ff.lit("Budget"))
+        .alias("tier")
+    ])
+
+    df.collect()
+
+    df = ff.FlowFrame({
+        "category": ["A", "B", "A", "B", "A"],
+        "value": [10, 20, 30, 40, 50],
+        "quantity": [1, 2, 3, 4, 5]
+    })
+
+    # Simple aggregation
+    result = df.group_by("category").agg([
+        ff.col("value").sum().alias("total_value"),
+        ff.col("value").var().alias("avg_value"),
+        ff.col("quantity").count().alias("count")
+    ])

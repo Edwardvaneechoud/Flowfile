@@ -24,7 +24,7 @@ print(type(df.data))  # <class 'polars.LazyFrame'>
 ### Key Properties of FlowFrame
 
 #### 1. Always Lazy Evaluation
-FlowFrame never loads your actual data into memory until you explicitly call `.collect()`. This means you can build complex transformations on massive datasets without consuming memory:
+A `FlowFrame` never loads your actual data into memory until you explicitly call `.collect()`. This means you can build complex transformations on massive datasets without consuming memory:
 
 ```python
 # None of this processes any data yet
@@ -78,7 +78,7 @@ print(f"After second filter: {len(df2.flow_graph.nodes)} nodes")
 # Both operations are tracked separately in the graph
 ```
 
-## FlowGraph: The Operation History
+## FlowGraph: The Pipeline's Blueprint
 
 ### What is FlowGraph?
 
@@ -208,6 +208,81 @@ transformed = df.with_columns([
 print("New schema:", transformed.schema)  # Shows new 'total' column immediately
 ```
 
+## Automatic Node Type Selection
+
+### UI Nodes vs Polars Code Nodes
+
+Flowfile intelligently determines whether an operation can be represented as a UI node or needs to fall back to a Polars code node. This happens automatically based on whether the operation has a corresponding UI component.
+
+```python
+import flowfile as ff
+
+raw_data = [
+    {"id": 1, "region": "North", "quantity": 10, "price": 150},
+    {"id": 2, "region": "South", "quantity": 5, "price": 300},
+    {"id": 3, "region": "East", "quantity": 8, "price": 200},
+    {"id": 4, "region": "West", "quantity": 12, "price": 100},
+    {"id": 5, "region": "North", "quantity": 20, "price": 250},
+    {"id": 6, "region": "South", "quantity": 15, "price": 400},
+    {"id": 7, "region": "East", "quantity": 18, "price": 350},
+    {"id": 8, "region": "West", "quantity": 25, "price": 500},
+]
+
+from flowfile_core.flowfile.flow_graph import FlowGraph
+graph: FlowGraph = ff.create_flow_graph(1)
+
+df_1 = ff.FlowFrame(raw_data, flow_graph=graph)
+df_2 = df_1.with_columns(flowfile_formulas=['[quantity] * [price]'], output_column_names=["total"])
+df_3 = df_2.filter(flowfile_formula="[total]>1500")
+
+# Simple group_by: Maps to UI node
+df_4 = df_3.group_by(['region']).agg([
+    ff.col("total").sum().alias("total_revenue"),
+    ff.col("total").mean().alias("total_quantity"),
+])
+
+print(df_4.get_node_settings().setting_input)
+# NodeGroupBy with groupby_input=GroupByInput(agg_cols=[...])
+# This creates a standard group_by node that appears in the UI
+
+# Complex group_by with expression: Falls back to Polars code
+df_5 = df_3.group_by([
+    (ff.col("region").str.to_uppercase() + ff.lit("test"))
+]).agg(
+    ff.col("total").sum().alias("total_revenue"),
+    ff.col("total").mean().alias("total_quantity"),
+)
+
+print(df_5.get_node_settings())
+# Node id: 6 (polars_code)  <-- Different node type!
+
+print(df_5.get_node_settings().setting_input)
+# polars_code_input=PolarsCodeInput(polars_code="input_df.group_by([...
+# The complex expression is preserved as raw Polars code
+```
+
+### Why This Matters
+
+This automatic fallback mechanism ensures:
+
+1. **No Limitations**: You can use any Polars expression, even if there's no UI representation
+2. **Best of Both Worlds**: Simple operations get visual nodes, complex ones preserve full expressiveness
+3. **Seamless Experience**: The API doesn't change—you write the same code regardless
+4. **Future-Proof**: As more UI components are added, existing code automatically benefits
+
+### How It Works
+
+When you call a method like `.group_by()`:
+
+1. Flowfile checks if the operation can be represented with existing UI node types
+2. If yes → Creates a specific node (e.g., `NodeGroupBy`) with structured settings
+3. If no → Creates a `polars_code` node that preserves the exact Polars expression
+
+This means:
+- **In the visual editor**: Simple operations show as configured nodes with forms, complex ones show as code blocks
+- **In execution**: Both types execute identically through Polars
+- **In the code**: You don't need to think about it—just write your transformations
+
 ## Practical Implications
 
 ### Memory Efficiency
@@ -287,6 +362,7 @@ assert sales_summary.flow_graph is product_summary.flow_graph
 
 ### 1. Use Descriptions for Complex Pipelines
 ```python
+import flowfile as ff
 pipeline = (
     ff.FlowFrame({
         "customer_id": [1, 2, 3, 4, 5],
@@ -313,25 +389,6 @@ pipeline = (
 ff.open_graph_in_editor(pipeline.flow_graph)
 ```
 
-### 3. Avoid Redundant Operations in Loops
-```python
-# ❌ Bad: Creates many duplicate nodes
-df = ff.FlowFrame({
-    "id": [1, 2, 3, 4, 5],
-    "value": [1, 2, 3, 4, 5]
-})
-for i in range(10):
-    df = df.filter(ff.col("value") > i)  # Creates 10 filter nodes!
-
-# ✅ Good: Build the condition first
-df = ff.FlowFrame({
-    "id": [1, 2, 3, 4, 5],
-    "value": [1, 2, 3, 4, 5]
-})
-final_threshold = 5
-df = df.filter(ff.col("value") > final_threshold)  # One filter node
-```
-
 ## Summary
 
 FlowFrame and FlowGraph work together to provide:
@@ -341,5 +398,6 @@ FlowFrame and FlowGraph work together to provide:
 - **Real-time feedback**: Instant schema prediction and error detection
 - **Seamless integration**: Switch between code and visual editing
 - **Polars compatibility**: 95% identical API with additional features
+- **Automatic adaptation**: Complex operations automatically fall back to code nodes
 
 Understanding this design helps you build efficient, maintainable data pipelines that scale from quick analyses to production ETL workflows.

@@ -69,10 +69,15 @@ nav:
   - Quickstart: quickstart.md
   - Building Flows: flows/building.md
   - Flowfile for Developers:
-    - Index:  flowfile_api/index.md
-    - Philosophy: flowfile_api/flowfile-for-developers.md
-    - Flowfile-api:
-        flowfile-core: flowfile_api/core/flowfile-core.md
+    - Introduction: for-developers/index.md
+    - Python API:
+        - Index: for-developers/python-api/index.md
+        - Design Concepts FlowFrame: for-developers/python-api/design-concepts.md
+
+    - Core Architecture & Concepts:
+        - Flowfile Core Api Reference: for-developers/core/python-api-reference.md
+        - The Core Philosophy: for-developers/flowfile-for-developers.md
+        - A Developer's Guide: for-developers/core/flowfile-core.md
 
   - Guides:
     - Overview: guides/index.md
