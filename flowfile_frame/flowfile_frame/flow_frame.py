@@ -1933,7 +1933,6 @@ class FlowFrame:
         all_input_expr_objects: List[Expr] = []
         pure_polars_expr_strings_for_wc: List[str] = []
         collected_raw_definitions: List[str] = []
-
         has_exprs_or_named_exprs = bool(exprs or named_exprs)
         if has_exprs_or_named_exprs:
             actual_exprs_to_process: List[Expr] = []
