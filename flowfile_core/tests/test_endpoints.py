@@ -293,6 +293,7 @@ def test_delete_connection_with_wrong_input():
 
 def test_run_error_flow_with_join():
     flow_id = create_join_graph()
+    breakpoint()
     data = get_join_data(flow_id, how='inner')
     flow = flow_file_handler.get_flow(flow_id)
     client.post("/update_settings/", json=data, params={"node_type": "join"})

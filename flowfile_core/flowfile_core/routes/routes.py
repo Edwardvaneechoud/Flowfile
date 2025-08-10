@@ -216,7 +216,7 @@ async def run_flow(flow_id: int, background_tasks: BackgroundTasks) -> JSONRespo
         if flow.flow_settings.is_running:
             raise HTTPException(422, 'Flow is already running')
         background_tasks.add_task(flow.run_graph)
-    return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_202_ACCEPTED)
+    return JSONResponse(content={"message": "Data started", "flow_id": flow_id}, status_code=status.HTTP_200_OK)
 
 
 @router.post('/flow/cancel/', tags=['editor'])
