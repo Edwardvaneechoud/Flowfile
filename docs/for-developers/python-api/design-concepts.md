@@ -2,6 +2,11 @@
 
 Understanding how FlowFrame and FlowGraph work together is key to mastering Flowfile. This guide explains the core design principles that make Flowfile both powerful and intuitive.
 
+!!! tip "Related Reading"
+    - **Practical Implementation**: See these concepts in action in our [Code to Flow guide](../../../guides/flowfile_frame_api.md)
+    - **Architecture Overview**: Learn about the system design in [Technical Architecture](../../../guides/technical_architecture.md)
+    - **Visual Building**: Compare with [Building Flows](../../../flows/building.md) visually
+
 ## FlowFrame: Always Lazy, Always Connected
 
 ### What is FlowFrame?
@@ -43,6 +48,9 @@ df = (
 result = df.collect()  # Everything executes at once, optimized
 ```
 
+!!! info "Performance Benefits"
+    This lazy evaluation is powered by Polars and explained in detail in our [Technical Architecture guide](../../../guides/technical_architecture.md#the-power-of-lazy-evaluation).
+
 #### 2. Connected to a DAG (Directed Acyclic Graph)
 Every FlowFrame has a reference to a FlowGraph that tracks every operation as a node:
 
@@ -55,6 +63,8 @@ df = ff.FlowFrame({
 print(df.flow_graph)  # Shows the graph this FlowFrame belongs to
 print(df.node_id)     # Shows which node in the graph this FlowFrame represents
 ```
+
+For a deeper understanding of how this DAG works internally, see [FlowGraph in the Core Guide](../core/flowfile-core.md#2-adding-a-node-where-settings-come-to-life).
 
 #### 3. Linear Operation Tracking
 Each operation creates a new node in the graph, even if you repeat the same operation:
@@ -97,6 +107,9 @@ print(f"Graph ID: {graph.flow_id}")
 print(f"Number of operations: {len(graph.nodes)}")
 print(f"Node connections: {graph.node_connections}")
 ```
+
+!!! note "API Reference"
+    For the complete FlowGraph API, see [FlowGraph Class Reference](../core/python-api-reference.md#flowfile_coreflowfileflow_graphflowgraph).
 
 ### How the DAG Works
 
@@ -184,6 +197,9 @@ result = (
 ff.open_graph_in_editor(result.flow_graph)
 ```
 
+!!! tip "Learn More"
+    See [Visual UI Integration](visual-ui.md) for details on launching and controlling the visual editor from Python.
+
 This opens a visual representation showing:
 - Each operation as a node
 - Data flow between operations  
@@ -207,6 +223,9 @@ transformed = df.with_columns([
 ])
 print("New schema:", transformed.schema)  # Shows new 'total' column immediately
 ```
+
+!!! info "How Schema Prediction Works"
+    Learn about the closure pattern that enables this in [The Magic of Closures](../flowfile-for-developers.md#schema-prediction-the-magic-of-closures).
 
 ## Automatic Node Type Selection
 
@@ -261,6 +280,9 @@ print(df_5.get_node_settings().setting_input)
 # The complex expression is preserved as raw Polars code
 ```
 
+!!! note "Contributing New Node Types"
+    Want to add UI support for more operations? See [Contributing](../flowfile-for-developers.md#contributing) for how to add new node types.
+
 ### Why This Matters
 
 This automatic fallback mechanism ensures:
@@ -306,6 +328,9 @@ large_pipeline = (
 # Only processes what's needed when you collect
 result = large_pipeline.collect()  # Optimized execution plan
 ```
+
+!!! tip "Performance Guide"
+    For more on optimization strategies, see [Execution Methods](../flowfile-for-developers.md#execution-methods) in our philosophy guide.
 
 ### Development vs Production
 The linear tracking is perfect for development but needs consideration for production:
@@ -389,6 +414,11 @@ pipeline = (
 ff.open_graph_in_editor(pipeline.flow_graph)
 ```
 
+!!! example "Complete Examples"
+    - **Database Pipeline**: See [PostgreSQL Integration](../../../guides/database_connectivity.md) for a real-world example
+    - **Cloud Pipeline**: Check [Cloud Storage Operations](cloud-connection-management.md) for S3 workflows
+    - **Export to Code**: Learn how your pipelines convert to pure Python in [Flow to Code](../../../guides/code_generator.md)
+
 ## Summary
 
 FlowFrame and FlowGraph work together to provide:
@@ -401,3 +431,11 @@ FlowFrame and FlowGraph work together to provide:
 - **Automatic adaptation**: Complex operations automatically fall back to code nodes
 
 Understanding this design helps you build efficient, maintainable data pipelines that scale from quick analyses to production ETL workflows.
+
+## Related Documentation
+
+- **[FlowFrame Operations](flowframe-operations.md)** - Available transformations and methods
+- **[Expressions](expressions.md)** - Column operations and formula syntax
+- **[Joins](joins.md)** - Combining datasets
+- **[Aggregations](aggregations.md)** - Group by and summarization
+- **[Visual UI Integration](visual-ui.md)** - Working with the visual editor
