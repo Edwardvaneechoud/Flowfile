@@ -32,6 +32,8 @@ Alternative bracket-based syntax for expressions:
 ```python
 df.filter(flowfile_formula="[price] > 100 AND [quantity] >= 10")
 ```
+Read more about the formula syntax here: [Flowfile Formula Syntax](expressions.md#flowfile-formula-syntax)
+Or try it out here: [Flowfile Formula Playground](https://polars-expr-transformer-playground-whuwbghlymon84t5ciewp3.streamlit.app/)
 
 ### Automatic Node Types
 Operations map to UI nodes when possible, otherwise fall back to `polars_code`:
@@ -48,3 +50,9 @@ Inspect and visualize the pipeline DAG:
 ```python
 ff.open_graph_in_editor(df.flow_graph)
 ```
+
+## 🏗️ Architecture Deep Dives
+
+For understanding how Flowfile works internally:
+- [**Core Architecture**](../core/flowfile-core.md) - FlowGraph, FlowNode, and FlowDataEngine internals
+- [**Design Philosophy**](../flowfile-for-developers.md) - The dual interface approach

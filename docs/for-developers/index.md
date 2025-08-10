@@ -1,4 +1,4 @@
-# **Flowfile Python API: For Developers**
+# **Flowfile: For Developers**
 
 Welcome to the developer documentation for Flowfile. This is the home for anyone who wants to build, manage, and understand data pipelines using Python, made with Flowfile.
 
@@ -6,6 +6,31 @@ Flowfile provides a high-performance, Polars-compatible API that is extended wit
 
 !!! info "If You Know Polars, You Know Flowfile" 
     Our API is designed to be a seamless extension of Polars. The majority of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
+
+
+## Prerequisites
+
+Before diving into the developer documentation:
+
+```bash
+# Install Flowfile
+pip install flowfile
+
+# For development/contributing
+git clone https://github.com/edwardvaneechoud/Flowfile
+cd Flowfile
+poetry install
+```
+
+**Required Knowledge:**
+- Python 3.10+
+- Basic familiarity with Polars or Pandas
+- Understanding of DataFrames and lazy evaluation (helpful but not required)
+
+**Optional but Helpful:**
+- Experience with Polars LazyFrames
+- Understanding of DAGs (Directed Acyclic Graphs)
+- Familiarity with Pydantic for data validation
 
 
 ## **Quick Start: Code-First ETL**
@@ -48,20 +73,20 @@ Flowfile is built on an architecture where the Python API and the visual editor 
 
 - **FlowGraph**: The central orchestrator that holds the complete definition of your pipeline—every node, setting, and connection.
 
-When you write `df.filter(...)`, you are programmatically constructing a FlowNode with specific settings. When a user drags a "Filter" node in the UI, they are creating the identical object. This **dual interface philosophy** means your work is never locked into one paradigm. Learn more about this in our [architectural deep dive](flowfile-for-developers.md).
+When you write `df.filter(...)`, you are programmatically constructing a FlowNode with specific settings. When a user drags a "Filter" node in the UI, they are creating the identical object. This **dual interface philosophy** means your work is never locked into one paradigm. Learn more about this in our [Bridge Code and Visual](flowfile-for-developers.md).
 
 
 ## **Key Features for Developers**
 
-- **Polars-Powered Performance:** Leverage the full speed of the Polars engine for all your data transformations. See our [technical architecture](../../guides/technical_architecture.md) for details on lazy evaluation.
+- **Polars-Powered Performance:** Leverage the full speed of the Polars engine for all your data transformations. See our [technical architecture](../guides/technical_architecture.md) for details on lazy evaluation.
 
 - **Seamless Visual Debugging:** Use `open_graph_in_editor()` at any point in your script to instantly see your pipeline's structure, inspect intermediate data schemas, and identify issues visually. [Learn more →](python-api/visual-ui.md)
 
 - **Integrated Cloud Connectors:** Read and write data from AWS S3 with simple, high-level functions, without worrying about the underlying connection logic. [See cloud storage guide →](python-api/cloud-connection-management.md)
 
-- **Secure Credential Management:** Handle database passwords and API keys securely using the built-in connection manager, which keeps secrets out of your code. [Database connectivity guide →](../../guides/database_connectivity.md)
+- **Secure Credential Management:** Handle database passwords and API keys securely using the built-in connection manager, which keeps secrets out of your code. [Database connectivity guide →](../guides/database_connectivity.md)
 
-- **Self-Documenting Pipelines:** The description parameter in every function annotates the corresponding node in the UI, making your pipelines understandable to your entire team. [Export to code guide →](../../guides/code_generator.md)
+- **Self-Documenting Pipelines:** The description parameter in every function annotates the corresponding node in the UI, making your pipelines understandable to your entire team. [Export to code guide →](../guides/code_generator.md)
 
 
 ## **Where to Go Next**

@@ -88,7 +88,13 @@ ff.open_graph_in_editor(
 ### Checking Server Status
 
 ```python
-from flowfile.api import is_flowfile_running
+# All server management functions are in flowfile.api
+from flowfile.api import (
+    is_flowfile_running,
+    start_flowfile_server_process, 
+    stop_flowfile_server_process,
+    get_auth_token
+)
 
 if is_flowfile_running():
     print("Server is running")
@@ -119,7 +125,6 @@ stop_flowfile_server_process()
 |----------|---------|-------------|
 | `FLOWFILE_HOST` | `127.0.0.1` | Host to bind server to |
 | `FLOWFILE_PORT` | `63578` | Port for the server |
-| `FLOWFILE_MODE` | `electron` | Enables browser auto-opening |
 | `FLOWFILE_MODULE_NAME` | `flowfile` | Module name to run |
 
 ### URLs and Endpoints

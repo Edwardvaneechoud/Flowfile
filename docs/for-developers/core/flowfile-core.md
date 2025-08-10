@@ -2,9 +2,18 @@
 
 Welcome! This guide is for developers who want to understand, use, and contribute to `flowfile-core`. We'll dive into the architecture, see how data flows, and learn how to build powerful data pipelines.
 
+!!! info "Looking for the API docs?"
+    - **[Python API Reference](../python-api/index.md)**: If you want to USE Flowfile
+    - **[Design Philosophy](../flowfile-for-developers.md)**: If you want to understand WHY Flowfile works this way
+    - **This page**: If you want to understand HOW Flowfile works internally
+
+!!! tip "New to Flowfile?"
+    If you're looking for the high-level Python API, start with the [Python API Overview](../python-api/index.md). This guide dives into the internal architecture.
+
 Ready? Let's build something!
 
 ---
+
 
 ## The Core Architecture
 
@@ -112,7 +121,7 @@ print(type(node))
 # <class 'flowfile_core.flowfile.flow_node.flow_node.FlowNode'>
 ```
 
-The `FlowNode` is the magic wrapper that makes your settings operational. It holds your original settings but also adds the machinery needed for execution.
+The `FlowNode` is the wrapper that makes your settings operational. It holds your original settings but also adds the machinery needed for execution.
 
 <details markdown="1">
 <summary>Peek inside the <code>FlowNode</code></summary>

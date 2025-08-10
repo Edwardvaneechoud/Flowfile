@@ -64,7 +64,7 @@ print(df.flow_graph)  # Shows the graph this FlowFrame belongs to
 print(df.node_id)     # Shows which node in the graph this FlowFrame represents
 ```
 
-For a deeper understanding of how this DAG works internally, see [FlowGraph in the Core Guide](../core/flowfile-core.md#2-adding-a-node-where-settings-come-to-life).
+For a deeper understanding of how this DAG works internally, see [FlowGraph in the Core Guide](../core/flowfile-core.md#2-adding-a-node-where-settings-come-to-life)).
 
 #### 3. Linear Operation Tracking
 Each operation creates a new node in the graph, even if you repeat the same operation:
@@ -109,7 +109,7 @@ print(f"Node connections: {graph.node_connections}")
 ```
 
 !!! note "API Reference"
-    For the complete FlowGraph API, see [FlowGraph Class Reference](../core/python-api-reference.md#flowfile_coreflowfileflow_graphflowgraph).
+    For the complete FlowGraph API, see [FlowGraph Class Reference](../core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph).
 
 ### How the DAG Works
 
@@ -225,7 +225,7 @@ print("New schema:", transformed.schema)  # Shows new 'total' column immediately
 ```
 
 !!! info "How Schema Prediction Works"
-    Learn about the closure pattern that enables this in [The Magic of Closures](../flowfile-for-developers.md#schema-prediction-the-magic-of-closures).
+    Learn about the closure pattern that enables this in [The Magic of Closures](../flowfile-for-developers.md#flowfile-the-use-of-closures).
 
 ## Automatic Node Type Selection
 

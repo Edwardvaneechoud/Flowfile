@@ -70,6 +70,7 @@ nav:
     - Introduction: for-developers/index.md
     - The Core Philosophy: for-developers/flowfile-for-developers.md
     - A Developer's Guide to the Core: for-developers/core/flowfile-core.md
+    - API Reference: for-developers/core/python-api-reference.md
     - Python API:
         - Overview: for-developers/python-api/index.md
         - Design Concepts: for-developers/python-api/design-concepts.md
@@ -82,7 +83,7 @@ nav:
         - Cloud Connections: for-developers/python-api/cloud-connection-management.md
         - Visual UI Integration: for-developers/python-api/visual-ui.md
         - Data Types: for-developers/python-api/data-types.md
-    - API Reference: for-developers/core/python-api-reference.md
+
   - Guides:
     - Overview: guides/index.md
     - Connect to Postgresql: guides/database_connectivity.md
