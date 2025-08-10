@@ -23,11 +23,13 @@ poetry install
 ```
 
 **Required Knowledge:**
+
 - Python 3.10+
 - Basic familiarity with Polars or Pandas
 - Understanding of DataFrames and lazy evaluation (helpful but not required)
 
 **Optional but Helpful:**
+
 - Experience with Polars LazyFrames
 - Understanding of DAGs (Directed Acyclic Graphs)
 - Familiarity with Pydantic for data validation
@@ -69,9 +71,9 @@ Want to see this visually? Check out our [Code to Flow guide](../guides/flowfile
 
 Flowfile is built on an architecture where the Python API and the visual editor are two interfaces to the exact same underlying objects: the FlowGraph and its FlowNodes.
 
-- **FlowFrame**: A wrapper around a Polars LazyFrame that automatically builds a FlowGraph as you chain operations.
+- **[FlowFrame](python-api/index.md)**: A wrapper around a Polars LazyFrame that automatically builds a FlowGraph as you chain operations.
 
-- **FlowGraph**: The central orchestrator that holds the complete definition of your pipeline—every node, setting, and connection.
+- **[FlowGraph](core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph)**: The central orchestrator that holds the complete definition of your pipeline—every node, setting, and connection.
 
 When you write `df.filter(...)`, you are programmatically constructing a FlowNode with specific settings. When a user drags a "Filter" node in the UI, they are creating the identical object. This **dual interface philosophy** means your work is never locked into one paradigm. Learn more about this in our [Bridge Code and Visual](flowfile-for-developers.md).
 
