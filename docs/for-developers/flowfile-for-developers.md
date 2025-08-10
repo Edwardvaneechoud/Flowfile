@@ -501,7 +501,7 @@ print(plan)
 ### Service Architecture
 
 ```mermaid
-graph TB
+graph LR
     subgraph "Frontend"
         A[Designer<br/>Vue/Electron]
     end
