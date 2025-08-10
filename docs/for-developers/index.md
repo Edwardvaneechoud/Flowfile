@@ -5,7 +5,7 @@ Welcome to the developer documentation for Flowfile. This is the home for anyone
 Flowfile provides a high-performance, Polars-compatible API that is extended with powerful features for visual integration, cloud connectivity, and production-grade ETL. It's designed for developers who love the speed and expressiveness of code but want the clarity and introspection of a visual tool.
 
 !!! info "If You Know Polars, You Know Flowfile" 
-    Our API is designed to be a seamless extension of Polars. Over 95% of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
+    Our API is designed to be a seamless extension of Polars. The majority of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
 
 
 ## **Quick Start: Code-First ETL**
@@ -38,7 +38,7 @@ results_df = processed_sales.collect()
 print(results_df)
 ```
 
-Want to see this visually? Check out our [Code to Flow guide](../../guides/flowfile_frame_api.md) to see how this code automatically creates a visual pipeline.
+Want to see this visually? Check out our [Code to Flow guide](../guides/flowfile_frame_api.md) to see how this code automatically creates a visual pipeline.
 
 ## **The Core Philosophy: Code and UI are the Same Thing**
 
@@ -79,14 +79,14 @@ When you write `df.filter(...)`, you are programmatically constructing a FlowNod
 ### 💡 **Deep Dives**
 - **[Core Architecture](core/flowfile-core.md)** - How FlowGraph, FlowNode, and FlowDataEngine work together
 - **[Dual Interface Philosophy](flowfile-for-developers.md)** - The design that bridges code and visual interfaces
-- **[Technical Architecture](../../guides/technical_architecture.md)** - System design and performance optimizations
+- **[Technical Architecture](../guides/technical_architecture.md)** - System design and performance optimizations
 
 ### 🔧 **Integration Guides**
 - **[Visual UI Integration](python-api/visual-ui.md)** - Launch and control the visual editor from Python
 - **[Cloud Connections](python-api/cloud-connection-management.md)** - Manage S3 and cloud storage connections
-- **[Database Connectivity](../../guides/database_connectivity.md)** - Connect to PostgreSQL and other databases
+- **[Database Connectivity](../guides/database_connectivity.md)** - Connect to PostgreSQL and other databases
 
 ### 🎯 **Practical Examples**
-- **[Code to Flow](../../guides/flowfile_frame_api.md)** - Build pipelines in code, visualize instantly
-- **[Flow to Code](../../guides/code_generator.md)** - Export visual pipelines as Python code
-- **[Building Flows Visually](../../flows/building.md)** - Create pipelines with the drag-and-drop interface
+- **[Code to Flow](../guides/flowfile_frame_api.md)** - Build pipelines in code, visualize instantly
+- **[Flow to Code](../guides/code_generator.md)** - Export visual pipelines as Python code
+- **[Building Flows Visually](../flows/building.md)** - Create pipelines with the drag-and-drop interface

@@ -1,6 +1,6 @@
 # Flowfile for Developers
 
-<summary><strong>📋 TL;DR - Key Takeaways</strong></summary>
+<strong>📋 TL;DR - Key Takeaways</strong>
 
 !!! abstract "Key Takeaways"
     - **Dual Interface Philosophy**: Write code like `df.filter().group_by()` OR use visual drag-and-drop—both create the same DAG
@@ -9,8 +9,7 @@
     - **Accidental Architecture**: Started as a UI project, discovered the settings approach perfectly bridges visual and code worlds
 
 
-<summary><strong>👥 Who Should Read This?</strong></summary>
-
+<strong>👥 Who Should Read This?</strong>
 !!! question "Target Audience"
     - **Potential Contributors** wanting to understand the codebase structure before diving in
     - **Power Users** curious about what happens under the hood when they build pipelines

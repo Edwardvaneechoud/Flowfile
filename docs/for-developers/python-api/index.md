@@ -16,7 +16,7 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 - [**Joins**](joins.md) - Combining datasets
 
 ### 🔐 Flowfile-Specific Features
-- [**Cloud Storage**](cloud-connection-management.md) - S3, Azure ADLS integration
+- [**Cloud Storage**](cloud-connection-management.md) - S3 integration
 - [**visualize pipelines**](visual-ui.md) - Working with the visual editor
 
 ## 🔑 Key Extensions to Polars
