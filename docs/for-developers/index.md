@@ -75,7 +75,7 @@ Flowfile is built on an architecture where the Python API and the visual editor 
 
 - **[FlowGraph](core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph)**: The central orchestrator that holds the complete definition of your pipeline—every node, setting, and connection.
 
-When you write `df.filter(...)`, you are programmatically constructing a FlowNode with specific settings. When a user drags a "Filter" node in the UI, they are creating the identical object. This **dual interface philosophy** means your work is never locked into one paradigm. Learn more about this in our [Bridge Code and Visual](flowfile-for-developers.md).
+When you write `df.filter(...)`, you are programmatically constructing a FlowNode with specific settings and attaching it to the FlowGraph. When a user drags a "Filter" node in the UI, they are creating the identical object. This **dual interface philosophy** means your work is never locked into one paradigm. Learn more about this in our [Bridge Code and Visual](flowfile-for-developers.md).
 
 
 ## **Key Features for Developers**
