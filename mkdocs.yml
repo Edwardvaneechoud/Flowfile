@@ -73,7 +73,8 @@ nav:
     - Python API:
         - Overview: for-developers/python-api/index.md
         - Design Concepts: for-developers/python-api/design-concepts.md
-        - Reading & Writing Data: for-developers/python-api/reading-data.md
+        - Reading Data: for-developers/python-api/reading-data.md
+        - Writing data: for-developers/python-api/writing-data.md
         - DataFrame Operations: for-developers/python-api/flowframe-operations.md
         - Expressions: for-developers/python-api/expressions.md
         - Joins: for-developers/python-api/joins.md
