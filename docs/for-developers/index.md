@@ -2,7 +2,8 @@
 
 Welcome to the developer documentation for Flowfile. This is the home for anyone who wants to build, manage, and understand data pipelines using Python, made with Flowfile.
 
-Flowfile provides a high-performance, Polars-compatible API that is extended with powerful features for visual integration, cloud connectivity, and production-grade ETL. It's designed for developers who love the speed and expressiveness of code but want the clarity and introspection of a visual tool.
+Flowfile provides a high-performance, Polars-compatible API that is extended visual integration, cloud connectivity, and analytics.
+It's for analytics developers, business users and engineers who want to create an unified way of working of doing analytics.
 
 !!! info "If You Know Polars, You Know Flowfile" 
     Our API is designed to be a seamless extension of Polars. Over 95% of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
