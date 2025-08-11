@@ -301,6 +301,105 @@
         .code-dot:nth-child(2) { background: #ffbd2e; }
         .code-dot:nth-child(3) { background: #28ca42; }
 
+        /* Developer Section Styles */
+        .developer-section {
+            padding: 4rem 2rem;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+        }
+
+        .approach-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin: 3rem 0;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        @media (max-width: 768px) {
+            .approach-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .approach-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .approach-card h3 {
+            color: var(--md-primary-fg-color);
+            margin-bottom: 1.5rem;
+            font-size: 1.4rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .approach-card ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .approach-card li {
+            padding: 0.5rem 0;
+            color: rgba(255,255,255,0.9);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .approach-card li::before {
+            content: '✓';
+            color: var(--md-primary-fg-color);
+            font-weight: bold;
+        }
+
+        .approach-card pre {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            margin: 0;
+        }
+
+        .approach-card code {
+            color: #f8f8f2;
+        }
+
+        .developer-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 3rem 0;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .developer-feature {
+            background: rgba(255,255,255,0.05);
+            padding: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .developer-feature h4 {
+            color: var(--md-primary-fg-color);
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+
+        .developer-feature p {
+            color: rgba(255,255,255,0.7);
+            font-size: 0.95rem;
+            margin: 0;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .hero-title {
@@ -370,6 +469,14 @@
             max-width: 700px;
             margin: 0 auto 3rem;
         }
+
+        .section-title-white {
+            color: white !important;
+        }
+
+        .section-subtitle-white {
+            color: rgba(255,255,255,0.8) !important;
+        }
     </style>
 </head>
 <body>
@@ -394,6 +501,12 @@
                         <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
                     </svg>
                     <span>View on GitHub</span>
+                </a>
+                <a href="for-developers/" class="hero-button hero-button-primary">
+                    <span>For developers</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                    </svg>
                 </a>
             </div>
         </div>
@@ -460,62 +573,105 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="nodes/" class="feature-card fade-in feature-link">
-                <div class="feature-icon">📊</div>
-                <h3 class="feature-title">Rich Transformations</h3>
+            <a href="for-developers/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">👩‍💻</div>
+                <h3 class="feature-title">Developer API</h3>
                 <p class="feature-description">
-                    Fuzzy matching, pivot operations, custom formulas, and more.
-                    Handle complex data transformations with ease.
+                    Full Python API with Polars compatibility. Build pipelines programmatically and seamlessly switch between code and visual editing.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
         </div>
     </section>
 
-    <!-- Code Example -->
-    <section style="padding: 2rem;">
-        <h2 class="section-title">Build Pipelines Your Way</h2>
-        <p class="section-subtitle">Use the visual designer or write code - seamlessly switch between both</p>
+    <!-- Developer Section -->
+    <section class="developer-section">
+        <div style="max-width: 1200px; margin: 0 auto;">
+            <h2 class="section-title section-title-white">Build Pipelines Your Way</h2>
+            <p class="section-subtitle section-subtitle-white">
+                Use the visual designer for exploration or write code for automation - seamlessly switch between both
+            </p>
 
-        <div class="code-preview">
-            <div class="code-header">
-                <div class="code-dot"></div>
-                <div class="code-dot"></div>
-                <div class="code-dot"></div>
+            <div class="approach-grid">
+                <!-- Visual Approach -->
+                <div class="approach-card">
+                    <h3><span>📊</span> Visual Approach</h3>
+                    <ul>
+                        <li>Drag and drop nodes to build workflows</li>
+                        <li>Configure transformations with intuitive forms</li>
+                        <li>Preview data at each step instantly</li>
+                        <li>Export your pipeline as Python code</li>
+                        <li>Perfect for exploration and prototyping</li>
+                    </ul>
+                </div>
+
+                <!-- Code Approach -->
+                <div class="approach-card">
+                    <h3><span>🐍</span> Code Approach</h3>
+                    <pre><code>import flowfile as ff
+
+df = ff.read_csv("data.csv")
+result = df.filter(
+    ff.col("amount") > 1000
+).group_by("region").agg(
+    ff.col("amount").sum()
+)
+
+# Visualize your pipeline
+ff.open_graph_in_editor(result.flow_graph)</code></pre>
+                </div>
             </div>
-            <pre><code class="language-python">import flowfile as ff
-from flowfile import col, open_graph_in_editor
 
-# Create a data pipeline
-df = ff.from_dict({
-    "id": [1, 2, 3, 4, 5],
-    "category": ["A", "B", "A", "C", "B"],
-    "value": [100, 200, 150, 300, 250]
-})
 
-# Process the data
-result = df.filter(col("value") > 150).with_columns([
-    (col("value") * 2).alias("double_value")
-])
-
-# Open the graph in the visual editor
-open_graph_in_editor(result.flow_graph)</code></pre>
+            <div class="hero-buttons">
+                <a href="for-developers/" class="hero-button hero-button-primary">
+                    <span>Developer Documentation</span>
+                </a>
+                <a href="quickstart.html" class="hero-button hero-button-secondary">
+                    <span>Quick Start Guide</span>
+                </a>
+            </div>
         </div>
     </section>
 
     <!-- Call to Action -->
-    <section style="text-align: center; padding: 4rem 2rem; background: var(--md-code-bg-color);">
-        <h2 class="section-title">Ready to Transform Your Data Workflow?</h2>
-        <div class="hero-buttons" style="margin-top: 2rem;">
-            <a href="quickstart" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
-                Start Building
-            </a>
-            <a href="guides/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
-                View Guides
-            </a>
-        </div>
-    </section>
+<section style="text-align: center; padding: 4rem 2rem; background: var(--md-code-bg-color);">
+    <h2 class="section-title">See It For Yourself</h2>
+    <p class="section-subtitle" style="max-width: 600px; margin: 0 auto 2rem;">
+        Start rediscovering how we bridge the gap between business users and technical users.
+    </p>
 
+    <div style="display: flex; justify-content: center; gap: 3rem; margin: 3rem 0; flex-wrap: wrap;">
+        <a href="quickstart.html" style="text-align: center; text-decoration: none; color: inherit; transition: transform 0.2s; display: block;"
+           onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+            <div style="font-size: 2.5rem; color: var(--md-primary-fg-color); font-weight: bold;">5 min</div>
+            <div style="color: var(--md-default-fg-color--light);">to first pipeline</div>
+        </a>
+        <a href="for-developers/python-api/" style="text-align: center; text-decoration: none; color: inherit; transition: transform 0.2s; display: block;"
+           onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+            <div style="font-size: 2.5rem; color: var(--md-primary-fg-color); font-weight: bold;">100%</div>
+            <div style="color: var(--md-default-fg-color--light);">Familiar API</div>
+        </a>
+        <a href="guides/code_generator.html" style="text-align: center; text-decoration: none; color: inherit; transition: transform 0.2s; display: block;"
+           onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+            <div style="font-size: 2.5rem; color: var(--md-primary-fg-color); font-weight: bold;">0</div>
+            <div style="color: var(--md-default-fg-color--light);">vendor lock-in</div>
+        </a>
+    </div>
+
+    <div class="hero-buttons" style="margin-top: 2rem;">
+        <a href="quickstart.html" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
+            <span>Try Interactive Tutorial</span>
+        </a>
+        <a href="guides/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
+            <span>Browse Examples</span>
+        </a>
+    </div>
+
+    <p style="margin-top: 2rem; color: var(--md-default-fg-color--light); font-size: 0.9rem;">
+        Free, <a href="https://github.com/edwardvaneechoud/Flowfile" style="color: var(--md-primary-fg-color); text-decoration: none;">open-source</a> and customizable
+    </p>
+</section>
     <!-- Scripts -->
     <script>
         // Add intersection observer for fade-in animations

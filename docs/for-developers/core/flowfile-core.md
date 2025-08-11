@@ -2,9 +2,18 @@
 
 Welcome! This guide is for developers who want to understand, use, and contribute to `flowfile-core`. We'll dive into the architecture, see how data flows, and learn how to build powerful data pipelines.
 
+!!! info "Looking for the API docs?"
+    - **[Python API Reference](../python-api/index.md)**: If you want to USE Flowfile
+    - **[Design Philosophy](../flowfile-for-developers.md)**: If you want to understand WHY Flowfile works this way
+    - **This page**: If you want to understand HOW Flowfile works internally
+
+!!! tip "New to Flowfile?"
+    If you're looking for the high-level Python API, start with the [Python API Overview](../python-api/index.md). This guide dives into the internal architecture.
+
 Ready? Let's build something!
 
 ---
+
 
 ## The Core Architecture
 
@@ -41,6 +50,8 @@ print(graph)
 
 <details markdown="1">
 <summary>Output of <code>print(graph)</code></summary>
+
+```
 FlowGraph(
 Nodes: {}                                #<-- An empty dictionary. No nodes yet!
 
@@ -58,12 +69,14 @@ Settings:                                #<-- The FlowSettings object you provid
   -is_running: False                     #<-- Is the flow currently running?
   -is_canceled: False                    #<-- Was a cancellation requested?
 )
+```
 </details>
 
 ```python 
 print(graph.run_graph())
+# flow_id=1 start_time=datetime.datetime(...) end_time=datetime.datetime(...) success=True nodes_completed=0 number_of_nodes=0 node_step_result=[]
+
 ```
-```# flow_id=1 start_time=datetime.datetime(...) end_time=datetime.datetime(...) success=True nodes_completed=0 number_of_nodes=0 node_step_result=[]```
 
 
 It runs successfully but does nothing, as expected. The FlowGraph's job is to:
@@ -108,7 +121,7 @@ print(type(node))
 # <class 'flowfile_core.flowfile.flow_node.flow_node.FlowNode'>
 ```
 
-The `FlowNode` is the magic wrapper that makes your settings operational. It holds your original settings but also adds the machinery needed for execution.
+The `FlowNode` is the wrapper that makes your settings operational. It holds your original settings but also adds the machinery needed for execution.
 
 <details markdown="1">
 <summary>Peek inside the <code>FlowNode</code></summary>

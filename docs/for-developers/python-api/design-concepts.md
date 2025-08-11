@@ -2,6 +2,11 @@
 
 Understanding how FlowFrame and FlowGraph work together is key to mastering Flowfile. This guide explains the core design principles that make Flowfile both powerful and intuitive.
 
+!!! tip "Related Reading"
+    - **Practical Implementation**: See these concepts in action in our [Code to Flow guide](../../guides/flowfile_frame_api.md)
+    - **Architecture Overview**: Learn about the system design in [Technical Architecture](../../guides/technical_architecture.md)
+    - **Visual Building**: Compare with [Building Flows](../../flows/building.md) visually
+
 ## FlowFrame: Always Lazy, Always Connected
 
 ### What is FlowFrame?
@@ -43,6 +48,9 @@ df = (
 result = df.collect()  # Everything executes at once, optimized
 ```
 
+!!! info "Performance Benefits"
+    This lazy evaluation is powered by Polars and explained in detail in our [Technical Architecture guide](../../guides/technical_architecture.md#the-power-of-lazy-evaluation).
+
 #### 2. Connected to a DAG (Directed Acyclic Graph)
 Every FlowFrame has a reference to a FlowGraph that tracks every operation as a node:
 
@@ -55,6 +63,8 @@ df = ff.FlowFrame({
 print(df.flow_graph)  # Shows the graph this FlowFrame belongs to
 print(df.node_id)     # Shows which node in the graph this FlowFrame represents
 ```
+
+For a deeper understanding of how this DAG works internally, see [FlowGraph in the Core Guide](../core/flowfile-core.md#2-adding-a-node-where-settings-come-to-life)).
 
 #### 3. Linear Operation Tracking
 Each operation creates a new node in the graph, even if you repeat the same operation:
@@ -97,6 +107,9 @@ print(f"Graph ID: {graph.flow_id}")
 print(f"Number of operations: {len(graph.nodes)}")
 print(f"Node connections: {graph.node_connections}")
 ```
+
+!!! note "API Reference"
+    For the complete FlowGraph API, see [FlowGraph Class Reference](../core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph).
 
 ### How the DAG Works
 
@@ -184,6 +197,9 @@ result = (
 ff.open_graph_in_editor(result.flow_graph)
 ```
 
+!!! tip "Learn More"
+    See [Visual UI Integration](visual-ui.md) for details on launching and controlling the visual editor from Python.
+
 This opens a visual representation showing:
 - Each operation as a node
 - Data flow between operations  
@@ -208,58 +224,82 @@ transformed = df.with_columns([
 print("New schema:", transformed.schema)  # Shows new 'total' column immediately
 ```
 
+!!! info "How Schema Prediction Works"
+    Learn about the closure pattern that enables this in [The Magic of Closures](../flowfile-for-developers.md#flowfile-the-use-of-closures).
+
 ## Automatic Node Type Selection
 
 ### UI Nodes vs Polars Code Nodes
 
-Flowfile intelligently determines whether an operation can be represented as a UI node or needs to fall back to a Polars code node. This happens automatically based on whether the operation has a corresponding UI component.
+Flowfile intelligently determines whether an operation can be represented as a UI node or needs to fall back to a Polars code node. This happens automatically based on the complexity of your operation.
+
+#### When You Get UI Nodes (Visual Components)
+
+Simple, straightforward operations map to dedicated UI nodes with configuration forms:
 
 ```python
 import flowfile as ff
 
-raw_data = [
-    {"id": 1, "region": "North", "quantity": 10, "price": 150},
-    {"id": 2, "region": "South", "quantity": 5, "price": 300},
-    {"id": 3, "region": "East", "quantity": 8, "price": 200},
-    {"id": 4, "region": "West", "quantity": 12, "price": 100},
-    {"id": 5, "region": "North", "quantity": 20, "price": 250},
-    {"id": 6, "region": "South", "quantity": 15, "price": 400},
-    {"id": 7, "region": "East", "quantity": 18, "price": 350},
-    {"id": 8, "region": "West", "quantity": 25, "price": 500},
-]
+df = ff.FlowFrame({
+    "region": ["North", "South", "East"],
+    "amount": [1000, 1500, 800]
+})
 
-from flowfile_core.flowfile.flow_graph import FlowGraph
-graph: FlowGraph = ff.create_flow_graph(1)
+# Simple filter → Creates a "Filter" UI node
+filtered = df.filter(ff.col("amount") > 1000)
 
-df_1 = ff.FlowFrame(raw_data, flow_graph=graph)
-df_2 = df_1.with_columns(flowfile_formulas=['[quantity] * [price]'], output_column_names=["total"])
-df_3 = df_2.filter(flowfile_formula="[total]>1500")
-
-# Simple group_by: Maps to UI node
-df_4 = df_3.group_by(['region']).agg([
-    ff.col("total").sum().alias("total_revenue"),
-    ff.col("total").mean().alias("total_quantity"),
-])
-
-print(df_4.get_node_settings().setting_input)
-# NodeGroupBy with groupby_input=GroupByInput(agg_cols=[...])
-# This creates a standard group_by node that appears in the UI
-
-# Complex group_by with expression: Falls back to Polars code
-df_5 = df_3.group_by([
-    (ff.col("region").str.to_uppercase() + ff.lit("test"))
-]).agg(
-    ff.col("total").sum().alias("total_revenue"),
-    ff.col("total").mean().alias("total_quantity"),
+# Simple group_by with column names → Creates a "Group By" UI node  
+grouped = df.group_by("region").agg(
+    ff.col("amount").sum().alias("total")
 )
 
-print(df_5.get_node_settings())
-# Node id: 6 (polars_code)  <-- Different node type!
-
-print(df_5.get_node_settings().setting_input)
-# polars_code_input=PolarsCodeInput(polars_code="input_df.group_by([...
-# The complex expression is preserved as raw Polars code
+# When opened in the UI, these show as configured visual nodes
+# with forms for editing parameters
 ```
+
+#### When You Get Polars Code Nodes (Code Blocks)
+
+Complex expressions that don't have a direct UI representation fall back to code nodes:
+
+```python
+# Complex group_by with expression → Falls back to "polars_code" node
+complex_grouped = df.group_by([
+    ff.col("region").str.to_uppercase() + ff.lit("_REGION")
+]).agg(
+    ff.col("amount").sum().alias("total")
+)
+
+# Complex filter with multiple conditions → Falls back to "polars_code" node
+complex_filtered = df.filter(
+    (ff.col("amount") > 1000) & 
+    (ff.col("region").str.contains("orth"))
+)
+
+# When opened in the UI, these show as code blocks
+# preserving your exact Polars expressions
+```
+
+#### Checking Node Types
+
+You can inspect what type of node was created:
+
+```python
+# Simple operation
+simple = df.filter(ff.col("amount") > 1000)
+print(simple.get_node_settings())
+# Output: Node id: 2 (filter)  ← UI node type
+
+# Complex operation  
+complex = df.filter(
+    (ff.col("amount") > 1000) & 
+    (ff.col("region").str.to_uppercase() == "NORTH")
+)
+print(complex.get_node_settings())
+# Output: Node id: 3 (polars_code)  ← Code node type
+```
+
+!!! note "Contributing New Node Types"
+    Want to add UI support for more operations? See [Contributing](../flowfile-for-developers.md#contributing) for how to add new node types.
 
 ### Why This Matters
 
@@ -306,6 +346,9 @@ large_pipeline = (
 # Only processes what's needed when you collect
 result = large_pipeline.collect()  # Optimized execution plan
 ```
+
+!!! tip "Performance Guide"
+    For more on optimization strategies, see [Execution Methods](../flowfile-for-developers.md#execution-methods) in our philosophy guide.
 
 ### Development vs Production
 The linear tracking is perfect for development but needs consideration for production:
@@ -389,6 +432,11 @@ pipeline = (
 ff.open_graph_in_editor(pipeline.flow_graph)
 ```
 
+!!! example "Complete Examples"
+    - **Database Pipeline**: See [PostgreSQL Integration](../../guides/database_connectivity.md) for a real-world example
+    - **Cloud Pipeline**: Check [Cloud Storage Operations](cloud-connection-management.md) for S3 workflows
+    - **Export to Code**: Learn how your pipelines convert to pure Python in [Flow to Code](../../guides/code_generator.md)
+
 ## Summary
 
 FlowFrame and FlowGraph work together to provide:
@@ -397,7 +445,15 @@ FlowFrame and FlowGraph work together to provide:
 - **Complete lineage**: Every operation is tracked and visualizable  
 - **Real-time feedback**: Instant schema prediction and error detection
 - **Seamless integration**: Switch between code and visual editing
-- **Polars compatibility**: 95% identical API with additional features
+- **Polars compatibility**: Very identical API with additional features
 - **Automatic adaptation**: Complex operations automatically fall back to code nodes
 
 Understanding this design helps you build efficient, maintainable data pipelines that scale from quick analyses to production ETL workflows.
+
+## Related Documentation
+
+- **[FlowFrame Operations](flowframe-operations.md)** - Available transformations and methods
+- **[Expressions](expressions.md)** - Column operations and formula syntax
+- **[Joins](joins.md)** - Combining datasets
+- **[Aggregations](aggregations.md)** - Group by and summarization
+- **[Visual UI Integration](visual-ui.md)** - Working with the visual editor

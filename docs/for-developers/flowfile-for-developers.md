@@ -1,28 +1,31 @@
-# Flowfile for Developers
+# The Architecture Story: How Flowfile Bridges Code and Visual Worlds
 
-<summary><strong>📋 TL;DR - Key Takeaways</strong></summary>
+<strong>📋 TL;DR - Key Takeaways</strong>
 
-!!! abstract "Key Takeaways"
-    - **Dual Interface Philosophy**: Write code like `df.filter().group_by()` OR use visual drag-and-drop—both create the same DAG
-    - **Settings-Driven Design**: Every transformation is a Pydantic model that drives both UI and code interfaces
-    - **Separation of Concerns**: DAG defines structure, Settings configure behavior, FlowDataEngine handles execution
-    - **Accidental Architecture**: Started as a UI project, discovered the settings approach perfectly bridges visual and code worlds
+!!! abstract "Key Points"
+    - **Two ways to build pipelines**: Write Python code or use drag-and-drop UI - both create the same thing
+    - **Settings-based design**: Every transformation is just a configuration object (Pydantic model)
+    - **Clear separation**: Graph structure, settings, and execution are handled separately
+    - **Happy accident**: Started as a UI project, ended up with an architecture that works great for both UI and code
 
 
-<summary><strong>👥 Who Should Read This?</strong></summary>
+!!! info "Navigation"
+    - **This page**: Architecture overview and design decisions
+    - **[Core Developer Guide](core/flowfile-core.md)**: Technical implementation details
+    - **[Python API](python-api/index.md)**: How to use Flowfile in your projects
 
+<strong>👥 Who Should Read This?</strong>
 !!! question "Target Audience"
-    - **Potential Contributors** wanting to understand the codebase structure before diving in
-    - **Power Users** curious about what happens under the hood when they build pipelines
-    - **Software Architects** interested in dual-interface design patterns and settings-driven architectures
-    - **Anyone** building data platforms who wants to learn from our journey of bridging visual and code interfaces
+    - Contributors who want to understand the codebase
+    - Users curious about how things work internally
+    - Developers building similar dual-interface tools
+    - Anyone interested in bridging UI and code approaches
 
+## The Problem We Solved
 
-## The Dual Interface Philosophy
+Most data tools force you to choose: either use a visual interface (easy but limited) or write code (powerful but complex). We wanted both in the same tool.
 
-Every data platform faces a fundamental challenge: how to bridge the gap between visual, no-code pipeline builders and the power of a code-first, developer-centric environment. Visual tools excel at introspection and accessibility, while code offers expressiveness and speed.
-
-Flowfile is built on a simple but powerful idea: **why not have both?**
+The challenge: How do you make a visual drag-and-drop interface that creates the exact same pipelines as writing code?
 
 The platform started with a clean, settings-based backend where every transformation is a declarative configuration object. This design is perfect for a UI. But developers don't think in configuration objects—they think in code:
 
@@ -31,21 +34,21 @@ The platform started with a clean, settings-based backend where every transforma
 df.filter(col("price") > 100).group_by("region").sum()
 ```
 
-The breakthrough came from realizing how easy it is to bridge these two worlds. A fluent API method can simply construct the same settings object that the UI creates. Both interfaces become different ways to build the same underlying configuration, giving developers the expressiveness they want while maintaining the structured settings the UI needs.
+The breakthrough came from realizing that the Polars API would be able to convert to our settings object and therefore creating the same settings object that the UI creates. Both interfaces become different ways to build the same underlying configuration, giving developers the expressiveness they want while maintaining the structured settings the UI needs.
 
-## The Evolution: From UI to Unified Platform
+## The result
 
-!!! info "The Accidental Architecture"
-    Flowfile's elegant architecture wasn't planned from the beginning. The project initially focused on building a frontend UI with drag-and-drop functionality, which required well-structured node configurations that clearly exposed settings. 
-    
-    This design choice—made purely for UI clarity—turned out to be the perfect foundation for integrating with Polars' lazy evaluation model. Since Polars handles 90% of the compute engine anyway, the settings-based approach became the bridge between visual and code interfaces.
+!!! abstract "How It Actually Happened"
+    This wasn't some grand plan. I started building a drag-and-drop UI and needed a clean way to configure nodes. Settings objects made sense for the UI. But the development of Flowfile has never been a planned approach, it was just about building what sounded _fun_.
+    Later, when looking at other projects, I realized I could just have the API methods create the same settings objects, well that is **_fun_**. Suddenly there were two equivalent interfaces almost by accident,.
+    Since Polars does the actual data processing, our settings just configure what Polars should do. This turned out to be an easy abstraction layer that showed it's potential from the start.
 
 The result is a Python API that constructs the exact same configuration objects as the visual editor:
 
-- **The Python API** translates directly to a `NodeFilter` object
+- **The Python API** `df.filter(...)`  translates directly to a `NodeFilter` object
 - **The Visual Editor** creates an identical `NodeFilter` object through clicks and drags
 
-Both interfaces are different ways to build the same Directed Acyclic Graph (DAG), providing the intuitive experience of a code-native API alongside the introspection and accessibility of a visual editor—all powered by a single, unified execution engine.
+Both interfaces are different ways to build the same Directed Acyclic Graph (DAG), providing the experience of a code-native API combined with the accessibility of a visual editor.
 
 ## One Pipeline, Two Ways
 
@@ -72,6 +75,7 @@ raw_data = [
 
 **Code:**
 ```python
+import flowfile as ff
 from flowfile_core.flowfile.flow_graph import FlowGraph
 
 graph: FlowGraph = ff.create_flow_graph()
@@ -91,6 +95,9 @@ df_4 = df_3.group_by(['region']).agg([
     ff.col("total").mean().alias("avg_transaction"),
 ])
 ```
+
+<details markdown="1">
+<summary>Inspecting the graph</summary>
 
 **Graph Introspection:**
 ```python
@@ -118,6 +125,7 @@ print(graph.get_node(3).node_inputs)
 print(graph.get_node(4).setting_input)
 print(graph.get_node(4).node_type)
 ```
+</details>
 
 ### Method 2: Direct Graph Construction (What Happens Internally)
 
@@ -192,8 +200,10 @@ print([s.get_minimal_field_info() for s in flow.get_node(4).schema])
 ```
 
 <details markdown="1">
+
 <summary>Both methods produce the exact same Polars execution plan:</summary>
 This is the polars query plan generated by both methods:
+
     ```
     AGGREGATE[maintain_order: false]
       [col("total").sum().alias("total_revenue"), 
@@ -214,7 +224,7 @@ This is the polars query plan generated by both methods:
 
 #### 1. The DAG is Everything
 
-Every Flowfile pipeline is a Directed Acyclic Graph where:
+Every Flowfile pipeline is a Directed Acyclic Graph where. This is captured in the  [FlowGraph](core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph)
 
 - **Nodes** are transformations (filter, join, group_by, etc.)
 - **Edges** represent data flow between nodes
@@ -223,6 +233,8 @@ Every Flowfile pipeline is a Directed Acyclic Graph where:
 #### 2. Settings Drive Everything
 
 Every node is composed of two parts: the **Node class** (a Pydantic BaseModel) that holds metadata and the **Settings** (often dataclasses) that configure the transformation:
+
+Read more about [Nodes](core/python-api-reference.md#flowfile_core.schemas.input_schema) and the [transformations](core/python-api-reference.md#flowfile_core.schemas.transform_schema)
 
 ```python
 # The Node: metadata and graph position
@@ -266,7 +278,7 @@ class AggColl:
 
 #### 3. Execution is Everything
 
-The `FlowDataEngine` orchestrates everything about execution. While the DAG defines structure and settings define configuration, FlowDataEngine is the runtime brain that makes it all happen.
+The [`FlowDataEngine`](core/python-api-reference.md#flowfile_core.flowfile.flow_data_engine.flow_data_engine.FlowDataEngine) orchestrates everything about execution. While the DAG defines structure and settings define configuration, FlowDataEngine is the runtime brain that makes it all happen.
 
 FlowDataEngine handles:
 - **Compute location** (worker service vs local execution)
@@ -303,9 +315,7 @@ The `FlowNode` class is the heart of each transformation in the graph. Each node
 
 The beauty is that FlowNode doesn't know about specific transformations—it just orchestrates the execution of its `_function` closure with the right inputs and manages the resulting state.
 
-## Schema Prediction: The Magic of Closures
-
-### How Flowfile Predicts Output Without Running Code
+## Flowfile: The Use of Closures
 
 When a method like `.filter()` is called, no data is actually filtered. Instead, a `FlowNode` is created containing a function—a closure that remembers its settings.
 
@@ -352,7 +362,7 @@ Each `_func` is a closure that wraps around the previous one, building up a chai
 
 #### The Closure Pattern in Practice
 
-Here's how closures are actually created in FlowGraph:
+Here's how closures are actually created in [FlowGraph](core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph):
 
 ```python
 # From the FlowGraph implementation
@@ -447,39 +457,32 @@ result = flow.get_node(final_node_id).get_resulting_data()
 
 ```python
 # Execute with caching enabled
-flow.execute_with_cache(cache_dir="./cache")
+import flowfile as ff
+
+flow = ff.create_flow_graph()
+flow.flow_settings.execution_mode = "Development"
+
+# Add transformations here
+flow.run_graph()
 
 # Inspect intermediate results
-node_3_result = flow.get_node(3).cached_result
+node_3_result = flow.get_node(3).results.get_example_data()
+
+flow.get_node(3).needs_run(performance_mode=False) # False
+
 ```
 
 **Characteristics:**
 - 📝 Push-based execution in topological order
-- 💾 Each node's output cached to disk
+- 💾 Each node's output written to disk
 - 🔍 Inspect any intermediate result
-- 🔄 Re-run from any point
-
-#### Schema Only
-
-**When to use:** Validation, UI feedback, pipeline design
-
-```python
-# Get schema without executing
-schema = flow.get_node(node_id).schema
-
-# Or from FlowFrame
-df.collect_schema()
-```
-
-**Characteristics:**
-- 🎭 No data processing at all
-- ⚡ Instant feedback
-- ✅ Validate transformations early
-- 🔮 Perfect for UI interactions
+- 🔄 When re-running the flow, only the steps that have changed(directly and indirectly) will run
 
 #### Explain Plan
 
-**When to use:** Optimization, understanding execution
+**When to use:** Optimization, understanding deeply the execution plan.
+
+!!! warning This feature uses directly the Polars implementation, when the full flow cannot be fully converted to Polars, it will show partial executions.
 
 ```python
 # See what Polars will actually do
@@ -493,21 +496,12 @@ print(plan)
 - 📈 Identify performance bottlenecks
 - 🎯 No actual execution
 
-### Comparison Matrix
-
-| Method | Speed | Memory | Debugging | Use Case |
-|--------|-------|---------|-----------|----------|
-| **Performance** | ⚡⚡⚡ | ✅ Low | ❌ | Production |
-| **Development** | 🐢 | ❌ High | ✅✅✅ | Debug/Test |
-| **Schema Only** | ⚡⚡⚡⚡ | ✅✅ None | ✅ | Validation |
-| **Explain Plan** | ⚡⚡⚡⚡ | ✅✅ None | ✅✅ | Optimization |
-
 ## System Architecture
 
 ### Service Architecture
 
 ```mermaid
-graph TB
+graph LR
     subgraph "Frontend"
         A[Designer<br/>Vue/Electron]
     end
@@ -617,4 +611,5 @@ The goal is to eventually auto-generate UI from Pydantic schemas, which would co
 
 The beauty of Flowfile's architecture—discovered through the organic evolution from a UI-first approach—is that even though adding nodes requires work across multiple layers today, the settings-based design provides a clear contract between visual and code interfaces. 
 
-I hope you enjoyed learning about Flowfile's architecture and found the dual-interface approach as exciting as I do! If you have questions, ideas, or want to contribute, feel free to reach out. Happy building!
+I hope you enjoyed learning about Flowfile's architecture and found the dual-interface approach as exciting as I do! If you have questions, ideas, or want to contribute, ]
+feel free to reach out via [GitHub](https://github.com/edwardvaneechoud/Flowfile) or check our [Core Developer Guide](core/flowfile-core.md). Happy building!
