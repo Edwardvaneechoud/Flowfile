@@ -80,50 +80,6 @@ df = df.with_columns(
 )
 ```
 
-## String Operations
-
-```python
-df = df.with_columns([
-    ff.col("name").str.to_uppercase().alias("name_upper"),
-    ff.col("code").str.slice(0, 3).alias("prefix"),
-    ff.col("text").str.contains("pattern").alias("has_pattern")
-])
-```
-
-## Conditional Logic
-
-```python
-# When/then/otherwise
-df = df.with_columns([
-    ff.when(ff.col("price") > 100)
-    .then(ff.lit("Premium"))
-    .when(ff.col("price") > 50)
-    .then(ff.lit("Standard"))
-    .otherwise(ff.lit("Budget"))
-    .alias("tier")
-])
-```
-
-## Date Operations
-
-```python
-df = df.with_columns([
-    ff.col("date").dt.year().alias("year"),
-    ff.col("date").dt.month().alias("month"),
-    ff.col("date").dt.day().alias("day"),
-    ff.col("date").dt.weekday().alias("weekday")
-])
-```
-
-## List Operations
-
-```python
-df = df.with_columns([
-    ff.col("tags").list.len().alias("tag_count"),
-    ff.col("values").list.sum().alias("total"),
-    ff.col("items").list.first().alias("first_item")
-])
-```
 
 !!! tip "Formula Syntax"
     Use `[column_name]` in formula strings for simpler syntax when supported by the operation.
