@@ -3,7 +3,7 @@
 Understanding how FlowFrame and FlowGraph work together is key to mastering Flowfile. This guide explains the core design principles that make Flowfile both powerful and intuitive.
 
 !!! tip "Related Reading"
-    - **Practical Implementation**: See these concepts in action in our [Code to Flow guide](../../guides/flowfile_frame_api.md)
+    - **Practical Implementation**: See these concepts in action in our [Code to Flow guide](../tutorials/flowfile_frame_api.md)
     - **Architecture Overview**: Learn about the system design in [Technical Architecture](../../guides/technical_architecture.md)
     - **Visual Building**: Compare with [Building Flows](../../flows/building.md) visually
 
