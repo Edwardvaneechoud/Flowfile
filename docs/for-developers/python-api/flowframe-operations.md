@@ -77,3 +77,6 @@ df = df.drop_duplicates(subset=["product_id"])
 
 !!! note "Polars Compatibility"
     All standard Polars DataFrame methods work identically. See [Polars docs](https://pola-rs.github.io/polars/py-polars/html/reference/dataframe/index.html) for complete reference.
+
+---
+[← Previous: Data Types](data-types.md) | [Next: Expressions →](expressions.md)

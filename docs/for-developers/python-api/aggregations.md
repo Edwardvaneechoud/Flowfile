@@ -79,3 +79,7 @@ df = df.with_columns([
 
 !!! note "Node Type Selection"
     Simple group_by operations create UI nodes. Complex expressions in group_by create `polars_code` nodes.
+
+
+---
+[← Previous: Expressions](expressions.md) | [Next: Joins →](joins.md)

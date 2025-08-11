@@ -43,6 +43,7 @@ result = df.filter(col("value") > 12, description="filter value > 12").with_colu
                         col("value").max().alias("max_value"),
                         col("value").min().alias("min_value"))
 df = result.collect()  # provides a polars dataframe
+open_graph_in_editor(result.flow_graph)
 ```
 <details markdown="1">
 <summary>Generated Flow in Flowfile UI</summary>

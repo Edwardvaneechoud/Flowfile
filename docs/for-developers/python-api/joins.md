@@ -100,3 +100,6 @@ print(f"Unmatched records: {len(unmatched)}")
 
 !!! warning "Unsupported Join Types"
     Currently, `join_asof` and `join_where` are not supported in Flowfile. These operations will need to be implemented using alternative approaches or raw Polars code.
+
+---
+[← Previous: Aggregations](aggregations.md) | [Next: Cloud Connection →](cloud-connections.md)

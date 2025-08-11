@@ -1,4 +1,4 @@
-# Python API Reference
+# Python API Flowfile Reference
 
 This section documents Flowfile's Python API, focusing on extensions and differences from Polars. For standard Polars operations, see the [Polars documentation](https://pola-rs.github.io/polars/py-polars/html/reference/).
 
@@ -16,7 +16,7 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 - [**Joins**](joins.md) - Combining datasets
 
 ### 🔐 Flowfile-Specific Features
-- [**Cloud Storage**](cloud-connection-management.md) - S3 integration
+- [**Cloud Storage**](cloud-connections.md) - S3 integration
 - [**visualize pipelines**](visual-ui.md) - Working with the visual editor
 
 ## 🔑 Key Extensions to Polars
@@ -54,5 +54,6 @@ ff.open_graph_in_editor(df.flow_graph)
 ## 🏗️ Architecture Deep Dives
 
 For understanding how Flowfile works internally:
+
 - [**Core Architecture**](../core/flowfile-core.md) - FlowGraph, FlowNode, and FlowDataEngine internals
 - [**Design Philosophy**](../flowfile-for-developers.md) - The dual interface approach

@@ -135,65 +135,6 @@ Once running, the following are available:
 - **API Docs**: `http://localhost:63578/docs`
 - **Health Check**: `http://localhost:63578/docs` (used to verify server is running)
 
-## Common Workflows
-
-### Iterative Development
-
-```python
-import flowfile as ff
-
-# Start with code
-df = ff.read_csv("data.csv")
-df = df.filter(ff.col("value") > 100)
-
-# Switch to visual for exploration
-ff.open_graph_in_editor(df.flow_graph)
-
-# Make changes in UI, save the flow
-
-# Continue in code with the modified flow
-# (reload the saved .flowfile)
-```
-
-### Debugging Complex Pipelines
-
-```python
-# Build complex pipeline
-pipeline = (
-    ff.read_csv("sales.csv")
-    .filter(ff.col("region") == "North")
-    .group_by("product")
-    .agg(ff.col("revenue").sum())
-    .join(product_data, on="product_id")
-    .sort("total_revenue", descending=True)
-)
-
-# Visualize to understand structure
-ff.open_graph_in_editor(pipeline.flow_graph)
-# Use UI to:
-# - See schema at each step
-# - Preview intermediate data
-# - Identify bottlenecks
-```
-
-### Team Collaboration
-
-```python
-# Developer creates pipeline in code
-result = create_complex_pipeline()
-
-# Save for business analyst
-ff.open_graph_in_editor(
-    result.flow_graph,
-    storage_location="./pipelines/quarterly_report.flowfile"
-)
-
-# Analyst can now:
-# 1. Open the .flowfile in Flowfile UI
-# 2. Modify filters/aggregations visually
-# 3. Re-run and export results
-```
-
 ## Troubleshooting
 
 ### Server Won't Start
@@ -284,23 +225,10 @@ ff.open_graph_in_editor(pipeline2.flow_graph)  # No new server started
 ff.open_graph_in_editor(pipeline3.flow_graph)  # Still same server
 ```
 
-## Integration with Development Tools
+---
 
-### Jupyter Notebooks
-
-```python
-# In Jupyter, server persists across cells
-# Cell 1
-import flowfile as ff
-df = ff.read_csv("data.csv")
-
-# Cell 2 - server auto-starts
-ff.open_graph_in_editor(df.flow_graph)
-
-# Cell 3 - reuses existing server
-df2 = df.filter(ff.col("value") > 100)
-ff.open_graph_in_editor(df2.flow_graph)
-```
-
-!!! tip "Performance Note"
-    The first call to `open_graph_in_editor()` may take 5-10 seconds to start the server. Subsequent calls are instant.
+!!! tip "Where to Go Next"
+    -   **Explore Visual Nodes:** Learn the details of each node available in the [Visual Editor](../../nodes/index.md).
+    -   **Convert Code to Visual:** See how your code translates into a visual workflow in the [Conversion Guide](../../guides/flowfile_frame_api.md).
+    -   **Build with Code:** Dive deeper into the [code-first approach](../../flows/building.md) for building pipelines.
+    -   **Back to Index:** Return to the main [Python API Index](index.md).

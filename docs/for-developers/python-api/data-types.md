@@ -60,3 +60,6 @@ df = df.fill_null(strategy="forward")  # Forward fill
 # Drop rows with nulls
 df = df.drop_nulls()
 ```
+
+---
+[← Previous: Writing data](writing-data.md) | [Next: FlowFile Operations →](flowframe-operations.md)

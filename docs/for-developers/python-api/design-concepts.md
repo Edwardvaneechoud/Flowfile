@@ -111,70 +111,6 @@ print(f"Node connections: {graph.node_connections}")
 !!! note "API Reference"
     For the complete FlowGraph API, see [FlowGraph Class Reference](../core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph).
 
-### How the DAG Works
-
-Each operation becomes a node with dependencies:
-
-```python
-df = ff.FlowFrame({
-    "id": [1, 2, 3, 4, 5],
-    "category": ["A", "B", "A", "C", "B"],
-    "amount": [100, 200, 150, 300, 250],
-    "active": [True, False, True, True, False]
-}, description="Load source data")
-# Graph: [Manual Input Node]
-
-filtered = df.filter(ff.col("active") == True, description="Keep active records") 
-# Graph: [Manual Input Node] → [Filter Node]
-
-aggregated = filtered.group_by("category").agg(ff.col("amount").sum())
-# Graph: [Manual Input Node] → [Filter Node] → [Group By Node]
-
-# Each FlowFrame points to its node in the graph
-print(f"Source node: {df.node_id}")
-print(f"Filter node: {filtered.node_id}")  
-print(f"Aggregation node: {aggregated.node_id}")
-```
-
-### Linear Execution Model
-
-**Important**: Flowfile tracks operations linearly, meaning identical operations create separate nodes:
-
-```python
-source = ff.FlowFrame({
-    "id": [1, 2, 3, 4],
-    "amount": [50, 150, 75, 200],
-    "category": ["A", "B", "A", "B"]
-})
-
-# Scenario 1: Running the same operation twice
-df1 = source.filter(ff.col("amount") > 100)  # Creates filter node A
-df2 = source.filter(ff.col("amount") > 100)  # Creates filter node B (different!)
-
-print(df1.node_id != df2.node_id)  # True - different nodes!
-
-# The graph now looks like:
-# [Manual Input] → [Filter A]
-#              ↘ [Filter B]
-```
-
-This is especially important when debugging or experimenting:
-
-```python
-df = ff.FlowFrame({
-    "product": ["Widget", "Gadget"],
-    "amount": [100, 200]
-})
-
-# In a Jupyter notebook, running this cell multiple times:
-df = df.with_columns([
-    (ff.col("amount") * 1.1).alias("amount_with_tax")
-])
-
-# Each execution adds a new node to the graph!
-# Graph after 3 runs: [Manual Input] → [Transform] → [Transform] → [Transform]
-```
-
 ## Visual Integration
 
 ### Viewing Your Graph
@@ -227,102 +163,6 @@ print("New schema:", transformed.schema)  # Shows new 'total' column immediately
 !!! info "How Schema Prediction Works"
     Learn about the closure pattern that enables this in [The Magic of Closures](../flowfile-for-developers.md#flowfile-the-use-of-closures).
 
-## Automatic Node Type Selection
-
-### UI Nodes vs Polars Code Nodes
-
-Flowfile intelligently determines whether an operation can be represented as a UI node or needs to fall back to a Polars code node. This happens automatically based on the complexity of your operation.
-
-#### When You Get UI Nodes (Visual Components)
-
-Simple, straightforward operations map to dedicated UI nodes with configuration forms:
-
-```python
-import flowfile as ff
-
-df = ff.FlowFrame({
-    "region": ["North", "South", "East"],
-    "amount": [1000, 1500, 800]
-})
-
-# Simple filter → Creates a "Filter" UI node
-filtered = df.filter(ff.col("amount") > 1000)
-
-# Simple group_by with column names → Creates a "Group By" UI node  
-grouped = df.group_by("region").agg(
-    ff.col("amount").sum().alias("total")
-)
-
-# When opened in the UI, these show as configured visual nodes
-# with forms for editing parameters
-```
-
-#### When You Get Polars Code Nodes (Code Blocks)
-
-Complex expressions that don't have a direct UI representation fall back to code nodes:
-
-```python
-# Complex group_by with expression → Falls back to "polars_code" node
-complex_grouped = df.group_by([
-    ff.col("region").str.to_uppercase() + ff.lit("_REGION")
-]).agg(
-    ff.col("amount").sum().alias("total")
-)
-
-# Complex filter with multiple conditions → Falls back to "polars_code" node
-complex_filtered = df.filter(
-    (ff.col("amount") > 1000) & 
-    (ff.col("region").str.contains("orth"))
-)
-
-# When opened in the UI, these show as code blocks
-# preserving your exact Polars expressions
-```
-
-#### Checking Node Types
-
-You can inspect what type of node was created:
-
-```python
-# Simple operation
-simple = df.filter(ff.col("amount") > 1000)
-print(simple.get_node_settings())
-# Output: Node id: 2 (filter)  ← UI node type
-
-# Complex operation  
-complex = df.filter(
-    (ff.col("amount") > 1000) & 
-    (ff.col("region").str.to_uppercase() == "NORTH")
-)
-print(complex.get_node_settings())
-# Output: Node id: 3 (polars_code)  ← Code node type
-```
-
-!!! note "Contributing New Node Types"
-    Want to add UI support for more operations? See [Contributing](../flowfile-for-developers.md#contributing) for how to add new node types.
-
-### Why This Matters
-
-This automatic fallback mechanism ensures:
-
-1. **No Limitations**: You can use any Polars expression, even if there's no UI representation
-2. **Best of Both Worlds**: Simple operations get visual nodes, complex ones preserve full expressiveness
-3. **Seamless Experience**: The API doesn't change—you write the same code regardless
-4. **Future-Proof**: As more UI components are added, existing code automatically benefits
-
-### How It Works
-
-When you call a method like `.group_by()`:
-
-1. Flowfile checks if the operation can be represented with existing UI node types
-2. If yes → Creates a specific node (e.g., `NodeGroupBy`) with structured settings
-3. If no → Creates a `polars_code` node that preserves the exact Polars expression
-
-This means:
-- **In the visual editor**: Simple operations show as configured nodes with forms, complex ones show as code blocks
-- **In execution**: Both types execute identically through Polars
-- **In the code**: You don't need to think about it—just write your transformations
-
 ## Practical Implications
 
 ### Memory Efficiency
@@ -349,36 +189,6 @@ result = large_pipeline.collect()  # Optimized execution plan
 
 !!! tip "Performance Guide"
     For more on optimization strategies, see [Execution Methods](../flowfile-for-developers.md#execution-methods) in our philosophy guide.
-
-### Development vs Production
-The linear tracking is perfect for development but needs consideration for production:
-
-```python
-# Development: Experiment freely
-df = ff.FlowFrame({
-    "id": [1, 2, 3, 4, 5],
-    "value": [10, 20, 30, 40, 50],
-    "category": ["A", "B", "A", "C", "B"]
-})
-
-debugging = True
-if debugging:
-    df = df.inspect()  # Adds inspection node
-    df = df.head(100)  # Adds sample node for testing
-
-# Production: Build clean pipelines
-def create_production_pipeline():
-    return (
-        ff.FlowFrame({
-            "region": ["North", "South", "East", "West"],
-            "sales": [1000, 1500, 800, 1200],
-            "status": ["active", "active", "inactive", "active"]
-        })
-        .filter(ff.col("status") == "active")
-        .group_by("region")
-        .agg(ff.col("sales").sum())
-    )
-```
 
 ### Graph Reuse and Copying
 You can work with the same graph across multiple FlowFrames:
@@ -434,7 +244,7 @@ ff.open_graph_in_editor(pipeline.flow_graph)
 
 !!! example "Complete Examples"
     - **Database Pipeline**: See [PostgreSQL Integration](../../guides/database_connectivity.md) for a real-world example
-    - **Cloud Pipeline**: Check [Cloud Storage Operations](cloud-connection-management.md) for S3 workflows
+    - **Cloud Pipeline**: Check [Cloud Connections](cloud-connections.md) for S3 workflows
     - **Export to Code**: Learn how your pipelines convert to pure Python in [Flow to Code](../../guides/code_generator.md)
 
 ## Summary

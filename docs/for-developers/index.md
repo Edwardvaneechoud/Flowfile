@@ -85,7 +85,7 @@ When you write `df.filter(...)`, you are programmatically constructing a FlowNod
 
 - **Seamless Visual Debugging:** Use `open_graph_in_editor()` at any point in your script to instantly see your pipeline's structure, inspect intermediate data schemas, and identify issues visually. [Learn more →](python-api/visual-ui.md)
 
-- **Integrated Cloud Connectors:** Read and write data from AWS S3 with simple, high-level functions, without worrying about the underlying connection logic. [See cloud storage guide →](python-api/cloud-connection-management.md)
+- **Integrated Cloud Connection:** Read and write data from AWS S3 with simple, high-level functions, without worrying about the underlying connection logic. [See cloud storage guide →](python-api/cloud-connections.md)
 
 - **Secure Credential Management:** Handle database passwords and API keys securely using the built-in connection manager, which keeps secrets out of your code. [Database connectivity guide →](../guides/database_connectivity.md)
 
@@ -111,7 +111,7 @@ When you write `df.filter(...)`, you are programmatically constructing a FlowNod
 
 ### 🔧 **Integration Guides**
 - **[Visual UI Integration](python-api/visual-ui.md)** - Launch and control the visual editor from Python
-- **[Cloud Connections](python-api/cloud-connection-management.md)** - Manage S3 and cloud storage connections
+- **[Cloud Connections](python-api/cloud-connections.md)** - Manage S3 and cloud storage connections
 - **[Database Connectivity](../guides/database_connectivity.md)** - Connect to PostgreSQL and other databases
 
 ### 🎯 **Practical Examples**

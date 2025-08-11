@@ -127,3 +127,7 @@ df = df.with_columns([
 
 !!! tip "Formula Syntax"
     Use `[column_name]` in formula strings for simpler syntax when supported by the operation.
+
+
+---
+[← Previous: FlowFile Operations](flowframe-operations.md) | [Next: Aggregations →](aggregations.md)

@@ -63,23 +63,6 @@ ff.FullCloudStorageConnection(
 )
 ```
 
-### MinIO Connection (S3-Compatible)
-
-```python
-ff.FullCloudStorageConnection(
-    connection_name="local-minio",
-    storage_type="s3",
-    auth_method="access_key",
-    aws_region="us-east-1",
-    endpoint_url="http://localhost:9000",
-    aws_allow_unsafe_html=True,  # For local/HTTP endpoints
-    aws_access_key_id="minioadmin",
-    aws_secret_access_key=SecretStr("minioadmin")
-)
-```
-
-### AWS CLI Authentication
-
 ```python
 ff.FullCloudStorageConnection(
     connection_name="my-s3-cli",
@@ -186,3 +169,6 @@ if my_conn:
 
 !!! tip "UI Integration"
     All connections created via code are immediately available in the UI's connection dropdown when configuring nodes.
+
+---
+[← Previous: Joins](joins.md) | [Next: visual Ui →](visual-ui.md)
