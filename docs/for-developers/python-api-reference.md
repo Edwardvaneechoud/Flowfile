@@ -74,8 +74,6 @@ The `FlowfileColumn` is a data class that holds the schema and rich metadata for
 
 ## Data Modeling (Schemas)
 
-::: flowfile_core.schemas.input_schema.NodeSort
-
 This section documents the Pydantic models that define the structure of settings and data.
 
 ### `schemas`
