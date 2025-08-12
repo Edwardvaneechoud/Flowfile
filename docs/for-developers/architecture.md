@@ -1,6 +1,7 @@
 # Technical Architecture
 
 Flowfile's architecture integrates visual design with high-performance data processing through three interconnected services and utilizes Polars' lazy evaluation. This design provides real-time feedback, processes large datasets efficiently, and maintains UI responsiveness during intensive computations. On this page, the three-service architecture, key technical features such as real-time schema prediction and efficient data exchange, and the role of Polars' lazy evaluation are explained.
+
 ![Flowfile Architecture](../assets/images/architecture/flowfile_architecture.png)
 
 ## Core Components

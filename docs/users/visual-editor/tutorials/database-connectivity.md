@@ -1,6 +1,6 @@
 # How to Connect and Work with PostgreSQL Databases in Flowfile
 
-### ![Full overview](../assets/images/guides/database_connectivity/main_image.png) Full flow overview
+### ![Full overview](../../../assets/images/guides/database_connectivity/main_image.png) Full flow overview
 
 Flowfile's latest release introduces powerful database connectivity features that allow you to seamlessly integrate with PostgreSQL databases like Supabase. In this guide, I'll walk you through the entire process of connecting to a database, reading data, transforming it, and writing it back.
 
@@ -35,7 +35,7 @@ Before diving in, make sure you have:
     *   Enable SSL: Check if required by your database (Supabase typically requires it).
 4.  Click **"Update Connection"** to save.
 
-### ![db_connection](../assets/images/guides/database_connectivity/db_connection.png) Connection overview in Flowfile
+### ![db_connection](../../../assets/images/guides/database_connectivity/db_connection.png) Connection overview in Flowfile
 
 ## Step 3: Create a New Data Flow
 
@@ -55,7 +55,7 @@ Before diving in, make sure you have:
 5.  Click **"Validate Settings"** to ensure everything is working.
 6.  You should see a green confirmation message: "Query settings are valid".
 
-### ![configure_read_db](../assets/images/guides/database_connectivity/configure_read_db.png) Node Settings panel showing database read configuration
+### ![configure_read_db](../../../assets/images/guides/database_connectivity/configure_read_db.png) Node Settings panel showing database read configuration
 
 ## Step 5: Run Your Initial Flow
 
@@ -64,7 +64,7 @@ Before diving in, make sure you have:
 3.  When completed, you'll see a success message and the number of records processed.
 4.  You can now click on the node output dot to preview the data that was read from your database.
 
-### ![initial_run_success](../assets/images/guides/database_connectivity/initial_run.png) Flow execution logs showing successful database read operation
+### ![initial_run_success](../../../assets/images/guides/database_connectivity/initial_run.png) Flow execution logs showing successful database read operation
 *Ensure the image `initial_run.png` shows the successful run log/node status, not the configuration panel again.*
 
 ## Step 6: Add Data Transformations
@@ -80,7 +80,7 @@ Now that you've successfully read data from your database, you can add transform
 2.  Connect these nodes in sequence by dragging from the output dot of one node to the input dot of the next.
 3.  Configure each node with the specific transformations you need (refer to the Flowfile documentation for details on specific node configurations if needed).
 
-### ![transformations](../assets/images/guides/database_connectivity/transformations.png) Overview of connected transformation nodes (Read -> Formula -> Group By)
+### ![transformations](../../../assets/images/guides/database_connectivity/transformations.png) Overview of connected transformation nodes (Read -> Formula -> Group By)
 
 ## Step 7: Add a Write to Database Node
 
@@ -96,7 +96,7 @@ Now that you've successfully read data from your database, you can add transform
         *   **"Replace"**: Delete the existing table and create a new one with the output data.
         *   **"Fail"**: Abort the flow if the table already exists.
 
-### ![configure_write_db](../assets/images/guides/database_connectivity/configure_write_db.png) Setup write to database node configuration panel
+### ![configure_write_db](../../../assets/images/guides/database_connectivity/configure_write_db.png) Setup write to database node configuration panel
 *Ensure the image `configure_write_db.png` actually shows the "Write to Database" node's configuration panel.*
 
 ## Step 8: Run Your Complete Workflow
@@ -109,7 +109,7 @@ Now that you've successfully read data from your database, you can add transform
 3.  Check the logs to confirm successful execution, including messages about records read and written.
 4.  Navigate to your Supabase project, open the SQL Editor or Table Editor, and check the `public.time_to_ship_per_category` table to see your newly created data!
 
-### ![supabase_result_table](../assets/images/guides/database_connectivity/result.png) Overview of the final result table in Supabase
+### ![supabase_result_table](../../../assets/images/guides/database_connectivity/result.png) Overview of the final result table in Supabase
 *Ensure the image `result.png` shows the data in the newly created Supabase table.*
 
 ## Conclusion

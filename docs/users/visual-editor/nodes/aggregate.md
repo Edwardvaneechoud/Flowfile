@@ -4,7 +4,7 @@ Aggregate nodes help you summarize and analyze your data by grouping and calcula
 
 ## Node Details
 
-### ![Group By](../assets/images/nodes/group_by.png){ width="50" height="50" } Group By  
+### ![Group By](../../../assets/images/nodes/group_by.png){ width="50" height="50" } Group By  
 
 The **Group By** node aggregates data based on selected columns, allowing calculations such as sums, averages, counts, and more.
 
@@ -34,7 +34,7 @@ The **Group By** node aggregates data based on selected columns, allowing calcul
 
 This node is essential for summarizing datasets and preparing structured outputs.
 
-### ![Pivot Data](../assets/images/nodes/pivot.png){ width="50" height="50" } Pivot Data  
+### ![Pivot Data](../../../assets/images/nodes/pivot.png){ width="50" height="50" } Pivot Data  
 
 The **Pivot Data** node converts data from a long format to a wide format by creating new columns based on unique values in a pivot column.
 
@@ -66,7 +66,7 @@ The **Pivot Data** node converts data from a long format to a wide format by cre
 
 This node is useful for restructuring datasets into a **summary-friendly format**.
 
-### ![Unpivot Data](../assets/images/nodes/unpivot.png){ width="50" height="50" } Unpivot Data  
+### ![Unpivot Data](../../../assets/images/nodes/unpivot.png){ width="50" height="50" } Unpivot Data  
 
 The **Unpivot Data** node transforms data from wide format to long format, making it easier for analysis and reporting.
 
@@ -97,7 +97,7 @@ The **Unpivot Data** node transforms data from wide format to long format, makin
 
 This node helps in restructuring datasets, especially when working with **reporting or analytical tools**.
 
-### ![Count Records](../assets/images/nodes/record_count.png){ width="50" height="50" } Count Records
+### ![Count Records](../../../assets/images/nodes/record_count.png){ width="50" height="50" } Count Records
 
 The **Count Records** node calculates the total number of rows in the dataset.
 
@@ -121,3 +121,6 @@ The **Count Records** node calculates the total number of rows in the dataset.
 This node has **no additional settings**—it simply returns the record count.
 
 This transformation is useful for **quick dataset validation** and **workflow monitoring**.
+
+---
+[← Combine data](combine.md) | [Next: Write data →](output.md)

@@ -4,7 +4,7 @@ Input nodes are the starting point for any data flow. Flowfile currently support
 
 ## Node Details
 
-### ![Read Data](../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
+### ![Read Data](../../../assets/images/nodes/input_data.png){ width="50" height="50" } Read Data
 
 The **Read Data** node allows you to load local data into your flow. It currently supports **CSV**, **Excel**, and **Parquet** file formats, each with specific configuration options.
 
@@ -58,19 +58,19 @@ When a **Parquet** file is selected, no additional setup options are required. P
 
 ---
 
-### ![Cloud Storage](../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
+### ![Cloud Storage](../../../assets/images/nodes/cloud_storage_reader.png){ width="50" height="50" } Cloud Storage Reader
 
 The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
 
 <details  markdown="1">
 <summary>Screenshot: Cloud Storage Reader Configuration</summary>
 
-![Screenshot of the Cloud Storage Reader configuration](../assets/images/ui/screenshot_cloud_reader_input.png)
+![Screenshot of the Cloud Storage Reader configuration](../../../assets/images/ui/screenshot_cloud_reader_input.png)
 
 </details>
 
 #### **Connection Options:**
-- Use existing S3 connections configured in your workspace (see [Manage Cloud Connections](../guides/manage_cloud_connections.md))
+- Use existing S3 connections configured in your workspace (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
 - Use local AWS CLI credentials or environment variables
 
 #### **File Settings:**
@@ -93,6 +93,9 @@ The **Cloud Storage Reader** node allows you to read data directly from AWS S3.
 
 ---
 
-### ![Manual Input](../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
+### ![Manual Input](../../../assets/images/nodes/manual_input.png){ width="50" height="50" } Manual Input
 
 The **Manual Input** node allows you to create data directly within Flowfile or paste data from your clipboard.
+
+---
+[← Node overview](index.md) | [Next: Transform data →](transform.md)

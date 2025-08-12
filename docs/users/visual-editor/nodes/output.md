@@ -5,7 +5,7 @@ Output nodes represent the final steps in your data pipeline, allowing you to sa
 ## Node Details
 ## Node Details  
 
-### ![Write Data](../assets/images/nodes/output.png){ width="50" height="50" } Write Data  
+### ![Write Data](../../../assets/images/nodes/output.png){ width="50" height="50" } Write Data  
 
 The **Write Data** node allows you to save your processed data in different formats. It supports **CSV**, **Excel**, and **Parquet**, each with specific configuration options.  
 
@@ -70,19 +70,19 @@ This node ensures that your transformed data is **saved in the correct format**,
 
 ---
 
-### ![Cloud Storage Writer](../assets/images/nodes/cloud_storage_writer.png){ width="50" height="50" } Cloud Storage Writer
+### ![Cloud Storage Writer](../../../assets/images/nodes/cloud_storage_writer.png){ width="50" height="50" } Cloud Storage Writer
 
 The **Cloud Storage Writer** node allows you to save your processed data directly to cloud storage services like AWS S3.
 
 <details markdown="1">
 <summary>Screenshot: Cloud Storage Writer Configuration</summary>
 
-![Screenshot of the Cloud Storage Writer configuration](../assets/images/ui/screenshot_cloud_writer_output.png)
+![Screenshot of the Cloud Storage Writer configuration](../../../assets/images/ui/screenshot_cloud_writer_output.png)
 
 </details>
 
 #### **Connection Options:**
-- Use existing cloud storage connections configured in your workspace (see [Manage Cloud Connections](../guides/manage_cloud_connections.md))
+- Use existing cloud storage connections configured in your workspace (see [Manage Cloud Connections](../tutorials/cloud-connections.md))
 - Use local AWS CLI credentials or environment variables for authentication
 
 #### **File Settings:**
@@ -114,6 +114,7 @@ The **Cloud Storage Writer** node allows you to save your processed data directl
 
 ---
 
-### ![Explore Data](../assets/images/nodes/explore_data.png){ width="50" height="50" } Explore Data
+### ![Explore Data](../../../assets/images/nodes/explore_data.png){ width="50" height="50" } Explore Data
 
 The Explore Data node provides interactive data exploration and analysis capabilities.
+

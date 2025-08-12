@@ -10,11 +10,11 @@ By connecting nodes together, you can create **flexible and scalable workflows**
 
 Flowfile nodes are grouped into five main categories:  
 
-- **Input Nodes** – Load data from files, databases, or external sources.  
-- **Transform Nodes** – Modify, clean, and reshape your data.  
-- **Combine Nodes** – Merge, join, or match multiple datasets.  
-- **Aggregate Nodes** – Summarize, group, and compute metrics.  
-- **Output Nodes** – Save data to files or explore it interactively.  
+- **[Input Nodes](input.md)** – Load data from files, databases, or external sources.  
+- **[Transform Nodes](transform.md)** – Modify, clean, and reshape your data.  
+- **[Combine Nodes](combine.md)** – Merge, join, or match multiple datasets.  
+- **[Aggregate Nodes](aggregate.md)** – Summarize, group, and compute metrics.  
+- **[Output Nodes](output.md)** – Save data to files or explore it interactively.  
 
 ---
 
@@ -28,3 +28,5 @@ Each node is designed to be **intuitive and consistent**, ensuring a smooth work
 ✔ **Error handling** – Validate and debug data issues efficiently.  
 
 Flowfile’s node-based approach makes data processing **fast, flexible, and code-free**, helping you build **powerful data pipelines with ease**.
+
+---

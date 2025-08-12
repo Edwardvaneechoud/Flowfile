@@ -4,7 +4,7 @@ import os
 from copy import deepcopy
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union, TypeVar, Literal
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union, TypeVar, Literal, Generator
 
 # Third-party imports
 from loky import Future
@@ -12,6 +12,7 @@ import polars as pl
 from polars.exceptions import PanicException
 from polars_grouper import graph_solver
 from polars_expr_transformer import simple_function_to_expr as to_expr
+from pyarrow import Table as PaTable
 from pyarrow.parquet import ParquetFile
 
 # Local imports - Core
@@ -64,7 +65,24 @@ from flowfile_core.flowfile.sources.external_sources.base_class import ExternalD
 T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
 
 def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform_schemas.JoinInput) -> Tuple[T, T, Dict[str, str]]:
+    """Temporarily renames join keys to avoid conflicts during a join.
 
+    This helper function checks the join type and renames the join key columns
+    in either the left or right DataFrame to a temporary name (`__FL_TEMP__...`).
+    This prevents Polars from automatically suffixing columns with `_right` when
+    join keys have the same name.
+
+    Args:
+        left_df: The left Polars DataFrame or LazyFrame.
+        right_df: The right Polars DataFrame or LazyFrame.
+        join_input: The JoinInput settings object defining the join.
+
+    Returns:
+        A tuple containing:
+        - The (potentially modified) left DataFrame.
+        - The (potentially modified) right DataFrame.
+        - A dictionary mapping the temporary names back to their desired final names.
+    """
     def _construct_temp_name(column_name: str) -> str:
         return "__FL_TEMP__"+column_name
     if join_input.how == 'right':
@@ -85,13 +103,15 @@ def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform
 
 
 def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.JoinInput) -> None:
-    """
-    Updates the right columns of the join input by deselecting them.
-    Args:
-        join_input ():
+    """Modifies JoinInput for semi/anti joins to not keep right-side columns.
 
-    Returns:
-        None
+    For 'semi' and 'anti' joins, Polars only returns columns from the left
+    DataFrame. This function enforces that behavior by modifying the `join_input`
+    in-place, setting the `keep` flag to `False` for all columns in the
+    right-side selection.
+
+    Args:
+        join_input: The JoinInput settings object to modify.
     """
     if join_input.how in ('semi', 'anti'):
         for jk in join_input.right_select.renames:
@@ -99,31 +119,38 @@ def ensure_right_unselect_for_semi_and_anti_joins(join_input: transform_schemas.
 
 
 def get_select_columns(full_select_input: List[transform_schemas.SelectInput]) -> List[str]:
-    """
-    Gets the list of column names to select from the full select input.
-    It filters out columns that are not marked to keep or join keys, and only includes those that are available.
+    """Extracts a list of column names to be selected from a SelectInput list.
+
+    This function filters a list of `SelectInput` objects to return the names
+    of columns that are marked as available and are either a join key or
+    explicitly marked to be kept.
+
     Args:
-        full_select_input (): List of SelectInput objects containing column information.
+        full_select_input: A list of SelectInput objects.
 
     Returns:
-        List of column names to select.
+        A list of column names to be selected.
     """
     return [v.old_name for v in full_select_input if (v.keep or v.join_key) and v.is_available]
 
 
 @dataclass
 class FlowDataEngine:
-    """
-    A class that provides a unified interface for working with tabular data, supporting both eager and lazy evaluation.
+    """The core data handling engine for Flowfile.
 
-    The class is organized into several logical sections:
-    1. Core properties and initialization
-    2. Data access and manipulation
-    3. Schema and metadata operations
-    4. Transformations and operations
-    5. I/O operations
-    """
+    This class acts as a high-level wrapper around a Polars DataFrame or
+    LazyFrame, providing a unified API for data ingestion, transformation,
+    and output. It manages data state (lazy vs. eager), schema information,
+    and execution logic.
 
+    Attributes:
+        _data_frame: The underlying Polars DataFrame or LazyFrame.
+        columns: A list of column names in the current data frame.
+        name: An optional name for the data engine instance.
+        number_of_records: The number of records. Can be -1 for lazy frames.
+        errors: A list of errors encountered during operations.
+        _schema: A cached list of `FlowfileColumn` objects representing the schema.
+    """
     # Core attributes
     _data_frame: Union[pl.DataFrame, pl.LazyFrame]
     columns: List[Any]
@@ -163,9 +190,6 @@ class FlowDataEngine:
     _number_of_records_callback: Callable = None
     _data_callback: Callable = None
 
-    # Tracking info
-    # node_id: int = None  # TODO: Implement node_id
-    # flow_id: int = None  # TODO: Implement flow_id
 
     def __init__(self,
                  raw_data: Union[List[Dict], List[Any], Dict[str, Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
@@ -178,7 +202,22 @@ class FlowDataEngine:
                  streamable: bool = True,
                  number_of_records_callback: Callable = None,
                  data_callback: Callable = None):
-        """Initialize FlowDataEngine with various data sources and configuration options."""
+        """Initializes the FlowDataEngine from various data sources.
+
+        Args:
+            raw_data: The input data. Can be a list of dicts, a Polars DataFrame/LazyFrame,
+                or a `RawData` schema object.
+            path_ref: A string path to a Parquet file.
+            name: An optional name for the data engine instance.
+            optimize_memory: If True, prefers lazy operations to conserve memory.
+            schema: An optional schema definition. Can be a list of `FlowfileColumn` objects,
+                a list of column names, or a Polars `Schema`.
+            number_of_records: The number of records, if known.
+            calculate_schema_stats: If True, computes detailed statistics for each column.
+            streamable: If True, allows for streaming operations when possible.
+            number_of_records_callback: A callback function to retrieve the number of records.
+            data_callback: A callback function to retrieve the data.
+        """
         self._initialize_attributes(number_of_records_callback, data_callback, streamable)
 
         if raw_data is not None:
@@ -190,7 +229,11 @@ class FlowDataEngine:
         self._finalize_initialization(name, optimize_memory, schema, calculate_schema_stats)
 
     def _initialize_attributes(self, number_of_records_callback, data_callback, streamable):
-        """Initialize basic attributes with default values."""
+        """(Internal) Sets the initial default attributes for a new instance.
+
+        This helper is called first during initialization to ensure all state-tracking
+        and configuration attributes have a clean default value before data is processed.
+        """
         self._external_source = None
         self._number_of_records_callback = number_of_records_callback
         self._data_callback = data_callback
@@ -204,8 +247,11 @@ class FlowDataEngine:
         self.is_future = False
 
     def _handle_raw_data(self, raw_data, number_of_records, optimize_memory):
-        """Process different types of input data."""
+        """(Internal) Dispatches raw data to the appropriate handler based on its type.
 
+        This acts as a router during initialization, inspecting the type of `raw_data`
+        and calling the corresponding specialized `_handle_*` method to process it.
+        """
         if isinstance(raw_data, input_schema.RawData):
             self._handle_raw_data_format(raw_data)
         elif isinstance(raw_data, pl.DataFrame):
@@ -216,12 +262,12 @@ class FlowDataEngine:
             self._handle_python_data(raw_data)
 
     def _handle_polars_dataframe(self, df: pl.DataFrame, number_of_records: Optional[int]):
-        """Handle Polars DataFrame input."""
+        """(Internal) Initializes the engine from an eager Polars DataFrame."""
         self.data_frame = df
         self.number_of_records = number_of_records or df.select(pl.len())[0, 0]
 
     def _handle_polars_lazy_frame(self, lf: pl.LazyFrame, number_of_records: Optional[int], optimize_memory: bool):
-        """Handle Polars LazyFrame input."""
+        """(Internal) Initializes the engine from a Polars LazyFrame."""
         self.data_frame = lf
         self._lazy = True
         if number_of_records is not None:
@@ -229,18 +275,17 @@ class FlowDataEngine:
         elif optimize_memory:
             self.number_of_records = -1
         else:
-            # TODO: assess whether this leads to slow downs with multi remote files
             self.number_of_records = lf.select(pl.len()).collect()[0, 0]
 
     def _handle_python_data(self, data: Union[List, Dict]):
-        """Handle Python list or dict input."""
+        """(Internal) Dispatches Python collections to the correct handler."""
         if isinstance(data, dict):
             self._handle_dict_input(data)
         else:
             self._handle_list_input(data)
 
     def _handle_dict_input(self, data: Dict):
-        """Handle dictionary input."""
+        """(Internal) Initializes the engine from a Python dictionary."""
         if len(data) == 0:
             self.initialize_empty_fl()
         lengths = [len(v) if isinstance(v, (list, tuple)) else 1 for v in data.values()]
@@ -254,7 +299,14 @@ class FlowDataEngine:
         self.lazy = True
 
     def _handle_raw_data_format(self, raw_data: input_schema.RawData):
-        """Create a FlowDataEngine from a RawData object."""
+        """(Internal) Initializes the engine from a `RawData` schema object.
+
+        This method uses the schema provided in the `RawData` object to correctly
+        infer data types when creating the Polars DataFrame.
+
+        Args:
+            raw_data: An instance of `RawData` containing the data and schema.
+        """
         flowfile_schema = list(FlowfileColumn.create_from_minimal_field_info(c) for c in raw_data.columns)
         polars_schema = pl.Schema([(flowfile_column.column_name, flowfile_column.get_polars_type().pl_datatype)
                                    for flowfile_column in flowfile_schema])
@@ -268,7 +320,7 @@ class FlowDataEngine:
         self.lazy = True
 
     def _handle_list_input(self, data: List):
-        """Handle list input."""
+        """(Internal) Initializes the engine from a list of records."""
         number_of_records = len(data)
         if number_of_records > 0:
             processed_data = self._process_list_data(data)
@@ -281,7 +333,11 @@ class FlowDataEngine:
 
     @staticmethod
     def _process_list_data(data: List) -> List[Dict]:
-        """Process list data into a format suitable for DataFrame creation."""
+        """(Internal) Normalizes list data into a list of dictionaries.
+
+        Ensures that a list of objects or non-dict items is converted into a
+        uniform list of dictionaries suitable for Polars DataFrame creation.
+        """
         if not (isinstance(data[0], dict) or hasattr(data[0], '__dict__')):
             try:
                 return pl.DataFrame(data).to_dicts()
@@ -296,19 +352,19 @@ class FlowDataEngine:
         return ensure_similarity_dicts(data)
 
     def to_cloud_storage_obj(self, settings: cloud_storage_schemas.CloudStorageWriteSettingsInternal):
-        """
-        Write the FlowDataEngine's data to an object in cloud storage.
+        """Writes the DataFrame to an object in cloud storage.
 
-        Supports writing to S3, Azure ADLS, and Google Cloud Storage. The 'overwrite'
-        write mode is supported. The 'append' mode is not yet implemented.
+        This method supports writing to various cloud storage providers like AWS S3,
+        Azure Data Lake Storage, and Google Cloud Storage.
 
         Args:
-            settings: Cloud storage write settings with connection details and write options.
+            settings: A `CloudStorageWriteSettingsInternal` object containing connection
+                details, file format, and write options.
 
         Raises:
-            ValueError: If file format is not supported.
-            NotImplementedError: If the 'append' write mode is used.
-            Exception: If writing to cloud storage fails.
+            ValueError: If the specified file format is not supported for writing.
+            NotImplementedError: If the 'append' write mode is used with an unsupported format.
+            Exception: If the write operation to cloud storage fails for any reason.
         """
         connection = settings.connection
         write_settings = settings.write_settings
@@ -358,7 +414,11 @@ class FlowDataEngine:
                                 storage_options: Dict[str, Any],
                                 credential_provider: Optional[Callable],
                                 write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
-        """Write LazyFrame to a Parquet file in cloud storage."""
+        """(Internal) Writes the DataFrame to a Parquet file in cloud storage.
+
+        Uses `sink_parquet` for efficient streaming writes. Falls back to a
+        collect-then-write pattern if sinking fails.
+        """
         try:
             sink_kwargs = {
                 "path": resource_path,
@@ -385,6 +445,11 @@ class FlowDataEngine:
                               storage_options: Dict[str, Any],
                               credential_provider: Optional[Callable],
                               write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
+        """(Internal) Writes the DataFrame to a Delta Lake table in cloud storage.
+
+        This operation requires collecting the data first, as `write_delta` operates
+        on an eager DataFrame.
+        """
         sink_kwargs = {
             "target": resource_path,
             "mode": write_settings.write_mode,
@@ -400,7 +465,10 @@ class FlowDataEngine:
                             storage_options: Dict[str, Any],
                             credential_provider: Optional[Callable],
                             write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
-        """Write LazyFrame to a CSV file in cloud storage."""
+        """(Internal) Writes the DataFrame to a CSV file in cloud storage.
+
+        Uses `sink_csv` for efficient, streaming writes of the data.
+        """
         try:
             sink_kwargs = {
                 "path": resource_path,
@@ -423,7 +491,10 @@ class FlowDataEngine:
                              storage_options: Dict[str, Any],
                              credential_provider: Optional[Callable],
                              write_settings: cloud_storage_schemas.CloudStorageWriteSettings):
-        """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage."""
+        """(Internal) Writes the DataFrame to a line-delimited JSON (NDJSON) file.
+
+        Uses `sink_ndjson` for efficient, streaming writes.
+        """
         try:
             sink_kwargs = {"path": resource_path}
             if storage_options:
@@ -437,22 +508,25 @@ class FlowDataEngine:
             raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
 
     @classmethod
-    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal):
-        """
-        Create a FlowDataEngine from an object in cloud storage.
+    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal) -> "FlowDataEngine":
+        """Creates a FlowDataEngine from an object in cloud storage.
 
-        Supports reading from S3, Azure ADLS, and Google Cloud Storage with various
-        authentication methods including access keys, IAM roles, and CLI credentials.
+        This method supports reading from various cloud storage providers like AWS S3,
+        Azure Data Lake Storage, and Google Cloud Storage, with support for
+        various authentication methods.
 
         Args:
-            settings: Cloud storage read settings with connection details and read options
+            settings: A `CloudStorageReadSettingsInternal` object containing connection
+                details, file format, and read options.
 
         Returns:
-            FlowDataEngine: New instance with data from cloud storage
+            A new `FlowDataEngine` instance containing the data from cloud storage.
 
-        Raises:FlowDataEngine.from_cloud_storage_obj()
-            ValueError: If storage type or file format is not supported
-            Exception: If reading from cloud storage fails
+        Raises:
+            ValueError: If the storage type or file format is not supported.
+            NotImplementedError: If a requested file format like "delta" or "iceberg"
+                is not yet implemented.
+            Exception: If reading from cloud storage fails.
         """
         connection = settings.connection
         read_settings = settings.read_settings
@@ -507,6 +581,7 @@ class FlowDataEngine:
     @staticmethod
     def _get_schema_from_first_file_in_dir(source: str, storage_options: Dict[str, Any],
                                            file_format: Literal["csv", "parquet", "json", "delta"]) -> List[FlowfileColumn] | None:
+        """Infers the schema by scanning the first file in a cloud directory."""
         try:
             scan_func = getattr(pl, "scan_" + file_format)
             first_file_ref = get_first_file_from_s3_dir(source, storage_options=storage_options)
@@ -522,7 +597,7 @@ class FlowDataEngine:
                                  storage_options: Dict[str, Any],
                                  credential_provider: Optional[Callable],
                                  read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
-        """Read Iceberg table(s) from cloud storage."""
+        """Reads Iceberg table(s) from cloud storage."""
         raise NotImplementedError(f"Failed to read Iceberg table from cloud storage: Not yet implemented")
 
     @classmethod
@@ -531,7 +606,7 @@ class FlowDataEngine:
                                  storage_options: Dict[str, Any],
                                  credential_provider: Optional[Callable],
                                  is_directory: bool) -> "FlowDataEngine":
-        """Read Parquet file(s) from cloud storage."""
+        """Reads Parquet file(s) from cloud storage."""
         try:
             # Use scan_parquet for lazy evaluation
             if is_directory:
@@ -551,7 +626,7 @@ class FlowDataEngine:
 
             return cls(
                 lf,
-                number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
+                number_of_records=6_666_666,  # Set so the provider is not accessed for this stat
                 optimize_memory=True,
                 streamable=True,
                 schema=schema
@@ -567,6 +642,7 @@ class FlowDataEngine:
                                storage_options: Dict[str, Any],
                                credential_provider: Optional[Callable],
                                read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
+        """Reads a Delta Lake table from cloud storage."""
         try:
             logger.info("Reading Delta file from cloud storage...")
             logger.info(f"read_settings: {read_settings}")
@@ -581,7 +657,7 @@ class FlowDataEngine:
 
             return cls(
                 lf,
-                number_of_records=6_666_666,  # Set to 6666666 so that the provider is not accessed for this stat
+                number_of_records=6_666_666,  # Set so the provider is not accessed for this stat
                 optimize_memory=True,
                 streamable=True
             )
@@ -595,7 +671,7 @@ class FlowDataEngine:
                              storage_options: Dict[str, Any],
                              credential_provider: Optional[Callable],
                              read_settings: cloud_storage_schemas.CloudStorageReadSettings) -> "FlowDataEngine":
-        """Read CSV file(s) from cloud storage."""
+        """Reads CSV file(s) from cloud storage."""
         try:
             scan_kwargs = {
                 "source": resource_path,
@@ -636,7 +712,7 @@ class FlowDataEngine:
                               storage_options: Dict[str, Any],
                               credential_provider: Optional[Callable],
                               is_directory: bool) -> "FlowDataEngine":
-        """Read JSON file(s) from cloud storage."""
+        """Reads JSON file(s) from cloud storage."""
         try:
             if is_directory:
                 resource_path = ensure_path_has_wildcard_pattern(resource_path, "json")
@@ -661,7 +737,7 @@ class FlowDataEngine:
             raise Exception(f"Failed to read JSON from cloud storage: {str(e)}")
 
     def _handle_path_ref(self, path_ref: str, optimize_memory: bool):
-        """Handle file path reference input."""
+        """Handles file path reference input."""
         try:
             pf = ParquetFile(path_ref)
         except Exception as e:
@@ -677,7 +753,7 @@ class FlowDataEngine:
 
     def _finalize_initialization(self, name: str, optimize_memory: bool, schema: Optional[Any],
                                  calculate_schema_stats: bool):
-        """Finalize initialization by setting remaining attributes."""
+        """Finalizes initialization by setting remaining attributes."""
         _ = calculate_schema_stats
         self.name = name
         self._optimize_memory = optimize_memory
@@ -690,12 +766,19 @@ class FlowDataEngine:
             self.columns = [c.column_name for c in self._schema] if self._schema else pl_schema.names()
 
     def __getitem__(self, item):
-        """Access a specific column or item from the DataFrame."""
+        """Accesses a specific column or item from the DataFrame."""
         return self.data_frame.select([item])
 
     @property
     def data_frame(self) -> pl.LazyFrame | pl.DataFrame | None:
-        """Get the underlying DataFrame with appropriate handling of different states."""
+        """The underlying Polars DataFrame or LazyFrame.
+
+        This property provides access to the Polars object that backs the
+        FlowDataEngine. It handles lazy-loading from external sources if necessary.
+
+        Returns:
+            The active Polars `DataFrame` or `LazyFrame`.
+        """
         if self._data_frame is not None and not self.is_future:
             return self._data_frame
         elif self.is_future:
@@ -714,24 +797,32 @@ class FlowDataEngine:
 
     @data_frame.setter
     def data_frame(self, df: pl.LazyFrame | pl.DataFrame):
-        """Set the underlying DataFrame with validation."""
+        """Sets the underlying Polars DataFrame or LazyFrame."""
         if self.lazy and isinstance(df, pl.DataFrame):
             raise Exception('Cannot set a non-lazy dataframe to a lazy flowfile')
         self._data_frame = df
 
     @staticmethod
     def _create_schema_stats_from_pl_schema(pl_schema: pl.Schema) -> List[Dict]:
+        """Converts a Polars Schema into a list of schema statistics dictionaries."""
         return [
             dict(column_name=k, pl_datatype=v, col_index=i)
             for i, (k, v) in enumerate(pl_schema.items())
         ]
 
     def _add_schema_from_schema_stats(self, schema_stats: List[Dict]):
+        """Populates the schema from a list of schema statistics dictionaries."""
         self._schema = convert_stats_to_column_info(schema_stats)
 
     @property
     def schema(self) -> List[FlowfileColumn]:
-        """Get the schema of the DataFrame, calculating if necessary."""
+        """The schema of the DataFrame as a list of `FlowfileColumn` objects.
+
+        This property lazily calculates the schema if it hasn't been determined yet.
+
+        Returns:
+            A list of `FlowfileColumn` objects describing the schema.
+        """
         if self.number_of_fields == 0:
             return []
         if self._schema is None or (self._calculate_schema_stats and not self.ind_schema_calculated):
@@ -745,17 +836,28 @@ class FlowDataEngine:
 
     @property
     def number_of_fields(self) -> int:
-        """Get the number of fields in the DataFrame."""
+        """The number of columns (fields) in the DataFrame.
+
+        Returns:
+            The integer count of columns.
+        """
         if self.__number_of_fields is None:
             self.__number_of_fields = len(self.columns)
         return self.__number_of_fields
 
-    # Data Collection and Sampling Methods
-
     def collect(self, n_records: int = None) -> pl.DataFrame:
-        """
-        Collect data from the DataFrame, optionally limiting the number of records.
-        Handles streaming and error cases appropriately.
+        """Collects the data and returns it as a Polars DataFrame.
+
+        This method triggers the execution of the lazy query plan (if applicable)
+        and returns the result. It supports streaming to optimize memory usage
+        for large datasets.
+
+        Args:
+            n_records: The maximum number of records to collect. If None, all
+                records are collected.
+
+        Returns:
+            A Polars `DataFrame` containing the collected data.
         """
         if n_records is None:
             logger.info(f'Fetching all data for Table object "{id(self)}". Settings: streaming={self._streamable}')
@@ -773,7 +875,7 @@ class FlowDataEngine:
             return self._handle_collection_error(n_records)
 
     def _collect_data(self, n_records: int = None) -> pl.DataFrame:
-        """Internal method to handle data collection."""
+        """Internal method to handle data collection logic."""
         if n_records is None:
 
             self.collect_external()
@@ -795,7 +897,7 @@ class FlowDataEngine:
         return self.data_frame.head(n_records).collect()
 
     def _collect_from_external_source(self, n_records: int) -> pl.DataFrame:
-        """Handle collection from external source."""
+        """Handles collection from an external source."""
         if self.external_source.get_pl_df() is not None:
             all_data = self.external_source.get_pl_df().head(n_records)
             self.data_frame = all_data
@@ -805,7 +907,7 @@ class FlowDataEngine:
         return self.data_frame
 
     def _handle_collection_error(self, n_records: int) -> pl.DataFrame:
-        """Handle errors during collection by attempting partial collection."""
+        """Handles errors during collection by attempting partial collection."""
         n_records = 100000000 if n_records is None else n_records
         ok_cols, error_cols = self._identify_valid_columns(n_records)
 
@@ -814,7 +916,7 @@ class FlowDataEngine:
         return self._create_empty_dataframe(n_records)
 
     def _identify_valid_columns(self, n_records: int) -> Tuple[List[str], List[Tuple[str, Any]]]:
-        """Identify which columns can be collected successfully."""
+        """Identifies which columns can be collected successfully."""
         ok_cols = []
         error_cols = []
         for c in self.columns:
@@ -827,7 +929,7 @@ class FlowDataEngine:
 
     def _create_partial_dataframe(self, ok_cols: List[str], error_cols: List[Tuple[str, Any]],
                                   n_records: int) -> pl.DataFrame:
-        """Create a DataFrame with partial data for columns that could be collected."""
+        """Creates a DataFrame with partial data for columns that could be collected."""
         df = self.data_frame.select(ok_cols)
         df = df.with_columns([
             pl.lit(None).alias(column_name).cast(data_type)
@@ -836,7 +938,7 @@ class FlowDataEngine:
         return df.select(self.columns).head(n_records).collect()
 
     def _create_empty_dataframe(self, n_records: int) -> pl.DataFrame:
-        """Create an empty DataFrame with the correct schema."""
+        """Creates an empty DataFrame with the correct schema."""
         if self.number_of_records > 0:
             return pl.DataFrame({
                 column_name: pl.Series(
@@ -847,11 +949,19 @@ class FlowDataEngine:
             })
         return pl.DataFrame(schema=self.data_frame.schema)
 
-    # Data Transformation Methods
-
     def do_group_by(self, group_by_input: transform_schemas.GroupByInput,
                     calculate_schema_stats: bool = True) -> "FlowDataEngine":
-        """Perform group by operations on the DataFrame."""
+        """Performs a group-by operation on the DataFrame.
+
+        Args:
+            group_by_input: A `GroupByInput` object defining the grouping columns
+                and aggregations.
+            calculate_schema_stats: If True, calculates schema statistics for the
+                resulting DataFrame.
+
+        Returns:
+            A new `FlowDataEngine` instance with the grouped and aggregated data.
+        """
         aggregations = [c for c in group_by_input.agg_cols if c.agg != 'groupby']
         group_columns = [c for c in group_by_input.agg_cols if c.agg == 'groupby']
 
@@ -873,7 +983,15 @@ class FlowDataEngine:
         )
 
     def do_sort(self, sorts: List[transform_schemas.SortByInput]) -> "FlowDataEngine":
-        """Sort the DataFrame based on specified columns and directions."""
+        """Sorts the DataFrame by one or more columns.
+
+        Args:
+            sorts: A list of `SortByInput` objects, each specifying a column
+                and sort direction ('asc' or 'desc').
+
+        Returns:
+            A new `FlowDataEngine` instance with the sorted data.
+        """
         if not sorts:
             return self
 
@@ -883,7 +1001,16 @@ class FlowDataEngine:
 
     def change_column_types(self, transforms: List[transform_schemas.SelectInput],
                             calculate_schema: bool = False) -> "FlowDataEngine":
-        """Change the data types of specified columns."""
+        """Changes the data type of one or more columns.
+
+        Args:
+            transforms: A list of `SelectInput` objects, where each object specifies
+                the column and its new `polars_type`.
+            calculate_schema: If True, recalculates the schema after the type change.
+
+        Returns:
+            A new `FlowDataEngine` instance with the updated column types.
+        """
         dtypes = [dtype.base_type() for dtype in self.data_frame.collect_schema().dtypes()]
         idx_mapping = list(
             (transform.old_name, self.cols_idx.get(transform.old_name), getattr(pl, transform.polars_type))
@@ -904,27 +1031,63 @@ class FlowDataEngine:
             streamable=self._streamable
         )
 
-    # Data Export and Conversion Methods
-
     def save(self, path: str, data_type: str = 'parquet') -> Future:
-        """Save the DataFrame to a file."""
+        """Saves the DataFrame to a file in a separate thread.
+
+        Args:
+            path: The file path to save to.
+            data_type: The format to save in (e.g., 'parquet', 'csv').
+
+        Returns:
+            A `loky.Future` object representing the asynchronous save operation.
+        """
         estimated_size = deepcopy(self.get_estimated_file_size() * 4)
         df = deepcopy(self.data_frame)
         return write_threaded(_df=df, path=path, data_type=data_type, estimated_size=estimated_size)
 
     def to_pylist(self) -> List[Dict]:
-        """Convert the DataFrame to a list of dictionaries."""
+        """Converts the DataFrame to a list of Python dictionaries.
+
+        Returns:
+            A list where each item is a dictionary representing a row.
+        """
         if self.lazy:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dicts()
         return self.data_frame.to_dicts()
 
+    def to_arrow(self) -> PaTable:
+        """Converts the DataFrame to a PyArrow Table.
+
+        This method triggers a `.collect()` call if the data is lazy,
+        then converts the resulting eager DataFrame into a `pyarrow.Table`.
+
+        Returns:
+            A `pyarrow.Table` instance representing the data.
+        """
+        if self.lazy:
+            return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_arrow()
+        else:
+            return self.data_frame.to_arrow()
+
     def to_raw_data(self) -> input_schema.RawData:
-        """Convert the DataFrame to a list of values."""
+        """Converts the DataFrame to a `RawData` schema object.
+
+        Returns:
+            An `input_schema.RawData` object containing the schema and data.
+        """
         columns = [c.get_minimal_field_info() for c in self.schema]
         data = list(self.to_dict().values())
         return input_schema.RawData(columns=columns, data=data)
 
     def to_dict(self) -> Dict[str, List]:
+        """Converts the DataFrame to a Python dictionary of columns.
+
+         Each key in the dictionary is a column name, and the corresponding value
+         is a list of the data in that column.
+
+         Returns:
+             A dictionary mapping column names to lists of their values.
+         """
         if self.lazy:
             return self.data_frame.collect(engine="streaming" if self._streamable else "auto").to_dict(as_series=False)
         else:
@@ -932,7 +1095,15 @@ class FlowDataEngine:
 
     @classmethod
     def create_from_external_source(cls, external_source: ExternalDataSource) -> "FlowDataEngine":
-        """Create a FlowDataEngine from an external data source."""
+        """Creates a FlowDataEngine from an external data source.
+
+        Args:
+            external_source: An object that conforms to the `ExternalDataSource`
+                interface.
+
+        Returns:
+            A new `FlowDataEngine` instance.
+        """
         if external_source.schema is not None:
             ff = cls.create_from_schema(external_source.schema)
         elif external_source.initial_data_getter is not None:
@@ -944,12 +1115,27 @@ class FlowDataEngine:
 
     @classmethod
     def create_from_sql(cls, sql: str, conn: Any) -> "FlowDataEngine":
-        """Create a FlowDataEngine from a SQL query."""
+        """Creates a FlowDataEngine by executing a SQL query.
+
+        Args:
+            sql: The SQL query string to execute.
+            conn: A database connection object or connection URI string.
+
+        Returns:
+            A new `FlowDataEngine` instance with the query result.
+        """
         return cls(pl.read_sql(sql, conn))
 
     @classmethod
     def create_from_schema(cls, schema: List[FlowfileColumn]) -> "FlowDataEngine":
-        """Create a FlowDataEngine from a schema definition."""
+        """Creates an empty FlowDataEngine from a schema definition.
+
+        Args:
+            schema: A list of `FlowfileColumn` objects defining the schema.
+
+        Returns:
+            A new, empty `FlowDataEngine` instance with the specified schema.
+        """
         pl_schema = []
         for i, flow_file_column in enumerate(schema):
             pl_schema.append((flow_file_column.name, cast_str_to_polars_type(flow_file_column.data_type)))
@@ -959,7 +1145,17 @@ class FlowDataEngine:
 
     @classmethod
     def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowDataEngine":
-        """Create a FlowDataEngine from a file path."""
+        """Creates a FlowDataEngine from a local file path.
+
+        Supports various file types like CSV, Parquet, and Excel.
+
+        Args:
+            received_table: A `ReceivedTableBase` object containing the file path
+                and format details.
+
+        Returns:
+            A new `FlowDataEngine` instance with data from the file.
+        """
         received_table.set_absolute_filepath()
         file_type_handlers = {
             'csv': create_funcs.create_from_path_csv,
@@ -977,19 +1173,36 @@ class FlowDataEngine:
 
     @classmethod
     def create_random(cls, number_of_records: int = 1000) -> "FlowDataEngine":
-        """Create a FlowDataEngine with random data."""
+        """Creates a FlowDataEngine with randomly generated data.
+
+        Useful for testing and examples.
+
+        Args:
+            number_of_records: The number of random records to generate.
+
+        Returns:
+            A new `FlowDataEngine` instance with fake data.
+        """
         return cls(create_fake_data(number_of_records))
 
     @classmethod
     def generate_enumerator(cls, length: int = 1000, output_name: str = 'output_column') -> "FlowDataEngine":
-        """Generate a sequence of numbers as a FlowDataEngine."""
+        """Generates a FlowDataEngine with a single column containing a sequence of integers.
+
+        Args:
+            length: The number of integers to generate in the sequence.
+            output_name: The name of the output column.
+
+        Returns:
+            A new `FlowDataEngine` instance.
+        """
         if length > 10_000_000:
             length = 10_000_000
         return cls(pl.LazyFrame().select((pl.int_range(0, length, dtype=pl.UInt32)).alias(output_name)))
 
     def _handle_schema(self, schema: List[FlowfileColumn] | List[str] | pl.Schema | None,
                        pl_schema: pl.Schema) -> List[FlowfileColumn] | None:
-        """Handle schema processing and validation."""
+        """Handles schema processing and validation during initialization."""
         if schema is None and pl_schema is not None:
             return convert_stats_to_column_info(self._create_schema_stats_from_pl_schema(pl_schema))
         elif schema is None and pl_schema is None:
@@ -1009,7 +1222,7 @@ class FlowDataEngine:
             return schema
 
     def _handle_polars_schema(self, schema: pl.Schema, pl_schema: pl.Schema) -> List[FlowfileColumn]:
-        """Handle Polars schema conversion."""
+        """Handles Polars schema conversion."""
         flow_file_columns = [
             FlowfileColumn.create_from_polars_dtype(column_name=col_name, data_type=dtype)
             for col_name, dtype in zip(schema.names(), schema.dtypes())
@@ -1024,7 +1237,7 @@ class FlowDataEngine:
         return flow_file_columns
 
     def _handle_string_schema(self, schema: List[str], pl_schema: pl.Schema) -> List[FlowfileColumn]:
-        """Handle string-based schema conversion."""
+        """Handles string-based schema conversion."""
         flow_file_columns = [
             FlowfileColumn.create_from_polars_dtype(column_name=col_name, data_type=dtype)
             for col_name, dtype in zip(schema, pl_schema.dtypes())
@@ -1036,10 +1249,19 @@ class FlowDataEngine:
 
         return flow_file_columns
 
-    # Data Manipulation Methods
-
     def split(self, split_input: transform_schemas.TextToRowsInput) -> "FlowDataEngine":
-        """Split a column into multiple rows based on a delimiter."""
+        """Splits a column's text values into multiple rows based on a delimiter.
+
+        This operation is often referred to as "exploding" the DataFrame, as it
+        increases the number of rows.
+
+        Args:
+            split_input: A `TextToRowsInput` object specifying the column to split,
+                the delimiter, and the output column name.
+
+        Returns:
+            A new `FlowDataEngine` instance with the exploded rows.
+        """
         output_column_name = (
             split_input.output_column_name
             if split_input.output_column_name
@@ -1064,7 +1286,18 @@ class FlowDataEngine:
         return FlowDataEngine(df)
 
     def unpivot(self, unpivot_input: transform_schemas.UnpivotInput) -> "FlowDataEngine":
-        """Convert data from wide to long format."""
+        """Converts the DataFrame from a wide to a long format.
+
+        This is the inverse of a pivot operation, taking columns and transforming
+        them into `variable` and `value` rows.
+
+        Args:
+            unpivot_input: An `UnpivotInput` object specifying which columns to
+                unpivot and which to keep as index columns.
+
+        Returns:
+            A new, unpivoted `FlowDataEngine` instance.
+        """
         lf = self.data_frame
 
         if unpivot_input.data_type_selector_expr is not None:
@@ -1083,7 +1316,17 @@ class FlowDataEngine:
         return FlowDataEngine(result)
 
     def do_pivot(self, pivot_input: transform_schemas.PivotInput, node_logger: NodeLogger = None) -> "FlowDataEngine":
-        """Convert data from long to wide format with aggregations."""
+        """Converts the DataFrame from a long to a wide format, aggregating values.
+
+        Args:
+            pivot_input: A `PivotInput` object defining the index, pivot, and value
+                columns, along with the aggregation logic.
+            node_logger: An optional logger for reporting warnings, e.g., if the
+                pivot column has too many unique values.
+
+        Returns:
+            A new, pivoted `FlowDataEngine` instance.
+        """
         # Get unique values for pivot columns
         max_unique_vals = 200
         new_cols_unique = fetch_unique_values(self.data_frame.select(pivot_input.pivot_column)
@@ -1143,7 +1386,16 @@ class FlowDataEngine:
         return FlowDataEngine(df, calculate_schema_stats=False)
 
     def do_filter(self, predicate: str) -> "FlowDataEngine":
-        """Filter the DataFrame based on a predicate expression."""
+        """Filters rows based on a predicate expression.
+
+        Args:
+            predicate: A string containing a Polars expression that evaluates to
+                a boolean value.
+
+        Returns:
+            A new `FlowDataEngine` instance containing only the rows that match
+            the predicate.
+        """
         try:
             f = to_expr(predicate)
         except Exception as e:
@@ -1153,13 +1405,24 @@ class FlowDataEngine:
         return FlowDataEngine(df, schema=self.schema, streamable=self._streamable)
 
     def add_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
-        """Add a record ID column with optional grouping."""
+        """Adds a record ID (row number) column to the DataFrame.
+
+        Can generate a simple sequential ID or a grouped ID that resets for
+        each group.
+
+        Args:
+            record_id_settings: A `RecordIdInput` object specifying the output
+                column name, offset, and optional grouping columns.
+
+        Returns:
+            A new `FlowDataEngine` instance with the added record ID column.
+        """
         if record_id_settings.group_by and len(record_id_settings.group_by_columns) > 0:
             return self._add_grouped_record_id(record_id_settings)
         return self._add_simple_record_id(record_id_settings)
 
     def _add_grouped_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
-        """Add a record ID column with grouping."""
+        """Adds a record ID column with grouping."""
         select_cols = [pl.col(record_id_settings.output_column_name)] + [pl.col(c) for c in self.columns]
 
         df = (
@@ -1179,7 +1442,7 @@ class FlowDataEngine:
         return FlowDataEngine(df, schema=output_schema)
 
     def _add_simple_record_id(self, record_id_settings: transform_schemas.RecordIdInput) -> "FlowDataEngine":
-        """Add a simple sequential record ID column."""
+        """Adds a simple sequential record ID column."""
         df = self.data_frame.with_row_index(
             record_id_settings.output_column_name,
             record_id_settings.offset
@@ -1190,38 +1453,52 @@ class FlowDataEngine:
 
         return FlowDataEngine(df, schema=output_schema)
 
-    # Utility Methods
-
     def get_schema_column(self, col_name: str) -> FlowfileColumn:
-        """Get schema information for a specific column."""
+        """Retrieves the schema information for a single column by its name.
+
+        Args:
+            col_name: The name of the column to retrieve.
+
+        Returns:
+            A `FlowfileColumn` object for the specified column, or `None` if not found.
+        """
         for s in self.schema:
             if s.name == col_name:
                 return s
 
     def get_estimated_file_size(self) -> int:
-        """Get the estimated size of the file in bytes."""
+        """Estimates the file size in bytes if the data originated from a local file.
+
+        This relies on the original path being tracked during file ingestion.
+
+        Returns:
+            The file size in bytes, or 0 if the original path is unknown.
+        """
         if self._org_path is not None:
             return os.path.getsize(self._org_path)
         return 0
 
     def __repr__(self) -> str:
-        """Return string representation of the FlowDataEngine."""
-        return f'flowfile table\n{self.data_frame.__repr__()}'
+        """Returns a string representation of the FlowDataEngine."""
+        return f'flow data engine\n{self.data_frame.__repr__()}'
 
     def __call__(self) -> "FlowDataEngine":
-        """Make the class callable, returning self."""
+        """Makes the class instance callable, returning itself."""
         return self
 
     def __len__(self) -> int:
-        """Get the number of records in the table."""
+        """Returns the number of records in the table."""
         return self.number_of_records if self.number_of_records >= 0 else self.get_number_of_records()
 
     def cache(self) -> "FlowDataEngine":
-        """
-        Cache the data in background and update the DataFrame reference.
+        """Caches the current DataFrame to disk and updates the internal reference.
+
+        This triggers a background process to write the current LazyFrame's result
+        to a temporary file. Subsequent operations on this `FlowDataEngine` instance
+        will read from the cached file, which can speed up downstream computations.
 
         Returns:
-            FlowDataEngine: Self with cached data
+            The same `FlowDataEngine` instance, now backed by the cached data.
         """
         edf = ExternalDfFetcher(lf=self.data_frame, file_ref=str(id(self)), wait_on_completion=False,
                                 flow_id=-1,
@@ -1236,7 +1513,13 @@ class FlowDataEngine:
         return self
 
     def collect_external(self):
-        """Collect data from external source if present."""
+        """Materializes data from a tracked external source.
+
+        If the `FlowDataEngine` was created from an `ExternalDataSource`, this
+        method will trigger the data retrieval, update the internal `_data_frame`
+        to a `LazyFrame` of the collected data, and reset the schema to be
+        re-evaluated.
+        """
         if self._external_source is not None:
             logger.info('Collecting external source')
             if self.external_source.get_pl_df() is not None:
@@ -1245,16 +1528,16 @@ class FlowDataEngine:
                 self.data_frame = pl.LazyFrame(list(self.external_source.get_iter()))
             self._schema = None  # enforce reset schema
 
-    # Data Access Methods
     def get_output_sample(self, n_rows: int = 10) -> List[Dict]:
-        """
-        Get a sample of the data as a list of dictionaries.
+        """Gets a sample of the data as a list of dictionaries.
+
+        This is typically used to display a preview of the data in a UI.
 
         Args:
-            n_rows: Number of rows to sample
+            n_rows: The number of rows to sample.
 
         Returns:
-            List[Dict]: Sample data as dictionaries
+            A list of dictionaries, where each dictionary represents a row.
         """
         if self.number_of_records > n_rows or self.number_of_records < 0:
             df = self.collect(n_rows)
@@ -1263,6 +1546,7 @@ class FlowDataEngine:
         return df.to_dicts()
 
     def __get_sample__(self, n_rows: int = 100, streamable: bool = True) -> "FlowDataEngine":
+        """Internal method to get a sample of the data."""
         if not self.lazy:
             df = self.data_frame.lazy()
         else:
@@ -1280,20 +1564,20 @@ class FlowDataEngine:
 
     def get_sample(self, n_rows: int = 100, random: bool = False, shuffle: bool = False,
                    seed: int = None) -> "FlowDataEngine":
-        """
-        Get a sample of rows from the DataFrame.
+        """Gets a sample of rows from the DataFrame.
 
         Args:
-            n_rows: Number of rows to sample
-            random: Whether to randomly sample
-            shuffle: Whether to shuffle the sample
-            seed: Random seed for reproducibility
+            n_rows: The number of rows to sample.
+            random: If True, performs random sampling. If False, takes the first n_rows.
+            shuffle: If True (and `random` is True), shuffles the data before sampling.
+            seed: A random seed for reproducibility.
 
         Returns:
-            FlowDataEngine: New instance with sampled data
+            A new `FlowDataEngine` instance containing the sampled data.
         """
-        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=True))
+        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=OFFLOAD_TO_WORKER))
         logging.info(f'Getting sample of {n_rows} rows')
+
         if random:
             if self.lazy and self.external_source is not None:
                 self.collect_external()
@@ -1315,31 +1599,30 @@ class FlowDataEngine:
         return FlowDataEngine(sample_df, schema=self.schema, number_of_records=n_records)
 
     def get_subset(self, n_rows: int = 100) -> "FlowDataEngine":
-        """
-        Get a subset of rows from the DataFrame.
+        """Gets the first `n_rows` from the DataFrame.
 
         Args:
-            n_rows: Number of rows to include
+            n_rows: The number of rows to include in the subset.
 
         Returns:
-            FlowDataEngine: New instance with subset of data
+            A new `FlowDataEngine` instance containing the subset of data.
         """
         if not self.lazy:
             return FlowDataEngine(self.data_frame.head(n_rows), calculate_schema_stats=True)
         else:
             return FlowDataEngine(self.data_frame.head(n_rows), calculate_schema_stats=True)
 
-    # Iterator Methods
-    def iter_batches(self, batch_size: int = 1000, columns: Union[List, Tuple, str] = None):
-        """
-        Iterate over the DataFrame in batches.
+    def iter_batches(self, batch_size: int = 1000,
+                     columns: Union[List, Tuple, str] = None) -> Generator["FlowDataEngine", None, None]:
+        """Iterates over the DataFrame in batches.
 
         Args:
-            batch_size: Size of each batch
-            columns: Columns to include
+            batch_size: The size of each batch.
+            columns: A list of column names to include in the batches. If None,
+                all columns are included.
 
         Yields:
-            FlowDataEngine: New instance for each batch
+            A `FlowDataEngine` instance for each batch.
         """
         if columns:
             self.data_frame = self.data_frame.select(columns)
@@ -1351,17 +1634,21 @@ class FlowDataEngine:
     def start_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
                          other: "FlowDataEngine", file_ref: str, flow_id: int = -1,
                          node_id: int | str = -1) -> ExternalFuzzyMatchFetcher:
-        """
-        Starts a fuzzy join with another DataFrame and returns the object to track.
+        """Starts a fuzzy join operation in a background process.
+
+        This method prepares the data and initiates the fuzzy matching in a
+        separate process, returning a tracker object immediately.
 
         Args:
-            fuzzy_match_input: Fuzzy matching parameters
-            other: Right DataFrame for join
-            file_ref: Reference for temporary files
-            flow_id: Flow ID for tracking
-            node_id: Node ID for tracking
+            fuzzy_match_input: A `FuzzyMatchInput` object with the matching parameters.
+            other: The right `FlowDataEngine` to join with.
+            file_ref: A reference string for temporary files.
+            flow_id: The flow ID for tracking.
+            node_id: The node ID for tracking.
+
         Returns:
-            FlowDataEngine: New instance with joined data
+            An `ExternalFuzzyMatchFetcher` object that can be used to track the
+            progress and retrieve the result of the fuzzy join.
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
@@ -1375,17 +1662,19 @@ class FlowDataEngine:
     def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
                       other: "FlowDataEngine", file_ref: str, flow_id: int = -1,
                       node_id: int | str = -1) -> "FlowDataEngine":
-        """
-        Perform a fuzzy join with another DataFrame.
+        """Performs a fuzzy join with another DataFrame.
+
+        This method blocks until the fuzzy join operation is complete.
 
         Args:
-            fuzzy_match_input: Fuzzy matching parameters
-            other: Right DataFrame for join
-            file_ref: Reference for temporary files
-            flow_id: Flow ID for tracking
-            node_id: Node ID for tracking
+            fuzzy_match_input: A `FuzzyMatchInput` object with the matching parameters.
+            other: The right `FlowDataEngine` to join with.
+            file_ref: A reference string for temporary files.
+            flow_id: The flow ID for tracking.
+            node_id: The node ID for tracking.
+
         Returns:
-            FlowDataEngine: New instance with joined data
+            A new `FlowDataEngine` instance with the result of the fuzzy join.
         """
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input=fuzzy_match_input)
@@ -1399,18 +1688,19 @@ class FlowDataEngine:
 
     def fuzzy_match(self, right: "FlowDataEngine", left_on: str, right_on: str,
                     fuzzy_method: str = 'levenshtein', threshold: float = 0.75) -> "FlowDataEngine":
-        """
-        Perform fuzzy matching between two DataFrames.
+        """Performs a simple fuzzy match between two DataFrames on a single column pair.
+
+        This is a convenience method for a common fuzzy join scenario.
 
         Args:
-            right: Right DataFrame for matching
-            left_on: Column from left DataFrame
-            right_on: Column from right DataFrame
-            fuzzy_method: Method for fuzzy matching
-            threshold: Matching threshold
+            right: The right `FlowDataEngine` to match against.
+            left_on: The column name from the left DataFrame to match on.
+            right_on: The column name from the right DataFrame to match on.
+            fuzzy_method: The fuzzy matching algorithm to use (e.g., 'levenshtein').
+            threshold: The similarity score threshold (0.0 to 1.0) for a match.
 
         Returns:
-            FlowDataEngine: New instance with matched data
+            A new `FlowDataEngine` with the matched data.
         """
         fuzzy_match_input = transform_schemas.FuzzyMatchInput(
             [transform_schemas.FuzzyMap(
@@ -1426,28 +1716,27 @@ class FlowDataEngine:
     def do_cross_join(self, cross_join_input: transform_schemas.CrossJoinInput,
                       auto_generate_selection: bool, verify_integrity: bool,
                       other: "FlowDataEngine") -> "FlowDataEngine":
-        """
-        Perform a cross join with another DataFrame.
+        """Performs a cross join with another DataFrame.
+
+        A cross join produces the Cartesian product of the two DataFrames.
 
         Args:
-            cross_join_input: Cross join parameters
-            auto_generate_selection: Whether to auto-generate column selection
-            verify_integrity: Whether to verify join integrity
-            other: Right DataFrame for join
+            cross_join_input: A `CrossJoinInput` object specifying column selections.
+            auto_generate_selection: If True, automatically renames columns to avoid conflicts.
+            verify_integrity: If True, checks if the resulting join would be too large.
+            other: The right `FlowDataEngine` to join with.
 
         Returns:
-            FlowDataEngine: New instance with joined data
+            A new `FlowDataEngine` with the result of the cross join.
 
         Raises:
-            Exception: If join would result in too many records
+            Exception: If `verify_integrity` is True and the join would result in
+                an excessively large number of records.
         """
         self.lazy = True
         other.lazy = True
 
         verify_join_select_integrity(cross_join_input, left_columns=self.columns, right_columns=other.columns)
-
-        # if auto_generate_selection:
-        #     cross_join_input.auto_rename()
 
         right_select = [v.old_name for v in cross_join_input.right_select.renames
                         if (v.keep or v.join_key) and v.is_available]
@@ -1480,20 +1769,23 @@ class FlowDataEngine:
 
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
              verify_integrity: bool, other: "FlowDataEngine") -> "FlowDataEngine":
-        """
-        Perform a join operation with another DataFrame.
+        """Performs a standard SQL-style join with another DataFrame.
+
+        Supports various join types like 'inner', 'left', 'right', 'outer', 'semi', and 'anti'.
 
         Args:
-            join_input: Join parameters
-            auto_generate_selection: Whether to auto-generate column selection
-            verify_integrity: Whether to verify join integrity
-            other: Right DataFrame for join
+            join_input: A `JoinInput` object defining the join keys, join type,
+                and column selections.
+            auto_generate_selection: If True, automatically handles column renaming.
+            verify_integrity: If True, performs checks to prevent excessively large joins.
+            other: The right `FlowDataEngine` to join with.
 
         Returns:
-            FlowDataEngine: New instance with joined data
+            A new `FlowDataEngine` with the joined data.
 
         Raises:
-            Exception: If join would result in too many records or is invalid
+            Exception: If the join configuration is invalid or if `verify_integrity`
+                is True and the join is predicted to be too large.
         """
         ensure_right_unselect_for_semi_and_anti_joins(join_input)
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
@@ -1548,16 +1840,17 @@ class FlowDataEngine:
                                 number_of_records=0, streamable=False)
             return fl
 
-    # Graph Operations
     def solve_graph(self, graph_solver_input: transform_schemas.GraphSolverInput) -> "FlowDataEngine":
-        """
-        Solve a graph problem using the specified columns.
+        """Solves a graph problem represented by 'from' and 'to' columns.
+
+        This is used for operations like finding connected components in a graph.
 
         Args:
-            graph_solver_input: Graph solving parameters
+            graph_solver_input: A `GraphSolverInput` object defining the source,
+                destination, and output column names.
 
         Returns:
-            FlowDataEngine: New instance with solved graph data
+            A new `FlowDataEngine` instance with the solved graph data.
         """
         lf = self.data_frame.with_columns(
             graph_solver(graph_solver_input.col_from, graph_solver_input.col_to)
@@ -1565,42 +1858,41 @@ class FlowDataEngine:
         )
         return FlowDataEngine(lf)
 
-    # Data Modification Methods
     def add_new_values(self, values: Iterable, col_name: str = None) -> "FlowDataEngine":
-        """
-        Add a new column with specified values.
+        """Adds a new column with the provided values.
 
         Args:
-            values: Values to add
-            col_name: Name for new column
+            values: An iterable (e.g., list, tuple) of values to add as a new column.
+            col_name: The name for the new column. Defaults to 'new_values'.
 
         Returns:
-            FlowDataEngine: New instance with added column
+            A new `FlowDataEngine` instance with the added column.
         """
         if col_name is None:
             col_name = 'new_values'
         return FlowDataEngine(self.data_frame.with_columns(pl.Series(values).alias(col_name)))
 
     def get_record_count(self) -> "FlowDataEngine":
-        """
-        Get the total number of records.
+        """Returns a new FlowDataEngine with a single column 'number_of_records'
+        containing the total number of records.
 
         Returns:
-            FlowDataEngine: New instance with record count
+            A new `FlowDataEngine` instance.
         """
         return FlowDataEngine(self.data_frame.select(pl.len().alias('number_of_records')))
 
     def assert_equal(self, other: "FlowDataEngine", ordered: bool = True, strict_schema: bool = False):
-        """
-        Assert that this DataFrame is equal to another.
+        """Asserts that this DataFrame is equal to another.
+
+        Useful for testing.
 
         Args:
-            other: DataFrame to compare with
-            ordered: Whether to consider row order
-            strict_schema: Whether to strictly compare schemas
+            other: The other `FlowDataEngine` to compare with.
+            ordered: If True, the row order must be identical.
+            strict_schema: If True, the data types of the schemas must be identical.
 
         Raises:
-            Exception: If DataFrames are not equal
+            Exception: If the DataFrames are not equal based on the specified criteria.
         """
         org_laziness = self.lazy, other.lazy
         self.lazy = False
@@ -1628,14 +1920,14 @@ class FlowDataEngine:
         self.lazy, other.lazy = org_laziness
         assert self_lf.equals(other_lf), 'Data is not equal'
 
-    # Initialization Methods
     def initialize_empty_fl(self):
-        """Initialize an empty LazyFrame."""
+        """Initializes an empty LazyFrame."""
         self.data_frame = pl.LazyFrame()
         self.number_of_records = 0
         self._lazy = True
 
     def _calculate_number_of_records_in_worker(self) -> int:
+        """Calculates the number of records in a worker process."""
         number_of_records = ExternalDfFetcher(
             lf=self.data_frame,
             operation_type="calculate_number_of_records",
@@ -1647,18 +1939,20 @@ class FlowDataEngine:
 
     def get_number_of_records(self, warn: bool = False, force_calculate: bool = False,
                               calculate_in_worker_process: bool = False) -> int:
-        """
-        Get the total number of records in the DataFrame.
+        """Gets the total number of records in the DataFrame.
+
+        For lazy frames, this may trigger a full data scan, which can be expensive.
 
         Args:
-            warn: Whether to warn about expensive operations
-            force_calculate: Whether to force recalculation
-            calculate_in_worker_process: Whether to offload compute to the worker process
+            warn: If True, logs a warning if a potentially expensive calculation is triggered.
+            force_calculate: If True, forces recalculation even if a value is cached.
+            calculate_in_worker_process: If True, offloads the calculation to a worker process.
+
         Returns:
-            int: Number of records
+            The total number of records.
 
         Raises:
-            Exception: If unable to get number of records
+            ValueError: If the number of records could not be determined.
         """
         if self.is_future and not self.is_collected:
             return -1
@@ -1669,37 +1963,39 @@ class FlowDataEngine:
 
             if self.lazy:
                 if calculate_in_worker_process:
-                    self.number_of_records = self._calculate_number_of_records_in_worker()
-                else:
-                    if warn:
-                        logger.warning('Calculating the number of records this can be expensive on a lazy frame')
                     try:
-                        self.number_of_records = self.data_frame.select(pl.len()).collect(
-                            engine="streaming" if self._streamable else "auto")[0, 0]
-                    except Exception:
-                        raise ValueError('Could not get number of records')
+                        self.number_of_records = self._calculate_number_of_records_in_worker()
+                        return self.number_of_records
+                    except Exception as e:
+                        logger.error(f"Error: {e}")
+                if warn:
+                    logger.warning('Calculating the number of records this can be expensive on a lazy frame')
+                try:
+                    self.number_of_records = self.data_frame.select(pl.len()).collect(
+                        engine="streaming" if self._streamable else "auto")[0, 0]
+                except Exception:
+                    raise ValueError('Could not get number of records')
             else:
                 self.number_of_records = self.data_frame.__len__()
         return self.number_of_records
 
-    # Properties
     @property
     def has_errors(self) -> bool:
-        """Check if there are any errors."""
+        """Checks if there are any errors."""
         return len(self.errors) > 0
 
     @property
     def lazy(self) -> bool:
-        """Check if DataFrame is lazy."""
+        """Indicates if the DataFrame is in lazy mode."""
         return self._lazy
 
     @lazy.setter
     def lazy(self, exec_lazy: bool = False):
-        """
-        Set the laziness of the DataFrame.
+        """Sets the laziness of the DataFrame.
 
         Args:
-            exec_lazy: Whether to make DataFrame lazy
+            exec_lazy: If True, converts the DataFrame to a LazyFrame. If False,
+                collects the data and converts it to an eager DataFrame.
         """
         if exec_lazy != self._lazy:
             if exec_lazy:
@@ -1715,42 +2011,40 @@ class FlowDataEngine:
 
     @property
     def external_source(self) -> ExternalDataSource:
-        """Get the external data source."""
+        """The external data source, if any."""
         return self._external_source
 
     @property
     def cols_idx(self) -> Dict[str, int]:
-        """Get column index mapping."""
+        """A dictionary mapping column names to their integer index."""
         if self._col_idx is None:
             self._col_idx = {c: i for i, c in enumerate(self.columns)}
         return self._col_idx
 
     @property
     def __name__(self) -> str:
-        """Get table name."""
+        """The name of the table."""
         return self.name
 
-    # Schema and Column Operations
     def get_select_inputs(self) -> transform_schemas.SelectInputs:
-        """
-        Get select inputs for all columns.
+        """Gets `SelectInput` specifications for all columns in the current schema.
 
         Returns:
-            SelectInputs: Input specifications for all columns
+            A `SelectInputs` object that can be used to configure selection or
+            transformation operations.
         """
         return transform_schemas.SelectInputs(
             [transform_schemas.SelectInput(old_name=c.name, data_type=c.data_type) for c in self.schema]
         )
 
     def select_columns(self, list_select: Union[List[str], Tuple[str], str]) -> "FlowDataEngine":
-        """
-        Select specific columns from the DataFrame.
+        """Selects a subset of columns from the DataFrame.
 
         Args:
-            list_select: Columns to select
+            list_select: A list, tuple, or single string of column names to select.
 
         Returns:
-            FlowDataEngine: New instance with selected columns
+            A new `FlowDataEngine` instance containing only the selected columns.
         """
         if isinstance(list_select, str):
             list_select = [list_select]
@@ -1767,14 +2061,13 @@ class FlowDataEngine:
         )
 
     def drop_columns(self, columns: List[str]) -> "FlowDataEngine":
-        """
-        Drop specified columns from the DataFrame.
+        """Drops specified columns from the DataFrame.
 
         Args:
-            columns: Columns to drop
+            columns: A list of column names to drop.
 
         Returns:
-            FlowDataEngine: New instance without dropped columns
+            A new `FlowDataEngine` instance without the dropped columns.
         """
         cols_for_select = tuple(set(self.columns) - set(columns))
         idx_to_keep = [self.cols_idx.get(c) for c in cols_for_select]
@@ -1787,14 +2080,13 @@ class FlowDataEngine:
         )
 
     def reorganize_order(self, column_order: List[str]) -> "FlowDataEngine":
-        """
-        Reorganize columns in specified order.
+        """Reorganizes columns into a specified order.
 
         Args:
-            column_order: Desired column order
+            column_order: A list of column names in the desired order.
 
         Returns:
-            FlowDataEngine: New instance with reordered columns
+            A new `FlowDataEngine` instance with the columns reordered.
         """
         df = self.data_frame.select(column_order)
         schema = sorted(self.schema, key=lambda x: column_order.index(x.column_name))
@@ -1802,16 +2094,15 @@ class FlowDataEngine:
 
     def apply_flowfile_formula(self, func: str, col_name: str,
                                output_data_type: pl.DataType = None) -> "FlowDataEngine":
-        """
-        Apply a formula to create a new column.
+        """Applies a formula to create a new column or transform an existing one.
 
         Args:
-            func: Formula to apply
-            col_name: Name for new column
-            output_data_type: Data type for output
+            func: A string containing a Polars expression formula.
+            col_name: The name of the new or transformed column.
+            output_data_type: The desired Polars data type for the output column.
 
         Returns:
-            FlowDataEngine: New instance with added column
+            A new `FlowDataEngine` instance with the applied formula.
         """
         parsed_func = to_expr(func)
         if output_data_type is not None:
@@ -1823,16 +2114,15 @@ class FlowDataEngine:
 
     def apply_sql_formula(self, func: str, col_name: str,
                           output_data_type: pl.DataType = None) -> "FlowDataEngine":
-        """
-        Apply an SQL-style formula to create a new column.
+        """Applies an SQL-style formula using `pl.sql_expr`.
 
         Args:
-            func: SQL formula to apply
-            col_name: Name for new column
-            output_data_type: Data type for output
+            func: A string containing an SQL expression.
+            col_name: The name of the new or transformed column.
+            output_data_type: The desired Polars data type for the output column.
 
         Returns:
-            FlowDataEngine: New instance with added column
+            A new `FlowDataEngine` instance with the applied formula.
         """
         expr = to_expr(func)
         if output_data_type not in (None, "Auto"):
@@ -1844,16 +2134,18 @@ class FlowDataEngine:
 
     def output(self, output_fs: input_schema.OutputSettings, flow_id: int, node_id: int | str,
                execute_remote: bool = True) -> "FlowDataEngine":
-        """
-        Write DataFrame to output file.
+        """Writes the DataFrame to an output file.
+
+        Can execute the write operation locally or in a remote worker process.
 
         Args:
-            output_fs: Output settings.
-            flow_id: Flow ID for tracking.
-            node_id: Node ID for tracking.
-            execute_remote: If the output should be executed at the flowfile worker process.
+            output_fs: An `OutputSettings` object with details about the output file.
+            flow_id: The flow ID for tracking.
+            node_id: The node ID for tracking.
+            execute_remote: If True, executes the write in a worker process.
+
         Returns:
-            FlowDataEngine: Self for chaining
+            The same `FlowDataEngine` instance for chaining.
         """
         logger.info('Starting to write output')
         if execute_remote:
@@ -1885,30 +2177,28 @@ class FlowDataEngine:
             logger.info("Finished writing output")
         return self
 
-    # Data Operations
     def make_unique(self, unique_input: transform_schemas.UniqueInput = None) -> "FlowDataEngine":
-        """
-        Get unique rows based on specified columns.
+        """Gets the unique rows from the DataFrame.
 
         Args:
-            unique_input: Unique operation parameters
+            unique_input: A `UniqueInput` object specifying a subset of columns
+                to consider for uniqueness and a strategy for keeping rows.
 
         Returns:
-            FlowDataEngine: New instance with unique rows
+            A new `FlowDataEngine` instance with unique rows.
         """
         if unique_input is None or unique_input.columns is None:
             return FlowDataEngine(self.data_frame.unique())
         return FlowDataEngine(self.data_frame.unique(unique_input.columns, keep=unique_input.strategy))
 
     def concat(self, other: Iterable["FlowDataEngine"] | "FlowDataEngine") -> "FlowDataEngine":
-        """
-        Concatenate with other DataFrames.
+        """Concatenates this DataFrame with one or more other DataFrames.
 
         Args:
-            other: DataFrames to concatenate
+            other: A single `FlowDataEngine` or an iterable of them.
 
         Returns:
-            FlowDataEngine: Concatenated DataFrame
+            A new `FlowDataEngine` containing the concatenated data.
         """
         if isinstance(other, FlowDataEngine):
             other = [other]
@@ -1918,15 +2208,15 @@ class FlowDataEngine:
 
     def do_select(self, select_inputs: transform_schemas.SelectInputs,
                   keep_missing: bool = True) -> "FlowDataEngine":
-        """
-        Perform complex column selection and transformation.
+        """Performs a complex column selection, renaming, and reordering operation.
 
         Args:
-            select_inputs: Selection specifications
-            keep_missing: Whether to keep columns not specified
+            select_inputs: A `SelectInputs` object defining the desired transformations.
+            keep_missing: If True, columns not specified in `select_inputs` are kept.
+                If False, they are dropped.
 
         Returns:
-            FlowDataEngine: New instance with selected/transformed columns
+            A new `FlowDataEngine` with the transformed selection.
         """
         new_schema = deepcopy(self.schema)
         renames = [r for r in select_inputs.renames if r.is_available]
@@ -1962,29 +2252,29 @@ class FlowDataEngine:
         output_file = FlowDataEngine(ndf, number_of_records=self.number_of_records)
         return output_file.reorganize_order(sorted_cols)
 
-    # Utility Methods
     def set_streamable(self, streamable: bool = False):
-        """Set whether DataFrame operations should be streamable."""
+        """Sets whether DataFrame operations should be streamable."""
         self._streamable = streamable
 
     def _calculate_schema(self) -> List[Dict]:
-        """Calculate schema statistics."""
+        """Calculates schema statistics."""
         if self.external_source is not None:
             self.collect_external()
         v = utils.calculate_schema(self.data_frame)
         return v
 
     def calculate_schema(self):
-        """Calculate and return schema."""
+        """Calculates and returns the schema."""
         self._calculate_schema_stats = True
         return self.schema
 
     def count(self) -> int:
-        """Get total number of records."""
+        """Gets the total number of records."""
         return self.get_number_of_records()
 
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
+        """Creates a FlowDataEngine from a path in a worker process."""
         received_table.set_absolute_filepath()
         external_fetcher = ExternalCreateFetcher(received_table=received_table,
                                                  file_type=received_table.file_type, flow_id=flow_id, node_id=node_id)
@@ -1992,14 +2282,19 @@ class FlowDataEngine:
 
 
 def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowDataEngine":
-    """
-    Execute arbitrary Polars code.
+    """Executes arbitrary Polars code on one or more FlowDataEngine objects.
+
+    This function takes a string of Python code that uses Polars and executes it.
+    Input `FlowDataEngine` objects are made available in the code's scope as
+    `input_df` (for a single input) or `input_df_1`, `input_df_2`, etc.
 
     Args:
-        code: Polars code to execute
+        *flowfile_tables: A variable number of `FlowDataEngine` objects to be
+            used as input to the code.
+        code: A string containing the Polars code to execute.
 
     Returns:
-        FlowDataEngine: Result of code execution
+        A new `FlowDataEngine` instance containing the result of the executed code.
     """
     polars_executable = polars_code_parser.get_executable(code, num_inputs=len(flowfile_tables))
     if len(flowfile_tables) == 0:
@@ -2012,4 +2307,3 @@ def execute_polars_code(*flowfile_tables: "FlowDataEngine", code: str) -> "FlowD
     if isinstance(df, pl.DataFrame):
         logger.warning("Got a non lazy DataFrame, possibly harming performance, if possible, try to use a lazy method")
     return FlowDataEngine(df)
-
