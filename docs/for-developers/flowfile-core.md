@@ -3,12 +3,12 @@
 Welcome! This guide is for developers who want to understand, use, and contribute to `flowfile-core`. We'll dive into the architecture, see how data flows, and learn how to build powerful data pipelines.
 
 !!! info "Looking for the API docs?"
-    - **[Python API Reference](../python-api/index.md)**: If you want to USE Flowfile
-    - **[Design Philosophy](../flowfile-for-developers.md)**: If you want to understand WHY Flowfile works this way
+    - **[Python API Reference for users](../users/python-api/index.md)**: If you want to USE Flowfile
+    - **[Design Philosophy](design-philosophy.md)**: If you want to understand WHY Flowfile works this way
     - **This page**: If you want to understand HOW Flowfile works internally
 
 !!! tip "New to Flowfile?"
-    If you're looking for the high-level Python API, start with the [Python API Overview](../python-api/index.md). This guide dives into the internal architecture.
+    If you're looking for the high-level Python API, start with the [Python API Overview](../users/python-api/index.md). This guide dives into the internal architecture.
 
 Ready? Let's build something!
 

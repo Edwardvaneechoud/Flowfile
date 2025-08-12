@@ -60,4 +60,4 @@ Each tutorial includes:
 
 ---
 
-*Need help? Check the [Node Reference](../nodes/) for detailed documentation on each node type.*
+*Need help? Check the [Node Reference](../nodes/index.md) for detailed documentation on each node type.*

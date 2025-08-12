@@ -91,7 +91,7 @@ Understanding these concepts helps you:
 
 - **Deep dive:** Read the full [FlowFrame and FlowGraph guide](design-concepts.md)
 - **Expressions:** Master the [Formula Syntax](expressions.md)
-- **Practice:** Try the [tutorials](../tutorials/)
+- **Practice:** Try the [tutorials](../tutorials/index.md)
 
 ---
 

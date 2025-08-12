@@ -83,8 +83,8 @@ null_counts = df.select([
 
 ## Resources
 
-- [API Reference](../reference/) - Complete method documentation
-- [Core Concepts](../concepts/) - Understand the architecture
+- [API Reference](../reference/index.md) - Complete method documentation
+- [Core Concepts](../concepts/index.md) - Understand the architecture
 - [Quick Start](../quickstart.md) - Get running in 5 minutes
 
 ---

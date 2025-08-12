@@ -2,7 +2,7 @@
 
 Flowfile provides secure, centralized management for cloud storage connections. Connections can be created through code or the UI—both store credentials in an encrypted database. 
 On this page we will cover how to create and manage them in Python. If you want to learn how to create them in the UI, 
-check out the [UI guide](../../guides/manage_cloud_connections.md).
+check out the [UI guide](../../visual-editor/tutorials/cloud-connections.md).
 
 ## Creating Connections
 

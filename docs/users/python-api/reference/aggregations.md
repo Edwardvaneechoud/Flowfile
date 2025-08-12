@@ -82,4 +82,4 @@ df = df.with_columns([
 
 
 ---
-[← Previous: Expressions](expressions.md) | [Next: Joins →](joins.md)
+[← Previous: Expressions](flowframe-operations.md) | [Next: Joins →](joins.md)

@@ -15,7 +15,7 @@ Click the Cloud icon in the left sidebar to access the Cloud Storage Connections
 <details markdown="1">
 <summary>Screenshot: Cloud Storage Connections Page</summary>
 
-![Cloud storage connection page](../assets/images/guides/create_cloud_connection/cloud_storage_connection_page.png)
+![Cloud storage connection page](../../../assets/images/guides/create_cloud_connection/cloud_storage_connection_page.png)
 
 
 </details>
@@ -27,7 +27,7 @@ Click the **"+ Add Connection"** button to open the connection configuration dia
 <details markdown="1">
 <summary>Screenshot: Add Connection Dialog</summary>
 
-![create_new_cloud_storage](../assets/images/guides/create_cloud_connection/add_cloud_connection.png)
+![create_new_cloud_storage](../../../assets/images/guides/create_cloud_connection/add_cloud_connection.png)
 
 </details>
 

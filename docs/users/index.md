@@ -4,11 +4,11 @@ Welcome to Flowfile! Whether you prefer visual drag-and-drop or writing code, we
 
 ## Choose Your Path
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 2rem 0;">
+<div markdown="1", style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 2rem 0;">
 
-<div style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
+<div markdown="1", style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
 
-### 🎨 [Visual Editor](visual-editor/)
+### 🎨 [Visual Editor](visual-editor/index.md)
 
 Perfect for analysts and business users who want to build data pipelines visually.
 
@@ -19,13 +19,13 @@ Perfect for analysts and business users who want to build data pipelines visuall
 - Connect to databases and cloud storage
 - Export your flows as Python code
 
-[**Get Started with Visual Editor →**](visual-editor/)
+[**Get Started with Visual Editor →**](visual-editor/index.md)
 
 </div>
 
-<div style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
+<div markdown="1" style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
 
-### 🐍 [Python API](python-api/)
+### 🐍 [Python API](python-api/index.md)
 
 Perfect for developers and data scientists who prefer code.
 
@@ -36,7 +36,7 @@ Perfect for developers and data scientists who prefer code.
 - Visualize your code as flow graphs
 - Use advanced features and optimizations
 
-[**Get Started with Python →**](python-api/)
+[**Get Started with Python →**](python-api/index.md)
 
 </div>
 
@@ -71,8 +71,8 @@ ff.open_graph_in_editor(result.flow_graph)  # See it visually!
 ## Where to Start?
 
 - **New to Flowfile?** Start with our [Quick Start Guide](../quickstart.md)
-- **Coming from Excel/Tableau?** Try the [Visual Editor](visual-editor/)
-- **Know Python/Pandas/Polars?** Jump into the [Python API](python-api/)
+- **Coming from Excel/Tableau?** Try the [Visual Editor](visual-editor/index.md)
+- **Know Python/Pandas/Polars?** Jump into the [Python API](python-api/index.md)
 - **Want to see real examples?** Check out our tutorials in either section
 
 ---

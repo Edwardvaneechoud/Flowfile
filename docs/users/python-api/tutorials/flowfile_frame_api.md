@@ -48,7 +48,7 @@ open_graph_in_editor(result.flow_graph)
 <details markdown="1">
 <summary>Generated Flow in Flowfile UI</summary>
 
-![Created flow](../assets/images/guides/code_to_flow/code_to_flow.png)
+![Created flow](../../../assets/images/guides/code_to_flow/code_to_flow.png)
 </details>
 
 ## Visualizing Your Pipeline
@@ -90,7 +90,7 @@ open_graph_in_editor(aggregated_df.flow_graph)
 <details markdown="1">
 <summary>Generated Flow in Flowfile UI</summary>
 
-![Created flow](../assets/images/guides/code_to_flow/code_to_flow_2.png)
+![Created flow](../../../assets/images/guides/code_to_flow/code_to_flow_2.png)
 </details>
 
 When you run `open_graph_in_editor(...)`, the Flowfile Designer UI will open and display a visual graph of your pipeline. You can:

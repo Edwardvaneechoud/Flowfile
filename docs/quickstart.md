@@ -74,4 +74,4 @@ Once all services are running, you should be able to:
 3. See the Electron application window open automatically
 
 The application is now ready to use! You can start creating your first data flow by dragging nodes onto the canvas. 
-For more information check out: [Building Flows](./flows/building.md)
+For more information check out: [Building Flows](users/visual-editor/building-flows.md)

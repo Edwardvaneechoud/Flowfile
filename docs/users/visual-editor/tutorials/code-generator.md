@@ -3,7 +3,7 @@
 Flowfile's Code Generator allows you to export your visually designed data pipelines as clean, executable Python code. This feature is designed to empower users who wish to inspect the underlying data transformation logic, integrate Flowfile pipelines into existing Python projects, or extend their workflows with custom scripts.
 
 The generated code is entirely self-contained and relies mostly on the Polars library, ensuring it can run independently of Flowfile.
-![code_generator](../assets/images/guides/code_generator/code_generator.gif)
+![code_generator](../../../assets/images/guides/code_generator/code_generator.gif)
 
 ## Key Characteristics of the Generated Code
 

@@ -203,8 +203,8 @@ pipeline.write_parquet("yearly_sales.parquet")
 ## Next Steps
 
 - 📖 [Core Concepts](concepts/design-concepts.md) - Understand FlowFrame and FlowGraph
-- 📚 [API Reference](reference/) - Detailed documentation
-- 🎯 [Tutorials](tutorials/) - Real-world examples
+- 📚 [API Reference](reference/index.md) - Detailed documentation
+- 🎯 [Tutorials](tutorials/index.md) - Real-world examples
 - 🔄 [Visual Integration](reference/visual-ui.md) - Working with the UI
 
 ## Tips
@@ -217,4 +217,4 @@ pipeline.write_parquet("yearly_sales.parquet")
 
 ---
 
-*Ready for more? Check out the [full API reference](reference/) or learn about [core concepts](concepts/design-concepts.md).*
+*Ready for more? Check out the [full API reference](reference/index.md) or learn about [core concepts](concepts/design-concepts.md).*

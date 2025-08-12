@@ -4,8 +4,8 @@ Understanding how FlowFrame and FlowGraph work together is key to mastering Flow
 
 !!! tip "Related Reading"
     - **Practical Implementation**: See these concepts in action in our [Code to Flow guide](../tutorials/flowfile_frame_api.md)
-    - **Architecture Overview**: Learn about the system design in [Technical Architecture](../../guides/technical_architecture.md)
-    - **Visual Building**: Compare with [Building Flows](../../flows/building.md) visually
+    - **Architecture Overview**: Learn about the system design in [Technical Architecture](../../../for-developers/architecture.md#technical-architecture)
+    - **Visual Building**: Compare with [Building Flows](../../visual-editor/building-flows.md) visually
 
 ## FlowFrame: Always Lazy, Always Connected
 
@@ -49,7 +49,7 @@ result = df.collect()  # Everything executes at once, optimized
 ```
 
 !!! info "Performance Benefits"
-    This lazy evaluation is powered by Polars and explained in detail in our [Technical Architecture guide](../../guides/technical_architecture.md#the-power-of-lazy-evaluation).
+    This lazy evaluation is powered by Polars and explained in detail in our [Technical Architecture guide](../../../for-developers/architecture.md#the-power-of-lazy-evaluation). 
 
 #### 2. Connected to a DAG (Directed Acyclic Graph)
 Every FlowFrame has a reference to a FlowGraph that tracks every operation as a node:
@@ -64,7 +64,7 @@ print(df.flow_graph)  # Shows the graph this FlowFrame belongs to
 print(df.node_id)     # Shows which node in the graph this FlowFrame represents
 ```
 
-For a deeper understanding of how this DAG works internally, see [FlowGraph in the Core Guide](../core/flowfile-core.md#2-adding-a-node-where-settings-come-to-life)).
+For a deeper understanding of how this DAG works internally, see [FlowGraph in the Developers Guide](../../../for-developers/flowfile-core.md#2-adding-a-node-where-settings-come-to-life)).
 
 #### 3. Linear Operation Tracking
 Each operation creates a new node in the graph, even if you repeat the same operation:
@@ -108,9 +108,6 @@ print(f"Number of operations: {len(graph.nodes)}")
 print(f"Node connections: {graph.node_connections}")
 ```
 
-!!! note "API Reference"
-    For the complete FlowGraph API, see [FlowGraph Class Reference](../core/python-api-reference.md#flowfile_core.flowfile.flow_graph.FlowGraph).
-
 ## Visual Integration
 
 ### Viewing Your Graph
@@ -134,7 +131,7 @@ ff.open_graph_in_editor(result.flow_graph)
 ```
 
 !!! tip "Learn More"
-    See [Visual UI Integration](visual-ui.md) for details on launching and controlling the visual editor from Python.
+    See [Visual UI Integration](../reference/visual-ui.md) for details on launching and controlling the visual editor from Python.
 
 This opens a visual representation showing:
 - Each operation as a node
@@ -161,7 +158,7 @@ print("New schema:", transformed.schema)  # Shows new 'total' column immediately
 ```
 
 !!! info "How Schema Prediction Works"
-    Learn about the closure pattern that enables this in [The Magic of Closures](../flowfile-for-developers.md#flowfile-the-use-of-closures).
+    Learn about the closure pattern that enables this in [The Magic of Closures](../../../for-developers/design-philosophy.md#flowfile-the-use-of-closures).
 
 ## Practical Implications
 
@@ -188,7 +185,7 @@ result = large_pipeline.collect()  # Optimized execution plan
 ```
 
 !!! tip "Performance Guide"
-    For more on optimization strategies, see [Execution Methods](../flowfile-for-developers.md#execution-methods) in our philosophy guide.
+    For more on optimization strategies, see [Execution Methods](../../../for-developers/design-philosophy.md#3-execution-is-everything) in our philosophy guide.
 
 ### Graph Reuse and Copying
 You can work with the same graph across multiple FlowFrames:
@@ -243,9 +240,9 @@ ff.open_graph_in_editor(pipeline.flow_graph)
 ```
 
 !!! example "Complete Examples"
-    - **Database Pipeline**: See [PostgreSQL Integration](../../guides/database_connectivity.md) for a real-world example
-    - **Cloud Pipeline**: Check [Cloud Connections](cloud-connections.md) for S3 workflows
-    - **Export to Code**: Learn how your pipelines convert to pure Python in [Flow to Code](../../guides/code_generator.md)
+    - **Database Pipeline**: See [PostgreSQL Integration](../../visual-editor/tutorials/database-connectivity.md) for a real-world ui example
+    - **Cloud Pipeline**: Check [Cloud Connections](../../visual-editor/tutorials/cloud-connections.md) for S3 workflows
+    - **Export to Code**: Learn how your pipelines convert to pure Python in [Flow to Code](../../visual-editor/tutorials/code-generator.md)
 
 ## Summary
 
@@ -262,8 +259,9 @@ Understanding this design helps you build efficient, maintainable data pipelines
 
 ## Related Documentation
 
-- **[FlowFrame Operations](flowframe-operations.md)** - Available transformations and methods
+- **[FlowFrame Operations](../reference/flowframe-operations.md)** - Available transformations and methods
 - **[Expressions](expressions.md)** - Column operations and formula syntax
-- **[Joins](joins.md)** - Combining datasets
-- **[Aggregations](aggregations.md)** - Group by and summarization
-- **[Visual UI Integration](visual-ui.md)** - Working with the visual editor
+- **[Joins](../reference/joins.md)** - Combining datasets
+- **[Aggregations](../reference/aggregations.md)** - Group by and summarization
+- **[Visual UI Integration](../reference/visual-ui.md)** - Working with the visual editor
+- **[Developers guide](../../../for-developers/index.md)** - Core architecture and design philosophy

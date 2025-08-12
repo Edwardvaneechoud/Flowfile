@@ -1,59 +1,62 @@
-# Python API Flowfile Reference
+# Python API
 
-This section documents Flowfile's Python API, focusing on extensions and differences from Polars. For standard Polars operations, see the [Polars documentation](https://pola-rs.github.io/polars/py-polars/html/reference/).
+Build data pipelines programmatically with Flowfile's Polars-compatible API.
 
-## 📘 Core API
 
-### Data Input/Output
-- [**Reading Data**](reading-data.md) - File formats and cloud storage
-- [**Writing Data**](writing-data.md) - Saving results
-- [**Data Types**](data-types.md) - Supported data types
+!!! info "If You Know Polars, You Know Flowfile" 
+    Our API is designed to be a seamless extension of Polars. The majority of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
 
-### Transformations
-- [**FlowFrame Operations**](flowframe-operations.md) - Filter, select, sort
-- [**Expressions**](expressions.md) - Column operations
-- [**Aggregations**](aggregations.md) - Group by and summarize
-- [**Joins**](joins.md) - Combining datasets
 
-### 🔐 Flowfile-Specific Features
-- [**Cloud Storage**](cloud-connections.md) - S3 integration
-- [**visualize pipelines**](visual-ui.md) - Working with the visual editor
+## Who This Is For
 
-## 🔑 Key Extensions to Polars
+- **Python developers** who prefer code over drag-and-drop
+- **Data scientists** familiar with Polars or Pandas
+- **Engineers** building automated data pipelines
+- **Anyone** who needs version control and programmatic pipeline generation
 
-### Description Parameter
-Every operation accepts `description` for visual documentation:
+## Quick Example
+
 ```python
-df = df.filter(ff.col("active") == True, description="Keep active records")
+import flowfile as ff
+
+df = ff.read_csv("sales.csv")
+result = df.filter(ff.col("amount") > 100).group_by("region").agg(
+    ff.col("amount").sum()
+)
+
+# Visualize your pipeline
+ff.open_graph_in_editor(result.flow_graph)
 ```
 
-### Flowfile Formula Syntax
-Alternative bracket-based syntax for expressions:
-```python
-df.filter(flowfile_formula="[price] > 100 AND [quantity] >= 10")
-```
-Read more about the formula syntax here: [Flowfile Formula Syntax](expressions.md#flowfile-formula-syntax)
-Or try it out here: [Flowfile Formula Playground](https://polars-expr-transformer-playground-whuwbghlymon84t5ciewp3.streamlit.app/)
+## Documentation
 
-### Automatic Node Types
-Operations map to UI nodes when possible, otherwise fall back to `polars_code`:
-```python
-# Simple → UI node
-df.group_by("category").agg(ff.col("value").sum())
+### [Quick Start](quickstart.md)
+Get up and running in 5 minutes with your first pipeline.
 
-# Complex → polars_code node
-df.group_by([ff.col("category").str.to_uppercase()]).agg(ff.col("value").sum())
-```
+### [Core Concepts](concepts/index.md)
 
-### Graph Access
-Inspect and visualize the pipeline DAG:
-```python
-ff.open_graph_in_editor(df.flow_graph)
-```
+- [FlowFrame and FlowGraph](concepts/design-concepts.md) - Fundamental building blocks
+- [Formula Syntax](concepts/expressions.md) - Flowfile's Excel-like expressions
 
-## 🏗️ Architecture Deep Dives
+### [API Reference](reference/index.md)
 
-For understanding how Flowfile works internally:
+- [Reading Data](reference/reading-data.md)
+- [Writing Data](reference/writing-data.md)
+- [Data Types](reference/data-types.md)
+- [DataFrame Operations](reference/flowframe-operations.md)
+- [Aggregations](reference/aggregations.md)
+- [Joins](reference/joins.md)
+- [Cloud Storage](reference/cloud-connections.md)
+- [Visual UI Integration](reference/visual-ui.md)
 
-- [**Core Architecture**](../core/flowfile-core.md) - FlowGraph, FlowNode, and FlowDataEngine internals
-- [**Design Philosophy**](../flowfile-for-developers.md) - The dual interface approach
+### [Tutorials](tutorials/index.md)
+
+- [Building Flows with Code](tutorials/flowfile_frame_api.md)
+
+## For Contributors
+
+Want to understand how Flowfile works internally or contribute to the project? See the [Developer Documentation](../../for-developers/index.md) for architecture details and internal API reference.
+
+---
+
+*Prefer visual workflows? Check out the [Visual Editor Guide](../visual-editor/index.md).*

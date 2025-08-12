@@ -33,16 +33,18 @@ Build powerful data pipelines without writing code using Flowfile's intuitive dr
 
 ### Nodes
 Each node represents a data operation:
-- **Input nodes** - Load data from files, databases, APIs
-- **Transform nodes** - Modify and clean your data
-- **Combine nodes** - Join and merge datasets
-- **Aggregate nodes** - Summarize and group data
-- **Output nodes** - Save or export results
+- 
+- **[Input nodes](nodes/input.md)** - Load data from files, databases, APIs
+- **[Transform nodes](nodes/transform.md)** - Modify and clean your data
+- **[Combine nodes](nodes/combine.md)** - Join and merge datasets
+- **[Aggregate nodes](nodes/aggregate.md)** - Summarize and group data
+- **[Output nodes](nodes/output.md)** - Save or export results
 
 ### Connections
 Draw lines between nodes to define data flow. Data moves from top to bottom, left to right.
 
 ### Execution
+
 - **Development mode** - See data at every step (great for debugging)
 - **Performance mode** - Optimized execution for large datasets
 
@@ -50,7 +52,7 @@ Draw lines between nodes to define data flow. Data moves from top to bottom, lef
 
 ### 📚 Guides
 - [Building Flows](building-flows.md) - Detailed workflow guide
-- [Node Reference](nodes/) - Complete documentation of all nodes
+- [Node Reference](nodes/index.md) - Complete documentation of all nodes
 
 ### 🎯 Tutorials
 - [Connect to Databases](tutorials/database-connectivity.md) - PostgreSQL, MySQL, and more
@@ -70,13 +72,15 @@ Draw lines between nodes to define data flow. Data moves from top to bottom, lef
 Wondering when to use visual vs Python? Here's a quick guide:
 
 **Use Visual Editor when:**
+
 - Exploring new datasets
 - Building one-off analyses
 - Collaborating with non-technical users
 - Creating documented workflows
 - Learning data transformations
 
-**Consider Python API when:**
+**Consider [Python API](../python-api/index.md) when:**
+
 - Integrating with existing code
 - Building programmatic pipelines
 - Need version control
@@ -87,4 +91,4 @@ Remember, you can always switch between them!
 
 ---
 
-*Ready to build? Start with [Building Flows](building-flows.md) or explore the [Node Reference](nodes/).*
+*Ready to build? Start with [Building Flows](building-flows.md) or explore the [Node Reference](nodes/index.md).*

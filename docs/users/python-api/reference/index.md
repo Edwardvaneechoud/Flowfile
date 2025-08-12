@@ -1,143 +1,70 @@
-# Python API Reference
+# Python API Flowfile Reference
 
-Complete reference documentation for Flowfile's Python API.
+This section documents Flowfile's Python API, focusing on extensions and differences from Polars. For standard Polars operations, see the [Polars documentation](https://pola-rs.github.io/polars/py-polars/html/reference/).
 
-## Core Operations
+## 📘 Core API
 
-### 📥 [Reading Data](reading-data.md)
-Load data from files, databases, and cloud storage.
-- `read_csv()`, `read_parquet()`, `read_json()`
-- `scan_*` methods for lazy loading
-- Cloud storage readers with S3 support
+### Data Input/Output
 
-### 📤 [Writing Data](writing-data.md)
-Save results to various formats and destinations.
-- `write_csv()`, `write_parquet()`, `write_json()`
-- Cloud storage writers
-- Delta Lake support
+- [**Reading Data**](reading-data.md) - File formats and cloud storage
+- [**Writing Data**](writing-data.md) - Saving results
+- [**Data Types**](data-types.md) - Supported data types
 
-### 📊 [Data Types](data-types.md)
-Supported data types and conversions.
-- Numeric, string, datetime types
-- Type casting and inference
-- Null handling
+### Transformations
 
-## Transformations
+- [**FlowFrame Operations**](flowframe-operations.md) - Filter, select, sort
+- [**Aggregations**](aggregations.md) - Group by and summarize
+- [**Joins**](joins.md) - Combining datasets
 
-### 🔧 [DataFrame Operations](flowframe-operations.md)
-Core methods for data manipulation.
-- `filter()`, `select()`, `sort()`
-- `with_columns()`, `drop()`, `rename()`
-- `unique()`, `drop_duplicates()`
+### 🔐 Flowfile-Specific Features
 
-### 📝 [Expressions](expressions.md)
-Column operations and formula syntax.
-- Column references with `ff.col()`
-- Flowfile formula syntax `[column]`
-- Mathematical and string operations
-- Conditional logic
+- [**Cloud Storage**](cloud-connections.md) - S3 integration
+- [**visualize pipelines**](visual-ui.md) - Working with the visual editor
 
-### 📈 [Aggregations](aggregations.md)
-Grouping and summarization.
-- `group_by()`, `agg()`
-- Aggregation functions (sum, mean, count, etc.)
-- Window functions
+## 🔑 Key Extensions to Polars
 
-### 🔗 [Joins](joins.md)
-Combining multiple datasets.
-- Join types (inner, left, right, outer)
-- Multiple join keys
-- Cross joins and unions
-
-## Advanced Features
-
-### ☁️ [Cloud Storage](cloud-connections.md)
-Working with S3 and cloud data.
-- Connection management
-- Secure credential storage
-- Reading and writing cloud data
-
-### 🖼️ [Visual Integration](visual-ui.md)
-Connecting code with the visual editor.
-- `open_graph_in_editor()`
-- Starting the web UI
-- Server management
-
-## Quick Reference
-
-### Creating DataFrames
+### Description Parameter
+Every operation accepts `description` for visual documentation:
 ```python
-# From dictionary
-df = ff.FlowFrame({"col1": [1, 2], "col2": [3, 4]})
-
-# From file
-df = ff.read_csv("data.csv")
-
-# From cloud
-df = ff.scan_parquet_from_cloud_storage("s3://bucket/data.parquet")
+df = df.filter(ff.col("active") == True, description="Keep active records")
 ```
 
-### Common Patterns
+### Flowfile Formula Syntax
+Alternative bracket-based syntax for expressions:
 ```python
-# Filter and transform
-result = (
-    df
-    .filter(ff.col("value") > 100)
-    .with_columns([
-        ff.col("text").str.to_uppercase()
-    ])
-    .select(["id", "text", "value"])
-)
+df.filter(flowfile_formula="[price] > 100 AND [quantity] >= 10")
+```
+Read more about the formula syntax here: [Flowfile Formula Syntax](../concepts/expressions.md).
+Or try it out here: [Flowfile Formula Playground](https://polars-expr-transformer-playground-whuwbghlymon84t5ciewp3.streamlit.app/)
 
-# Aggregate
-summary = df.group_by("category").agg([
-    ff.col("amount").sum(),
-    ff.col("amount").mean()
-])
+### Automatic Node Types
+Operations map to UI nodes when possible, otherwise fall back to `polars_code`:
+```python
+# Simple → UI node
+df.group_by("category").agg(ff.col("value").sum())
 
-# Join
-merged = df1.join(df2, on="key", how="left")
+# Complex → polars_code node
+df.group_by([ff.col("category").str.to_uppercase()]).agg(ff.col("value").sum())
 ```
 
-### Execution
+### Graph Access
+Inspect and visualize the pipeline DAG:
 ```python
-# Get results as Polars DataFrame
-data = df.collect()
-
-# Write to file
-df.write_parquet("output.parquet")
-
-# Visualize
 ff.open_graph_in_editor(df.flow_graph)
 ```
 
-## API Compatibility
+## 🏗️ Architecture Deep Dives
 
-Flowfile's API is designed to be **Polars-compatible** with these extensions:
+For understanding how Flowfile works internally:
 
-1. **Description parameter** - Document operations
-2. **Flowfile formulas** - Excel-like syntax
-3. **Visual integration** - Graph visualization
-4. **Cloud storage** - Built-in S3 support
+- [**Core Architecture**](../../../for-developers/flowfile-core.md#1-the-flowgraph-your-pipeline-orchestrator) - FlowGraph, FlowNode, and FlowDataEngine internals
+- [**Design Philosophy**](../../../for-developers/design-philosophy.md) - The dual interface approach
 
-Most Polars code works with minimal changes:
-
-```python
-# Polars
-import polars as pl
-df = pl.read_csv("data.csv")
-df = df.filter(pl.col("x") > 5)
-
-# Flowfile (just change imports)
-import flowfile as ff
-df = ff.read_csv("data.csv")
-df = df.filter(ff.col("x") > 5)
-```
 
 ## Getting Help
 
 - **Not finding a method?** Check the [Polars documentation](https://pola-rs.github.io/polars/py-polars/html/reference/) - most methods work identically
-- **Need examples?** See our [tutorials](../tutorials/)
+- **Need examples?** See our [tutorials](../tutorials/index.md)
 - **Understanding concepts?** Read about [FlowFrame and FlowGraph](../concepts/design-concepts.md)
 
 ---

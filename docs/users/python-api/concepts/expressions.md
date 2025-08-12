@@ -86,4 +86,5 @@ df = df.with_columns(
 
 
 ---
-[← Previous: FlowFile Operations](flowframe-operations.md) | [Next: Aggregations →](aggregations.md)
+
+*Want to see more about the Flowfile python api? Check out the [reference documentation](../reference/index.md).*
