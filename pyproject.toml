@@ -82,6 +82,7 @@ numpy = "1.26.4"
 pandas = "^2.3.1"
 mkdocstrings = "^0.30.0"
 mkdocstrings-python = "^1.16.12"
+griffe-pydantic = "^1.1.6"
 
 [build-system]
 requires = ["poetry-core"]
