@@ -6,7 +6,9 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 ## Interface Overview
 
 ![Flowfile Interface Overview](../../assets/images/ui/full_ui.png){ width="800px" }
+
 *The complete Flowfile interface showing:*
+
 - **Left sidebar**: Browse and select from available nodes 
 - **Center canvas**: Build your flow by arranging and connecting nodes
 - **Right sidebar**: Configure node settings and parameters
@@ -15,7 +17,7 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 
 ## Creating a Flow
 
-  ![Flowfile Landing](../../assets/images/ui/landing.png){ width="800px" }
+  ![Flowfile Landing](../../assets/images/ui/landing.png){ width="1200px" }
   <figcaption>The Flowfile landing page when no flows are active, showing options to create a new flow or open an existing one</figcaption>
 
 ### Starting a New Flow
@@ -25,6 +27,7 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 4. Files are saved with the `.flowfile` extension
 
 ### Adding Nodes
+
 1. Browse nodes in the left sidebar, organized by category:
      - Input Sources (for loading data)
      - Transformations (for modifying data)
@@ -37,7 +40,7 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 ## Configuring Nodes
 
 ### Node Settings
-![Flowfile Interface Overview](../../assets/images/ui/node_settings.png){ width="800px" }
+![Flowfile Interface Overview](../../assets/images/ui/node_settings.png){ width="1200px" }
 1. Click any node to open its settings in the right sidebar
 2. Each node type has specific configuration options:
 
@@ -70,7 +73,7 @@ Choose your xecution mode from the dropdown:
 ## Example Flow
 
 Here's a typical flow that demonstrates common operations:
-![graph](../../assets/images/ui/graph.png){ width="800px" }
+![graph](../../assets/images/ui/graph.png){ width="1200px" }
 
 ## Best Practices
 

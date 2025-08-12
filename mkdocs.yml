@@ -47,9 +47,15 @@ plugins:
       handlers:
         python:
           options:
-            # Make headings for objects one level lower than the page title
-            heading_level: 3
-            enable_inventory: true
+            # Global options for all Python objects
+            show_root_heading: true
+            show_inherited_members: true
+            show_bases: true
+            # Options specific to the griffe-pydantic extension
+            extensions:
+              - griffe_pydantic:
+                  # Render the "Fields" and "Validators" sections
+                  schema: true
 
 markdown_extensions:
   - attr_list

@@ -32,8 +32,9 @@ Build powerful data pipelines without writing code using Flowfile's intuitive dr
 ## Core Concepts
 
 ### Nodes
+
 Each node represents a data operation:
-- 
+
 - **[Input nodes](nodes/input.md)** - Load data from files, databases, APIs
 - **[Transform nodes](nodes/transform.md)** - Modify and clean your data
 - **[Combine nodes](nodes/combine.md)** - Join and merge datasets
@@ -50,11 +51,11 @@ Draw lines between nodes to define data flow. Data moves from top to bottom, lef
 
 ## Learn More
 
-### 📚 Guides
+### More Resources
 - [Building Flows](building-flows.md) - Detailed workflow guide
 - [Node Reference](nodes/index.md) - Complete documentation of all nodes
 
-### 🎯 Tutorials
+### Tutorials
 - [Connect to Databases](tutorials/database-connectivity.md) - PostgreSQL, MySQL, and more
 - [Cloud Storage Setup](tutorials/cloud-connections.md) - Work with S3 data
 - [Export to Python](tutorials/code-generator.md) - Convert visual flows to code
