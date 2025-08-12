@@ -46,10 +46,10 @@ Perfect for developers and data scientists who prefer code.
 
 The beauty of Flowfile is that **you don't have to choose**. You can:
 
-- 📝 Write code and visualize it instantly with `open_graph_in_editor()`
-- 🎨 Build visually and export as Python code
-- 🔄 Switch between visual and code at any time
-- 👥 Collaborate across technical and non-technical teams
+- Write code and visualize it instantly with `open_graph_in_editor()`
+- Build visually and export as Python code
+- Switch between visual and code at any time
+- Collaborate across technical and non-technical teams
 
 ## Quick Examples
 

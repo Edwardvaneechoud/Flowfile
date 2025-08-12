@@ -456,6 +456,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
         if flow_id is not None:
             if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)
+            logger.info(f"Ui available at: http://127.0.0.1:63578/ui#/main/designer")
             return True
         else:
             return False

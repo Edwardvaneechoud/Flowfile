@@ -121,6 +121,7 @@ class PolarsCodeParser:
     """
 
     def __init__(self):
+        import datetime
         self.safe_globals = {
             # Polars functionality
             'pl': pl,
@@ -175,7 +176,8 @@ class PolarsCodeParser:
             'False': False,
             'None': None,
             'time': time,
-            'BytesIO': BytesIO
+            'BytesIO': BytesIO,
+            'datetime': datetime,
         }
 
     @staticmethod

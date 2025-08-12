@@ -2,7 +2,7 @@
 
 This section documents Flowfile's Python API, focusing on extensions and differences from Polars. For standard Polars operations, see the [Polars documentation](https://pola-rs.github.io/polars/py-polars/html/reference/).
 
-## 📘 Core API
+## Core API
 
 ### Data Input/Output
 
@@ -16,12 +16,12 @@ This section documents Flowfile's Python API, focusing on extensions and differe
 - [**Aggregations**](aggregations.md) - Group by and summarize
 - [**Joins**](joins.md) - Combining datasets
 
-### 🔐 Flowfile-Specific Features
+### Flowfile-Specific Features
 
 - [**Cloud Storage**](cloud-connections.md) - S3 integration
 - [**visualize pipelines**](visual-ui.md) - Working with the visual editor
 
-## 🔑 Key Extensions to Polars
+## Key Extensions to Polars
 
 ### Description Parameter
 Every operation accepts `description` for visual documentation:
@@ -53,7 +53,7 @@ Inspect and visualize the pipeline DAG:
 ff.open_graph_in_editor(df.flow_graph)
 ```
 
-## 🏗️ Architecture Deep Dives
+## Architecture Deep Dives
 
 For understanding how Flowfile works internally:
 

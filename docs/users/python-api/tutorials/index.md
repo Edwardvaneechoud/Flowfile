@@ -4,7 +4,7 @@ Learn to build powerful data pipelines with code through practical, hands-on exa
 
 ## Available Tutorials
 
-### 📊 [Building Flows with Code](flowfile_frame_api.md)
+### [Building Flows with Code](flowfile_frame_api.md)
 The complete guide to creating data pipelines programmatically while maintaining visual compatibility.
 
 **You'll learn:**
@@ -20,17 +20,14 @@ The complete guide to creating data pipelines programmatically while maintaining
 
 ## Coming Soon
 
-### 🔄 Data Pipeline Patterns
+### Data Pipeline Patterns
 Common patterns for ETL, data cleaning, and analysis.
 
-### 🚀 Performance Optimization
+### Performance Optimization
 Advanced techniques for handling large datasets efficiently.
 
-### 🔗 Integration Examples
+### Integration Examples
 Connecting Flowfile with pandas, scikit-learn, and other tools.
-
-### 🤖 Automation Workflows
-Building scheduled and event-driven pipelines.
 
 ## Tutorial Style
 

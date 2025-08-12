@@ -4,7 +4,7 @@ Hands-on guides for building real-world data pipelines with the visual editor.
 
 ## Available Tutorials
 
-### 🔌 [Database Connectivity](database-connectivity.md)
+### [Database Connectivity](database-connectivity.md)
 Learn how to connect to PostgreSQL databases, read data, apply transformations, and write results back. Perfect for building ETL pipelines with databases like Supabase.
 
 **You'll learn:**
@@ -16,7 +16,7 @@ Learn how to connect to PostgreSQL databases, read data, apply transformations, 
 
 ---
 
-### ☁️ [Cloud Storage Setup](cloud-connections.md)
+### [Cloud Storage Setup](cloud-connections.md)
 Connect to AWS S3 and other cloud storage services to read and write data directly from the cloud.
 
 **You'll learn:**
@@ -28,7 +28,7 @@ Connect to AWS S3 and other cloud storage services to read and write data direct
 
 ---
 
-### 🐍 [Export to Python Code](code-generator.md)
+### [Export to Python Code](code-generator.md)
 Convert your visual pipelines into clean, executable Python code for deployment or version control.
 
 **You'll learn:**

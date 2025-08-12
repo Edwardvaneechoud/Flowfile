@@ -4,11 +4,11 @@ Build powerful data pipelines without writing code using Flowfile's intuitive dr
 
 ## What You'll Learn
 
-- 🔧 **Build flows visually** - Drag, drop, and connect nodes
-- 📊 **Transform data** - Filter, aggregate, join, and more
-- 🔌 **Connect to data sources** - Databases, files, and cloud storage
-- 👁️ **Preview results** - See data at each step
-- 📤 **Export to code** - Generate Python code from your visual flows
+- **Build flows visually** - Drag, drop, and connect nodes
+- **Transform data** - Filter, aggregate, join, and more
+- **Connect to data sources** - Databases, files, and cloud storage
+- **Preview results** - See data at each step
+- **Export to code** - Generate Python code from your visual flows
 
 ## Getting Started
 

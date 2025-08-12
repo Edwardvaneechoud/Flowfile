@@ -4,7 +4,7 @@ Understanding the key concepts behind Flowfile's Python API will help you build 
 
 ## Available Guides
 
-### 📦 [FlowFrame and FlowGraph](design-concepts.md)
+### [FlowFrame and FlowGraph](design-concepts.md)
 The fundamental building blocks of Flowfile pipelines.
 
 **You'll learn:**
@@ -20,7 +20,7 @@ The fundamental building blocks of Flowfile pipelines.
 
 ---
 
-### 📝 [Formula Syntax](expressions.md)
+### [Formula Syntax](expressions.md)
 Flowfile's Excel-like formula syntax for expressions.
 
 **You'll learn:**

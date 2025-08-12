@@ -727,7 +727,8 @@ class FlowNode:
         if self.results.resulting_data is None and not performance_mode:
             self.results.resulting_data = self.get_resulting_data()
             self.results.example_data_generator = lambda: self.get_resulting_data().get_sample(100).to_arrow()
-            self.node_schema.result_schema = self.results.resulting_data
+            self.node_schema.result_schema = self.results.resulting_data.schema
+            self.node_stats.has_completed_last_run = True
 
     def execute_local(self, flow_id: int, performance_mode: bool = False):
         """Executes the node's logic locally.
@@ -906,6 +907,9 @@ class FlowNode:
                 except Exception as e:
                     self.results.errors = str(e)
                     node_logger.error(f'Error with running the node: {e}')
+                    self.node_stats.error = str(e)
+                    self.node_stats.has_completed_last_run = False
+                self.node_stats.has_run_with_current_setup = True
             else:
                 node_logger.info('Node has already run, not running the node')
         else:
@@ -1102,6 +1106,7 @@ class FlowNode:
         """
         self.print('Getting a table example')
         if self.is_setup and include_data and self.node_stats.has_completed_last_run:
+
             if self.node_template.node_group == 'output':
                 self.print('getting the table example')
                 return self.main_input[0].get_table_example(include_data)

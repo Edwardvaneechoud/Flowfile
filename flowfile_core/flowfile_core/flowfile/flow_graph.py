@@ -24,7 +24,7 @@ from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_x
     get_calamine_xlsx_data_types
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
+from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal,
                                                          CloudStorageWriteSettingsInternal,
                                                          FullCloudStorageConnection,
@@ -1844,6 +1844,13 @@ class FlowGraph:
             existing_setting_input, new_node_settings
         )
         getattr(self, f"add_{node_type}")(combined_settings)
+
+    def generate_code(self):
+        """Generates code for the flow graph.
+        This method exports the flow graph to a Polars-compatible format.
+        """
+        from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
+        print(export_flow_to_polars(self))
 
 
 def combine_existing_settings_and_new_settings(setting_input: Any, new_settings: input_schema.NodePromise) -> Any:
