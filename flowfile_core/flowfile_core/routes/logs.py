@@ -33,9 +33,7 @@ async def format_sse_message(data: str) -> str:
 
 @router.post("/logs/{flow_id}", tags=['flow_logging'])
 async def add_log(flow_id: int, log_message: str):
-    """
-    Adds a log message to the log file for a given flow_id.
-    """
+    """Adds a log message to the log file for a given flow_id."""
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
@@ -45,9 +43,7 @@ async def add_log(flow_id: int, log_message: str):
 
 @router.post("/raw_logs", tags=['flow_logging'])
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
-    """
-    Adds a log message to the log file for a given flow_id.
-    """
+    """Adds a log message to the log file for a given flow_id."""
     logger.info('Adding raw logs')
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:

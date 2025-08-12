@@ -1,6 +1,8 @@
 from typing import List, Dict, Optional, Set, Tuple
 import polars as pl
 
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
@@ -825,6 +827,40 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
         self._add_code("")
 
+    @staticmethod
+    def _transform_fuzzy_mappings_to_string(fuzzy_mappings: List[FuzzyMapping]) -> str:
+        output_str = "["
+        for i, fuzzy_mapping in enumerate(fuzzy_mappings):
+
+            output_str += (f"FuzzyMapping(left_col='{fuzzy_mapping.left_col}',"
+                           f" right_col='{fuzzy_mapping.right_col}', "
+                           f"threshold_score={fuzzy_mapping.threshold_score}, "
+                           f"fuzzy_type='{fuzzy_mapping.fuzzy_type}')")
+            if i < len(fuzzy_mappings) - 1:
+                output_str += ",\n"
+        output_str += "]"
+        return output_str
+
+    def _handle_fuzzy_match(self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: Dict[str, str]) -> None:
+        """Handle fuzzy match nodes."""
+        self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
+        left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
+        right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))
+        if left_df == right_df:
+            right_df = "df_right"
+            self._add_code(f"{right_df} = {left_df}")
+
+        if settings.join_input.left_select.has_drop_cols():
+            self._add_code(f"{left_df} = {left_df}.drop({[c.old_name for c in settings.join_input.left_select.non_jk_drop_columns]})")
+        if settings.join_input.right_select.has_drop_cols():
+            self._add_code(f"{right_df} = {right_df}.drop({[c.old_name for c in settings.join_input.right_select.non_jk_drop_columns]})")
+
+        fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(settings.join_input.join_mapping)
+        self._add_code(f"{var_name} = fuzzy_match_dfs(\n"
+                       f"       left_df={left_df}, right_df={right_df},\n"
+                       f"       fuzzy_maps={fuzzy_join_mapping_settings}\n"
+                       f"       ).lazy()")
+
     def _handle_unique(self, settings: input_schema.NodeUnique, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle unique/distinct nodes."""
         input_df = input_vars.get('main', 'df')
@@ -895,8 +931,8 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    .write_csv_to_cloud_storage(')
             self._add_code(f'        path="{output_settings.resource_path}",')
             self._add_code(f'        connection_name="{output_settings.connection_name}",')
-            self._add_code(f'        delimiter="{output_settings.output_csv_table.delimiter}",')
-            self._add_code(f'        encoding="{output_settings.output_csv_table.encoding}",')
+            self._add_code(f'        delimiter="{output_settings.csv_delimiter}",')
+            self._add_code(f'        encoding="{output_settings.csv_encoding}",')
             self._add_code(f'        description="{settings.description}"')
         elif output_settings.file_format == "parquet":
             self._add_code(f'    .write_parquet_to_cloud_storage(')

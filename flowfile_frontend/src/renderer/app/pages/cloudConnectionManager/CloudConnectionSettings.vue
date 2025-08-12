@@ -19,7 +19,7 @@
         <label for="storage-type" class="form-label">Storage Type</label>
         <select id="storage-type" v-model="connection.storageType" class="form-input" required>
           <option value="s3">AWS S3</option>
-          <option value="adls">Azure Data Lake Storage</option>
+          <!-- <option value="adls">Azure Data Lake Storage</option> -->
         </select>
       </div>
 

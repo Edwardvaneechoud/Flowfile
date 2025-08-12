@@ -99,7 +99,6 @@ class TestJoins:
     def test_right_join(self, customers, orders):
         """Test right join operation."""
         result = customers.join(orders, on="customer_id", how="right").collect()
-
         assert len(result) == 7  # All 7 orders (including those without matching customers)
 
         assert set(result["order_id"].to_list()) == {101, 102, 103, 104, 105, 106, 107}

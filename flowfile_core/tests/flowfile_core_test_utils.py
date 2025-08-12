@@ -7,7 +7,6 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.auth.models import SecretInput
 
 
-
 def is_docker_available():
     """Check if Docker is running."""
     if platform.system() == "Windows":
@@ -24,7 +23,6 @@ def ensure_password_is_available():
         secret = SecretInput(name='test_database_pw', value='testpass')
         with get_db_context() as db:
             store_secret(db, secret, 1)
-
 
 
 from contextlib import contextmanager

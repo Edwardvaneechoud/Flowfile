@@ -68,6 +68,23 @@
           </el-select>
         </div>
         <div class="form-group">
+          <label>Execution location:</label>
+          <el-select
+            v-model="flowSettings.execution_location"
+            size="small"
+            placeholder="Select the execution location"
+            style="width: 100%"
+            @change="pushFlowSettings"
+          >
+            <el-option
+              v-for="executionLocationOption in executionLocationOptions"
+              :key="executionLocationOption.key"
+              :label="executionLocationOption.label"
+              :value="executionLocationOption.key"
+            />
+          </el-select>
+        </div>
+        <div class="form-group">
           <el-checkbox
             v-model="flowSettings.show_detailed_progress"
             label="Show details during execution"
@@ -93,6 +110,7 @@ import {
   FlowSettings,
   updateFlowSettings,
   ExecutionMode,
+  ExecutionLocation,
   updateRunStatus,
 } from "../../nodes/nodeLogic";
 
@@ -108,6 +126,16 @@ const savePath = ref<string | undefined>(undefined);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
+
+interface ExecutionLocationOption {
+  key: ExecutionLocation;
+  label: string;
+}
+
+const executionLocationOptions = ref<ExecutionLocationOption[]>([
+  { key: "local", label: "Local" },
+  { key: "remote", label: "Remote" },
+]);
 
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 

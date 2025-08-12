@@ -3,6 +3,8 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
 permissions:
   contents: write
 jobs:
@@ -13,5 +15,15 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: 3.x
-      - run: pip install mkdocs-material 
-      - run: mkdocs gh-deploy --force
+
+      # Install Poetry and then use it to install your dependencies
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          # Installs packages from the [dev] group, like mkdocs and mkdocstrings
+          poetry install --with dev --no-interaction --no-ansi
+
+      # Run the mkdocs command using Poetry's environment
+      - name: Deploy documentation
+        run: |
+          poetry run mkdocs gh-deploy --force

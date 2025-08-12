@@ -1,8 +1,3 @@
-import time
-import random
-import uuid
-import socket
-import hashlib
 
 from dataclasses import dataclass
 from typing import Dict, List
@@ -12,33 +7,7 @@ from pathlib import Path
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.schemas import FlowSettings
-from flowfile_core.configs import logger
-
-
-def create_unique_id() -> int:
-    """
-    Create a unique id for the flowfile with increased randomness while maintaining 32-bit compatibility
-    Returns:
-        int: unique id within 32 bits (4 bytes)
-    """
-    # Get various entropy sources
-    time_ms = int(time.time() * 1000)
-    pid = os.getpid()
-    random_bytes = random.getrandbits(32)
-    mac_addr = uuid.getnode()  # MAC address as integer
-    hostname = socket.gethostname()
-
-    # Combine all sources into a string
-    seed = f"{time_ms}-{pid}-{random_bytes}-{mac_addr}-{hostname}-{uuid.uuid4()}"
-
-    # Create a hash of all entropy sources
-    hash_obj = hashlib.md5(seed.encode())
-    hash_int = int(hash_obj.hexdigest(), 16)
-
-    # Ensure the result fits within 32 bits (4 bytes)
-    unique_id = hash_int & 0xFFFFFFFF
-
-    return unique_id
+from flowfile_core.flowfile.utils import create_unique_id
 
 
 @dataclass
@@ -71,7 +40,7 @@ class FlowfileHandler:
             raise 'flow already registered'
         else:
             name = flow_settings.name if flow_settings.name else flow_settings.flow_id
-            self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_id=flow_settings.flow_id, flow_settings=flow_settings)
+            self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_settings=flow_settings)
         return self.get_flow(flow_settings.flow_id)
 
     def get_flow(self, flow_id: int) -> FlowGraph | None:

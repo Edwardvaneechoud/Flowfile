@@ -15,10 +15,12 @@ from flowfile_core.configs.utils import MutableBool
 DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
-SINGLE_FILE_MODE: bool = os.environ.get("SINGLE_FILE_MODE", "0") == "1"
 
+# Single file mode flag, this determines where worker requests are being send to.
+SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1")
 
-OFFLOAD_TO_WORKER = MutableBool(True)
+# Offload to worker flag, this determines if the worker should handle processing tasks.
+OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1")
 
 
 def parse_args():
@@ -61,7 +63,7 @@ def get_default_worker_url(worker_port=None):
     worker_host = os.getenv("WORKER_HOST", None)
 
     if worker_port is None:
-        worker_port = os.getenv("WORKER_PORT", DEFAULT_WORKER_PORT)
+        worker_port = os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT)
 
     # Convert to int if it's a string
     worker_port = int(worker_port) if isinstance(worker_port, str) else worker_port
@@ -81,14 +83,15 @@ args = parse_args()
 
 SERVER_HOST = args.host if args.host is not None else DEFAULT_SERVER_HOST
 SERVER_PORT = args.port if args.port is not None else DEFAULT_SERVER_PORT
-WORKER_PORT = args.worker_port if args.worker_port is not None else int(os.getenv("WORKER_PORT", DEFAULT_WORKER_PORT))
+WORKER_PORT = args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT",
+                                                                                  DEFAULT_WORKER_PORT))
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
 config = Config(".env")
 DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
-WORKER_URL = config("WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
+WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
 IS_RUNNING_IN_DOCKER = os.getenv('RUNNING_IN_DOCKER', 'false').lower() == 'true'
 TEMP_DIR = get_temp_dir()
 
