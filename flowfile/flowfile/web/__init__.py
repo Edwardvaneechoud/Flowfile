@@ -51,6 +51,8 @@ def extend_app(app: FastAPI):
 
     @app.get("/single_mode")
     async def in_single_mode() -> bool:
+        print("Checking if single file mode is enabled")
+        print(os.environ.get('FLOWFILE_SINGLE_FILE_MODE'))
         return os.environ.get('FLOWFILE_SINGLE_FILE_MODE', "0") == "1"
 
     @app.get("/ui", include_in_schema=False)
