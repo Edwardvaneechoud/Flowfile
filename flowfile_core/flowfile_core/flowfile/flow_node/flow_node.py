@@ -733,10 +733,9 @@ class FlowNode:
                     example_data = resulting_data.get_sample(100).to_arrow()
                 return example_data
             return get_example_data
-
+        resulting_data = self.get_resulting_data()
+        self.results.resulting_data = resulting_data
         if self.results.resulting_data is None and not performance_mode:
-            resulting_data = self.get_resulting_data()
-            self.results.resulting_data = resulting_data
             self.results.example_data_generator = example_data_generator()
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True

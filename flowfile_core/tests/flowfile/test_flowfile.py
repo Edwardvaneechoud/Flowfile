@@ -1079,7 +1079,7 @@ def test_no_re_calculate_example_data_after_change_no_run():
     after_change_data = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
 
     assert after_change_data == first_data, 'Data should be the same after change without run'
-
+    OFFLOAD_TO_WORKER.value = True
 
 def test_add_fuzzy_match_only_local():
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
@@ -1113,3 +1113,4 @@ def test_add_fuzzy_match_only_local():
                                    {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
                                   )
     output_data.assert_equal(expected_data)
+    OFFLOAD_TO_WORKER.value = True

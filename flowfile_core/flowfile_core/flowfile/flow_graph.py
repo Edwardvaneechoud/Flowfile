@@ -300,8 +300,6 @@ class FlowGraph:
 
         return print(tree)
 
-
-
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
         """Calculates and applies a layered layout to all nodes in the graph.
 
@@ -490,7 +488,8 @@ class FlowGraph:
                 node_id=node.node_id,
                 flow_id=self.flow_id,
             )
-            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref)
+            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref,
+                                                                  n=min(sample_size, number_of_records))
             return flowfile_table
 
         def schema_callback():
