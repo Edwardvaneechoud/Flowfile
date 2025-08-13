@@ -218,3 +218,4 @@ pipeline.write_parquet("yearly_sales.parquet")
 ---
 
 *Ready for more? Check out the [full API reference](reference/index.md) or learn about [core concepts](concepts/design-concepts.md).*
+Or want to see another example? Checkout the [quickstart guide](../../quickstart.md#quick-start-for-technical-users-technical-quickstart)!

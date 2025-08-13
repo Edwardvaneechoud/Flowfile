@@ -5,7 +5,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.configs.flow_logger import NodeLogger
-from flowfile_core.configs.settings import SINGLE_FILE_MODE
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
@@ -694,7 +694,7 @@ class FlowNode:
         Returns:
             True if the node should be run, False otherwise.
         """
-        if execution_location == "local" or SINGLE_FILE_MODE:
+        if execution_location == "local" or not OFFLOAD_TO_WORKER:
             return False
 
         flow_logger = logger if node_logger is None else node_logger
@@ -724,9 +724,20 @@ class FlowNode:
         Raises:
             Exception: Propagates exceptions from the execution.
         """
+        def example_data_generator():
+            example_data = None
+
+            def get_example_data():
+                nonlocal example_data
+                if example_data is None:
+                    example_data = resulting_data.get_sample(100).to_arrow()
+                return example_data
+            return get_example_data
+
         if self.results.resulting_data is None and not performance_mode:
-            self.results.resulting_data = self.get_resulting_data()
-            self.results.example_data_generator = lambda: self.get_resulting_data().get_sample(100).to_arrow()
+            resulting_data = self.get_resulting_data()
+            self.results.resulting_data = resulting_data
+            self.results.example_data_generator = example_data_generator()
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True
 
@@ -869,7 +880,7 @@ class FlowNode:
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
             if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
-                    and not (run_location == 'local' or SINGLE_FILE_MODE)):
+                    and not (run_location == 'local' or not OFFLOAD_TO_WORKER)):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
@@ -899,8 +910,8 @@ class FlowNode:
                     else:
                         self.results.errors = str(e)
                         node_logger.error(f'Error with running the node: {e}')
-            elif ((run_location == 'local' or SINGLE_FILE_MODE) and (not self.node_stats.has_run_with_current_setup
-                                                                     or self.node_template.node_group == "output")):
+            elif ((run_location == 'local' or not OFFLOAD_TO_WORKER) and
+                  (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
                 try:
                     node_logger.info('Executing fully locally')
                     self.execute_full_local(performance_mode)

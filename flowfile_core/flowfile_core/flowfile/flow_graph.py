@@ -1581,12 +1581,13 @@ class FlowGraph:
             execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
                                                                    node not in skip_nodes],
                                                         flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
-
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
             if self.flow_settings.execution_location == 'local':
                 OFFLOAD_TO_WORKER.value = False
+            elif self.flow_settings.execution_location == 'remote':
+                OFFLOAD_TO_WORKER.value = True
             for node in execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
