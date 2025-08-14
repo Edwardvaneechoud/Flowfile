@@ -694,7 +694,7 @@ class FlowNode:
         Returns:
             True if the node should be run, False otherwise.
         """
-        if execution_location == "local" or not SINGLE_FILE_MODE:
+        if execution_location == "local" or SINGLE_FILE_MODE:
             return False
 
         flow_logger = logger if node_logger is None else node_logger
