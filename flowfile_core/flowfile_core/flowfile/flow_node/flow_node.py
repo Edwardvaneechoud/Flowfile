@@ -879,7 +879,7 @@ class FlowNode:
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
             if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
-                    and not (run_location == 'local' or not SINGLE_FILE_MODE)):
+                    and not (run_location == 'local' or SINGLE_FILE_MODE)):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
@@ -909,7 +909,7 @@ class FlowNode:
                     else:
                         self.results.errors = str(e)
                         node_logger.error(f'Error with running the node: {e}')
-            elif ((run_location == 'local' or not SINGLE_FILE_MODE) and
+            elif ((run_location == 'local' or SINGLE_FILE_MODE) and
                   (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
                 try:
                     node_logger.info('Executing fully locally')
