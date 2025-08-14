@@ -546,6 +546,7 @@ def test_analytics_processor_from_parquet_file_run_in_one_local_process():
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph, connection)
     node_step = graph.get_node(2)
+    graph.run_graph()
     assert node_step.results.analysis_data_generator, 'The node should have to run'
     assert node_step.results.analysis_data_generator().__len__() == 10_000, 'There should be 1000 rows in the data'
     OFFLOAD_TO_WORKER.value = True

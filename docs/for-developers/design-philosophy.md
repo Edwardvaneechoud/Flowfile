@@ -446,6 +446,7 @@ result = flow.get_node(final_node_id).get_resulting_data()
 ```
 
 **Characteristics:**
+
 - ⚡ Pull-based execution from the final node
 - 🎯 Polars optimizes the entire pipeline
 - 💨 Data flows once through optimized plan
