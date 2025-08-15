@@ -1094,10 +1094,25 @@ def test_no_re_calculate_example_data_after_change_no_run():
 
     first_data = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
     assert len(first_data) > 0, 'Data should be present'
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="lowercase([city])"),
+        )
+    )
+    after_change_data_before_run = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
 
-    after_change_data = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+    assert after_change_data_before_run == first_data, 'Data should be the same after change without run'
+    assert not graph.get_node(3).node_stats.has_run_with_current_setup
+    assert graph.get_node(3).node_stats.has_completed_last_run
+    graph.run_graph()
+    assert graph.get_node(3).node_stats.has_run_with_current_setup
+    after_change_data_after_run = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
 
-    assert after_change_data == first_data, 'Data should be the same after change without run'
+    assert after_change_data_after_run != first_data, 'Data should be different after run'
+
     OFFLOAD_TO_WORKER.value = True
 
 def test_add_fuzzy_match_only_local():
