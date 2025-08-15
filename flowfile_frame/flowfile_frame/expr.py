@@ -490,6 +490,20 @@ class Expr:
         result.agg_func = "sum"
         return result
 
+    def unique_counts(self):
+        """
+        Return the number of unique values in the column.
+
+        Returns
+        -------
+        Expr
+            A new expression with the unique counts
+        """
+        result_expr = self.expr.unique_counts() if self.expr is not None else None
+        result = self._create_next_expr(method_name="unique_counts", result_expr=result_expr, is_complex=self.is_complex)
+        result.agg_func = "unique_counts"
+        return result
+
     def implode(self):
         result_expr = self.expr.implode() if self.expr is not None else None
         result = self._create_next_expr(method_name="implode", result_expr=result_expr, is_complex=self.is_complex)

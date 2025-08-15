@@ -16,3 +16,8 @@ class MutableBool:
         elif isinstance(other, MutableBool):
             return self.value == other.value
         return NotImplemented
+
+    def set(self, value):
+        """Set the value of the MutableBool"""
+        self.value = bool(value)
+        return self

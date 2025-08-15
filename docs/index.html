@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>Flowfile - Visual ETL Tool</title>
 
     <!-- Material Design Web Components -->
@@ -52,6 +52,8 @@
             color: var(--md-default-fg-color);
             background-color: var(--md-default-bg-color);
             line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
         pre {
@@ -59,24 +61,28 @@
             padding: 1rem;
             border-radius: 8px;
             overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            font-size: 0.875rem;
         }
 
         code {
             font-family: 'Source Code Pro', 'Roboto Mono', monospace;
             color: var(--md-code-fg-color);
+            font-size: 0.875rem;
         }
-    </style>
 
-    <style>
+        /* Mobile-first approach */
+
         /* Hero Section */
         .hero-section {
-            min-height: 70vh;
+            min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             background: linear-gradient(135deg, var(--md-primary-fg-color) 0%, var(--md-accent-fg-color) 100%);
             position: relative;
             overflow: hidden;
+            padding: 1rem;
         }
 
         .hero-section::before {
@@ -103,13 +109,14 @@
             color: white;
             z-index: 1;
             max-width: 900px;
-            padding: 2rem;
+            padding: 1rem;
+            width: 100%;
         }
 
         .hero-logo {
-            width: 120px;
-            height: 120px;
-            margin-bottom: 2rem;
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
             filter: drop-shadow(0 10px 30px rgba(0,0,0,0.2));
             animation: pulse 3s ease-in-out infinite;
         }
@@ -120,31 +127,34 @@
         }
 
         .hero-title {
-            font-size: 3.5rem;
+            font-size: 2rem;
             font-weight: 700;
             margin-bottom: 1rem;
             text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            line-height: 1.2;
         }
 
         .hero-subtitle {
-            font-size: 1.3rem;
+            font-size: 1rem;
             margin-bottom: 2rem;
             opacity: 0.95;
             max-width: 700px;
             margin-left: auto;
             margin-right: auto;
             line-height: 1.6;
+            padding: 0 1rem;
         }
 
         .hero-buttons {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
             justify-content: center;
             flex-wrap: wrap;
+            padding: 0 1rem;
         }
 
         .hero-button {
-            padding: 0.8rem 2rem;
+            padding: 0.75rem 1.5rem;
             border-radius: 50px;
             text-decoration: none;
             font-weight: 600;
@@ -152,6 +162,11 @@
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+            font-size: 0.9rem;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            min-height: 44px;
+            min-width: 44px;
         }
 
         .hero-button-primary {
@@ -159,7 +174,7 @@
             color: var(--md-primary-fg-color);
         }
 
-        .hero-button-primary:hover {
+        .hero-button-primary:hover, .hero-button-primary:active {
             transform: translateY(-2px);
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
         }
@@ -170,21 +185,21 @@
             background: transparent;
         }
 
-        .hero-button-secondary:hover {
+        .hero-button-secondary:hover, .hero-button-secondary:active {
             background: rgba(255,255,255,0.1);
             transform: translateY(-2px);
         }
 
         /* Feature Cards */
         .features-section {
-            padding: 4rem 2rem;
+            padding: 3rem 1rem;
             background: var(--md-default-bg-color);
         }
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
             max-width: 1200px;
             margin: 0 auto;
         }
@@ -192,7 +207,7 @@
         .feature-card {
             background: var(--md-code-bg-color);
             border-radius: 16px;
-            padding: 2rem;
+            padding: 1.5rem;
             transition: all 0.3s ease;
             border: 1px solid transparent;
             position: relative;
@@ -200,6 +215,8 @@
             text-decoration: none;
             display: block;
             color: inherit;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .feature-link {
@@ -233,7 +250,7 @@
             transform: translateX(0);
         }
 
-        .feature-card:hover {
+        .feature-card:hover, .feature-card:active {
             transform: translateY(-5px);
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             border-color: var(--md-primary-fg-color--light);
@@ -242,11 +259,6 @@
         .feature-card:hover .feature-arrow {
             opacity: 1;
             transform: translateX(0);
-        }
-
-        .feature-card:active {
-            transform: translateY(-3px);
-            transition: transform 0.1s ease;
         }
 
         .feature-icon {
@@ -263,7 +275,7 @@
         }
 
         .feature-title {
-            font-size: 1.3rem;
+            font-size: 1.1rem;
             font-weight: 600;
             margin-bottom: 0.5rem;
             color: var(--md-default-fg-color);
@@ -272,14 +284,15 @@
         .feature-description {
             color: var(--md-default-fg-color--light);
             line-height: 1.6;
+            font-size: 0.95rem;
         }
 
         /* Code Preview */
         .code-preview {
             background: var(--md-code-bg-color);
             border-radius: 16px;
-            padding: 2rem;
-            margin: 2rem auto;
+            padding: 1.5rem;
+            margin: 2rem 1rem;
             max-width: 800px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }
@@ -303,39 +316,33 @@
 
         /* Developer Section Styles */
         .developer-section {
-            padding: 4rem 2rem;
+            padding: 3rem 1rem;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
             color: white;
         }
 
         .approach-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
-            margin: 3rem 0;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            margin: 2rem 0;
             max-width: 1200px;
             margin-left: auto;
             margin-right: auto;
-        }
-
-        @media (max-width: 768px) {
-            .approach-grid {
-                grid-template-columns: 1fr;
-            }
         }
 
         .approach-card {
             background: rgba(255,255,255,0.05);
             border: 1px solid rgba(255,255,255,0.1);
             border-radius: 16px;
-            padding: 2rem;
+            padding: 1.5rem;
             backdrop-filter: blur(10px);
         }
 
         .approach-card h3 {
             color: var(--md-primary-fg-color);
             margin-bottom: 1.5rem;
-            font-size: 1.4rem;
+            font-size: 1.2rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
@@ -351,31 +358,37 @@
             padding: 0.5rem 0;
             color: rgba(255,255,255,0.9);
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 0.5rem;
+            font-size: 0.95rem;
         }
 
         .approach-card li::before {
             content: '✓';
             color: var(--md-primary-fg-color);
             font-weight: bold;
+            flex-shrink: 0;
         }
 
         .approach-card pre {
             background: rgba(0,0,0,0.3);
             border: 1px solid rgba(255,255,255,0.1);
             margin: 0;
+            padding: 1rem;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .approach-card code {
             color: #f8f8f2;
+            font-size: 0.8rem;
         }
 
         .developer-features {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.5rem;
-            margin: 3rem 0;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+            margin: 2rem 0;
             max-width: 1200px;
             margin-left: auto;
             margin-right: auto;
@@ -383,7 +396,7 @@
 
         .developer-feature {
             background: rgba(255,255,255,0.05);
-            padding: 1.5rem;
+            padding: 1.25rem;
             border-radius: 12px;
             border: 1px solid rgba(255,255,255,0.1);
         }
@@ -391,17 +404,115 @@
         .developer-feature h4 {
             color: var(--md-primary-fg-color);
             margin-bottom: 0.5rem;
-            font-size: 1.1rem;
+            font-size: 1rem;
         }
 
         .developer-feature p {
             color: rgba(255,255,255,0.7);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             margin: 0;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
+        /* Interface Screenshot */
+        .interface-preview {
+            max-width: 1000px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .interface-preview img {
+            width: 100%;
+            height: auto;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .interface-preview img:hover {
+            transform: scale(1.02);
+        }
+
+        /* Section Titles */
+        .section-title {
+            text-align: center;
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+            color: var(--md-default-fg-color);
+            padding: 0 1rem;
+            line-height: 1.2;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            font-size: 1rem;
+            color: var(--md-default-fg-color--light);
+            max-width: 700px;
+            margin: 0 auto 2rem;
+            padding: 0 1rem;
+            line-height: 1.5;
+        }
+
+        .section-title-white {
+            color: white !important;
+        }
+
+        .section-subtitle-white {
+            color: rgba(255,255,255,0.8) !important;
+        }
+
+        /* Stats Section */
+        .stats-container {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+            padding: 0 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.2s;
+            display: block;
+            min-width: 100px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            color: var(--md-primary-fg-color);
+            font-weight: bold;
+        }
+
+        .stat-label {
+            color: var(--md-default-fg-color--light);
+            font-size: 0.9rem;
+        }
+
+        /* Bottom CTA Section */
+        .bottom-cta {
+            text-align: center;
+            padding: 3rem 1rem;
+            background: var(--md-code-bg-color);
+        }
+
+        .bottom-cta-subtitle {
+            max-width: 600px;
+            margin: 0 auto 2rem;
+            padding: 0 1rem;
+            color: var(--md-default-fg-color--light);
+            font-size: 0.95rem;
+        }
+
+        /* Tablet styles */
+        @media (min-width: 640px) {
+            .hero-logo {
+                width: 100px;
+                height: 100px;
+            }
+
             .hero-title {
                 font-size: 2.5rem;
             }
@@ -410,9 +521,152 @@
                 font-size: 1.1rem;
             }
 
+            .hero-button {
+                padding: 0.8rem 2rem;
+                font-size: 1rem;
+            }
+
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .developer-features {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .section-title {
+                font-size: 2rem;
+            }
+
+            .section-subtitle {
+                font-size: 1.1rem;
+            }
+
+            .feature-title {
+                font-size: 1.2rem;
+            }
+
+            .stats-container {
+                gap: 3rem;
+            }
+
+            .stat-value {
+                font-size: 2.5rem;
+            }
+        }
+
+        /* Desktop styles */
+        @media (min-width: 1024px) {
+            .hero-section {
+                min-height: 70vh;
+                padding: 2rem;
+            }
+
+            .hero-logo {
+                width: 120px;
+                height: 120px;
+                margin-bottom: 2rem;
+            }
+
+            .hero-title {
+                font-size: 3.5rem;
+            }
+
+            .hero-subtitle {
+                font-size: 1.3rem;
+            }
+
             .hero-buttons {
-                flex-direction: column;
-                align-items: center;
+                flex-direction: row;
+                gap: 1rem;
+            }
+
+            .features-section {
+                padding: 4rem 2rem;
+            }
+
+            .features-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 2rem;
+            }
+
+            .feature-card {
+                padding: 2rem;
+            }
+
+            .approach-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 2rem;
+                margin: 3rem 0;
+            }
+
+            .approach-card {
+                padding: 2rem;
+            }
+
+            .approach-card h3 {
+                font-size: 1.4rem;
+            }
+
+            .developer-section {
+                padding: 4rem 2rem;
+            }
+
+            .developer-features {
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1.5rem;
+                margin: 3rem 0;
+            }
+
+            .developer-feature {
+                padding: 1.5rem;
+            }
+
+            .developer-feature h4 {
+                font-size: 1.1rem;
+            }
+
+            .developer-feature p {
+                font-size: 0.95rem;
+            }
+
+            .section-title {
+                font-size: 2.5rem;
+                margin-bottom: 1rem;
+            }
+
+            .section-subtitle {
+                font-size: 1.2rem;
+                margin-bottom: 3rem;
+            }
+
+            .feature-title {
+                font-size: 1.3rem;
+            }
+
+            .feature-description {
+                font-size: 1rem;
+            }
+
+            .interface-preview {
+                margin: 3rem auto;
+                padding: 0 2rem;
+            }
+
+            .bottom-cta {
+                padding: 4rem 2rem;
+            }
+
+            .approach-card code {
+                font-size: 0.875rem;
+            }
+
+            .approach-card li {
+                font-size: 1rem;
+            }
+
+            pre {
+                font-size: 0.9rem;
             }
         }
 
@@ -435,47 +689,40 @@
         .fade-in:nth-child(3) { animation-delay: 0.3s; }
         .fade-in:nth-child(4) { animation-delay: 0.4s; }
 
-        /* Interface Screenshot */
-        .interface-preview {
-            max-width: 1000px;
-            margin: 3rem auto;
-            padding: 0 2rem;
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .feature-card:active {
+                transform: scale(0.98);
+            }
+
+            .hero-button:active {
+                transform: scale(0.95);
+            }
+
+            .feature-arrow {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
-        .interface-preview img {
-            width: 100%;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-            transition: transform 0.3s ease;
+        /* Reduce motion for accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
 
-        .interface-preview img:hover {
-            transform: scale(1.02);
-        }
+        /* High contrast mode support */
+        @media (prefers-contrast: high) {
+            .feature-card {
+                border: 2px solid var(--md-default-fg-color);
+            }
 
-        /* Section Titles */
-        .section-title {
-            text-align: center;
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            color: var(--md-default-fg-color);
-        }
-
-        .section-subtitle {
-            text-align: center;
-            font-size: 1.2rem;
-            color: var(--md-default-fg-color--light);
-            max-width: 700px;
-            margin: 0 auto 3rem;
-        }
-
-        .section-title-white {
-            color: white !important;
-        }
-
-        .section-subtitle-white {
-            color: rgba(255,255,255,0.8) !important;
+            .hero-button {
+                border: 2px solid currentColor;
+            }
         }
     </style>
 </head>
@@ -622,7 +869,6 @@ ff.open_graph_in_editor(result.flow_graph)</code></pre>
                 </div>
             </div>
 
-
             <div class="hero-buttons">
                 <a href="users/python-api/" class="hero-button hero-button-primary">
                     <span>Python API Documentation</span>
@@ -631,51 +877,51 @@ ff.open_graph_in_editor(result.flow_graph)</code></pre>
                     <span>Visual Editor Guide</span>
                 </a>
             </div>
-                        <div class="hero-buttons" style="margin-top: 3rem;">
+            <div class="hero-buttons" style="margin-top: 2rem;">
                 <a href="for-developers/" class="hero-button hero-button-primary">
                     <span>Read Developer Docs</span>
-                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
                 </a>
             </div>
         </div>
     </section>
-<section style="text-align: center; padding: 4rem 2rem; background: var(--md-code-bg-color);">
-    <h2 class="section-title">See It For Yourself</h2>
-    <p class="section-subtitle" style="max-width: 600px; margin: 0 auto 2rem;">
-        Start rediscovering how we bridge the gap between business users and technical users.
-    </p>
 
-    <div style="display: flex; justify-content: center; gap: 3rem; margin: 3rem 0; flex-wrap: wrap;">
-        <a href="quickstart.html" style="text-align: center; text-decoration: none; color: inherit; transition: transform 0.2s; display: block;"
-           onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-            <div style="font-size: 2.5rem; color: var(--md-primary-fg-color); font-weight: bold;">5 min</div>
-            <div style="color: var(--md-default-fg-color--light);">to first pipeline</div>
-        </a>
-        <a href="users/python-api/" style="text-align: center; text-decoration: none; color: inherit; transition: transform 0.2s; display: block;"
-           onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-            <div style="font-size: 2.5rem; color: var(--md-primary-fg-color); font-weight: bold;">100%</div>
-            <div style="color: var(--md-default-fg-color--light);">Familiar API</div>
-        </a>
-        <a href="users/visual-editor/tutorials/code-generator.html" style="text-align: center; text-decoration: none; color: inherit; transition: transform 0.2s; display: block;"
-           onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-            <div style="font-size: 2.5rem; color: var(--md-primary-fg-color); font-weight: bold;">0</div>
-            <div style="color: var(--md-default-fg-color--light);">vendor lock-in</div>
-        </a>
-    </div>
+    <!-- Bottom CTA Section -->
+    <section class="bottom-cta">
+        <h2 class="section-title">See It For Yourself</h2>
+        <p class="bottom-cta-subtitle">
+            Start rediscovering how we bridge the gap between business users and technical users.
+        </p>
 
-    <div class="hero-buttons" style="margin-top: 2rem;">
-        <a href="quickstart.html" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
-            <span>Try Interactive Tutorial</span>
-        </a>
-        <a href="users/visual-editor/tutorials/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
-            <span>Browse Examples</span>
-        </a>
-    </div>
+        <div class="stats-container">
+            <a href="quickstart.html" class="stat-item">
+                <div class="stat-value">5 min</div>
+                <div class="stat-label">to first pipeline</div>
+            </a>
+            <a href="users/python-api/" class="stat-item">
+                <div class="stat-value">100%</div>
+                <div class="stat-label">Familiar API</div>
+            </a>
+            <a href="users/visual-editor/tutorials/code-generator.html" class="stat-item">
+                <div class="stat-value">0</div>
+                <div class="stat-label">vendor lock-in</div>
+            </a>
+        </div>
 
-    <p style="margin-top: 2rem; color: var(--md-default-fg-color--light); font-size: 0.9rem;">
-        Free, <a href="https://github.com/edwardvaneechoud/Flowfile" style="color: var(--md-primary-fg-color); text-decoration: none;">open-source</a> and customizable
-    </p>
-</section>
+        <div class="hero-buttons" style="margin-top: 2rem;">
+            <a href="quickstart.html" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
+                <span>Try Interactive Tutorial</span>
+            </a>
+            <a href="users/visual-editor/tutorials/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
+                <span>Browse Examples</span>
+            </a>
+        </div>
+
+        <p style="margin-top: 2rem; color: var(--md-default-fg-color--light); font-size: 0.9rem;">
+            Free, <a href="https://github.com/edwardvaneechoud/Flowfile" style="color: var(--md-primary-fg-color); text-decoration: none;">open-source</a> and customizable
+        </p>
+    </section>
+
     <!-- Scripts -->
     <script>
         // Add intersection observer for fade-in animations
@@ -692,6 +938,23 @@ ff.open_graph_in_editor(result.flow_graph)</code></pre>
         document.querySelectorAll('.fade-in').forEach(el => {
             observer.observe(el);
         });
+
+        // Add touch feedback for mobile devices
+        const touchElements = document.querySelectorAll('.hero-button, .feature-card, .stat-item');
+        touchElements.forEach(el => {
+            el.addEventListener('touchstart', function() {
+                this.style.opacity = '0.8';
+            });
+            el.addEventListener('touchend', function() {
+                this.style.opacity = '1';
+            });
+        });
+
+        // Improve hover states for mobile
+        let touchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        if (touchDevice) {
+            document.body.classList.add('touch-device');
+        }
     </script>
 </body>
 </html>
