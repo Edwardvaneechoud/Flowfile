@@ -2,6 +2,8 @@
 
 Flowfile allows you to create data pipelines visually by connecting nodes that represent different data operations. This guide will walk you through the process of creating and running flows.
 
+!!! info "Looking for a quickstart overview?"
+    Check out our [Quick Start Guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart) to get up and running in minutes.
 
 ## Interface Overview
 
@@ -13,7 +15,6 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 - **Center canvas**: Build your flow by arranging and connecting nodes
 - **Right sidebar**: Configure node settings and parameters
 - **Bottom panel**: Preview data at each step
-
 
 ## Creating a Flow
 
@@ -40,9 +41,25 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 ## Configuring Nodes
 
 ### Node Settings
-![Flowfile Interface Overview](../../assets/images/ui/node_settings.png){ width="1200px" }
-1. Click any node to open its settings in the right sidebar
-2. Each node type has specific configuration options:
+
+<div style="display: flex; flex-wrap: wrap; gap: 2rem; align-items: start; margin: 1.5rem 0;">
+
+  <div markdown="1" style="flex: 3; min-width: 300px;">
+    <p>Click any node on the canvas to open its settings in the right sidebar. Each node type has unique configuration options tailored to its function.</p>
+    <p>For example, the <strong>"Formula"</strong> node shown here includes sections for:</p>
+    <ul style="margin: 0; padding-left: 1.5rem;">
+      <li>🎛️ <strong>General:</strong> Add a custom description via general settings</li>
+      <li>⚙️ <strong>Performance tweaking:</strong> Define if the data needs to be cached for better performance via general settings</li>
+      <li>↔️ <strong>Transformations:</strong> Define the formula to be applied on the incoming data </li>
+    </ul>
+  </div>
+
+  <div style="flex: 7; min-width: 400px;">
+    <img src="../../assets/images/ui/node_settings_formula.png" alt="Node settings panel showing configuration options for a Formula node" style="width: 100%; border-radius: 8px; display: block;"/>
+    <p style="text-align: center; font-style: italic; font-size: 0.9em; margin-top: 0.5rem;">The settings panel for a "Formula" node.</p>
+  </div>
+
+</div>
 
 ### Data Preview
 1. After configuration, each node shows the output schema of the action
@@ -52,9 +69,10 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 ## Running Your Flow
 
 ### 1. Execution Options
-Choose your xecution mode from the dropdown:
-     - **Development**: Lets you view the data in every step of the process, at the cost of performance
-     - **Performance**: Only executes steps needed for the output (e.g., writing data), allowing for query optimizations and better performance
+Choose your execution mode from the settings panel:
+
+- **Development**: Lets you view the data in every step of the process, at the cost of performance
+- **Performance**: Only executes steps needed for the output (e.g., writing data), allowing for query optimizations and better performance
 
 ### 2. Running the Flow
 1. Click the **Run** button in the top toolbar
@@ -102,15 +120,18 @@ Here's a typical flow that demonstrates common operations:
       - Use mouse wheel to zoom
       - Hold Shift to select multiple nodes
       - Right-click for context menu
-      - Right click on the text to add notes
+      - Right-click on the text to add notes
 
 - **Data Handling**:
     - Use sample nodes during development
     - Preview data frequently
-    - Check column types early
-    - Monitor memory usage
+    - Check column types early with *select* nodes
 
 ---
+
+---
+## Want to see another example? 
+Checkout the [quickstart guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart)!
 
 ## Next Steps
 

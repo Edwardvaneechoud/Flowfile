@@ -350,6 +350,25 @@ def test_add_read_excel():
     graph.add_read(input_file=input_schema.NodeRead(**settings))
 
 
+def get_dependency_example():
+    graph = create_graph()
+    graph = add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}]
+)
+    node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type='unique')
+    graph.add_node_promise(node_promise)
+
+    node_connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
+    add_connection(graph, node_connection)
+    input_file = input_schema.NodeUnique(flow_id=1, node_id=2,
+                                         unique_input=transform_schema.UniqueInput(columns=['city'])
+                                         )
+    graph.add_unique(input_file)
+    return graph
+
+
 def ensure_excel_is_read_from_arrow_object():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
@@ -1052,3 +1071,80 @@ def test_complex_cloud_write_scenario():
     node= graph.get_node(3)
     node.get_table_example(True)
     graph.run_graph()
+
+
+def test_no_re_calculate_example_data_after_change_no_run():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    OFFLOAD_TO_WORKER.value = False
+
+    graph = get_dependency_example()
+    graph.flow_settings.execution_location = "local"
+    graph.run_graph()
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="titlecase([city])"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
+    graph.run_graph()
+
+    first_data = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+    assert len(first_data) > 0, 'Data should be present'
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="lowercase([city])"),
+        )
+    )
+    after_change_data_before_run = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+
+    assert after_change_data_before_run == first_data, 'Data should be the same after change without run'
+    assert not graph.get_node(3).node_stats.has_run_with_current_setup
+    assert graph.get_node(3).node_stats.has_completed_last_run
+    graph.run_graph()
+    assert graph.get_node(3).node_stats.has_run_with_current_setup
+    after_change_data_after_run = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+
+    assert after_change_data_after_run != first_data, 'Data should be different after run'
+
+    OFFLOAD_TO_WORKER.value = True
+
+def test_add_fuzzy_match_only_local():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    OFFLOAD_TO_WORKER.value = False
+    graph = create_graph()
+    graph.flow_settings.execution_location = "local"
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'fuzzy_match', 2)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                           'valid': True}],
+         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    output_data = graph.get_node(2).get_resulting_data()
+    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
+                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
+                                  )
+    output_data.assert_equal(expected_data)
+    OFFLOAD_TO_WORKER.value = True

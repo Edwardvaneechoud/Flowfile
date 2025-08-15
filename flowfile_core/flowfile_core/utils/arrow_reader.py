@@ -138,11 +138,16 @@ def collect_batches(reader: pa.ipc.RecordBatchFileReader, n: int) -> Tuple[List[
     rows_collected = 0
 
     for batch in iter_batches(reader, n, rows_collected):
-        batches.append(batch)
+
         rows_collected += batch.num_rows
         logger.debug(f"Collected batch: total rows now {rows_collected}")
         if rows_collected >= n:
+            if rows_collected > n:
+                batches.append(batch.slice(0, n - (rows_collected - batch.num_rows)))
+            else:
+                batches.append(batch)
             break
+        batches.append(batch)
 
     logger.info(f"Finished collecting {len(batches)} batches with {rows_collected} total rows")
     return batches, rows_collected
@@ -217,7 +222,7 @@ def read_top_n(file_path: str, n: int = 1000, strict: bool = False) -> pa.Table:
 
         table = pa.Table.from_batches(batches)  # type: ignore
         logger.info(f"Successfully read {rows_collected} rows from {file_path}")
-        return table
+    return table
 
 
 def get_read_top_n(file_path: str, n: int = 1000, strict: bool = False) -> Callable[[], pa.Table]:

@@ -565,7 +565,7 @@ class FlowFrame:
             coalesce: bool = None,
             maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
             description: str = None,
-    ):
+    ) -> "FlowFrame":
         """
         Add a join operation to the Logical Plan.
 

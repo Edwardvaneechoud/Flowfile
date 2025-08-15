@@ -206,7 +206,7 @@ def check_if_in_single_mode() -> bool:
     try:
         response: requests.Response = requests.get(f"{FLOWFILE_BASE_URL}/single_mode", timeout=1)
         if response.ok:
-            return response.json() == "1"
+            return response.json()
     except Exception:
         pass
     return False
@@ -400,6 +400,8 @@ def _open_flow_in_browser(flow_id: int) -> None:
         logger.info(f"Unified mode detected. Opening imported flow in browser: {flow_url}")
         try:
             time.sleep(0.5)
+            logger.info("Attempting to open browser tab for flow...")
+            logger.info("Opening URL in browser: %s", flow_url)
             webbrowser.open_new_tab(flow_url)
         except Exception as wb_err:
             logger.warning(f"Could not automatically open browser tab: {wb_err}")
@@ -452,7 +454,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
             return False
 
         flow_id = import_flow_to_editor(flow_file_path, auth_token)
-
+        print(flow_id, "flow_id", flow_in_single_mode, automatically_open_browser)
         if flow_id is not None:
             if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)
