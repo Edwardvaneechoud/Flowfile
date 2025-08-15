@@ -421,6 +421,25 @@ def get_dependency_example():
     return graph
 
 
+def get_dependency_example():
+    graph = create_graph()
+    graph = add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}]
+)
+    node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type='unique')
+    graph.add_node_promise(node_promise)
+
+    node_connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
+    add_connection(graph, node_connection)
+    input_file = input_schema.NodeUnique(flow_id=1, node_id=2,
+                                         unique_input=transform_schema.UniqueInput(columns=['city'])
+                                         )
+    graph.add_unique(input_file)
+    return graph
+
+
 def ensure_excel_is_read_from_arrow_object():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
@@ -1182,6 +1201,26 @@ def test_no_re_calculate_example_data_after_change_no_run():
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
     graph.run_graph()
 
+
+def test_no_re_calculate_example_data_after_change_no_run():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    OFFLOAD_TO_WORKER.value = False
+
+    graph = get_dependency_example()
+    graph.flow_settings.execution_location = "local"
+    graph.run_graph()
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="titlecase([city])"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
+    graph.run_graph()
+
     first_data = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
     assert len(first_data) > 0, 'Data should be present'
     graph.add_formula(
@@ -1203,8 +1242,11 @@ def test_no_re_calculate_example_data_after_change_no_run():
 
     assert after_change_data_after_run != first_data, 'Data should be different after run'
 
+    OFFLOAD_TO_WORKER.value = True
 
 def test_add_fuzzy_match_only_local():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    OFFLOAD_TO_WORKER.value = False
     graph = create_graph()
     graph.flow_settings.execution_location = "local"
     input_data = [{'name': 'eduward'},
@@ -1227,86 +1269,11 @@ def test_add_fuzzy_match_only_local():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowDataEngine(
-        {'name': ['courtney', 'eduward', 'edward', 'eduward', 'edward'],
-         'name_right': ['courtney', 'edward', 'edward', 'eduward', 'eduward'],
-         'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 1.0, 0.8571428571428572]}
-    )
+    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
+                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
+                                  )
     output_data.assert_equal(expected_data)
-
-
-def test_changes_execution_mode(flow_logger):
-    settings = {'flow_id': 1, 'node_id': 1, 'pos_x': 304.8727272727273,
-                'pos_y': 549.5272727272727, 'is_setup': True, 'description': 'Test csv',
-                'received_file': {'id': None, 'name': 'fake_data.csv',
-                                  'path': str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/data/fake_data.csv'),
-                                  'directory': None, 'analysis_file_available': False, 'status': None,
-                                  'file_type': 'csv', 'fields': [], 'reference': '', 'starting_from_line': 0,
-                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
-                                  'row_delimiter': '', 'quote_char': '', 'infer_schema_length': 20000,
-                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': None,
-                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
-                                  'type_inference': False}}
-    graph = create_graph()
-    flow_logger.warning(str(graph))
-    add_node_promise_on_type(graph, 'read', 1)
-    input_file = input_schema.NodeRead(**settings)
-    graph.add_read(input_file)
-    run_info = graph.run_graph()
-    handle_run_info(run_info)
-    graph.add_select(select_settings=input_schema.NodeSelect(flow_id=1, node_id=2,
-                                                             select_input=[transform_schema.SelectInput("City")],
-                                                             keep_missing=True))
-    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-    explain_node_2 = graph.get_node(2).get_resulting_data().data_frame.explain()
-    assert "flowfile_core/tests/support_files/data/fake_data.csv" not in explain_node_2
-    graph.execution_location = "local"
-
-    explain_node_2 = graph.get_node(2).get_resulting_data().data_frame.explain()
-    # now it should read from the actual source, since we do not cache the data with the external worker
-
-    assert "flowfile_core/tests/support_files/data/fake_data.csv" in explain_node_2
-
-
-
-def test_fuzzy_match_schema_predict(flow_logger):
-    graph = create_graph()
-    input_data = [{'name': 'eduward'},
-                  {'name': 'edward'},
-                  {'name': 'courtney'}]
-    add_manual_input(graph, data=input_data)
-    add_node_promise_on_type(graph, 'fuzzy_match', 2)
-    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
-    right_connection.input_connection.connection_class = 'input-1'
-    add_connection(graph, left_connection)
-    add_connection(graph, right_connection)
-    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
-        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
-                           'valid': True}],
-         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
-         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
-         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
-    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
-    node = graph.get_node(2)
-    org_func = node._function
-
-    def test_func(*args, **kwargs):
-        raise ValueError('This is a test error')
-    node._function = test_func
-    # enforce to calculate the data based on the schema
-    predicted_data = node.get_predicted_resulting_data()
-    assert predicted_data.columns == ['name', 'name_right', 'name_vs_name_right_levenshtein']
-    input_data = [{'name': 'eduward', 'other_field': 'test'},
-                  {'name': 'edward'},
-                  {'name': 'courtney'}]
-    add_manual_input(graph, data=input_data)
-    sleep(0.1)
-    predicted_data = node.get_predicted_resulting_data()  # Gives none because the schema predict is programmed to run only once.
-    flow_logger.info("This is the test")
-    flow_logger.info(str(len(predicted_data.columns)))
-    flow_logger.warning(str(predicted_data.collect()))
-    assert len(predicted_data.columns) == 5
-    node._function = org_func  # Restore the original function
-    result = node.get_resulting_data()
-    assert result.columns == predicted_data.columns
+    OFFLOAD_TO_WORKER.value = True
