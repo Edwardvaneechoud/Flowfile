@@ -20,6 +20,13 @@ if TYPE_CHECKING:
     from flowfile_frame.selectors import Selector
     ExprType = TypeVar('ExprType', bound='Expr')
     ColumnType = "Column"  # Use string literal instead of direct class reference
+    from polars._typing import (
+        Ambiguous,
+        IntoExpr,
+        IntoExprColumn,
+        PolarsDataType,
+        PolarsTemporalType,
+        TimeUnit)
 
 ExprOrStr = Union['Expr', str]
 ExprOrStrList = List[ExprOrStr]
@@ -110,6 +117,11 @@ class StringMethods:
         res_expr = self.expr.to_uppercase() if self.expr is not None else None
         return self._create_next_expr(method_name="to_uppercase", result_expr=res_expr, is_complex=True)
 
+    def slice(self, offset: int | IntoExprColumn, length: int | IntoExprColumn | None = None) -> Expr:
+        res_expr = self.expr.slice(offset=offset, length=length)
+        return self._create_next_expr(method_name="slice", result_expr=res_expr, is_complex=True,
+                                      offset=offset, length=length)
+
     def to_lowercase(self):
         res_expr = self.expr.to_lowercase() if self.expr is not None else None
         return self._create_next_expr(method_name="to_lowercase", result_expr=res_expr, is_complex=True)
@@ -138,12 +150,27 @@ class StringMethods:
                     strict: bool = True,
                     exact: bool = True,
                     cache: bool = True,
-                    ambiguous: Literal["earliest", "latest", "raise", "null"] | Expr = "raise",):
+                    ambiguous: Literal["earliest", "latest", "raise", "null"] | Expr = "raise",) -> 'Expr':
         res_expr = self.expr.to_datetime(format, time_unit=time_unit, time_zone=time_zone, strict=strict,
                                          exact=exact, cache=cache, ambiguous=ambiguous)
         return self._create_next_expr(method_name="to_datetime", result_expr=res_expr, is_complex=True,
                                       format=format, time_unit=time_unit, time_zone=time_zone, strict=strict,
                                       exact=exact, cache=cache, ambiguous=ambiguous)
+
+    def strptime(self,
+                 dtype: PolarsTemporalType,
+                 format: str | None = None,
+                 *,
+                 strict: bool = True,
+                 exact: bool = True,
+                 cache: bool = True,
+                 ambiguous: Literal["earliest", "latest", "raise", "null"] | Expr = "raise",) -> 'Expr':
+        res_expr = self.expr.strptime(dtype, format, strict=strict, exact=exact, cache=cache, ambiguous=ambiguous)
+        return self._create_next_expr(method_name="strptime", dtype=dtype, result_expr=res_expr, is_complex=True,
+                                      format=format, strict=strict,
+                                      exact=exact, cache=cache, ambiguous=ambiguous)
+
+
 
     def __getattr__(self, name):
         if self.expr is None or not hasattr(self.expr, name):
@@ -461,6 +488,20 @@ class Expr:
         result_expr = self.expr.sum() if self.expr is not None else None
         result = self._create_next_expr(method_name="sum", result_expr=result_expr, is_complex=self.is_complex)
         result.agg_func = "sum"
+        return result
+
+    def unique_counts(self):
+        """
+        Return the number of unique values in the column.
+
+        Returns
+        -------
+        Expr
+            A new expression with the unique counts
+        """
+        result_expr = self.expr.unique_counts() if self.expr is not None else None
+        result = self._create_next_expr(method_name="unique_counts", result_expr=result_expr, is_complex=self.is_complex)
+        result.agg_func = "unique_counts"
         return result
 
     def implode(self):

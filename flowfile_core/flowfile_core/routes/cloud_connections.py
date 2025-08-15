@@ -27,13 +27,11 @@ def create_cloud_storage_connection(input_connection: FullCloudStorageConnection
     """
     Create a new cloud storage connection.
     Parameters
-    ----------
-    input_connection: FullCloudStorageConnection schema containing connection details
-    current_user: User obtained from Depends(get_current_active_user)
-    db: Session obtained from Depends(get_db)
+        input_connection: FullCloudStorageConnection schema containing connection details
+        current_user: User obtained from Depends(get_current_active_user)
+        db: Session obtained from Depends(get_db)
     Returns
-    -------
-    Dict with a success message
+        Dict with a success message
     """
     logger.info(f'Create cloud connection {input_connection.connection_name}')
     try:
@@ -70,12 +68,10 @@ def get_cloud_connections(
     """
     Get all cloud storage connections for the current user.
     Parameters
-    ----------
-    db: Session obtained from Depends(get_db)
-    current_user: User obtained from Depends(get_current_active_user)
+        db: Session obtained from Depends(get_db)
+        current_user: User obtained from Depends(get_current_active_user)
 
     Returns
-    -------
-    List[FullCloudStorageConnectionInterface]
+        List[FullCloudStorageConnectionInterface]
     """
     return get_all_cloud_connections_interface(db, current_user.id)

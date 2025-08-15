@@ -624,6 +624,7 @@ def scan_parquet_from_cloud_storage(
         flow_graph: Optional[FlowGraph] = None,
         connection_name: Optional[str] = None,
         scan_mode: Literal["single_file", "directory", None] = None,
+        description: Optional[str] = None
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -644,7 +645,8 @@ def scan_parquet_from_cloud_storage(
                                                                               scan_mode=scan_mode,
                                                                               connection_name=connection_name,
                                                                               file_format="parquet"),
-        user_id=get_current_user_id())
+        user_id=get_current_user_id(),
+        description=description)
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
         data=flow_graph.get_node(node_id).get_resulting_data().data_frame,

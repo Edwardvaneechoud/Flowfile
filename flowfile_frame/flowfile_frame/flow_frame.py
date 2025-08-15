@@ -565,7 +565,7 @@ class FlowFrame:
             coalesce: bool = None,
             maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
             description: str = None,
-    ):
+    ) -> "FlowFrame":
         """
         Add a join operation to the Logical Plan.
 
@@ -1400,7 +1400,6 @@ class FlowFrame:
                 by_cols.append(col(col_expr).alias(new_name))
             elif isinstance(col_expr, Expr):
                 by_cols.append(col_expr.alias(new_name))
-
         # Create a GroupByFrame
         return GroupByFrame(
             node_id=new_node_id,
@@ -1934,7 +1933,6 @@ class FlowFrame:
         all_input_expr_objects: List[Expr] = []
         pure_polars_expr_strings_for_wc: List[str] = []
         collected_raw_definitions: List[str] = []
-
         has_exprs_or_named_exprs = bool(exprs or named_exprs)
         if has_exprs_or_named_exprs:
             actual_exprs_to_process: List[Expr] = []

@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 
 def get_func_type_mapping(func: str):
+    """Infers the output data type of common aggregation functions."""
     if func in ["mean", "avg", "median", "std", "var"]:
         return "Float64"
     elif func in ['min', 'max', 'first', 'last', "cumsum", "sum"]:
@@ -19,6 +20,7 @@ def get_func_type_mapping(func: str):
 
 
 def string_concat(*column: str):
+    """A simple wrapper to concatenate string columns in Polars."""
     return pl.col(column).cast(pl.Utf8).str.concat(delimiter=',')
 
 
@@ -28,27 +30,35 @@ FuzzyTypeLiteral = Literal['levenshtein', 'jaro', 'jaro_winkler', 'hamming', 'da
 
 
 def construct_join_key_name(side: SideLit, column_name: str) -> str:
+    """Creates a temporary, unique name for a join key column."""
     return "_FLOWFILE_JOIN_KEY_" + side.upper() + "_" + column_name
 
 
 class JoinKeyRename(NamedTuple):
+    """Represents the renaming of a join key from its original to a temporary name."""
     original_name: str
     temp_name: str
 
 
 class JoinKeyRenameResponse(NamedTuple):
+    """Contains a list of join key renames for one side of a join."""
     side: SideLit
     join_key_renames: List[JoinKeyRename]
 
 
 class FullJoinKeyResponse(NamedTuple):
+    """Holds the join key rename responses for both sides of a join."""
     left: JoinKeyRenameResponse
     right: JoinKeyRenameResponse
 
 
 @dataclass
 class SelectInput:
-    # __slots__ = ['old_name', 'new_name', 'keep', 'data_type', 'data_type_change', 'join_key']
+    """Defines how a single column should be selected, renamed, or type-cast.
+
+    This is a core building block for any operation that involves column manipulation.
+    It holds all the configuration for a single field in a selection operation.
+    """
     old_name: str
     original_position: Optional[int] = None
     new_name: Optional[str] = None
@@ -80,6 +90,7 @@ class SelectInput:
 
     @property
     def polars_type(self) -> str:
+        """Translates a user-friendly type name to a Polars data type string."""
         if self.data_type.lower() == 'string':
             return 'Utf8'
         elif self.data_type.lower() == 'integer':
@@ -91,7 +102,7 @@ class SelectInput:
 
 @dataclass
 class FieldInput:
-    # __slots__ = ['old_name', 'new_name', 'keep', 'data_type', 'data_type_change', 'join_key']
+    """Represents a single field with its name and data type, typically for defining an output column."""
     name: str
     data_type: Optional[str] = None
 
@@ -102,19 +113,22 @@ class FieldInput:
 
 @dataclass
 class FunctionInput:
+    """Defines a formula to be applied, including the output field information."""
     field: FieldInput
     function: str
 
 
 @dataclass
 class BasicFilter:
+    """Defines a simple, single-condition filter (e.g., 'column' 'equals' 'value')."""
     field: str = ''
-    filter_type: str = ''  # equals, in, not in, smaller, larger
+    filter_type: str = ''
     filter_value: str = ''
 
 
 @dataclass
 class FilterInput:
+    """Defines the settings for a filter operation, supporting basic or advanced (expression-based) modes."""
     advanced_filter: str = ''
     basic_filter: BasicFilter = None
     filter_type: str = 'basic'
@@ -122,43 +136,54 @@ class FilterInput:
 
 @dataclass
 class SelectInputs:
+    """A container for a list of `SelectInput` objects, providing helper methods for managing selections."""
     renames: List[SelectInput]
 
     @property
     def old_cols(self) -> Set:
+        """Returns a set of original column names to be kept in the selection."""
         return set(v.old_name for v in self.renames if v.keep)
 
     @property
     def new_cols(self) -> Set:
+        """Returns a set of new (renamed) column names to be kept in the selection."""
         return set(v.new_name for v in self.renames if v.keep)
 
     @property
     def rename_table(self):
-        return {v.old_name: v.new_name for v in self.renames if v.is_available}
+        """Generates a dictionary for use in Polars' `.rename()` method."""
+        return {v.old_name: v.new_name for v in self.renames if v.is_available and (v.keep or v.join_key)}
 
     def get_select_cols(self, include_join_key: bool = True):
+        """Gets a list of original column names to select from the source DataFrame."""
         return [v.old_name for v in self.renames if v.keep or (v.join_key and include_join_key)]
 
-    def __add__(self, other: SelectInput):
+    def __add__(self, other: "SelectInput"):
+        """Allows adding a SelectInput using the '+' operator."""
         self.renames.append(other)
 
-    def append(self, other: SelectInput):
+    def append(self, other: "SelectInput"):
+        """Appends a new SelectInput to the list of renames."""
         self.renames.append(other)
 
     def remove_select_input(self, old_key: str):
+        """Removes a SelectInput from the list based on its original name."""
         self.renames = [rename for rename in self.renames if rename.old_name != old_key]
 
     def unselect_field(self, old_key: str):
+        """Marks a field to be dropped from the final selection by setting `keep` to False."""
         for rename in self.renames:
             if old_key == rename.old_name:
                 rename.keep = False
 
     @classmethod
-    def create_from_list(cls, col_list: str):
+    def create_from_list(cls, col_list: List[str]):
+        """Creates a SelectInputs object from a simple list of column names."""
         return cls([SelectInput(c) for c in col_list])
 
     @classmethod
     def create_from_pl_df(cls, df: pl.DataFrame | pl.LazyFrame):
+        """Creates a SelectInputs object from a Polars DataFrame's columns."""
         return cls([SelectInput(c) for c in df.columns])
 
     def get_select_input_on_old_name(self, old_name: str) -> SelectInput | None:
@@ -169,15 +194,18 @@ class SelectInputs:
 
 
 class JoinInputs(SelectInputs):
+    """Extends `SelectInputs` with functionality specific to join operations, like handling join keys."""
 
     def __init__(self, renames: List[SelectInput]):
         self.renames = renames
 
     @property
     def join_key_selects(self) -> List[SelectInput]:
+        """Returns only the `SelectInput` objects that are marked as join keys."""
         return [v for v in self.renames if v.join_key]
 
     def get_join_key_renames(self, side: SideLit, filter_drop: bool = False) -> JoinKeyRenameResponse:
+        """Gets the temporary rename mapping for all join keys on one side of a join."""
         return JoinKeyRenameResponse(
             side,
             [JoinKeyRename(jk.new_name,
@@ -186,19 +214,20 @@ class JoinInputs(SelectInputs):
         )
 
     def get_join_key_rename_mapping(self, side: SideLit) -> Dict[str, str]:
+        """Returns a dictionary mapping original join key names to their temporary names."""
         return {jkr[0]: jkr[1] for jkr in self.get_join_key_renames(side)[1]}
 
 
 @dataclass
 class JoinMap:
-    # __slots__ = "left_col", "right_col"
+    """Defines a single mapping between a left and right column for a join key."""
     left_col: str
     right_col: str
 
 
-
 @dataclass
 class FuzzyMap(JoinMap):
+    """Extends `JoinMap` with settings for fuzzy string matching, such as the algorithm and similarity threshold."""
     threshold_score: Optional[float] = 80.0
     fuzzy_type: Optional[FuzzyTypeLiteral] = 'levenshtein'
     perc_unique: Optional[float] = 0.0
@@ -223,12 +252,13 @@ class FuzzyMap(JoinMap):
 
 
 class JoinSelectMixin:
-    """Mixin for common join selection functionality"""
+    """A mixin providing common methods for join-like operations that involve left and right inputs."""
     left_select: JoinInputs = None
     right_select: JoinInputs = None
 
     @staticmethod
     def parse_select(select: List[SelectInput] | List[str] | List[Dict]) -> JoinInputs | None:
+        """Parses various input formats into a standardized `JoinInputs` object."""
         if all(isinstance(c, SelectInput) for c in select):
             return JoinInputs(select)
         elif all(isinstance(c, dict) for c in select):
@@ -241,6 +271,7 @@ class JoinSelectMixin:
             return JoinInputs([SelectInput(s, s) for s in select])
 
     def auto_generate_new_col_name(self, old_col_name: str, side: str) -> str:
+        """Generates a new, non-conflicting column name by adding a suffix if necessary."""
         current_names = self.left_select.new_cols & self.right_select.new_cols
         if old_col_name not in current_names:
             return old_col_name
@@ -250,6 +281,7 @@ class JoinSelectMixin:
             old_col_name = f'{side}_{old_col_name}'
 
     def add_new_select_column(self, select_input: SelectInput, side: str):
+        """Adds a new column to the selection for either the left or right side."""
         selects = self.right_select if side == 'right' else self.left_select
         select_input.new_name = self.auto_generate_new_col_name(select_input.old_name, side=side)
         selects.__add__(select_input)
@@ -257,19 +289,23 @@ class JoinSelectMixin:
 
 @dataclass
 class CrossJoinInput(JoinSelectMixin):
+    """Defines the settings for a cross join operation, including column selections for both inputs."""
     left_select: SelectInputs = None
     right_select: SelectInputs = None
 
     def __init__(self, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str]):
+        """Initializes the CrossJoinInput with selections for left and right tables."""
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)
 
     @property
     def overlapping_records(self):
+        """Finds column names that would conflict after the join."""
         return self.left_select.new_cols & self.right_select.new_cols
 
     def auto_rename(self):
+        """Automatically renames columns on the right side to prevent naming conflicts."""
         overlapping_records = self.overlapping_records
         while len(overlapping_records) > 0:
             for right_col in self.right_select.renames:
@@ -280,13 +316,15 @@ class CrossJoinInput(JoinSelectMixin):
 
 @dataclass
 class JoinInput(JoinSelectMixin):
+    """Defines the settings for a standard SQL-style join, including keys, strategy, and selections."""
     join_mapping: List[JoinMap]
     left_select: JoinInputs = None
     right_select: JoinInputs = None
     how: JoinStrategy = 'inner'
 
     @staticmethod
-    def parse_join_mapping(join_mapping: List[JoinMap] | Tuple[str, str] | str) -> List[JoinMap]:
+    def parse_join_mapping(join_mapping: any) -> List[JoinMap]:
+        """Parses various input formats for join keys into a standardized list of `JoinMap` objects."""
         if isinstance(join_mapping, (tuple, list)):
             assert len(join_mapping) > 0
             if all(isinstance(jm, dict) for jm in join_mapping):
@@ -309,6 +347,7 @@ class JoinInput(JoinSelectMixin):
                  left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str],
                  how: JoinStrategy = 'inner'):
+        """Initializes the JoinInput with keys, selections, and join strategy."""
         self.join_mapping = self.parse_join_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)
@@ -316,10 +355,12 @@ class JoinInput(JoinSelectMixin):
         self.how = how
 
     def set_join_keys(self):
+        """Marks the `SelectInput` objects corresponding to join keys."""
         [setattr(v, "join_key", v.old_name in self._left_join_keys) for v in self.left_select.renames]
         [setattr(v, "join_key", v.old_name in self._right_join_keys) for v in self.right_select.renames]
 
     def get_join_key_renames(self, filter_drop: bool = False) -> FullJoinKeyResponse:
+        """Gets the temporary rename mappings for the join keys on both sides."""
         return FullJoinKeyResponse(self.left_select.get_join_key_renames(side="left", filter_drop=filter_drop),
                                    self.right_select.get_join_key_renames(side="right", filter_drop=filter_drop))
 
@@ -335,18 +376,22 @@ class JoinInput(JoinSelectMixin):
 
     @property
     def _left_join_keys(self) -> Set:
+        """Returns a set of the left-side join key column names."""
         return set(jm.left_col for jm in self.join_mapping)
 
     @property
     def _right_join_keys(self) -> Set:
+        """Returns a set of the right-side join key column names."""
         return set(jm.right_col for jm in self.join_mapping)
 
     @property
-    def left_join_keys(self) -> List:
+    def left_join_keys(self) -> List[str]:
+        """Returns an ordered list of the left-side join key column names to be used in the join."""
         return [jm.left_col for jm in self.used_join_mapping]
 
     @property
-    def right_join_keys(self) -> List:
+    def right_join_keys(self) -> List[str]:
+        """Returns an ordered list of the right-side join key column names to be used in the join."""
         return [jm.right_col for jm in self.used_join_mapping]
 
     @property
@@ -357,6 +402,7 @@ class JoinInput(JoinSelectMixin):
             return self.left_select.new_cols & self.right_select.new_cols
 
     def auto_rename(self):
+        """Automatically renames columns on the right side to prevent naming conflicts."""
         self.set_join_keys()
         overlapping_records = self.overlapping_records
         while len(overlapping_records) > 0:
@@ -366,7 +412,8 @@ class JoinInput(JoinSelectMixin):
             overlapping_records = self.overlapping_records
 
     @property
-    def used_join_mapping(self):
+    def used_join_mapping(self) -> List[JoinMap]:
+        """Returns the final join mapping after applying all renames and transformations."""
         new_mappings: List[JoinMap] = []
         left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table
         left_join_rename_mapping: Dict[str, str] = self.left_select.get_join_key_rename_mapping("left")
@@ -382,6 +429,7 @@ class JoinInput(JoinSelectMixin):
 
 @dataclass
 class FuzzyMatchInput(JoinInput):
+    """Extends `JoinInput` with settings specific to fuzzy matching, such as the matching algorithm and threshold."""
     join_mapping: List[FuzzyMap]
     aggregate_output: bool = False
 
@@ -429,6 +477,7 @@ class FuzzyMatchInput(JoinInput):
 
     @property
     def fuzzy_maps(self) -> List[FuzzyMap]:
+        """Returns the final fuzzy mappings after applying all column renames."""
         new_mappings = []
         left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table
         for org_fuzzy_map in self.join_mapping:
@@ -480,6 +529,7 @@ class AggColl:
     output_type: Optional[str] = None
 
     def __init__(self, old_name: str, agg: str, new_name: str = None, output_type: str = None):
+        """Initializes an aggregation column with its source, function, and new name."""
         self.old_name = str(old_name)
         if agg != 'groupby':
             self.new_name = new_name if new_name is not None else self.old_name + "_" + agg
@@ -490,6 +540,7 @@ class AggColl:
 
     @property
     def agg_func(self):
+        """Returns the corresponding Polars aggregation function from the `agg` string."""
         if self.agg == 'groupby':
             return self.agg
         elif self.agg == 'concat':
@@ -524,6 +575,7 @@ class GroupByInput:
 
 @dataclass
 class PivotInput:
+    """Defines the settings for a pivot (long-to-wide) operation."""
     index_columns: List[str]
     pivot_column: str
     value_col: str
@@ -531,9 +583,11 @@ class PivotInput:
 
     @property
     def grouped_columns(self) -> List[str]:
+        """Returns the list of columns to be used for the initial grouping stage of the pivot."""
         return self.index_columns + [self.pivot_column]
 
     def get_group_by_input(self) -> GroupByInput:
+        """Constructs the `GroupByInput` needed for the pre-aggregation step of the pivot."""
         group_by_cols = [AggColl(c, 'groupby') for c in self.grouped_columns]
         agg_cols = [AggColl(self.value_col, agg=aggregation, new_name=aggregation) for aggregation in self.aggregations]
         return GroupByInput(group_by_cols+agg_cols)
@@ -541,21 +595,25 @@ class PivotInput:
     def get_index_columns(self) -> List[pl.col]:
         return [pl.col(c) for c in self.index_columns]
 
-    def get_pivot_column(self) -> pl.col:
+    def get_pivot_column(self) -> pl.Expr:
+        """Returns the pivot column as a Polars column expression."""
         return pl.col(self.pivot_column)
 
     def get_values_expr(self) -> pl.Expr:
+        """Creates the struct expression used to gather the values for pivoting."""
         return pl.struct([pl.col(c) for c in self.aggregations]).alias('vals')
 
 
 @dataclass
 class SortByInput:
+    """Defines a single sort condition on a column, including the direction."""
     column: str
     how: str = 'asc'
 
 
 @dataclass
 class RecordIdInput:
+    """Defines settings for adding a record ID (row number) column to the data."""
     output_column_name: str = 'record_id'
     offset: int = 1
     group_by: Optional[bool] = False
@@ -564,6 +622,7 @@ class RecordIdInput:
 
 @dataclass
 class TextToRowsInput:
+    """Defines settings for splitting a text column into multiple rows based on a delimiter."""
     column_to_split: str
     output_column_name: Optional[str] = None
     split_by_fixed_value: Optional[bool] = True
@@ -573,12 +632,14 @@ class TextToRowsInput:
 
 @dataclass
 class UnpivotInput:
+    """Defines settings for an unpivot (wide-to-long) operation."""
     index_columns: Optional[List[str]] = field(default_factory=list)
     value_columns: Optional[List[str]] = field(default_factory=list)
     data_type_selector: Optional[Literal['float', 'all', 'date', 'numeric', 'string']] = None
     data_type_selector_mode: Optional[Literal['data_type', 'column']] = 'column'
 
     def __post_init__(self):
+        """Ensures that list attributes are initialized correctly if they are None."""
         if self.index_columns is None:
             self.index_columns = []
         if self.value_columns is None:
@@ -587,7 +648,8 @@ class UnpivotInput:
             self.data_type_selector_mode = 'column'
 
     @property
-    def data_type_selector_expr(self) -> Callable:
+    def data_type_selector_expr(self) -> Optional[Callable]:
+        """Returns a Polars selector function based on the `data_type_selector` string."""
         if self.data_type_selector_mode == 'data_type':
             if self.data_type_selector is not None:
                 try:
@@ -600,17 +662,20 @@ class UnpivotInput:
 
 @dataclass
 class UnionInput:
+    """Defines settings for a union (concatenation) operation."""
     mode: Literal['selective', 'relaxed'] = 'relaxed'
 
 
 @dataclass
 class UniqueInput:
+    """Defines settings for a uniqueness operation, specifying columns and which row to keep."""
     columns: Optional[List[str]] = None
     strategy: Literal["first", "last", "any", "none"] = "any"
 
 
 @dataclass
 class GraphSolverInput:
+    """Defines settings for a graph-solving operation (e.g., finding connected components)."""
     col_from: str
     col_to: str
     output_column_name: Optional[str] = 'graph_group'
@@ -618,5 +683,5 @@ class GraphSolverInput:
 
 @dataclass
 class PolarsCodeInput:
+    """A simple container for a string of user-provided Polars code to be executed."""
     polars_code: str
-

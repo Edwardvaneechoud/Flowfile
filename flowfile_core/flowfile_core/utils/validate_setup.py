@@ -34,8 +34,6 @@ def validate_setup():
         check_if_node_has_add_function_in_flow_graph(node)
         check_if_node_has_input_schema_definition(node)
 
-    print("All nodes have corresponding functions in FlowGraph and input schema definitions.")
-
 
 if __name__ == "__main__":
     validate_setup()

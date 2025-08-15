@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.3.7"
+version = "0.3.8"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -80,6 +80,9 @@ pytest = "^8.4.1"
 testcontainers = "^4.10.0"
 numpy = "1.26.4"
 pandas = "^2.3.1"
+mkdocstrings = "^0.30.0"
+mkdocstrings-python = "^1.16.12"
+griffe-pydantic = "^1.1.6"
 
 [build-system]
 requires = ["poetry-core"]
