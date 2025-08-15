@@ -317,6 +317,43 @@ def test_add_fuzzy_match():
     output_data.assert_equal(expected_data)
 
 
+def test_add_fuzzy_match_lcoal():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    graph = create_graph()
+    graph.flow_settings.execution_location = "local"
+    breakpoint()
+    OFFLOAD_TO_WORKER.value = False
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'fuzzy_match', 2)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                           'valid': True}],
+         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    output_data = graph.get_node(2).get_resulting_data()
+    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
+                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
+                                  )
+    output_data.assert_equal(expected_data)
+    OFFLOAD_TO_WORKER.value = True
+
+
 def test_add_record_count():
     graph = create_graph()
     input_data = [{'name': 'eduward'},
