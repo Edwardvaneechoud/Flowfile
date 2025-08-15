@@ -3,6 +3,8 @@
 site_name: Flowfile
 site_description: A visual ETL tool combining drag-and-drop workflow building with Polars dataframes
 site_url: https://edwardvaneechoud.github.io/Flowfile/
+repo_url: https://github.com/edwardvaneechoud/Flowfile
+
 
 # Explicitly set the URL style for consistency and planning
 use_directory_urls: false
@@ -67,6 +69,7 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+  - footnotes
 
 # MkDocs Navigation Structure
 

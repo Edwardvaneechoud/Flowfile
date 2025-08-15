@@ -572,8 +572,8 @@ def test_add_pivot_string_count():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_count', '3_count', '2_count',
-                                         '1_count'}, 'Columns should be Country, 0_count, 3_count, 2_count, 1_count'
+    assert set(predicted_df.columns) == {'Country', '0', '3', '2',
+                                         '1'}, 'Columns should be Country, 0, 3, 2, 1'
     assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
@@ -594,8 +594,8 @@ def test_add_pivot_string_concat():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_concat', '3_concat', '2_concat',
-                                         '1_concat'}, 'Columns should be Country, 0_concat, 3_concat, 2_concat, 1_concat'
+    assert set(predicted_df.columns) == {'Country', '0', '3', '2',
+                                         '1'}, 'Columns should be Country, 0, 3, 2, 1'
     assert {'str'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -616,7 +616,7 @@ def test_try_add_to_big_pivot():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    expected_columns = ['Country'] + [f'{i + 1}_sum' for i in range(200)]
+    expected_columns = ['Country'] + [f'{i + 1}' for i in range(200)]
     assert set(predicted_df.columns) == set(expected_columns), 'Should not have calculated the columns'
     run_info = graph.run_graph()
     handle_run_info(run_info)
