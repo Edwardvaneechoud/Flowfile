@@ -71,7 +71,8 @@ def pre_calculate_pivot_schema(node_input_schema: List[FlowfileColumn],
     val_column_schema = get_schema_of_column(node_input_schema, pivot_input.value_col)
     if output_fields is not None and len(output_fields) > 0:
         return index_columns_schema+[FlowfileColumn(PlType(Plcolumn_name=output_field.name,
-                                                           pl_datatype=output_field.data_type)) for output_field in output_fields]
+                                                           pl_datatype=output_field.data_type)) for output_field in
+                                     output_fields]
 
     else:
         max_unique_vals = 200
@@ -84,7 +85,11 @@ def pre_calculate_pivot_schema(node_input_schema: List[FlowfileColumn],
                                 f' Max unique values: {max_unique_vals}')
         pl_output_fields = []
         for val in unique_vals:
-            for agg in pivot_input.aggregations:
-                output_type = get_output_data_type_pivot(val_column_schema, agg)
-                pl_output_fields.append(PlType(column_name=f'{val}_{agg}', pl_datatype=output_type))
+            if len(pivot_input.aggregations) == 1:
+                output_type = get_output_data_type_pivot(val_column_schema, pivot_input.aggregations[0])
+                pl_output_fields.append(PlType(column_name=str(val), pl_datatype=output_type))
+            else:
+                for agg in pivot_input.aggregations:
+                    output_type = get_output_data_type_pivot(val_column_schema, agg)
+                    pl_output_fields.append(PlType(column_name=f'{val}_{agg}', pl_datatype=output_type))
         return index_columns_schema + [FlowfileColumn(pl_output_field) for pl_output_field in pl_output_fields]
