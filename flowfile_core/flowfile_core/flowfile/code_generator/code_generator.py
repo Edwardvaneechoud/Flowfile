@@ -825,6 +825,23 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"{var_name} = {input_df}.head(n={settings.sample_size})")
         self._add_code("")
 
+    def _handle_fuzzy_match(self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: Dict[str, str]) -> None:
+        """Handle fuzzy match nodes."""
+        logger.warning("Fuzzy match nodes are not yet implemented in Polars code generation.")
+        self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
+        left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
+        right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))
+
+        # Ensure left and right DataFrames are distinct
+        if left_df == right_df:
+            right_df = "df_right"
+            self._add_code(f"{right_df} = {left_df}")
+
+        if settings.join_input.how in ("semi", "anti"):
+            self._handle_semi_anti_join(settings, var_name, left_df, right_df)
+        else:
+            self._handle_standard_join(settings, var_name, left_df, right_df)
+
     def _handle_unique(self, settings: input_schema.NodeUnique, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle unique/distinct nodes."""
         input_df = input_vars.get('main', 'df')

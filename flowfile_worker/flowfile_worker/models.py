@@ -1,7 +1,9 @@
 from pydantic import BaseModel
 from typing import Optional, Literal, Any
 from base64 import decodebytes
-from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
+
+from pl_fuzzy_frame_match import FuzzyMapping
+
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
 
