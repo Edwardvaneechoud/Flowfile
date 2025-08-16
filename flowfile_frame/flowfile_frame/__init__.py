@@ -2,7 +2,7 @@
 """A Polars-like API for building ETL graphs."""
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
+from flowfile_core.schemas.transform_schema import FuzzyMap
 OFFLOAD_TO_WORKER.value = False
 
 # Core classes

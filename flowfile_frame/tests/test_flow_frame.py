@@ -15,6 +15,7 @@ import polars as pl
 from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame_methods import read_csv
 from flowfile_frame.expr import col
+from flowfile_frame import FuzzyMap
 
 
 try:
@@ -823,3 +824,21 @@ def test_read_csv_integration():
         # Clean up
         os.unlink(tmp1_path)
         os.unlink(tmp2_path)
+
+
+def test_fuzzy_match():
+    """Test fuzzy matching operations."""
+    from flowfile_core.schemas.input_schema import MinimalFieldInfo, RawData
+    left_data = FlowFrame({"id": [1, 2, 3, 4, 5], "street": ["123 Main St", "456 Elm St", "789 Maple Ave", "101 Oak St", "202 Pine St"]})
+    right_data = FlowFrame({"id": [1, 2, 3], "street": ["123 Main Street", "456 Elm Street", "789 Maple Avenue"]})
+
+    fuzzy_match_input = FuzzyMap("street", threshold_score=40)
+
+    # Fuzzy match on name
+    result = left_data.fuzzy_match(right_data, [fuzzy_match_input]).collect()
+
+    expected_df = pl.DataFrame([[1, 2, 3, 4], ['123 Main St', '456 Elm St', '789 Maple Ave', '101 Oak St'],
+                  [0.7333333333333334, 0.7142857142857143, 0.8125, 0.4], [1, 2, 3, 1],
+                  ['123 Main Street', '456 Elm Street', '789 Maple Avenue', '123 Main Street']],
+                 schema=['id', 'street', 'fuzzy_score_0', 'id_right', 'street_right'])
+    assert_frame_equal(result, expected_df, check_row_order=False, check_exact=False)

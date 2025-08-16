@@ -2119,21 +2119,24 @@ class FlowFrame:
 
         # Step 3: Generate new node ID
         new_node_id = generate_node_id()
-        breakpoint()
-        data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
-            {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
-                               'valid': True}],
-             'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
-             'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
-             'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
         node_fuzzy_match = input_schema.NodeFuzzyMatch(flow_id=self.flow_graph.flow_id,
-                                    node_id=new_node_id,
-                                    join_input=transform_schema.FuzzyMatchInput(join_mapping=fuzzy_mappings,
-                                                                                left_select=self.columns,
-                                                                                right_select=other.columns)
-                                    )
-
-
+                                                       node_id=new_node_id,
+                                                       join_input=
+                                                       transform_schema.FuzzyMatchInput(join_mapping=fuzzy_mappings,
+                                                                                        left_select=self.columns,
+                                                                                        right_select=other.columns),
+                                                       description=description or "Fuzzy match between two FlowFrames",
+                                                       depending_on_ids=[self.node_id, other.node_id],
+                                                       )
+        self.flow_graph.add_fuzzy_match(node_fuzzy_match)
+        self._add_connection(self.node_id, new_node_id, "main")
+        other._add_connection(other.node_id, new_node_id, "right")
+        return FlowFrame(
+            data=self.flow_graph.get_node(new_node_id).get_resulting_data().data_frame,
+            flow_graph=self.flow_graph,
+            node_id=new_node_id,
+            parent_node_id=self.node_id,
+        )
 
     def text_to_rows(
         self,

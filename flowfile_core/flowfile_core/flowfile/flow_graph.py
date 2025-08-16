@@ -790,7 +790,8 @@ class FlowGraph:
                            function=_func,
                            input_columns=[],
                            node_type='fuzzy_match',
-                           setting_input=fuzzy_settings)
+                           setting_input=fuzzy_settings,
+                           input_node_ids=fuzzy_settings.depending_on_ids)
         node = self.get_node(node_id=fuzzy_settings.node_id)
 
         def schema_callback():
