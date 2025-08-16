@@ -322,7 +322,6 @@ def test_add_fuzzy_match_lcoal():
 
     graph = create_graph()
     graph.flow_settings.execution_location = "local"
-    breakpoint()
     OFFLOAD_TO_WORKER.value = False
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},

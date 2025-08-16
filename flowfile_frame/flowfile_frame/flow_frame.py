@@ -5,11 +5,13 @@ from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, C
 import re
 
 import polars as pl
-from polars._typing import (CsvEncoding)
 from flowfile_frame.lazy_methods import add_lazyframe_methods
 
-from polars._typing import (FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
+from polars._typing import (CsvEncoding, FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
 from collections.abc import Iterator
+
+from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
@@ -20,8 +22,7 @@ from flowfile_frame.expr import Expr, Column, lit, col
 from flowfile_frame.selectors import Selector
 from flowfile_frame.group_frame import GroupByFrame
 from flowfile_frame.utils import (_parse_inputs_as_iterable, create_flow_graph, stringify_values,
-                                  ensure_inputs_as_iterable, generate_node_id,
-                                  set_node_id, data as node_id_data)
+                                  ensure_inputs_as_iterable, generate_node_id, data as node_id_data)
 from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
 from flowfile_frame.utils import _check_if_convertible_to_code
 from flowfile_frame.config import logger
@@ -2108,6 +2109,31 @@ class FlowFrame:
         self._add_polars_code(new_node_id, code, desc)
 
         return self._create_child_frame(new_node_id)
+
+    def fuzzy_match(self,
+                    other: "FlowFrame",
+                    fuzzy_mappings: List[transform_schema.FuzzyMap],
+                    description: str = None,
+                    ) -> "FlowFrame":
+        self._ensure_same_graph(other)
+
+        # Step 3: Generate new node ID
+        new_node_id = generate_node_id()
+        breakpoint()
+        data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+            {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                               'valid': True}],
+             'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+             'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+             'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+        node_fuzzy_match = input_schema.NodeFuzzyMatch(flow_id=self.flow_graph.flow_id,
+                                    node_id=new_node_id,
+                                    join_input=transform_schema.FuzzyMatchInput(join_mapping=fuzzy_mappings,
+                                                                                left_select=self.columns,
+                                                                                right_select=other.columns)
+                                    )
+
+
 
     def text_to_rows(
         self,
