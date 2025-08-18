@@ -269,6 +269,67 @@ class FlowGraph:
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
+    def print_tree(self):
+        """
+        Print flow_graph as a tree.
+        """
+        max_node_id = max(self._node_db.keys())
+
+        tree = ""
+        tabs = 0
+
+        ordered_nodes = [i.node_id for i in self.execution_order]
+
+        for node in ordered_nodes:
+            tabs += 1
+            node_input = node.setting_input
+            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
+
+            if operation == "Formula":
+                operation = "With Columns"
+
+
+            tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
+
+            if show_descriptions & show_schema:
+                raise ValueError('show_descriptions and show_schema cannot be True simultaneously')
+            if show_descriptions:
+                tree += ": " + str(node_input.description)
+            elif show_schema:
+                tree += " -> ["
+                if operation == "Manual Input":
+                    schema = ", ".join([str(i.name) + ": " + str(i.data_type) for i in node_input.raw_data_format.columns])
+                    tree += schema
+                elif operation == "With Columns":
+                    tree_with_col_schema = ", " + node_input.function.field.name + ": " + node_input.function.field.data_type 
+                    tree += schema + tree_with_col_schema
+                elif operation == "Filter":
+                    index = node_input.filter_input.advanced_filter.find("]")
+                    filtered_column = str(node_input.filter_input.advanced_filter[1:index])
+                    schema = re.sub('({str(filtered_column)}: [A-Za-z0-9]+\,\s)', "", schema)
+                    tree += schema
+                elif operation == "Group By":
+                    for col in node_input.groupby_input.agg_cols:
+                        schema = re.sub(str(col.old_name) + ': [a-z0-9]+\, ', "", schema)
+                    tree += schema
+                tree += "]"
+            else:
+                if operation == "Manual Input":
+                    tree += ": " + str(node_input.raw_data_format.data)
+                elif operation == "With Columns":
+                    tree += ": " + str(node_input.function)
+                elif operation == "Filter":
+                    tree += ": " + str(node_input.filter_input.advanced_filter)
+                elif operation == "Group By":
+                    tree += ": groupby=[" + ", ".join([col.old_name for col in node_input.groupby_input.agg_cols if col.agg == "groupby"]) + "], "
+                    tree += "agg=[" + ", ".join([str(col.agg) + "(" + str(col.old_name) + ")" for col in node_input.groupby_input.agg_cols if col.agg != "groupby"]) + "]"
+
+            if node_input.node_id < max_node_id:
+                tree += "\n" + "# " + " "*3*(tabs-1) + "|___ "
+            print("\n"*2)
+
+        return print(tree)
+        
     def get_nodes_overview(self):
         output = []
         for v in self._node_db.values():
@@ -1188,21 +1249,21 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            skip_nodes = [node for node in self.nodes if not node.is_correct]
-            skip_nodes.extend([lead_to_node for node in skip_nodes for lead_to_node in node.leads_to_nodes])
-            execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
-                                                                   node not in skip_nodes],
+            self.skip_nodes = [node for node in self.nodes if not node.is_correct]
+            self.skip_nodes.extend([lead_to_node for node in self.skip_nodes for lead_to_node in node.leads_to_nodes])
+            self.execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
+                                                                   node not in self.skip_nodes],
                                                         flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
-            skip_node_message(self.flow_logger, skip_nodes)
-            execution_order_message(self.flow_logger, execution_order)
+            skip_node_message(self.flow_logger, self.skip_nodes)
+            execution_order_message(self.flow_logger, self.execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
-            for node in execution_order:
+            for node in self.execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
                     self.flow_logger.info('Flow canceled')
                     break
-                if node in skip_nodes:
+                if node in self.skip_nodes:
                     node_logger.info(f'Skipping node {node.node_id}')
                     continue
                 node_result = NodeResult(node_id=node.node_id, node_name=node.name)
@@ -1230,7 +1291,7 @@ class FlowGraph:
                     node_result.is_running = False
                     node_logger.error(f'Error in node {node.node_id}: {e}')
                 if not node_result.success:
-                    skip_nodes.extend(list(node.get_all_dependent_nodes()))
+                    self.skip_nodes.extend(list(node.get_all_dependent_nodes()))
                 node_logger.info(f'Completed node with success: {node_result.success}')
                 self.nodes_completed += 1
             self.flow_logger.info('Flow completed!')
