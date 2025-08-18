@@ -243,64 +243,6 @@ class FlowGraph:
         self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
                            setting_input=node_promise)
 
-    def print_tree(self, show_schema=False, show_descriptions=False):
-        """
-        Print flow_graph as a tree.
-        """
-        max_node_id = max(self._node_db.keys())
-
-        tree = ""
-        tabs = 0
-        tab_counter = 0
-        for node in self.nodes:
-            tab_counter += 1
-            node_input = node.setting_input
-            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
-
-            if operation == "Formula":
-                operation = "With Columns"
-
-            tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
-
-            if show_descriptions & show_schema:
-                raise ValueError('show_descriptions and show_schema cannot be True simultaneously')
-            if show_descriptions:
-                tree += ": " + str(node_input.description)
-            elif show_schema:
-                tree += " -> ["
-                if operation == "Manual Input":
-                    schema = ", ".join([str(i.name) + ": " + str(i.data_type) for i in node_input.raw_data_format.columns])
-                    tree += schema
-                elif operation == "With Columns":
-                    tree_with_col_schema = ", " + node_input.function.field.name + ": " + node_input.function.field.data_type
-                    tree += schema + tree_with_col_schema
-                elif operation == "Filter":
-                    index = node_input.filter_input.advanced_filter.find("]")
-                    filtered_column = str(node_input.filter_input.advanced_filter[1:index])
-                    schema = re.sub('({str(filtered_column)}: [A-Za-z0-9]+\,\s)', "", schema)
-                    tree += schema
-                elif operation == "Group By":
-                    for col in node_input.groupby_input.agg_cols:
-                        schema = re.sub(str(col.old_name) + ': [a-z0-9]+\, ', "", schema)
-                    tree += schema
-                tree += "]"
-            else:
-                if operation == "Manual Input":
-                    tree += ": " + str(node_input.raw_data_format.data)
-                elif operation == "With Columns":
-                    tree += ": " + str(node_input.function)
-                elif operation == "Filter":
-                    tree += ": " + str(node_input.filter_input.advanced_filter)
-                elif operation == "Group By":
-                    tree += ": groupby=[" + ", ".join([col.old_name for col in node_input.groupby_input.agg_cols if col.agg == "groupby"]) + "], "
-                    tree += "agg=[" + ", ".join([str(col.agg) + "(" + str(col.old_name) + ")" for col in node_input.groupby_input.agg_cols if col.agg != "groupby"]) + "]"
-
-            if node_input.node_id < max_node_id:
-                tree += "\n" + "# " + " "*3*(tabs-1) + "|___ "
-            print("\n"*2)
-
-        return print(tree)
-
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
         """Calculates and applies a layered layout to all nodes in the graph.
 
@@ -383,47 +325,13 @@ class FlowGraph:
         for node in ordered_nodes:
             tabs += 1
             node_input = node.setting_input
-            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
-
-            if operation == "Formula":
-                operation = "With Columns"
-
+            operation = str(pipeline.flow_graph._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
 
             tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
 
-            if show_descriptions & show_schema:
-                raise ValueError('show_descriptions and show_schema cannot be True simultaneously')
-            if show_descriptions:
+            if node_input.description:
                 tree += ": " + str(node_input.description)
-            elif show_schema:
-                tree += " -> ["
-                if operation == "Manual Input":
-                    schema = ", ".join([str(i.name) + ": " + str(i.data_type) for i in node_input.raw_data_format.columns])
-                    tree += schema
-                elif operation == "With Columns":
-                    tree_with_col_schema = ", " + node_input.function.field.name + ": " + node_input.function.field.data_type 
-                    tree += schema + tree_with_col_schema
-                elif operation == "Filter":
-                    index = node_input.filter_input.advanced_filter.find("]")
-                    filtered_column = str(node_input.filter_input.advanced_filter[1:index])
-                    schema = re.sub('({str(filtered_column)}: [A-Za-z0-9]+\,\s)', "", schema)
-                    tree += schema
-                elif operation == "Group By":
-                    for col in node_input.groupby_input.agg_cols:
-                        schema = re.sub(str(col.old_name) + ': [a-z0-9]+\, ', "", schema)
-                    tree += schema
-                tree += "]"
-            else:
-                if operation == "Manual Input":
-                    tree += ": " + str(node_input.raw_data_format.data)
-                elif operation == "With Columns":
-                    tree += ": " + str(node_input.function)
-                elif operation == "Filter":
-                    tree += ": " + str(node_input.filter_input.advanced_filter)
-                elif operation == "Group By":
-                    tree += ": groupby=[" + ", ".join([col.old_name for col in node_input.groupby_input.agg_cols if col.agg == "groupby"]) + "], "
-                    tree += "agg=[" + ", ".join([str(col.agg) + "(" + str(col.old_name) + ")" for col in node_input.groupby_input.agg_cols if col.agg != "groupby"]) + "]"
-
+            
             if node_input.node_id < max_node_id:
                 tree += "\n" + "# " + " "*3*(tabs-1) + "|___ "
             print("\n"*2)
