@@ -6,7 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
-from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter, export_flow_to_polars
+from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
 try:
@@ -2522,7 +2522,7 @@ def test_cloud_storage_reader():
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-def test_cloud_storage_writer(tmp_path):
+def test_cloud_storage_writer():
     output_file_name = f"s3://flowfile-test/flowfile_generated_data_{uuid4()}.parquet"
     conn = ensure_cloud_storage_connection_is_available_and_get_connection()
     write_settings = cloud_ss.CloudStorageWriteSettings(
@@ -2536,6 +2536,44 @@ def test_cloud_storage_writer(tmp_path):
         connection_name=conn.connection_name
     )
 
+    flow = create_basic_flow()
+
+    flow = create_sample_dataframe_node(flow)
+    record_count_node = input_schema.NodeRecordCount(flow_id=1, node_id=2, depending_on_id=1)
+    flow.add_record_count(record_count_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    node_settings = input_schema.NodeCloudStorageWriter(flow_id=flow.flow_id, node_id=3, user_id=1,
+                                                        cloud_storage_settings=write_settings,)
+    flow.add_cloud_storage_writer(node_settings)
+
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(2, 3))
+    code = export_flow_to_polars(flow)
+    verify_if_execute(code)
+    fde = FlowDataEngine.from_cloud_storage_obj(
+        cloud_ss.CloudStorageReadSettingsInternal(read_settings=read_settings, connection=get_cloud_connection())
+    )
+    assert fde.collect()[0, 0] == 5
+
+
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
+@pytest.mark.parametrize("file_format", ["csv", "parquet", "json", "delta"])
+def test_cloud_storage_writer(file_format):
+    if file_format != "delta":
+        output_file_name = f"s3://flowfile-test/flowfile_generated_data_{uuid4()}.{file_format}"
+    else:
+        output_file_name = f"s3://flowfile-test/flowfile_generated_data_{uuid4()}"
+    conn = ensure_cloud_storage_connection_is_available_and_get_connection()
+    write_settings = cloud_ss.CloudStorageWriteSettings(
+        resource_path=output_file_name,
+        file_format=file_format,
+        connection_name=conn.connection_name
+    )
+    read_settings = cloud_ss.CloudStorageReadSettings(
+        resource_path=output_file_name,
+        file_format=file_format,
+        connection_name=conn.connection_name
+    )
     flow = create_basic_flow()
 
     flow = create_sample_dataframe_node(flow)

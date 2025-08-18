@@ -895,8 +895,8 @@ class FlowGraphToPolarsConverter:
             self._add_code(f'    .write_csv_to_cloud_storage(')
             self._add_code(f'        path="{output_settings.resource_path}",')
             self._add_code(f'        connection_name="{output_settings.connection_name}",')
-            self._add_code(f'        delimiter="{output_settings.output_csv_table.delimiter}",')
-            self._add_code(f'        encoding="{output_settings.output_csv_table.encoding}",')
+            self._add_code(f'        delimiter="{output_settings.csv_delimiter}",')
+            self._add_code(f'        encoding="{output_settings.csv_encoding}",')
             self._add_code(f'        description="{settings.description}"')
         elif output_settings.file_format == "parquet":
             self._add_code(f'    .write_parquet_to_cloud_storage(')

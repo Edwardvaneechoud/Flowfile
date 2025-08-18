@@ -11,6 +11,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                delete_cloud_connection,
                                                                                get_all_cloud_connections_interface)
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
 
 import pytest
 from pathlib import Path
@@ -350,6 +352,25 @@ def test_add_read_excel():
     graph.add_read(input_file=input_schema.NodeRead(**settings))
 
 
+def get_dependency_example():
+    graph = create_graph()
+    graph = add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}]
+)
+    node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type='unique')
+    graph.add_node_promise(node_promise)
+
+    node_connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
+    add_connection(graph, node_connection)
+    input_file = input_schema.NodeUnique(flow_id=1, node_id=2,
+                                         unique_input=transform_schema.UniqueInput(columns=['city'])
+                                         )
+    graph.add_unique(input_file)
+    return graph
+
+
 def ensure_excel_is_read_from_arrow_object():
     settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
                 'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
@@ -492,12 +513,49 @@ def test_add_pivot():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_sum', '3_sum', '2_sum',
-                                         '1_sum'}, 'Columns should be Country, 0_sum, 3_sum, 2_sum, 1_sum'
+    assert set(predicted_df.columns) == {'Country', '0', '3', '2', '1'}, 'Columns should be Country, 0, 3, 2, 1'
     assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+
+def test_pivot_schema_callback():
+    graph = create_graph()
+    input_data = (FlowDataEngine.create_random(10000).apply_flowfile_formula('random_int(0, 4)', 'groups')
+                  .select_columns(['groups', 'Country', 'sales_data']))
+    add_manual_input(graph, data=input_data.to_pylist())
+    add_node_promise_on_type(graph, 'pivot', 2)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    pivot_input = transform_schema.PivotInput(pivot_column='groups', value_col='sales_data', index_columns=['Country'],
+                                              aggregations=['sum'])
+    pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
+    graph.add_pivot(pivot_settings)
+
+
+def test_schema_callback_in_graph():
+    pivot_input = transform_schema.PivotInput(index_columns=['Country'], pivot_column='groups',
+                                              value_col='sales_data', aggregations=['sum'])
+
+    data = (FlowDataEngine.create_random(10000)
+            .apply_flowfile_formula('random_int(0, 4)', 'groups')
+            .select_columns(['groups', 'Country', 'Work', 'sales_data']))
+    node_input_schema = data.schema
+    input_lf = data.data_frame
+    result_schema = pre_calculate_pivot_schema(node_input_schema=node_input_schema,
+                                               pivot_input=pivot_input,
+                                               input_lf=input_lf,)
+    result_data = FlowDataEngine.create_from_schema(result_schema)
+    expected_schema = [input_schema.MinimalFieldInfo(name="Country", data_type="String"),
+                       input_schema.MinimalFieldInfo(name='0', data_type='Float64'),
+                       input_schema.MinimalFieldInfo(name='1', data_type='Float64'),
+                       input_schema.MinimalFieldInfo(name='2', data_type='Float64'),
+                       input_schema.MinimalFieldInfo(name='3', data_type='Float64')]
+    expected_data = FlowDataEngine.create_from_schema([FlowfileColumn.create_from_minimal_field_info(mfi)
+                                                       for mfi in expected_schema])
+    result_data.assert_equal(expected_data)
+
 
 
 def test_add_pivot_string_count():
@@ -514,8 +572,8 @@ def test_add_pivot_string_count():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_count', '3_count', '2_count',
-                                         '1_count'}, 'Columns should be Country, 0_count, 3_count, 2_count, 1_count'
+    assert set(predicted_df.columns) == {'Country', '0', '3', '2',
+                                         '1'}, 'Columns should be Country, 0, 3, 2, 1'
     assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
@@ -536,8 +594,8 @@ def test_add_pivot_string_concat():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    assert set(predicted_df.columns) == {'Country', '0_concat', '3_concat', '2_concat',
-                                         '1_concat'}, 'Columns should be Country, 0_concat, 3_concat, 2_concat, 1_concat'
+    assert set(predicted_df.columns) == {'Country', '0', '3', '2',
+                                         '1'}, 'Columns should be Country, 0, 3, 2, 1'
     assert {'str'} == set(p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -558,7 +616,7 @@ def test_try_add_to_big_pivot():
     pivot_settings = input_schema.NodePivot(flow_id=1, node_id=2, pivot_input=pivot_input)
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
-    expected_columns = ['Country'] + [f'{i + 1}_sum' for i in range(200)]
+    expected_columns = ['Country'] + [f'{i + 1}' for i in range(200)]
     assert set(predicted_df.columns) == set(expected_columns), 'Should not have calculated the columns'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -1052,3 +1110,80 @@ def test_complex_cloud_write_scenario():
     node= graph.get_node(3)
     node.get_table_example(True)
     graph.run_graph()
+
+
+def test_no_re_calculate_example_data_after_change_no_run():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    OFFLOAD_TO_WORKER.value = False
+
+    graph = get_dependency_example()
+    graph.flow_settings.execution_location = "local"
+    graph.run_graph()
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="titlecase([city])"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
+    graph.run_graph()
+
+    first_data = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+    assert len(first_data) > 0, 'Data should be present'
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="lowercase([city])"),
+        )
+    )
+    after_change_data_before_run = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+
+    assert after_change_data_before_run == first_data, 'Data should be the same after change without run'
+    assert not graph.get_node(3).node_stats.has_run_with_current_setup
+    assert graph.get_node(3).node_stats.has_completed_last_run
+    graph.run_graph()
+    assert graph.get_node(3).node_stats.has_run_with_current_setup
+    after_change_data_after_run = [row["titleCity"] for row in graph.get_node_data(3, True).main_output.data]
+
+    assert after_change_data_after_run != first_data, 'Data should be different after run'
+
+    OFFLOAD_TO_WORKER.value = True
+
+def test_add_fuzzy_match_only_local():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    OFFLOAD_TO_WORKER.value = False
+    graph = create_graph()
+    graph.flow_settings.execution_location = "local"
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'fuzzy_match', 2)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                           'valid': True}],
+         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    output_data = graph.get_node(2).get_resulting_data()
+    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
+                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
+                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
+                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
+                                  )
+    output_data.assert_equal(expected_data)
+    OFFLOAD_TO_WORKER.value = True

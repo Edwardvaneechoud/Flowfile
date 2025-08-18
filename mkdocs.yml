@@ -1,6 +1,13 @@
+# mkdocs.yml
+
 site_name: Flowfile
 site_description: A visual ETL tool combining drag-and-drop workflow building with Polars dataframes
 site_url: https://edwardvaneechoud.github.io/Flowfile/
+repo_url: https://github.com/edwardvaneechoud/Flowfile
+
+
+# Explicitly set the URL style for consistency and planning
+use_directory_urls: false
 
 theme:
   name: material
@@ -32,28 +39,88 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
 
+extra_css:
+  - stylesheets/extra.css
+
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            # Global options for all Python objects
+            show_root_heading: true
+            show_inherited_members: true
+            show_bases: true
+            # Options specific to the griffe-pydantic extension
+            extensions:
+              - griffe_pydantic:
+                  # Render the "Fields" and "Validators" sections
+                  schema: true
+
 markdown_extensions:
   - attr_list
   - md_in_html
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - footnotes
+
+# MkDocs Navigation Structure
+
 
 nav:
   - Home: index.html
   - Quickstart: quickstart.md
-  - Building Flows: flows/building.md
-  - Guides:
-    - Overview: guides/index.md
-    - Connect to Postgresql: guides/database_connectivity.md
-    - Manage Cloud Connections: guides/manage_cloud_connections.md
-    - Technical architecture: guides/technical_architecture.md
-    - Using Code to Flow: guides/flowfile_frame_api.md
-    - Using Flow to Code: guides/code_generator.md
-  - Nodes:
-    - Overview: nodes/index.md
-    - Input Nodes: nodes/input.md
-    - Transform Nodes: nodes/transform.md
-    - Combine Nodes: nodes/combine.md
-    - Aggregate Nodes: nodes/aggregate.md
-    - Output Nodes: nodes/output.md
+
+  - User Guides:
+    - Overview: users/index.md
+
+    - Visual Editor:
+      - Getting Started: users/visual-editor/index.md
+      - Building Flows: users/visual-editor/building-flows.md
+      - Node Reference:
+        - Overview: users/visual-editor/nodes/index.md
+        - Input Nodes: users/visual-editor/nodes/input.md
+        - Transform Nodes: users/visual-editor/nodes/transform.md
+        - Combine Nodes: users/visual-editor/nodes/combine.md
+        - Aggregate Nodes: users/visual-editor/nodes/aggregate.md
+        - Output Nodes: users/visual-editor/nodes/output.md
+      - Tutorials:
+        - Overview: users/visual-editor/tutorials/index.md
+        - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
+        - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
+        - Export to Python: users/visual-editor/tutorials/code-generator.md
+
+    - Python API:
+      - Overview: users/python-api/index.md
+      - Quick Start: users/python-api/quickstart.md
+      - Core Concepts:
+        - Overview: users/python-api/concepts/index.md
+        - FlowFrame & FlowGraph: users/python-api/concepts/design-concepts.md
+        - Formula Syntax: users/python-api/concepts/expressions.md
+      - API Reference:
+        - Overview: users/python-api/reference/index.md
+        - Reading Data: users/python-api/reference/reading-data.md
+        - Writing Data: users/python-api/reference/writing-data.md
+        - Data Types: users/python-api/reference/data-types.md
+        - DataFrame Operations: users/python-api/reference/flowframe-operations.md
+        - Aggregations: users/python-api/reference/aggregations.md
+        - Joins: users/python-api/reference/joins.md
+        - Cloud Storage: users/python-api/reference/cloud-connections.md
+        - Visual UI Integration: users/python-api/reference/visual-ui.md
+      - Tutorials:
+        - Overview: users/python-api/tutorials/index.md
+        - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
+
+  - For Developers:
+    - Introduction: for-developers/index.md
+    - Design Philosophy: for-developers/design-philosophy.md
+    - Architecture: for-developers/architecture.md
+    - Core Internals: for-developers/flowfile-core.md
+    - Internal API Reference: for-developers/python-api-reference.md

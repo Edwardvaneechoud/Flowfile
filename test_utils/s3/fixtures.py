@@ -8,6 +8,7 @@ import shutil
 import boto3
 from botocore.client import Config
 from test_utils.s3.data_generator import populate_test_data
+from test_utils.s3.demo_data_generator import create_demo_data
 
 logger = logging.getLogger("s3_fixture")
 
@@ -102,7 +103,7 @@ def create_test_buckets():
     client = get_minio_client()
 
     # Create test buckets
-    buckets = ['test-bucket', 'flowfile-test', 'sample-data', 'worker-test-bucket']
+    buckets = ['test-bucket', 'flowfile-test', 'sample-data', 'worker-test-bucket', 'demo-bucket']
     for bucket in buckets:
         try:
             client.create_bucket(Bucket=bucket)
@@ -176,6 +177,10 @@ def start_minio_container() -> bool:
                                access_key=MINIO_ACCESS_KEY,
                                secret_key=MINIO_SECRET_KEY,
                                bucket_name="test-bucket")
+            create_demo_data(endpoint_url=MINIO_ENDPOINT_URL,
+                               access_key=MINIO_ACCESS_KEY,
+                               secret_key=MINIO_SECRET_KEY,
+                               bucket_name="demo-bucket")
             return True
         return False
 

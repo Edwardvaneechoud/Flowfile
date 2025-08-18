@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>Flowfile - Visual ETL Tool</title>
 
     <!-- Material Design Web Components -->
@@ -52,6 +52,8 @@
             color: var(--md-default-fg-color);
             background-color: var(--md-default-bg-color);
             line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
         pre {
@@ -59,24 +61,28 @@
             padding: 1rem;
             border-radius: 8px;
             overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            font-size: 0.875rem;
         }
 
         code {
             font-family: 'Source Code Pro', 'Roboto Mono', monospace;
             color: var(--md-code-fg-color);
+            font-size: 0.875rem;
         }
-    </style>
 
-    <style>
+        /* Mobile-first approach */
+
         /* Hero Section */
         .hero-section {
-            min-height: 70vh;
+            min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             background: linear-gradient(135deg, var(--md-primary-fg-color) 0%, var(--md-accent-fg-color) 100%);
             position: relative;
             overflow: hidden;
+            padding: 1rem;
         }
 
         .hero-section::before {
@@ -103,13 +109,14 @@
             color: white;
             z-index: 1;
             max-width: 900px;
-            padding: 2rem;
+            padding: 1rem;
+            width: 100%;
         }
 
         .hero-logo {
-            width: 120px;
-            height: 120px;
-            margin-bottom: 2rem;
+            width: 80px;
+            height: 80px;
+            margin-bottom: 1.5rem;
             filter: drop-shadow(0 10px 30px rgba(0,0,0,0.2));
             animation: pulse 3s ease-in-out infinite;
         }
@@ -120,31 +127,34 @@
         }
 
         .hero-title {
-            font-size: 3.5rem;
+            font-size: 2rem;
             font-weight: 700;
             margin-bottom: 1rem;
             text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            line-height: 1.2;
         }
 
         .hero-subtitle {
-            font-size: 1.3rem;
+            font-size: 1rem;
             margin-bottom: 2rem;
             opacity: 0.95;
             max-width: 700px;
             margin-left: auto;
             margin-right: auto;
             line-height: 1.6;
+            padding: 0 1rem;
         }
 
         .hero-buttons {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
             justify-content: center;
             flex-wrap: wrap;
+            padding: 0 1rem;
         }
 
         .hero-button {
-            padding: 0.8rem 2rem;
+            padding: 0.75rem 1.5rem;
             border-radius: 50px;
             text-decoration: none;
             font-weight: 600;
@@ -152,6 +162,11 @@
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+            font-size: 0.9rem;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            min-height: 44px;
+            min-width: 44px;
         }
 
         .hero-button-primary {
@@ -159,7 +174,7 @@
             color: var(--md-primary-fg-color);
         }
 
-        .hero-button-primary:hover {
+        .hero-button-primary:hover, .hero-button-primary:active {
             transform: translateY(-2px);
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
         }
@@ -170,21 +185,21 @@
             background: transparent;
         }
 
-        .hero-button-secondary:hover {
+        .hero-button-secondary:hover, .hero-button-secondary:active {
             background: rgba(255,255,255,0.1);
             transform: translateY(-2px);
         }
 
         /* Feature Cards */
         .features-section {
-            padding: 4rem 2rem;
+            padding: 3rem 1rem;
             background: var(--md-default-bg-color);
         }
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
             max-width: 1200px;
             margin: 0 auto;
         }
@@ -192,7 +207,7 @@
         .feature-card {
             background: var(--md-code-bg-color);
             border-radius: 16px;
-            padding: 2rem;
+            padding: 1.5rem;
             transition: all 0.3s ease;
             border: 1px solid transparent;
             position: relative;
@@ -200,6 +215,8 @@
             text-decoration: none;
             display: block;
             color: inherit;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .feature-link {
@@ -233,7 +250,7 @@
             transform: translateX(0);
         }
 
-        .feature-card:hover {
+        .feature-card:hover, .feature-card:active {
             transform: translateY(-5px);
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
             border-color: var(--md-primary-fg-color--light);
@@ -242,11 +259,6 @@
         .feature-card:hover .feature-arrow {
             opacity: 1;
             transform: translateX(0);
-        }
-
-        .feature-card:active {
-            transform: translateY(-3px);
-            transition: transform 0.1s ease;
         }
 
         .feature-icon {
@@ -263,7 +275,7 @@
         }
 
         .feature-title {
-            font-size: 1.3rem;
+            font-size: 1.1rem;
             font-weight: 600;
             margin-bottom: 0.5rem;
             color: var(--md-default-fg-color);
@@ -272,14 +284,15 @@
         .feature-description {
             color: var(--md-default-fg-color--light);
             line-height: 1.6;
+            font-size: 0.95rem;
         }
 
         /* Code Preview */
         .code-preview {
             background: var(--md-code-bg-color);
             border-radius: 16px;
-            padding: 2rem;
-            margin: 2rem auto;
+            padding: 1.5rem;
+            margin: 2rem 1rem;
             max-width: 800px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }
@@ -301,8 +314,205 @@
         .code-dot:nth-child(2) { background: #ffbd2e; }
         .code-dot:nth-child(3) { background: #28ca42; }
 
-        /* Responsive */
-        @media (max-width: 768px) {
+        /* Developer Section Styles */
+        .developer-section {
+            padding: 3rem 1rem;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+        }
+
+        .approach-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            margin: 2rem 0;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .approach-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .approach-card h3 {
+            color: var(--md-primary-fg-color);
+            margin-bottom: 1.5rem;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .approach-card ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .approach-card li {
+            padding: 0.5rem 0;
+            color: rgba(255,255,255,0.9);
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            font-size: 0.95rem;
+        }
+
+        .approach-card li::before {
+            content: '✓';
+            color: var(--md-primary-fg-color);
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .approach-card pre {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.1);
+            margin: 0;
+            padding: 1rem;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .approach-card code {
+            color: #f8f8f2;
+            font-size: 0.8rem;
+        }
+
+        .developer-features {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+            margin: 2rem 0;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .developer-feature {
+            background: rgba(255,255,255,0.05);
+            padding: 1.25rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .developer-feature h4 {
+            color: var(--md-primary-fg-color);
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+        }
+
+        .developer-feature p {
+            color: rgba(255,255,255,0.7);
+            font-size: 0.9rem;
+            margin: 0;
+        }
+
+        /* Interface Screenshot */
+        .interface-preview {
+            max-width: 1000px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .interface-preview img {
+            width: 100%;
+            height: auto;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease;
+        }
+
+        .interface-preview img:hover {
+            transform: scale(1.02);
+        }
+
+        /* Section Titles */
+        .section-title {
+            text-align: center;
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+            color: var(--md-default-fg-color);
+            padding: 0 1rem;
+            line-height: 1.2;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            font-size: 1rem;
+            color: var(--md-default-fg-color--light);
+            max-width: 700px;
+            margin: 0 auto 2rem;
+            padding: 0 1rem;
+            line-height: 1.5;
+        }
+
+        .section-title-white {
+            color: white !important;
+        }
+
+        .section-subtitle-white {
+            color: rgba(255,255,255,0.8) !important;
+        }
+
+        /* Stats Section */
+        .stats-container {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+            padding: 0 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.2s;
+            display: block;
+            min-width: 100px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            color: var(--md-primary-fg-color);
+            font-weight: bold;
+        }
+
+        .stat-label {
+            color: var(--md-default-fg-color--light);
+            font-size: 0.9rem;
+        }
+
+        /* Bottom CTA Section */
+        .bottom-cta {
+            text-align: center;
+            padding: 3rem 1rem;
+            background: var(--md-code-bg-color);
+        }
+
+        .bottom-cta-subtitle {
+            max-width: 600px;
+            margin: 0 auto 2rem;
+            padding: 0 1rem;
+            color: var(--md-default-fg-color--light);
+            font-size: 0.95rem;
+        }
+
+        /* Tablet styles */
+        @media (min-width: 640px) {
+            .hero-logo {
+                width: 100px;
+                height: 100px;
+            }
+
             .hero-title {
                 font-size: 2.5rem;
             }
@@ -311,9 +521,152 @@
                 font-size: 1.1rem;
             }
 
+            .hero-button {
+                padding: 0.8rem 2rem;
+                font-size: 1rem;
+            }
+
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .developer-features {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .section-title {
+                font-size: 2rem;
+            }
+
+            .section-subtitle {
+                font-size: 1.1rem;
+            }
+
+            .feature-title {
+                font-size: 1.2rem;
+            }
+
+            .stats-container {
+                gap: 3rem;
+            }
+
+            .stat-value {
+                font-size: 2.5rem;
+            }
+        }
+
+        /* Desktop styles */
+        @media (min-width: 1024px) {
+            .hero-section {
+                min-height: 70vh;
+                padding: 2rem;
+            }
+
+            .hero-logo {
+                width: 120px;
+                height: 120px;
+                margin-bottom: 2rem;
+            }
+
+            .hero-title {
+                font-size: 3.5rem;
+            }
+
+            .hero-subtitle {
+                font-size: 1.3rem;
+            }
+
             .hero-buttons {
-                flex-direction: column;
-                align-items: center;
+                flex-direction: row;
+                gap: 1rem;
+            }
+
+            .features-section {
+                padding: 4rem 2rem;
+            }
+
+            .features-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 2rem;
+            }
+
+            .feature-card {
+                padding: 2rem;
+            }
+
+            .approach-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 2rem;
+                margin: 3rem 0;
+            }
+
+            .approach-card {
+                padding: 2rem;
+            }
+
+            .approach-card h3 {
+                font-size: 1.4rem;
+            }
+
+            .developer-section {
+                padding: 4rem 2rem;
+            }
+
+            .developer-features {
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1.5rem;
+                margin: 3rem 0;
+            }
+
+            .developer-feature {
+                padding: 1.5rem;
+            }
+
+            .developer-feature h4 {
+                font-size: 1.1rem;
+            }
+
+            .developer-feature p {
+                font-size: 0.95rem;
+            }
+
+            .section-title {
+                font-size: 2.5rem;
+                margin-bottom: 1rem;
+            }
+
+            .section-subtitle {
+                font-size: 1.2rem;
+                margin-bottom: 3rem;
+            }
+
+            .feature-title {
+                font-size: 1.3rem;
+            }
+
+            .feature-description {
+                font-size: 1rem;
+            }
+
+            .interface-preview {
+                margin: 3rem auto;
+                padding: 0 2rem;
+            }
+
+            .bottom-cta {
+                padding: 4rem 2rem;
+            }
+
+            .approach-card code {
+                font-size: 0.875rem;
+            }
+
+            .approach-card li {
+                font-size: 1rem;
+            }
+
+            pre {
+                font-size: 0.9rem;
             }
         }
 
@@ -336,39 +689,40 @@
         .fade-in:nth-child(3) { animation-delay: 0.3s; }
         .fade-in:nth-child(4) { animation-delay: 0.4s; }
 
-        /* Interface Screenshot */
-        .interface-preview {
-            max-width: 1000px;
-            margin: 3rem auto;
-            padding: 0 2rem;
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .feature-card:active {
+                transform: scale(0.98);
+            }
+
+            .hero-button:active {
+                transform: scale(0.95);
+            }
+
+            .feature-arrow {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
-        .interface-preview img {
-            width: 100%;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-            transition: transform 0.3s ease;
+        /* Reduce motion for accessibility */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
 
-        .interface-preview img:hover {
-            transform: scale(1.02);
-        }
+        /* High contrast mode support */
+        @media (prefers-contrast: high) {
+            .feature-card {
+                border: 2px solid var(--md-default-fg-color);
+            }
 
-        /* Section Titles */
-        .section-title {
-            text-align: center;
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            color: var(--md-default-fg-color);
-        }
-
-        .section-subtitle {
-            text-align: center;
-            font-size: 1.2rem;
-            color: var(--md-default-fg-color--light);
-            max-width: 700px;
-            margin: 0 auto 3rem;
+            .hero-button {
+                border: 2px solid currentColor;
+            }
         }
     </style>
 </head>
@@ -383,7 +737,7 @@
                 Build data pipelines visually, transform data using powerful nodes, and analyze results - all without writing code.
             </p>
             <div class="hero-buttons fade-in">
-                <a href="quickstart" class="hero-button hero-button-primary">
+                <a href="quickstart.html" class="hero-button hero-button-primary">
                     <span>Get Started</span>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
@@ -394,6 +748,12 @@
                         <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
                     </svg>
                     <span>View on GitHub</span>
+                </a>
+                <a href="users/" class="hero-button hero-button-primary">
+                    <span>User Guides</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                    </svg>
                 </a>
             </div>
         </div>
@@ -410,7 +770,7 @@
         <p class="section-subtitle">Build powerful data pipelines without writing code, powered by the speed of Polars</p>
 
         <div class="features-grid">
-            <a href="flows/building" class="feature-card fade-in feature-link">
+            <a href="users/visual-editor/building-flows.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🎨</div>
                 <h3 class="feature-title">Visual Pipeline Design</h3>
                 <p class="feature-description">
@@ -420,7 +780,7 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="guides/technical_architecture" class="feature-card fade-in feature-link">
+            <a href="for-developers/architecture.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">⚡</div>
                 <h3 class="feature-title">Blazing Fast Performance</h3>
                 <p class="feature-description">
@@ -430,7 +790,7 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="guides/code_generator" class="feature-card fade-in feature-link">
+            <a href="users/visual-editor/tutorials/code-generator.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🔄</div>
                 <h3 class="feature-title">Flow to Code</h3>
                 <p class="feature-description">
@@ -440,7 +800,7 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="guides/database_connectivity" class="feature-card fade-in feature-link">
+            <a href="users/visual-editor/tutorials/database-connectivity.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🔌</div>
                 <h3 class="feature-title">Database Integration</h3>
                 <p class="feature-description">
@@ -450,7 +810,7 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="guides/flowfile_frame_api" class="feature-card fade-in feature-link">
+            <a href="users/python-api/tutorials/flowfile_frame_api.html" class="feature-card fade-in feature-link">
                 <div class="feature-icon">🐍</div>
                 <h3 class="feature-title">Code to Flow</h3>
                 <p class="feature-description">
@@ -460,60 +820,106 @@
                 <span class="feature-arrow">→</span>
             </a>
 
-            <a href="nodes/" class="feature-card fade-in feature-link">
-                <div class="feature-icon">📊</div>
-                <h3 class="feature-title">Rich Transformations</h3>
+            <a href="users/python-api/" class="feature-card fade-in feature-link">
+                <div class="feature-icon">👩‍💻</div>
+                <h3 class="feature-title">Python API</h3>
                 <p class="feature-description">
-                    Fuzzy matching, pivot operations, custom formulas, and more.
-                    Handle complex data transformations with ease.
+                    Full Python API with Polars compatibility. Build pipelines programmatically and seamlessly switch between code and visual editing.
                 </p>
                 <span class="feature-arrow">→</span>
             </a>
         </div>
     </section>
 
-    <!-- Code Example -->
-    <section style="padding: 2rem;">
-        <h2 class="section-title">Build Pipelines Your Way</h2>
-        <p class="section-subtitle">Use the visual designer or write code - seamlessly switch between both</p>
+    <!-- Developer Section -->
+    <section class="developer-section">
+        <div style="max-width: 1200px; margin: 0 auto;">
+            <h2 class="section-title section-title-white">Build Pipelines Your Way</h2>
+            <p class="section-subtitle section-subtitle-white">
+                Use the visual designer for exploration or write code for automation - seamlessly switch between both
+            </p>
 
-        <div class="code-preview">
-            <div class="code-header">
-                <div class="code-dot"></div>
-                <div class="code-dot"></div>
-                <div class="code-dot"></div>
+            <div class="approach-grid">
+                <!-- Visual Approach -->
+                <div class="approach-card">
+                    <h3><span>📊</span> Visual Approach</h3>
+                    <ul>
+                        <li>Drag and drop nodes to build workflows</li>
+                        <li>Configure transformations with intuitive forms</li>
+                        <li>Preview data at each step instantly</li>
+                        <li>Export your pipeline as Python code</li>
+                        <li>Perfect for exploration and prototyping</li>
+                    </ul>
+                </div>
+
+                <!-- Code Approach -->
+                <div class="approach-card">
+                    <h3><span>🐍</span> Code Approach</h3>
+                    <pre><code>import flowfile as ff
+
+df = ff.read_csv("data.csv")
+result = df.filter(
+    ff.col("amount") > 1000
+).group_by("region").agg(
+    ff.col("amount").sum()
+)
+
+# Visualize your pipeline
+ff.open_graph_in_editor(result.flow_graph)</code></pre>
+                </div>
             </div>
-            <pre><code class="language-python">import flowfile as ff
-from flowfile import col, open_graph_in_editor
 
-# Create a data pipeline
-df = ff.from_dict({
-    "id": [1, 2, 3, 4, 5],
-    "category": ["A", "B", "A", "C", "B"],
-    "value": [100, 200, 150, 300, 250]
-})
-
-# Process the data
-result = df.filter(col("value") > 150).with_columns([
-    (col("value") * 2).alias("double_value")
-])
-
-# Open the graph in the visual editor
-open_graph_in_editor(result.flow_graph)</code></pre>
+            <div class="hero-buttons">
+                <a href="users/python-api/" class="hero-button hero-button-primary">
+                    <span>Python API Documentation</span>
+                </a>
+                <a href="users/visual-editor/" class="hero-button hero-button-secondary">
+                    <span>Visual Editor Guide</span>
+                </a>
+            </div>
+            <div class="hero-buttons" style="margin-top: 2rem;">
+                <a href="for-developers/" class="hero-button hero-button-primary">
+                    <span>Read Developer Docs</span>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                </a>
+            </div>
         </div>
     </section>
 
-    <!-- Call to Action -->
-    <section style="text-align: center; padding: 4rem 2rem; background: var(--md-code-bg-color);">
-        <h2 class="section-title">Ready to Transform Your Data Workflow?</h2>
-        <div class="hero-buttons" style="margin-top: 2rem;">
-            <a href="quickstart" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
-                Start Building
+    <!-- Bottom CTA Section -->
+    <section class="bottom-cta">
+        <h2 class="section-title">See It For Yourself</h2>
+        <p class="bottom-cta-subtitle">
+            Start rediscovering how we bridge the gap between business users and technical users.
+        </p>
+
+        <div class="stats-container">
+            <a href="quickstart.html" class="stat-item">
+                <div class="stat-value">5 min</div>
+                <div class="stat-label">to first pipeline</div>
             </a>
-            <a href="guides/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
-                View Guides
+            <a href="users/python-api/" class="stat-item">
+                <div class="stat-value">100%</div>
+                <div class="stat-label">Familiar API</div>
+            </a>
+            <a href="users/visual-editor/tutorials/code-generator.html" class="stat-item">
+                <div class="stat-value">0</div>
+                <div class="stat-label">vendor lock-in</div>
             </a>
         </div>
+
+        <div class="hero-buttons" style="margin-top: 2rem;">
+            <a href="quickstart.html" class="hero-button hero-button-primary" style="background: var(--md-primary-fg-color); color: white;">
+                <span>Try Interactive Tutorial</span>
+            </a>
+            <a href="users/visual-editor/tutorials/" class="hero-button hero-button-secondary" style="border-color: var(--md-primary-fg-color); color: var(--md-primary-fg-color);">
+                <span>Browse Examples</span>
+            </a>
+        </div>
+
+        <p style="margin-top: 2rem; color: var(--md-default-fg-color--light); font-size: 0.9rem;">
+            Free, <a href="https://github.com/edwardvaneechoud/Flowfile" style="color: var(--md-primary-fg-color); text-decoration: none;">open-source</a> and customizable
+        </p>
     </section>
 
     <!-- Scripts -->
@@ -532,6 +938,23 @@ open_graph_in_editor(result.flow_graph)</code></pre>
         document.querySelectorAll('.fade-in').forEach(el => {
             observer.observe(el);
         });
+
+        // Add touch feedback for mobile devices
+        const touchElements = document.querySelectorAll('.hero-button, .feature-card, .stat-item');
+        touchElements.forEach(el => {
+            el.addEventListener('touchstart', function() {
+                this.style.opacity = '0.8';
+            });
+            el.addEventListener('touchend', function() {
+                this.style.opacity = '1';
+            });
+        });
+
+        // Improve hover states for mobile
+        let touchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        if (touchDevice) {
+            document.body.classList.add('touch-device');
+        }
     </script>
 </body>
 </html>
