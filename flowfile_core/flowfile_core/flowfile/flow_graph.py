@@ -269,7 +269,7 @@ class FlowGraph:
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
-    def print_tree(self, show_schema=False, show_descriptions=False):
+    def print_tree(self):
         """
         Print flow_graph as a tree.
         """
@@ -278,8 +278,10 @@ class FlowGraph:
         tree = ""
         tabs = 0
 
-        for node in self.nodes:
-            tab_counter += 1
+        ordered_nodes = [i.node_id for i in self.execution_order]
+
+        for node in ordered_nodes:
+            tabs += 1
             node_input = node.setting_input
             operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
 
@@ -1247,21 +1249,21 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            skip_nodes = [node for node in self.nodes if not node.is_correct]
-            skip_nodes.extend([lead_to_node for node in skip_nodes for lead_to_node in node.leads_to_nodes])
-            execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
-                                                                   node not in skip_nodes],
+            self.skip_nodes = [node for node in self.nodes if not node.is_correct]
+            self.skip_nodes.extend([lead_to_node for node in self.skip_nodes for lead_to_node in node.leads_to_nodes])
+            self.execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
+                                                                   node not in self.skip_nodes],
                                                         flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
-            skip_node_message(self.flow_logger, skip_nodes)
-            execution_order_message(self.flow_logger, execution_order)
+            skip_node_message(self.flow_logger, self.skip_nodes)
+            execution_order_message(self.flow_logger, self.execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
-            for node in execution_order:
+            for node in self.execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
                     self.flow_logger.info('Flow canceled')
                     break
-                if node in skip_nodes:
+                if node in self.skip_nodes:
                     node_logger.info(f'Skipping node {node.node_id}')
                     continue
                 node_result = NodeResult(node_id=node.node_id, node_name=node.name)
@@ -1289,7 +1291,7 @@ class FlowGraph:
                     node_result.is_running = False
                     node_logger.error(f'Error in node {node.node_id}: {e}')
                 if not node_result.success:
-                    skip_nodes.extend(list(node.get_all_dependent_nodes()))
+                    self.skip_nodes.extend(list(node.get_all_dependent_nodes()))
                 node_logger.info(f'Completed node with success: {node_result.success}')
                 self.nodes_completed += 1
             self.flow_logger.info('Flow completed!')
