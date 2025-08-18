@@ -1550,6 +1550,11 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
+            self.skip_nodes = [node for node in self.nodes if not node.is_correct]
+            self.skip_nodes.extend([lead_to_node for node in self.skip_nodes for lead_to_node in node.leads_to_nodes])
+            self.execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
+                                                                   node not in self.skip_nodes],
+                                                        flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
             skip_node_message(self.flow_logger, self.skip_nodes)
             execution_order_message(self.flow_logger, self.execution_order)
