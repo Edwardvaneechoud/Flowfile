@@ -330,7 +330,7 @@ class FlowGraph:
         for node in ordered_nodes:
             tabs += 1
             node_input = node.setting_input
-            operation = str(pipeline.flow_graph._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
+            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
 
             tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
 
