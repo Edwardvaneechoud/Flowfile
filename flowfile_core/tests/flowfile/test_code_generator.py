@@ -2381,6 +2381,7 @@ def test_aggregation_functions():
 
 def test_print_tree():
     """ Test made to the FlowGraph's print_tree method"""
+
     flow = create_basic_flow()
 
     manual_input_data_1 = [
@@ -2388,28 +2389,28 @@ def test_print_tree():
     ["North", "South", "East"], 
     [10, 5, 8],                 
     [150, 300, 200]             
-]
+    ]
 
-manual_input_data_2 = [
-    [4, 5, 6],                  
-    ["West", "North", "South"], 
-    [15, 12, 7],                
-    [100, 200, 250]             
-]
+    manual_input_data_2 = [
+    [4, 5, 6],
+    ["West", "North", "South"],
+    [15, 12, 7],
+    [100, 200, 250]
+    ]
 
-manual_input_data_3 = [
-    [7, 8, 9],                  
-    ["East", "West", "North"],  
-    [10, 6, 3],                 
-    [180, 220, 350]             
-]
+    manual_input_data_3 = [
+    [7, 8, 9],  
+    ["East", "West", "North"],
+    [10, 6, 3],
+    [180, 220, 350]
+    ]
 
-manual_input_data_4 = [
-    [10, 11, 12],               
-    ["South", "East", "West"],  
-    [9, 4, 7],                  
-    [280, 260, 230]             
-]
+    manual_input_data_4 = [
+    [10, 11, 12],
+    ["South", "East", "West"],
+    [9, 4, 7],
+    [280, 260, 230]
+    ]
 
 
     for i,j in zip([manual_input_data_1,manual_input_data_2,manual_input_data_3,manual_input_data_4], range(1,5)):
