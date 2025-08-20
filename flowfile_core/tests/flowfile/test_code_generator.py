@@ -2457,6 +2457,11 @@ def test_print_tree():
     flow.add_group_by(groupby_node)
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
 
+    code = export_flow_to_polars(flow)
+    print("\n"*2)
+    print(code)
+    print("\n"*2)
+
     verify_code_contains(code,
                          "df_1 = pl.LazyFrame(",
                          "df_2 = pl.LazyFrame(",
