@@ -2458,9 +2458,6 @@ def test_print_tree():
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
 
     code = export_flow_to_polars(flow)
-    print("\n"*2)
-    print(code)
-    print("\n"*2)
 
     verify_code_contains(code,
                          "df_1 = pl.LazyFrame(",
@@ -2470,7 +2467,10 @@ def test_print_tree():
                          "df_5 = pl.concat(",
                          "df_6 = df_5.group_by(",
                          )
-
+    verify_if_execute(code)
+    result_df = get_result_from_generated_code(code)
+    expected_df = flow.get_node(6).get_resulting_data().data_frame
+    assert_frame_equal(result_df, expected_df, check_row_order=False)
 
 def test_flow_with_disconnected_nodes():
     """Test a flow where some nodes might not be connected properly"""
