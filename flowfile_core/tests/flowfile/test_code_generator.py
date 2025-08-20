@@ -2399,7 +2399,7 @@ def test_print_tree():
     ]
 
     manual_input_data_3 = [
-    [7, 8, 9],  
+    [7, 8, 9],
     ["East", "West", "North"],
     [10, 6, 3],
     [180, 220, 350]
@@ -2411,7 +2411,6 @@ def test_print_tree():
     [9, 4, 7],
     [280, 260, 230]
     ]
-
 
     for i,j in zip([manual_input_data_1,manual_input_data_2,manual_input_data_3,manual_input_data_4], range(1,5)):
         data = input_schema.NodeManualInput(
@@ -2427,7 +2426,7 @@ def test_print_tree():
                 data=i
             )
         )
-        graph.add_manual_input(data)
+        flow.add_manual_input(data)
 
     # Add union node
     union_node = input_schema.NodeUnion(
@@ -2436,12 +2435,10 @@ def test_print_tree():
         depending_on_ids=[1, 2, 3, 4],
         union_input=transform_schema.UnionInput(mode="relaxed")
     )
-    graph.add_union(union_node)
+    flow.add_union(union_node)
     for i in range(1, 5):
         connection = input_schema.NodeConnection.create_from_simple_input(i, 5, 'main')
-        add_connection(graph, connection)
-
-
+        add_connection(flow, connection)
 
     # Add group by node
     groupby_node = input_schema.NodeGroupBy(
@@ -2457,8 +2454,8 @@ def test_print_tree():
             ]
         )
     )
-    graph.add_group_by(groupby_node)
-    add_connection(graph, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
+    flow.add_group_by(groupby_node)
+    add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
 
 
 def test_flow_with_disconnected_nodes():
