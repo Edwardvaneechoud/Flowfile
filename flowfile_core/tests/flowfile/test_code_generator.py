@@ -2467,7 +2467,7 @@ def test_print_tree():
                          "df_2 = pl.LazyFrame(",
                          "df_3 = pl.LazyFrame(",
                          "df_4 = pl.LazyFrame(",
-                         "df_5 = df_1.union(",
+                         "df_5 = pl.concat(",
                          "df_6 = df_5.group_by(",
                          )
 
