@@ -33,7 +33,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSetting
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_order
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
@@ -227,10 +227,7 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
-        self.skip_nodes = [node for node in self.nodes if not node.is_correct]
-        self.skip_nodes.extend([lead_to_node for node in self.skip_nodes for lead_to_node in node.leads_to_nodes])
-        self.execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
-        node not in self.skip_nodes],flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+        self.skip_nodes, self.execution_order = compute_execution_order(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
         """Adds a placeholder node to the graph that is not yet fully configured.
@@ -1550,11 +1547,7 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            self.skip_nodes = [node for node in self.nodes if not node.is_correct]
-            self.skip_nodes.extend([lead_to_node for node in self.skip_nodes for lead_to_node in node.leads_to_nodes])
-            self.execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
-                                                                   node not in self.skip_nodes],
-                                                        flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            self.skip_nodes, self.execution_order = compute_execution_order(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
             skip_node_message(self.flow_logger, self.skip_nodes)
             execution_order_message(self.flow_logger, self.execution_order)
