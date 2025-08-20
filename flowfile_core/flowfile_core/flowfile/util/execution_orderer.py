@@ -2,11 +2,11 @@ from typing import List, Dict, Set
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.configs import logger
 from collections import deque, defaultdict
-from .node_skipper import determine_nodes_to_skip
+import node_skipper
 
 
 def compute_skip_nodes_execution_order(nodes: List[FlowNode], flow_starts: List[FlowNode] = None):
-    skip_nodes = determine_nodes_to_skip(nodes=nodes)
+    skip_nodes = node_skipper.determine_nodes_to_skip(nodes=nodes)
     computed_execution_order = determine_execution_order(all_nodes=[node for node in nodes if node not in skip_nodes],
                                                         flow_starts=flow_starts)
     return skip_nodes, computed_execution_order
