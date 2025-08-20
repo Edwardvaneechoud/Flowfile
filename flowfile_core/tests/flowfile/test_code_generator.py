@@ -2413,20 +2413,20 @@ manual_input_data_4 = [
 
 
     for i,j in zip([manual_input_data_1,manual_input_data_2,manual_input_data_3,manual_input_data_4], range(1,5)):
-            data = input_schema.NodeManualInput(
-                flow_id=1,
-                node_id=j,
-                raw_data_format=input_schema.RawData(
-                    columns=[
-                        input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
-                        input_schema.MinimalFieldInfo(name="region", data_type="String"),
-                        input_schema.MinimalFieldInfo(name="quantity", data_type="Integer"),
-                        input_schema.MinimalFieldInfo(name="price", data_type="Integer")
-                    ],
-                    data=i
-                )
+        data = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=j,
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="region", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="quantity", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="price", data_type="Integer")
+                ],
+                data=i
             )
-            graph.add_manual_input(data)
+        )
+        graph.add_manual_input(data)
 
     # Add union node
     union_node = input_schema.NodeUnion(
