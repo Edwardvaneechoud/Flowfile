@@ -2412,52 +2412,52 @@ manual_input_data_4 = [
 ]
 
 
-for i,j in zip([manual_input_data_1,manual_input_data_2,manual_input_data_3,manual_input_data_4], range(1,5)):
-        data = input_schema.NodeManualInput(
-            flow_id=1,
-            node_id=j,
-            raw_data_format=input_schema.RawData(
-                columns=[
-                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
-                    input_schema.MinimalFieldInfo(name="region", data_type="String"),
-                    input_schema.MinimalFieldInfo(name="quantity", data_type="Integer"),
-                    input_schema.MinimalFieldInfo(name="price", data_type="Integer")
-                ],
-                data=i
+    for i,j in zip([manual_input_data_1,manual_input_data_2,manual_input_data_3,manual_input_data_4], range(1,5)):
+            data = input_schema.NodeManualInput(
+                flow_id=1,
+                node_id=j,
+                raw_data_format=input_schema.RawData(
+                    columns=[
+                        input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                        input_schema.MinimalFieldInfo(name="region", data_type="String"),
+                        input_schema.MinimalFieldInfo(name="quantity", data_type="Integer"),
+                        input_schema.MinimalFieldInfo(name="price", data_type="Integer")
+                    ],
+                    data=i
+                )
             )
-        )
-        graph.add_manual_input(data)
+            graph.add_manual_input(data)
 
-# Add union node
-union_node = input_schema.NodeUnion(
-    flow_id=1,
-    node_id=5,
-    depending_on_ids=[1, 2, 3, 4],
-    union_input=transform_schema.UnionInput(mode="relaxed")
-)
-graph.add_union(union_node)
-for i in range(1, 5):
-    connection = input_schema.NodeConnection.create_from_simple_input(i, 5, 'main')
-    add_connection(graph, connection)
-
-
-
-# Add group by node
-groupby_node = input_schema.NodeGroupBy(
-    flow_id=1,
-    node_id=6,
-    depending_on_id=1,
-    groupby_input=transform_schema.GroupByInput(
-        agg_cols=[
-            transform_schema.AggColl("region", "groupby"),
-            transform_schema.AggColl("quantity", "sum", "total_quantity"),
-            transform_schema.AggColl("price", "mean", "avg_price"),
-            transform_schema.AggColl("quantity", "count", "num_transactions")
-        ]
+    # Add union node
+    union_node = input_schema.NodeUnion(
+        flow_id=1,
+        node_id=5,
+        depending_on_ids=[1, 2, 3, 4],
+        union_input=transform_schema.UnionInput(mode="relaxed")
     )
-)
-graph.add_group_by(groupby_node)
-add_connection(graph, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
+    graph.add_union(union_node)
+    for i in range(1, 5):
+        connection = input_schema.NodeConnection.create_from_simple_input(i, 5, 'main')
+        add_connection(graph, connection)
+
+
+
+    # Add group by node
+    groupby_node = input_schema.NodeGroupBy(
+        flow_id=1,
+        node_id=6,
+        depending_on_id=1,
+        groupby_input=transform_schema.GroupByInput(
+            agg_cols=[
+                transform_schema.AggColl("region", "groupby"),
+                transform_schema.AggColl("quantity", "sum", "total_quantity"),
+                transform_schema.AggColl("price", "mean", "avg_price"),
+                transform_schema.AggColl("quantity", "count", "num_transactions")
+            ]
+        )
+    )
+    graph.add_group_by(groupby_node)
+    add_connection(graph, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
 
 
 def test_flow_with_disconnected_nodes():
