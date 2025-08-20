@@ -2457,6 +2457,15 @@ def test_print_tree():
     flow.add_group_by(groupby_node)
     add_connection(flow, node_connection=input_schema.NodeConnection.create_from_simple_input(5, 6, 'main'))
 
+    verify_code_contains(code,
+                         "df_1 = pl.LazyFrame(",
+                         "df_2 = pl.LazyFrame(",
+                         "df_3 = pl.LazyFrame(",
+                         "df_4 = pl.LazyFrame(",
+                         "df_5 = df_1.union(",
+                         "df_6 = df_5.group_by(",
+                         )
+
 
 def test_flow_with_disconnected_nodes():
     """Test a flow where some nodes might not be connected properly"""
