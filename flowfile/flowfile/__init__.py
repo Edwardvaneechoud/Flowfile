@@ -21,6 +21,7 @@ from flowfile_frame.flow_frame import (
     FlowFrame
 )
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
