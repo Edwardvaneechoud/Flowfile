@@ -14,11 +14,12 @@ from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
 
+
 import pytest
 from pathlib import Path
 from typing import List, Dict, Literal
 from copy import deepcopy
-
+from time import sleep
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
@@ -1224,7 +1225,7 @@ def test_add_fuzzy_match_only_local():
     OFFLOAD_TO_WORKER.value = True
 
 
-def test_fuzzy_match_schema_predict():
+def test_fuzzy_match_schema_predict(flow_logger):
     graph = create_graph()
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
@@ -1256,7 +1257,11 @@ def test_fuzzy_match_schema_predict():
                   {'name': 'edward'},
                   {'name': 'courtney'}]
     add_manual_input(graph, data=input_data)
+    sleep(0.1)
     predicted_data = node.get_predicted_resulting_data()  # Gives none because the schema predict is programmed to run only once.
+    flow_logger.info("This is the test")
+    flow_logger.info(str(len(predicted_data.columns)))
+    flow_logger.warning(str(predicted_data.collect()))
     assert len(predicted_data.columns) == 5
     node._function = org_func  # Restore the original function
     result = node.get_resulting_data()
