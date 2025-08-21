@@ -1527,7 +1527,7 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            skip_nodes, execution_order = compute_skip_nodes_execution_order(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)

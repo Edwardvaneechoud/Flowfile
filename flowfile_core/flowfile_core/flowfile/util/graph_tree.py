@@ -1,4 +1,4 @@
-from flowfile_core.flowfile.util.execution_orderer import compute_skip_nodes_execution_order
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.flow_graph import FlowGraph
 
 def graph_tree(graph:FlowGraph):
@@ -196,7 +196,7 @@ def graph_tree(graph:FlowGraph):
     lines.append("=" * 80)
     
     try:
-        skip_nodes, ordered_nodes = compute_skip_nodes_execution_order(nodes=graph.nodes,flow_starts=graph._flow_starts+graph.get_implicit_starter_nodes())
+        skip_nodes, ordered_nodes = compute_execution_plan(nodes=graph.nodes,flow_starts=graph._flow_starts+graph.get_implicit_starter_nodes())
         if ordered_nodes:
             for i, node in enumerate(ordered_nodes, 1):
                 lines.append(f"  {i:3d}. {node_info[node.node_id]['label']}")
