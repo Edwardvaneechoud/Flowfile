@@ -843,7 +843,6 @@ class FlowGraphToPolarsConverter:
 
     def _handle_fuzzy_match(self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle fuzzy match nodes."""
-        logger.warning("Fuzzy match nodes are not yet implemented in Polars code generation.")
         self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
         left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
         right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))

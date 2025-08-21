@@ -163,4 +163,4 @@ class SingleExecutionFuture(Generic[T]):
         try:
             self.cleanup()
         except Exception:
-            pass  # Ignore exceptions in destructor
+            pass
