@@ -34,6 +34,7 @@ from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import compute_skip_nodes_execution_order
+from flowfile_core.flowfile.util.graph_tree import graph_tree
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
@@ -317,28 +318,7 @@ class FlowGraph:
         """
         Print flow_graph as a tree.
         """
-        max_node_id = max(self._node_db.keys())
-
-        tree = ""
-        tabs = 0
-
-        ordered_nodes = [i.node_id for i in self.execution_order]
-
-        for node in ordered_nodes:
-            tabs += 1
-            node_input = node.setting_input
-            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
-
-            tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
-
-            if node_input.description:
-                tree += ": " + str(node_input.description)
-            
-            if node_input.node_id < max_node_id:
-                tree += "\n" + "# " + " "*3*(tabs-1) + "|___ "
-            print("\n"*2)
-
-        return print(tree)
+        return print(graph_tree(self))
         
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""
