@@ -2473,7 +2473,7 @@ def test_graph_tree():
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
     tree_elements = ["(id=", ">", "1.", "Execution Order", "Flow Graph Visualization", "="]
-    assert any(element for element in tree_elements) in print(flow.print_tree())
+    assert any(element for element in tree_elements) in flow.print_tree()
 
 def test_flow_with_disconnected_nodes():
     """Test a flow where some nodes might not be connected properly"""
