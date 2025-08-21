@@ -788,8 +788,9 @@ class FlowGraph:
             return FlowDataEngine(f.get_result())
 
         def schema_callback():
+            fm_input_copy = deepcopy(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
             node = self.get_node(node_id=fuzzy_settings.node_id)
-            return calculate_fuzzy_match_schema(fuzzy_settings.join_input,
+            return calculate_fuzzy_match_schema(fm_input_copy,
                                                 left_schema=node.node_inputs.main_inputs[0].schema,
                                                 right_schema=node.node_inputs.right_input.schema
                                                 )
