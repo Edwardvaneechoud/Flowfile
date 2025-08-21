@@ -1732,7 +1732,7 @@ class FlowGraph:
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
-            for node in self.execution_order:
+            for node in execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
                     self.flow_logger.info('Flow canceled')
