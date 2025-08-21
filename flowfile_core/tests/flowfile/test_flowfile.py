@@ -1190,6 +1190,7 @@ def test_no_re_calculate_example_data_after_change_no_run():
 
     OFFLOAD_TO_WORKER.value = True
 
+
 def test_add_fuzzy_match_only_local():
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
     OFFLOAD_TO_WORKER.value = False
@@ -1223,3 +1224,44 @@ def test_add_fuzzy_match_only_local():
                                   )
     output_data.assert_equal(expected_data)
     OFFLOAD_TO_WORKER.value = True
+
+
+def test_fuzzy_match_schema_predict():
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    breakpoint()
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'fuzzy_match', 2)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                           'valid': True}],
+         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
+    node = graph.get_node(2)
+    def test_func(*args, **kwargs):
+        raise ValueError('This is a test error')
+    node._function = test_func
+    # enforce to calculate the data based on the schema
+    predicted_data = node.get_predicted_resulting_data()
+    assert predicted_data.columns == ['name', 'name_right', 'fuzzy_score_0']
+    input_data = [{'name': 'eduward', 'other_field': 'test'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    breakpoint()
+    add_manual_input(graph, data=input_data)
+
+    predicted_data = node.get_predicted_resulting_data()  # Gives none because the schema predict is programmed to run only once.
+
+
+
+
+

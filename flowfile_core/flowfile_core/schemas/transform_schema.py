@@ -158,6 +158,10 @@ class SelectInputs:
         """Gets a list of original column names to select from the source DataFrame."""
         return [v.old_name for v in self.renames if v.keep or (v.join_key and include_join_key)]
 
+    def has_drop_cols(self) -> bool:
+        """Checks if any column is marked to be dropped from the selection."""
+        return any(not v.keep for v in self.renames)
+
     def __add__(self, other: "SelectInput"):
         """Allows adding a SelectInput using the '+' operator."""
         self.renames.append(other)
@@ -457,15 +461,16 @@ class FuzzyMatchInput(JoinInput):
 
     def __init__(self, join_mapping: List[FuzzyMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str], aggregate_output: bool = False, how: JoinStrategy = 'inner'):
+        breakpoint()
         self.join_mapping = self.parse_fuzz_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)
         self.how = how
         for jm in self.join_mapping:
 
-            if jm.right_col not in self.right_select.old_cols:
+            if jm.right_col not in {v.old_name for v in self.right_select.renames}:
                 self.right_select.append(SelectInput(jm.right_col, keep=False, join_key=True))
-            if jm.left_col not in self.left_select.old_cols:
+            if jm.left_col not in {v.old_name for v in self.left_select.renames}:
                 self.left_select.append(SelectInput(jm.left_col, keep=False, join_key=True))
         [setattr(v, "join_key", v.old_name in self._left_join_keys) for v in self.left_select.renames]
         [setattr(v, "join_key", v.old_name in self._right_join_keys) for v in self.right_select.renames]

@@ -32,6 +32,70 @@ def test_fuzzy_match_internal():
     fuzzy_match_result.assert_equal(expected_data)
 
 
+@pytest.fixture
+def fuzzy_test_data_left() -> FlowDataEngine:
+    """
+    Generates a small, predictable test dataset with data designed for fuzzy matching challenges.
+
+    Returns:
+        LazyFrame with left side test data
+    """
+    return FlowDataEngine(pl.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "company_name": ["Apple Inc.", "Microsft", "Amazon", "Gogle", "Facebok"],
+            "address": ["1 Apple Park", "One Microsoft Way", "410 Terry Ave N", "1600 Amphitheatre", "1 Hacker Way"],
+            "contact": ["Tim Cook", "Satya Ndella", "Andy Jessy", "Sundar Pichai", "Mark Zukerberg"],
+        }
+    ))
+
+
+@pytest.fixture
+def fuzzy_test_data_right() -> FlowDataEngine:
+    """
+    Generates a small, predictable test dataset with variations for fuzzy matching.
+
+    Returns:
+        LazyFrame with right side test data
+    """
+    return FlowDataEngine(pl.DataFrame(
+        {
+            "id": [101, 102, 103, 104, 105],
+            "organization": ["Apple Incorporated", "Microsoft Corp", "Amazon.com Inc", "Google LLC", "Facebook Inc"],
+            "location": [
+                "Apple Park, Cupertino",
+                "Microsoft Way, Redmond",
+                "Terry Ave North, Seattle",
+                "Amphitheatre Pkwy, Mountain View",
+                "Hacker Way, Menlo Park",
+            ],
+            "ceo": ["Timothy Cook", "Satya Nadella", "Andy Jassy", "Sundar Pichai", "Mark Zuckerberg"],
+        }
+    ))
+
+
+def test_fuzzy_match_auto_select_columns_not_provided(fuzzy_test_data_left, fuzzy_test_data_right):
+    left_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_left.columns[:-1]]
+    right_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_right.columns[:-1]]
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[
+        transform_schema.FuzzyMap(left_col='company_name', right_col='organization', threshold_score=50)
+    ], left_select=left_select, right_select=right_select)
+    fuzzy_match_result = fuzzy_test_data_left.fuzzy_join(fuzzy_match_input, fuzzy_test_data_right)
+    assert fuzzy_match_result is not None, 'Fuzzy match failed'
+    assert fuzzy_match_result.number_of_fields == 9
+
+
+def test_fuzzy_match_auto_select_columns_not_selected(fuzzy_test_data_left, fuzzy_test_data_right):
+    left_select = [transform_schema.SelectInput(c, keep=False) for c in fuzzy_test_data_left.columns[:-1]]
+    right_select = [transform_schema.SelectInput(c, keep=False) for c in fuzzy_test_data_right.columns]
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[
+        transform_schema.FuzzyMap(left_col='company_name', right_col='organization', threshold_score=50)
+    ], left_select=left_select, right_select=right_select)
+    fuzzy_match_result = fuzzy_test_data_left.fuzzy_join(fuzzy_match_input, fuzzy_test_data_right)
+    assert fuzzy_match_result is not None, 'Fuzzy match failed'
+    assert fuzzy_match_result.number_of_fields == 4
+
+
 def test_fuzzy_match_external():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
     left_flowfile_table = FlowDataEngine(['edward', 'eduward', 'court']).do_select(r)
