@@ -1765,7 +1765,7 @@ class FlowGraph:
                     node_result.is_running = False
                     node_logger.error(f'Error in node {node.node_id}: {e}')
                 if not node_result.success:
-                    self.skip_nodes.extend(list(node.get_all_dependent_nodes()))
+                    skip_nodes.extend(list(node.get_all_dependent_nodes()))
                 node_logger.info(f'Completed node with success: {node_result.success}')
                 self.nodes_completed += 1
             self.flow_logger.info('Flow completed!')
