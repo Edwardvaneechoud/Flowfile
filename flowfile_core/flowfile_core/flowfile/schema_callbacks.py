@@ -9,14 +9,37 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_op
 from flowfile_core.configs.flow_logger import main_logger
 
 
-def calculate_uniqueness(a: float, b: float) -> float:
-    return ((pow(a + 0.5, 2) + pow(b + 0.5, 2)) / 2 - pow(0.5, 2)) + 0.5 * abs(a - b)
+def _ensure_all_columns_have_select(left_cols: List[str],
+                                    right_cols: List[str],
+                                    fuzzy_match_input: transform_schema.FuzzyMatchInput):
+    """
+    Ensure that all columns in the left and right FlowDataEngines are included in the fuzzy match input's select
+     statements.
+    Args:
+        left_cols (List[str]): List of column names in the left FlowDataEngine.
+        right_cols (List[str]): List of column names in the right FlowDataEngine.
+        fuzzy_match_input (FuzzyMatchInput): Fuzzy match input configuration containing select statements.
+
+    Returns:
+        None
+    """
+    right_cols_in_select = {c.old_name for c in fuzzy_match_input.right_select.renames}
+    left_cols_in_select = {c.old_name for c in fuzzy_match_input.left_select.renames}
+
+    fuzzy_match_input.left_select.renames.extend(
+        [transform_schema.SelectInput(col) for col in left_cols if col not in left_cols_in_select])
+    fuzzy_match_input.right_select.renames.extend(
+        [transform_schema.SelectInput(col) for col in right_cols if col not in right_cols_in_select]
+    )
 
 
 def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
                                  left_schema: List[FlowfileColumn],
                                  right_schema: List[FlowfileColumn]):
-    print('calculating fuzzy match schema')
+    _ensure_all_columns_have_select(left_cols=[col.column_name for col in left_schema],
+                                    right_cols=[col.column_name for col in right_schema],
+                                    fuzzy_match_input=fm_input)
+
     left_schema_dict, right_schema_dict = ({ls.name: ls for ls in left_schema}, {rs.name: rs for rs in right_schema})
     fm_input.auto_rename()
 

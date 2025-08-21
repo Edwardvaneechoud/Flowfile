@@ -606,7 +606,6 @@ class FlowNode:
         Returns:
             A FlowDataEngine instance with a schema but no data.
         """
-        breakpoint()
         if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
             self.print('Getting data based on the schema')
 

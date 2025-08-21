@@ -19,9 +19,8 @@ def _ensure_all_columns_have_select(left: "FlowDataEngine",
         fuzzy_match_input ():
 
     Returns:
-
+        None
     """
-    breakpoint()
     right_cols_in_select = {c.old_name for c in fuzzy_match_input.right_select.renames}
     left_cols_in_select = {c.old_name for c in fuzzy_match_input.left_select.renames}
 
@@ -46,7 +45,6 @@ def prepare_for_fuzzy_match(left: "FlowDataEngine", right: "FlowDataEngine",
     """
     left.lazy = True
     right.lazy = True
-    breakpoint()
     _ensure_all_columns_have_select(left, right, fuzzy_match_input)
     verify_join_select_integrity(fuzzy_match_input, left_columns=left.columns, right_columns=right.columns)
     if not verify_join_map_integrity(fuzzy_match_input, left_columns=left.schema, right_columns=right.schema):

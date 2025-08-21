@@ -775,6 +775,7 @@ class FlowGraph:
         """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
+            node = self.get_node(node_id=fuzzy_settings.node_id)
             if self.execution_location == "local":
                 return main.fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input,
                                        other=right,
@@ -783,13 +784,11 @@ class FlowGraph:
             f = main.start_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
                                       flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
             logger.info("Started the fuzzy match action")
-            node._fetch_cached_df = f
+            node._fetch_cached_df = f  # Add to the node so it can be cancelled and fetch later if needed
             return FlowDataEngine(f.get_result())
 
         def schema_callback():
-            breakpoint()
             node = self.get_node(node_id=fuzzy_settings.node_id)
-            print("DOING THIS")
             return calculate_fuzzy_match_schema(fuzzy_settings.join_input,
                                                 left_schema=node.node_inputs.main_inputs[0].schema,
                                                 right_schema=node.node_inputs.right_input.schema

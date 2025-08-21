@@ -1231,7 +1231,6 @@ def test_fuzzy_match_schema_predict():
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
-    breakpoint()
     add_manual_input(graph, data=input_data)
     add_node_promise_on_type(graph, 'fuzzy_match', 2)
     left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -1250,17 +1249,16 @@ def test_fuzzy_match_schema_predict():
     def test_func(*args, **kwargs):
         raise ValueError('This is a test error')
     node._function = test_func
+    breakpoint()
     # enforce to calculate the data based on the schema
     predicted_data = node.get_predicted_resulting_data()
     assert predicted_data.columns == ['name', 'name_right', 'fuzzy_score_0']
     input_data = [{'name': 'eduward', 'other_field': 'test'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
-    breakpoint()
     add_manual_input(graph, data=input_data)
-
     predicted_data = node.get_predicted_resulting_data()  # Gives none because the schema predict is programmed to run only once.
-
+    assert len(predicted_data.columns) == 5
 
 
 

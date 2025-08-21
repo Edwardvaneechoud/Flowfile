@@ -162,6 +162,15 @@ class SelectInputs:
         """Checks if any column is marked to be dropped from the selection."""
         return any(not v.keep for v in self.renames)
 
+    @property
+    def drop_columns(self) -> List[SelectInput]:
+        """Returns a list of column names that are marked to be dropped from the selection."""
+        return [v for v in self.renames if not v.keep and v.is_available]
+
+    @property
+    def non_jk_drop_columns(self) -> List[SelectInput]:
+        return [v for v in self.renames if not v.keep and v.is_available and not v.join_key]
+
     def __add__(self, other: "SelectInput"):
         """Allows adding a SelectInput using the '+' operator."""
         self.renames.append(other)
@@ -461,7 +470,6 @@ class FuzzyMatchInput(JoinInput):
 
     def __init__(self, join_mapping: List[FuzzyMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str], aggregate_output: bool = False, how: JoinStrategy = 'inner'):
-        breakpoint()
         self.join_mapping = self.parse_fuzz_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
         self.right_select = self.parse_select(right_select)

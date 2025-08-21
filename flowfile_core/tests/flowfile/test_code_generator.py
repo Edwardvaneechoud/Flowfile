@@ -2628,10 +2628,8 @@ def test_cloud_storage_writer(file_format):
 
 
 def test_fuzzy_match_single_file(fuzzy_join_left_data):
-    breakpoint()
     flow = create_basic_flow(1)
     flow.add_manual_input(fuzzy_join_left_data)
-    breakpoint()
     settings = input_schema.NodeFuzzyMatch(flow_id=1, node_id=2, description='', auto_generate_selection=True,
                                            join_input=transform_schema.FuzzyMatchInput(
                                                join_mapping=[transform_schema.FuzzyMap('name',threshold_score=75.0)],
@@ -2654,27 +2652,27 @@ def test_fuzzy_match_single_file(fuzzy_join_left_data):
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)
 
+
 def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data):
-    breakpoint()
     flow = create_basic_flow(1)
     flow.add_manual_input(fuzzy_join_left_data)
-    breakpoint()
     settings = input_schema.NodeFuzzyMatch(flow_id=1, node_id=2, description='', auto_generate_selection=True,
                                            join_input=transform_schema.FuzzyMatchInput(
                                                join_mapping=[transform_schema.FuzzyMap('name',threshold_score=75.0)],
             left_select=[transform_schema.SelectInput(old_name='name', keep=True),
                          transform_schema.SelectInput(old_name='id', keep=True)],
             right_select=[transform_schema.SelectInput(old_name='name', keep=True),
-                          transform_schema.SelectInput(old_name='id', keep=True)],
+                          transform_schema.SelectInput(old_name='id', keep=False)],
                                            ), auto_keep_all=True)
     flow.add_fuzzy_match(settings)
-    breakpoint()
 
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2, input_type="main"))
     add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2, input_type="right"))
 
     code = export_flow_to_polars(flow)
 
-    breakpoint()
     verify_if_execute(code)
-
+    breakpoint()
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)

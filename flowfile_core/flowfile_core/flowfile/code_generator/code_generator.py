@@ -845,20 +845,19 @@ class FlowGraphToPolarsConverter:
         self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
         left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
         right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))
-        breakpoint()
         if left_df == right_df:
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
 
         if settings.join_input.left_select.has_drop_cols():
-            self._add_code(f"{left_df} = {left_df}.select({settings.join_input.left_select.get_select_cols(include_join_key=True)})")
+            self._add_code(f"{left_df} = {left_df}.drop({[c.old_name for c in settings.join_input.left_select.non_jk_drop_columns]})")
         if settings.join_input.right_select.has_drop_cols():
-            self._add_code(f"{right_df} = {right_df}.select({settings.join_input.right_select.get_select_cols(include_join_key=True)})")
+            self._add_code(f"{right_df} = {right_df}.drop({[c.old_name for c in settings.join_input.right_select.non_jk_drop_columns]})")
 
         fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(settings.join_input.join_mapping)
         self._add_code(f"{var_name} = fuzzy_match_dfs(\n"
                        f"       left_df={left_df}, right_df={right_df},\n"
-                       f"       fuzzy_maps={fuzzy_join_mapping_settings}"
+                       f"       fuzzy_maps={fuzzy_join_mapping_settings}\n"
                        f"       ).lazy()")
 
     def _handle_unique(self, settings: input_schema.NodeUnique, var_name: str, input_vars: Dict[str, str]) -> None:
