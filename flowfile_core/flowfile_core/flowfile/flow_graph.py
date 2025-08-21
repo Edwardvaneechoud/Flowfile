@@ -228,7 +228,7 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
-        self.skip_nodes, self.execution_order = compute_skip_nodes_execution_order(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+        skip_nodes, execution_order = compute_skip_nodes_execution_order(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
         """Adds a placeholder node to the graph that is not yet fully configured.
@@ -1527,17 +1527,17 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            self.skip_nodes, self.execution_order = compute_skip_nodes_execution_order(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            skip_nodes, execution_order = compute_skip_nodes_execution_order(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
-            skip_node_message(self.flow_logger, self.skip_nodes)
-            execution_order_message(self.flow_logger, self.execution_order)
+            skip_node_message(self.flow_logger, skip_nodes)
+            execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
             for node in self.execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
                     self.flow_logger.info('Flow canceled')
                     break
-                if node in self.skip_nodes:
+                if node in skip_nodes:
                     node_logger.info(f'Skipping node {node.node_id}')
                     continue
                 node_result = NodeResult(node_id=node.node_id, node_name=node.name)
