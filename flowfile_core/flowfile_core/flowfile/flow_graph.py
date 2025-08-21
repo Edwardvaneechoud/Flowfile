@@ -314,7 +314,7 @@ class FlowGraph:
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
-    def graph_tree(self):
+    def print_tree(self):
         """Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art."""
         if not self._node_db:
             print("Empty flow graph")
