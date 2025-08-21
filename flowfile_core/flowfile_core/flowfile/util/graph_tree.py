@@ -1,7 +1,7 @@
-from flowfile_core.flowfile.flow_graph import FlowGraph
+import flowfile as ff
 from flowfile_core.flowfile.util.execution_orderer import compute_skip_nodes_execution_order
 
-def graph_tree(graph:FlowGraph):
+def graph_tree(graph:ff.FlowGraph):
     """
     Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art.
     """
