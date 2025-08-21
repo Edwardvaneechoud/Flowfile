@@ -1,6 +1,8 @@
 from typing import List, Dict, Optional, Set, Tuple
 import polars as pl
 
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
@@ -826,7 +828,7 @@ class FlowGraphToPolarsConverter:
         self._add_code("")
 
     @staticmethod
-    def _transform_fuzzy_mappings_to_string(fuzzy_mappings: List[transform_schema.FuzzyMap]) -> str:
+    def _transform_fuzzy_mappings_to_string(fuzzy_mappings: List[FuzzyMapping]) -> str:
         output_str = "["
         for i, fuzzy_mapping in enumerate(fuzzy_mappings):
 

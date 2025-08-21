@@ -6,6 +6,8 @@ from copy import deepcopy
 
 from typing import NamedTuple
 
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 
 def get_func_type_mapping(func: str):
     """Infers the output data type of common aggregation functions."""
@@ -238,32 +240,6 @@ class JoinMap:
     right_col: str
 
 
-@dataclass
-class FuzzyMap(JoinMap):
-    """Extends `JoinMap` with settings for fuzzy string matching, such as the algorithm and similarity threshold."""
-    threshold_score: Optional[float] = 80.0
-    fuzzy_type: Optional[FuzzyTypeLiteral] = 'levenshtein'
-    perc_unique: Optional[float] = 0.0
-    output_column_name: Optional[str] = None
-    valid: Optional[bool] = True
-
-    def __init__(self, left_col: str, right_col: str = None, threshold_score: float = 80.0,
-                 fuzzy_type: FuzzyTypeLiteral = 'levenshtein', perc_unique: float = 0, output_column_name: str = None,
-                 _output_col_name: str = None, valid: bool = True, output_col_name: str = None):
-        if right_col is None:
-            right_col = left_col
-        self.valid = valid
-        self.left_col = left_col
-        self.right_col = right_col
-        self.threshold_score = threshold_score
-        self.fuzzy_type = fuzzy_type
-        self.perc_unique = perc_unique
-        self.output_column_name = output_column_name if output_column_name is not None else _output_col_name
-        self.output_column_name = self.output_column_name if self.output_column_name is not None else output_col_name
-        if self.output_column_name is None:
-            self.output_column_name = f'fuzzy_score_{self.left_col}_{self.right_col}'
-
-
 class JoinSelectMixin:
     """A mixin providing common methods for join-like operations that involve left and right inputs."""
     left_select: JoinInputs = None
@@ -443,32 +419,32 @@ class JoinInput(JoinSelectMixin):
 @dataclass
 class FuzzyMatchInput(JoinInput):
     """Extends `JoinInput` with settings specific to fuzzy matching, such as the matching algorithm and threshold."""
-    join_mapping: List[FuzzyMap]
+    join_mapping: List[FuzzyMapping]
     aggregate_output: bool = False
 
     @staticmethod
-    def parse_fuzz_mapping(fuzz_mapping: List[FuzzyMap] | Tuple[str, str] | str) -> List[FuzzyMap]:
+    def parse_fuzz_mapping(fuzz_mapping: List[FuzzyMapping] | Tuple[str, str] | str) -> List[FuzzyMapping]:
         if isinstance(fuzz_mapping, (tuple, list)):
             assert len(fuzz_mapping) > 0
             if all(isinstance(fm, dict) for fm in fuzz_mapping):
-                fuzz_mapping = [FuzzyMap(**fm) for fm in fuzz_mapping]
+                fuzz_mapping = [FuzzyMapping(**fm) for fm in fuzz_mapping]
 
-            if not isinstance(fuzz_mapping[0], FuzzyMap):
+            if not isinstance(fuzz_mapping[0], FuzzyMapping):
                 assert len(fuzz_mapping) <= 2
                 if len(fuzz_mapping) == 2:
                     assert isinstance(fuzz_mapping[0], str) and isinstance(fuzz_mapping[1], str)
-                    fuzz_mapping = [FuzzyMap(*fuzz_mapping)]
+                    fuzz_mapping = [FuzzyMapping(*fuzz_mapping)]
                 elif isinstance(fuzz_mapping[0], str):
-                    fuzz_mapping = [FuzzyMap(fuzz_mapping[0], fuzz_mapping[0])]
+                    fuzz_mapping = [FuzzyMapping(fuzz_mapping[0], fuzz_mapping[0])]
         elif isinstance(fuzz_mapping, str):
-            fuzz_mapping = [FuzzyMap(fuzz_mapping, fuzz_mapping)]
-        elif isinstance(fuzz_mapping, FuzzyMap):
+            fuzz_mapping = [FuzzyMapping(fuzz_mapping, fuzz_mapping)]
+        elif isinstance(fuzz_mapping, FuzzyMapping):
             fuzz_mapping = [fuzz_mapping]
         else:
             raise Exception('No valid join mapping as input')
         return fuzz_mapping
 
-    def __init__(self, join_mapping: List[FuzzyMap] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
+    def __init__(self, join_mapping: List[FuzzyMapping] | Tuple[str, str] | str, left_select: List[SelectInput] | List[str],
                  right_select: List[SelectInput] | List[str], aggregate_output: bool = False, how: JoinStrategy = 'inner'):
         self.join_mapping = self.parse_fuzz_mapping(join_mapping)
         self.left_select = self.parse_select(left_select)
@@ -489,7 +465,7 @@ class FuzzyMatchInput(JoinInput):
         return self.left_select.new_cols & self.right_select.new_cols
 
     @property
-    def fuzzy_maps(self) -> List[FuzzyMap]:
+    def fuzzy_maps(self) -> List[FuzzyMapping]:
         """Returns the final fuzzy mappings after applying all column renames."""
         new_mappings = []
         left_rename_table, right_rename_table = self.left_select.rename_table, self.right_select.rename_table

@@ -2112,7 +2112,7 @@ class FlowFrame:
 
     def fuzzy_match(self,
                     other: "FlowFrame",
-                    fuzzy_mappings: List[transform_schema.FuzzyMap],
+                    fuzzy_mappings: List[FuzzyMapping],
                     description: str = None,
                     ) -> "FlowFrame":
         self._ensure_same_graph(other)

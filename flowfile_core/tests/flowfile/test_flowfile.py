@@ -308,12 +308,12 @@ def test_add_fuzzy_match():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
-                                  )
+    output_data.to_dict()
+    expected_data = FlowDataEngine({
+        'name': ['edward', 'eduward', 'courtney', 'edward', 'eduward'],
+        'name_right': ['edward', 'edward', 'courtney', 'eduward', 'eduward'],
+        'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 0.8571428571428572, 1.0]}
+    )
     output_data.assert_equal(expected_data)
 
 
@@ -343,12 +343,11 @@ def test_add_fuzzy_match_lcoal():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
-                                  )
+    expected_data = FlowDataEngine({
+        'name': ['edward', 'eduward', 'courtney', 'edward', 'eduward'],
+        'name_right': ['edward', 'edward', 'courtney', 'eduward', 'eduward'],
+        'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 0.8571428571428572, 1.0]}
+    )
     output_data.assert_equal(expected_data)
     OFFLOAD_TO_WORKER.value = True
 
@@ -1216,12 +1215,11 @@ def test_add_fuzzy_match_only_local():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
-                                  )
+    expected_data = FlowDataEngine(
+        {'name': ['courtney', 'eduward', 'edward', 'eduward', 'edward'],
+         'name_right': ['courtney', 'edward', 'edward', 'eduward', 'eduward'],
+         'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 1.0, 0.8571428571428572]}
+    )
     output_data.assert_equal(expected_data)
     OFFLOAD_TO_WORKER.value = True
 
@@ -1246,20 +1244,20 @@ def test_fuzzy_match_schema_predict():
          'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
     graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
     node = graph.get_node(2)
+    org_func = node._function
+
     def test_func(*args, **kwargs):
         raise ValueError('This is a test error')
     node._function = test_func
-    breakpoint()
     # enforce to calculate the data based on the schema
     predicted_data = node.get_predicted_resulting_data()
-    assert predicted_data.columns == ['name', 'name_right', 'fuzzy_score_0']
+    assert predicted_data.columns == ['name', 'name_right', 'name_vs_name_right_levenshtein']
     input_data = [{'name': 'eduward', 'other_field': 'test'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
     add_manual_input(graph, data=input_data)
     predicted_data = node.get_predicted_resulting_data()  # Gives none because the schema predict is programmed to run only once.
     assert len(predicted_data.columns) == 5
-
-
-
-
+    node._function = org_func  # Restore the original function
+    result = node.get_resulting_data()
+    assert result.columns == predicted_data.columns

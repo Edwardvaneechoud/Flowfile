@@ -2,11 +2,11 @@
 """A Polars-like API for building ETL graphs."""
 
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-from flowfile_core.schemas.transform_schema import FuzzyMap
 OFFLOAD_TO_WORKER.value = False
 
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
+from pl_fuzzy_frame_match.models import FuzzyMapping  # noqa: F401
 
 from flowfile_frame.utils import create_flow_graph  # noqa: F401
 

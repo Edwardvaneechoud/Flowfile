@@ -1,9 +1,10 @@
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
-from flowfile_core.schemas import cloud_storage_schemas as cs_schemas
 import polars as pl
 import pytest
+
+from pl_fuzzy_frame_match.models import FuzzyMapping
 
 
 def create_sample_data():
@@ -18,17 +19,17 @@ def test_fuzzy_match_internal():
     right_flowfile_table = left_flowfile_table
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
     right_select = [transform_schema.SelectInput(c) for c in right_flowfile_table.columns]
-    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[transform_schema.FuzzyMap(left_col='name')],
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[FuzzyMapping(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
     fuzzy_match_result = left_flowfile_table.fuzzy_join(fuzzy_match_input, right_flowfile_table)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
-    expected_data = FlowDataEngine([{'name': 'court', 'fuzzy_score_0': 1.0, 'name_right': 'court'},
-     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-     {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'}])
+    expected_data = FlowDataEngine([{'name': 'court', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'court'},
+     {'name': 'eduward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'eduward'},
+     {'name': 'edward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'eduward'},
+     {'name': 'eduward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'edward'},
+     {'name': 'edward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
 
 
@@ -78,7 +79,7 @@ def test_fuzzy_match_auto_select_columns_not_provided(fuzzy_test_data_left, fuzz
     left_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_left.columns[:-1]]
     right_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_right.columns[:-1]]
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[
-        transform_schema.FuzzyMap(left_col='company_name', right_col='organization', threshold_score=50)
+        FuzzyMapping(left_col='company_name', right_col='organization', threshold_score=50)
     ], left_select=left_select, right_select=right_select)
     fuzzy_match_result = fuzzy_test_data_left.fuzzy_join(fuzzy_match_input, fuzzy_test_data_right)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
@@ -89,7 +90,7 @@ def test_fuzzy_match_auto_select_columns_not_selected(fuzzy_test_data_left, fuzz
     left_select = [transform_schema.SelectInput(c, keep=False) for c in fuzzy_test_data_left.columns[:-1]]
     right_select = [transform_schema.SelectInput(c, keep=False) for c in fuzzy_test_data_right.columns]
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[
-        transform_schema.FuzzyMap(left_col='company_name', right_col='organization', threshold_score=50)
+        FuzzyMapping(left_col='company_name', right_col='organization', threshold_score=50)
     ], left_select=left_select, right_select=right_select)
     fuzzy_match_result = fuzzy_test_data_left.fuzzy_join(fuzzy_match_input, fuzzy_test_data_right)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
@@ -102,17 +103,17 @@ def test_fuzzy_match_external():
     right_flowfile_table = left_flowfile_table
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
     right_select = [transform_schema.SelectInput(c) for c in right_flowfile_table.columns]
-    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[transform_schema.FuzzyMap(left_col='name')],
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[FuzzyMapping(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
     fuzzy_match_result = left_flowfile_table.fuzzy_join_external(fuzzy_match_input, right_flowfile_table)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
-    expected_data = FlowDataEngine([{'name': 'court', 'fuzzy_score_0': 1.0, 'name_right': 'court'},
-     {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-     {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-     {'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-     {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'}])
+    expected_data = FlowDataEngine([{'name': 'court', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'court'},
+     {'name': 'eduward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'eduward'},
+     {'name': 'edward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'eduward'},
+     {'name': 'eduward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'edward'},
+     {'name': 'edward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
 
 

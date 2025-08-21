@@ -15,7 +15,7 @@ import polars as pl
 from polars.testing import assert_frame_equal
 from flowfile_frame.flow_frame_methods import read_csv
 from flowfile_frame.expr import col
-from flowfile_frame import FuzzyMap
+from pl_fuzzy_frame_match.models import FuzzyMapping
 
 
 try:
@@ -832,7 +832,7 @@ def test_fuzzy_match():
     left_data = FlowFrame({"id": [1, 2, 3, 4, 5], "street": ["123 Main St", "456 Elm St", "789 Maple Ave", "101 Oak St", "202 Pine St"]})
     right_data = FlowFrame({"id": [1, 2, 3], "street": ["123 Main Street", "456 Elm Street", "789 Maple Avenue"]})
 
-    fuzzy_match_input = FuzzyMap("street", threshold_score=40)
+    fuzzy_match_input = FuzzyMapping("street", threshold_score=40)
 
     # Fuzzy match on name
     result = left_data.fuzzy_match(right_data, [fuzzy_match_input]).collect()
