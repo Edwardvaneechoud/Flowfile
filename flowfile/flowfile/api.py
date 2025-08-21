@@ -17,6 +17,7 @@ from typing import Optional, Dict, Any, Union, Tuple, List
 from subprocess import Popen
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from tempfile import TemporaryDirectory
+import flowfile as ff
 
 # Configuration
 FLOWFILE_HOST: str = os.environ.get("FLOWFILE_HOST", "127.0.0.1")
