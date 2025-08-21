@@ -33,7 +33,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSetting
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.execution_orderer import compute_skip_nodes_execution_order
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
 from flowfile_core.flowfile.util.graph_tree import graph_tree
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
@@ -228,7 +228,7 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
-        skip_nodes, execution_order = compute_skip_nodes_execution_order(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+        skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
         """Adds a placeholder node to the graph that is not yet fully configured.
