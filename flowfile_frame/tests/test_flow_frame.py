@@ -837,8 +837,12 @@ def test_fuzzy_match():
     # Fuzzy match on name
     result = left_data.fuzzy_match(right_data, [fuzzy_match_input]).collect()
 
-    expected_df = pl.DataFrame([[1, 2, 3, 4], ['123 Main St', '456 Elm St', '789 Maple Ave', '101 Oak St'],
-                  [0.7333333333333334, 0.7142857142857143, 0.8125, 0.4], [1, 2, 3, 1],
-                  ['123 Main Street', '456 Elm Street', '789 Maple Avenue', '123 Main Street']],
-                 schema=['id', 'street', 'fuzzy_score_0', 'id_right', 'street_right'])
+    expected_df = pl.DataFrame({
+        'id': [1, 4, 3, 2],
+        'street': ['123 Main St', '101 Oak St', '789 Maple Ave', '456 Elm St'],
+        'id_right': [1, 1, 3, 2], 'street_right': ['123 Main Street', '123 Main Street', '789 Maple Avenue', '456 Elm Street'],
+        'street_vs_street_right_levenshtein': [0.7333333333333334, 0.4, 0.8125, 0.7142857142857143]}
+    )
     assert_frame_equal(result, expected_df, check_row_order=False, check_exact=False)
+
+
