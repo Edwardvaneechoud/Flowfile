@@ -803,26 +803,34 @@ class FlowGraph:
         """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
+            node = self.get_node(node_id=fuzzy_settings.node_id)
+            if self.execution_location == "local":
+                return main.fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input,
+                                       other=right,
+                                       node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id))
+
             f = main.start_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
                                       flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
             logger.info("Started the fuzzy match action")
-            node._fetch_cached_df = f
+            node._fetch_cached_df = f  # Add to the node so it can be cancelled and fetch later if needed
             return FlowDataEngine(f.get_result())
+
+        def schema_callback():
+            fm_input_copy = deepcopy(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
+            node = self.get_node(node_id=fuzzy_settings.node_id)
+            return calculate_fuzzy_match_schema(fm_input_copy,
+                                                left_schema=node.node_inputs.main_inputs[0].schema,
+                                                right_schema=node.node_inputs.right_input.schema
+                                                )
 
         self.add_node_step(node_id=fuzzy_settings.node_id,
                            function=_func,
                            input_columns=[],
                            node_type='fuzzy_match',
-                           setting_input=fuzzy_settings)
-        node = self.get_node(node_id=fuzzy_settings.node_id)
+                           setting_input=fuzzy_settings,
+                           input_node_ids=fuzzy_settings.depending_on_ids,
+                           schema_callback=schema_callback)
 
-        def schema_callback():
-            return calculate_fuzzy_match_schema(fuzzy_settings.join_input,
-                                                left_schema=node.node_inputs.main_inputs[0].schema,
-                                                right_schema=node.node_inputs.right_input.schema
-                                                )
-
-        node.schema_callback = schema_callback
         return self
 
     def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "FlowGraph":

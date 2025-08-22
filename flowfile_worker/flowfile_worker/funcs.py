@@ -2,8 +2,9 @@ import polars as pl
 import io
 from typing import List, Dict, Callable
 from multiprocessing import Array, Value, Queue
-from flowfile_worker.polars_fuzzy_match.matcher import fuzzy_match_dfs
-from flowfile_worker.polars_fuzzy_match.models import FuzzyMapping
+
+from pl_fuzzy_frame_match import fuzzy_match_dfs, FuzzyMapping
+
 from flowfile_worker.flow_logger import get_worker_logger
 from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.external_sources.sql_source.main import write_df_to_database
@@ -33,7 +34,10 @@ def fuzzy_join_task(left_serializable_object: bytes, right_serializable_object: 
         flowfile_logger.info("Starting fuzzy join operation")
         left_df = pl.LazyFrame.deserialize(io.BytesIO(left_serializable_object))
         right_df = pl.LazyFrame.deserialize(io.BytesIO(right_serializable_object))
-        fuzzy_match_result = fuzzy_match_dfs(left_df, right_df, fuzzy_maps, flowfile_logger)
+        fuzzy_match_result = fuzzy_match_dfs(left_df=left_df,
+                                             right_df=right_df,
+                                             fuzzy_maps=fuzzy_maps,
+                                             logger=flowfile_logger)
         flowfile_logger.info("Fuzzy join operation completed successfully")
         fuzzy_match_result.write_ipc(file_path)
         with progress.get_lock():
