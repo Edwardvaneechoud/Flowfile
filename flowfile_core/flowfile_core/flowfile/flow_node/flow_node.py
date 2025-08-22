@@ -907,7 +907,13 @@ class FlowNode:
                                           node_logger=node_logger)
                     else:
                         self.results.errors = str(e)
-                        node_logger.error(f'Error with running the node: {e}')
+                        if "Connection refused" in str(e) and "/submit_query/" in str(e):
+                            node_logger.warning("There was an issue connecting to the remote worker, "
+                                                "ensure the worker process is running, "
+                                                "or change the settings to, so it executes locally")
+                            node_logger.error("Could not execute in the remote worker. (Re)start the worker service, or change settings to local settings.")
+                        else:
+                            node_logger.error(f'Error with running the node: {e}')
             elif ((run_location == 'local') and
                   (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
                 try:

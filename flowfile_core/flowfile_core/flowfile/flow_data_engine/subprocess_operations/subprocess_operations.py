@@ -122,6 +122,8 @@ def results_exists(file_ref: str):
         return False
     except requests.RequestException as e:
         logger.error(f"Failed to check results existence: {str(e)}")
+        if "Connection refused" in str(e):
+            logger.info("")
         return False
 
 
