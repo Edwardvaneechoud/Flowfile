@@ -24,7 +24,7 @@ class FlowGraphConfig(BaseModel):
     name: str = ''
     path: str = ''
     execution_mode: ExecutionModeLiteral = 'Performance'
-    execution_location: ExecutionLocationsLiteral = "auto"
+    execution_location: ExecutionLocationsLiteral = "remote"
 
 
 class FlowSettings(FlowGraphConfig):

@@ -108,14 +108,12 @@ class NodeStepSettings:
         streamable: If True, the node can process data in a streaming fashion.
         setup_errors: If True, indicates a non-blocking error occurred during setup.
         breaking_setup_errors: If True, indicates an error occurred that prevents execution.
-        execute_location: The preferred location for execution ('auto', 'local', 'remote').
     """
     cache_results: bool = False
     renew_schema: bool = True
     streamable: bool = True
     setup_errors: bool = False
     breaking_setup_errors: bool = False
-    execute_location: schemas.ExecutionLocationsLiteral = 'auto'
 
 
 class NodeStepInputs:
