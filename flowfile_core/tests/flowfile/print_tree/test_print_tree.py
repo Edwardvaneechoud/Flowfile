@@ -62,7 +62,7 @@ def test_graph_tree(capsys):
     [280, 260, 230]
     ]
 
-    for i,j in zip([manual_input_data_1,manual_input_data_2,manual_input_data_3,manual_input_data_4], range(1,5)):
+    for i, j in zip([manual_input_data_1, manual_input_data_2, manual_input_data_3, manual_input_data_4], range(1, 5)):
         data = input_schema.NodeManualInput(
             flow_id=1,
             node_id=j,
