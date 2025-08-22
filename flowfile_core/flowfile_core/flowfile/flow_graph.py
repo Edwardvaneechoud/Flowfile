@@ -32,7 +32,8 @@ from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSetting
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.flowfile.util.graph_tree import add_undrawn_nodes, build_flow_paths, build_node_info, calculate_depth, define_node_connections, draw_merged_paths, draw_standalone_paths, group_nodes_by_depth, trace_path
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
@@ -255,64 +256,6 @@ class FlowGraph:
         self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
                            setting_input=node_promise)
 
-    def print_tree(self, show_schema=False, show_descriptions=False):
-        """
-        Print flow_graph as a tree.
-        """
-        max_node_id = max(self._node_db.keys())
-
-        tree = ""
-        tabs = 0
-        tab_counter = 0
-        for node in self.nodes:
-            tab_counter += 1
-            node_input = node.setting_input
-            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
-
-            if operation == "Formula":
-                operation = "With Columns"
-
-            tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
-
-            if show_descriptions & show_schema:
-                raise ValueError('show_descriptions and show_schema cannot be True simultaneously')
-            if show_descriptions:
-                tree += ": " + str(node_input.description)
-            elif show_schema:
-                tree += " -> ["
-                if operation == "Manual Input":
-                    schema = ", ".join([str(i.name) + ": " + str(i.data_type) for i in node_input.raw_data_format.columns])
-                    tree += schema
-                elif operation == "With Columns":
-                    tree_with_col_schema = ", " + node_input.function.field.name + ": " + node_input.function.field.data_type
-                    tree += schema + tree_with_col_schema
-                elif operation == "Filter":
-                    index = node_input.filter_input.advanced_filter.find("]")
-                    filtered_column = str(node_input.filter_input.advanced_filter[1:index])
-                    schema = re.sub('({str(filtered_column)}: [A-Za-z0-9]+\,\s)', "", schema)
-                    tree += schema
-                elif operation == "Group By":
-                    for col in node_input.groupby_input.agg_cols:
-                        schema = re.sub(str(col.old_name) + ': [a-z0-9]+\, ', "", schema)
-                    tree += schema
-                tree += "]"
-            else:
-                if operation == "Manual Input":
-                    tree += ": " + str(node_input.raw_data_format.data)
-                elif operation == "With Columns":
-                    tree += ": " + str(node_input.function)
-                elif operation == "Filter":
-                    tree += ": " + str(node_input.filter_input.advanced_filter)
-                elif operation == "Group By":
-                    tree += ": groupby=[" + ", ".join([col.old_name for col in node_input.groupby_input.agg_cols if col.agg == "groupby"]) + "], "
-                    tree += "agg=[" + ", ".join([str(col.agg) + "(" + str(col.old_name) + ")" for col in node_input.groupby_input.agg_cols if col.agg != "groupby"]) + "]"
-
-            if node_input.node_id < max_node_id:
-                tree += "\n" + "# " + " "*3*(tabs-1) + "|___ "
-            print("\n"*2)
-
-        return print(tree)
-
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
         """Calculates and applies a layered layout to all nodes in the graph.
 
@@ -380,6 +323,89 @@ class FlowGraph:
         """Provides the official string representation of the FlowGraph instance."""
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
+
+    def print_tree(self):
+        """Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art."""
+        if not self._node_db:
+            print("Empty flow graph")
+            return
+
+        # Build node information
+        node_info = build_node_info(self.nodes)
+
+        # Calculate depths for all nodes
+        for node_id in node_info:
+            calculate_depth(node_id, node_info)
+
+        # Group nodes by depth
+        depth_groups, max_depth = group_nodes_by_depth(node_info)
+
+        # Sort nodes within each depth group
+        for depth in depth_groups:
+            depth_groups[depth].sort()
+
+        # Create the main flow visualization
+        lines = []
+        lines.append("=" * 80)
+        lines.append("Flow Graph Visualization")
+        lines.append("=" * 80)
+        lines.append("")
+
+        # Track which nodes connect to what
+        merge_points = define_node_connections(node_info)
+
+        # Build the flow paths
+        paths = build_flow_paths(node_info,self._flow_starts, merge_points)
+
+        # Find the maximum label length for each depth level
+        max_label_length = {}
+        for depth in range(max_depth + 1):
+            if depth in depth_groups:
+                max_len = max(len(node_info[nid]['label']) for nid in depth_groups[depth])
+                max_label_length[depth] = max_len
+
+        # Draw the paths
+        drawn_nodes = set()
+        merge_drawn = set()
+
+        # Group paths by their merge points
+        paths_by_merge = {}
+        standalone_paths = []
+
+        #Build flow paths
+        paths = build_flow_paths(node_info, self._flow_starts, merge_points)
+
+        # Define paths to merge and standalone paths
+        for path in paths:
+            if len(path) > 1 and path[-1] in merge_points and len(merge_points[path[-1]]) > 1:
+                merge_id = path[-1]
+                if merge_id not in paths_by_merge:
+                    paths_by_merge[merge_id] = []
+                paths_by_merge[merge_id].append(path)
+            else:
+                standalone_paths.append(path)
+
+        # Draw merged paths
+        draw_merged_paths(node_info, merge_points, paths_by_merge,merge_drawn, drawn_nodes, lines)
+
+        # Draw standlone paths
+        draw_standalone_paths(drawn_nodes, standalone_paths, lines, node_info)
+
+        # Add undrawn nodes
+        add_undrawn_nodes(drawn_nodes, node_info, lines)
+
+        try:
+            skip_nodes, ordered_nodes = compute_execution_plan(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            if ordered_nodes:
+                for i, node in enumerate(ordered_nodes, 1):
+                    lines.append(f"  {i:3d}. {node_info[node.node_id]['label']}")
+        except Exception as e:
+            lines.append(f"  Could not determine execution order: {e}")
+
+        # Print everything
+        output = "\n".join(lines)
+
+        print(output)
 
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""
@@ -1590,11 +1616,8 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            skip_nodes = [node for node in self.nodes if not node.is_correct]
-            skip_nodes.extend([lead_to_node for node in skip_nodes for lead_to_node in node.leads_to_nodes])
-            execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
-                                                                   node not in skip_nodes],
-                                                        flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
