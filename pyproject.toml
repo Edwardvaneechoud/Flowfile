@@ -57,9 +57,9 @@ cryptography = "^45.0.5"
 httpx = "^0.28.1"
 tqdm = "^4.67.1"
 s3fs = "^2025.7.0"
+pl-fuzzy-frame-match = ">=0.4.0"
 google-cloud-storage
 azure-storage-blob
-
 
 [tool.poetry.scripts]
 flowfile_worker = "flowfile_worker.main:run"
