@@ -2473,7 +2473,7 @@ def test_graph_tree(systemout):
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
     flow.print_tree()
-    stdout = systemout.readouterr()
+    stdout = systemout.readouterr().out
 
     tree_elements = ["(id=", ">", "1.", "Execution Order", "Flow Graph Visualization", "="]
     for element in tree_elements:
