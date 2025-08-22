@@ -2379,7 +2379,7 @@ def test_aggregation_functions():
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
-def test_graph_tree(systemout):
+def test_graph_tree(capsys):
     """ Test made to the FlowGraph's print_tree method"""
 
     flow = create_basic_flow()
@@ -2473,7 +2473,7 @@ def test_graph_tree(systemout):
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
     flow.print_tree()
-    stdout = systemout.readouterr().out
+    stdout = capsys.readouterr().out
 
     tree_elements = ["(id=", ">", "1.", "Execution Order", "Flow Graph Visualization", "="]
     for element in tree_elements:
