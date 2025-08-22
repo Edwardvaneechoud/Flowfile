@@ -516,9 +516,8 @@ class FlowGraph:
         
         # Print everything
         output = "\n".join(lines)
+        
         print(output)
-    
-        return output
         
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""

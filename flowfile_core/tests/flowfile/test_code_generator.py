@@ -2379,7 +2379,7 @@ def test_aggregation_functions():
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
-def test_graph_tree():
+def test_graph_tree(systemout):
     """ Test made to the FlowGraph's print_tree method"""
 
     flow = create_basic_flow()
@@ -2472,8 +2472,12 @@ def test_graph_tree():
     expected_df = flow.get_node(6).get_resulting_data().data_frame
     assert_frame_equal(result_df, expected_df, check_row_order=False)
 
+    flow.print_tree()
+    stdout = systemout.readouterr()
+
     tree_elements = ["(id=", ">", "1.", "Execution Order", "Flow Graph Visualization", "="]
-    assert all(element in flow.print_tree() for element in tree_elements)
+    for element in tree_elements:
+        assert element in stdout
 
 def test_flow_with_disconnected_nodes():
     """Test a flow where some nodes might not be connected properly"""
