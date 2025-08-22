@@ -15,7 +15,7 @@ import { defineProps, ref, onUnmounted } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import { RunInformation } from "../../baseNode/nodeInterfaces";
 import { ElNotification } from "element-plus";
-import { updateRunStatus } from "../../nodes/nodeLogic";
+import { updateRunStatus, getFlowSettings, FlowSettings } from "../../nodes/nodeLogic";
 import { VueFlowStore } from "@vue-flow/core";
 
 const nodeStore = useNodeStore();
@@ -32,6 +32,7 @@ const props = defineProps({
     }),
   },
 });
+
 
 const freezeFlow = () => {
   let vueFlowElement: VueFlowStore = nodeStore.vueFlowInstance;
@@ -57,12 +58,13 @@ interface NotificationConfig {
   type: "success" | "error";
 }
 
-const showNotification = (title: string, message: string, type?: "success" | "error") => {
+const showNotification = (title: string, message: string, type?: "success" | "error", dangerouslyUseHTMLString?: boolean) => {
   ElNotification({
-    title,
-    message,
-    type,
+    title: title,
+    message: message,
+    type: type,
     position: "top-left",
+    dangerouslyUseHTMLString: dangerouslyUseHTMLString
   });
 };
 
@@ -117,9 +119,36 @@ const checkRunStatus = async () => {
 };
 
 const runFlow = async () => {
+  
+  const flowSettings: FlowSettings | null = await getFlowSettings(nodeStore.flow_id);
+  if (!flowSettings) {
+    throw new Error("Failed to retrieve flow settings");
+  }
+
+  const escapeHtml = (text: string): string => {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;}
+  
+  
   freezeFlow();
+
   nodeStore.resetNodeResult();
-  showNotification("Run started", "The flow started flowing");
+  
+  const executionLocationText = flowSettings.execution_location === 'local' ? 'Local' : 'Remote';
+  
+  const escapedFlowName = escapeHtml(flowSettings.name);
+  
+  const notificationMessage = `
+    <div style="line-height: 1.4;">
+      <div><strong>Flow:</strong> "${escapedFlowName}"</div>
+      <div><strong>Mode:</strong> ${flowSettings.execution_mode}</div>
+      <div><strong>Location:</strong> ${executionLocationText}</div>
+    </div>
+  `;
+  
+  
+  showNotification("🚀 Flow Started", notificationMessage, undefined, true);
 
   try {
     await axios.post("/flow/run/", null, {

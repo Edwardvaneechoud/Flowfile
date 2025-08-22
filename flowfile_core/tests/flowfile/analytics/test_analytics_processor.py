@@ -530,9 +530,6 @@ def test_analytics_processor_from_parquet_file_run_performance():
 
 
 def test_analytics_processor_from_parquet_file_run_in_one_local_process():
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-    OFFLOAD_TO_WORKER.value = False
-
     graph = create_graph()
 
     graph.flow_settings.execution_location = "local"
@@ -549,4 +546,3 @@ def test_analytics_processor_from_parquet_file_run_in_one_local_process():
     graph.run_graph()
     assert node_step.results.analysis_data_generator, 'The node should have to run'
     assert node_step.results.analysis_data_generator().__len__() == 10_000, 'There should be 1000 rows in the data'
-    OFFLOAD_TO_WORKER.value = True

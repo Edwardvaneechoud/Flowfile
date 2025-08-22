@@ -11,7 +11,6 @@ from uuid import uuid1
 from copy import deepcopy
 from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
@@ -178,7 +177,7 @@ class FlowGraph:
     start_datetime: datetime = None
     end_datetime: datetime = None
     nodes_completed: int = 0
-    flow_settings: schemas.FlowSettings = None
+    _flow_settings: schemas.FlowSettings = None
     flow_logger: FlowLogger
 
     def __init__(self,
@@ -202,7 +201,7 @@ class FlowGraph:
         if isinstance(flow_settings, schemas.FlowGraphConfig):
             flow_settings = schemas.FlowSettings.from_flow_settings_input(flow_settings)
 
-        self.flow_settings = flow_settings
+        self._flow_settings = flow_settings
         self.uuid = str(uuid1())
         self.nodes_completed = 0
         self.start_datetime = None
@@ -226,6 +225,19 @@ class FlowGraph:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
+
+    @property
+    def flow_settings(self) -> schemas.FlowSettings:
+        return self._flow_settings
+
+    @flow_settings.setter
+    def flow_settings(self, flow_settings: schemas.FlowSettings):
+        if (
+                (self._flow_settings.execution_location != flow_settings.execution_location) or
+                (self._flow_settings.execution_mode != flow_settings.execution_mode)
+        ):
+            self.reset()
+        self._flow_settings = flow_settings
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
         """Adds a placeholder node to the graph that is not yet fully configured.
@@ -1550,6 +1562,8 @@ class FlowGraph:
         Args:
             execution_location: The execution location to set.
         """
+        if self.flow_settings.execution_location != execution_location:
+            self.reset()
         self.flow_settings.execution_location = execution_location
 
     def run_graph(self) -> RunInformation | None:
@@ -1584,10 +1598,6 @@ class FlowGraph:
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
-            if self.flow_settings.execution_location == 'local':
-                OFFLOAD_TO_WORKER.value = False
-            elif self.flow_settings.execution_location == 'remote':
-                OFFLOAD_TO_WORKER.value = True
             for node in execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:

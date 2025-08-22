@@ -5,7 +5,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.configs.flow_logger import NodeLogger
-from flowfile_core.configs.settings import SINGLE_FILE_MODE, OFFLOAD_TO_WORKER
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
@@ -681,7 +680,7 @@ class FlowNode:
             logger.warning('Not implemented')
 
     def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None,
-                  execution_location: schemas.ExecutionLocationsLiteral = "auto") -> bool:
+                  execution_location: schemas.ExecutionLocationsLiteral = "worker") -> bool:
         """Determines if the node needs to be executed.
 
         The decision is based on its run state, caching settings, and execution mode.
@@ -694,7 +693,7 @@ class FlowNode:
         Returns:
             True if the node should be run, False otherwise.
         """
-        if execution_location == "local" or SINGLE_FILE_MODE:
+        if execution_location == "local":
             return False
 
         flow_logger = logger if node_logger is None else node_logger
@@ -879,7 +878,7 @@ class FlowNode:
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
             if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
-                    and not (run_location == 'local' or SINGLE_FILE_MODE)):
+                    and not (run_location == 'local')):
                 self.prepare_before_run()
                 try:
                     if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
@@ -909,7 +908,7 @@ class FlowNode:
                     else:
                         self.results.errors = str(e)
                         node_logger.error(f'Error with running the node: {e}')
-            elif ((run_location == 'local' or SINGLE_FILE_MODE) and
+            elif ((run_location == 'local') and
                   (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
                 try:
                     node_logger.info('Executing fully locally')

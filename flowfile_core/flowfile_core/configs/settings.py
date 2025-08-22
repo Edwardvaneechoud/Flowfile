@@ -15,10 +15,12 @@ from flowfile_core.configs.utils import MutableBool
 DEFAULT_SERVER_HOST = "0.0.0.0"
 DEFAULT_SERVER_PORT = 63578
 DEFAULT_WORKER_PORT = 63579
-SINGLE_FILE_MODE: bool = os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1"
 
+# Single file mode flag, this determines where worker requests are being send to.
+SINGLE_FILE_MODE: MutableBool = MutableBool(os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1")
 
-OFFLOAD_TO_WORKER = MutableBool(not SINGLE_FILE_MODE)
+# Offload to worker flag, this determines if the worker should handle processing tasks.
+OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO_WORKER", "1") == "1")
 
 
 def parse_args():

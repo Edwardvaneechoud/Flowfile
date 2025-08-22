@@ -19,12 +19,12 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.utils.utils import ensure_similarity_dicts
 from flowfile_core.configs.flow_logger import NodeLogger
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import (
     cloud_storage_schemas,
     input_schema,
     transform_schema as transform_schemas
 )
+from flowfile_core.schemas.schemas import ExecutionLocationsLiteral, get_global_execution_location
 
 # Local imports - Flow File Components
 from flowfile_core.flowfile.flow_data_engine import utils
@@ -63,6 +63,7 @@ from flowfile_core.flowfile.flow_data_engine.threaded_processes import (
 from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
 
 T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
+
 
 def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform_schemas.JoinInput) -> Tuple[T, T, Dict[str, str]]:
     """Temporarily renames join keys to avoid conflicts during a join.
@@ -1563,7 +1564,7 @@ class FlowDataEngine:
         return FlowDataEngine(df, number_of_records=len(df), schema=self.schema)
 
     def get_sample(self, n_rows: int = 100, random: bool = False, shuffle: bool = False,
-                   seed: int = None) -> "FlowDataEngine":
+                   seed: int = None, execution_location: Optional[ExecutionLocationsLiteral] = None) -> "FlowDataEngine":
         """Gets a sample of rows from the DataFrame.
 
         Args:
@@ -1571,11 +1572,10 @@ class FlowDataEngine:
             random: If True, performs random sampling. If False, takes the first n_rows.
             shuffle: If True (and `random` is True), shuffles the data before sampling.
             seed: A random seed for reproducibility.
-
+            execution_location: Location which is used to calculate the size of the dataframe
         Returns:
             A new `FlowDataEngine` instance containing the sampled data.
         """
-        n_records = min(n_rows, self.get_number_of_records(calculate_in_worker_process=OFFLOAD_TO_WORKER))
         logging.info(f'Getting sample of {n_rows} rows')
 
         if random:
@@ -1583,12 +1583,17 @@ class FlowDataEngine:
                 self.collect_external()
 
             if self.lazy and shuffle:
-                sample_df = self.data_frame.collect(engine="streaming" if self._streamable else "auto").sample(n_rows,
-                                                                                                               seed=seed,
-                                                                                     shuffle=shuffle)
+                sample_df = (self.data_frame.collect(engine="streaming" if self._streamable else "auto")
+                             .sample(n_rows, seed=seed, shuffle=shuffle))
             elif shuffle:
                 sample_df = self.data_frame.sample(n_rows, seed=seed, shuffle=shuffle)
             else:
+                if execution_location is None:
+                    execution_location = get_global_execution_location()
+                n_rows = min(n_rows, self.get_number_of_records(
+                    calculate_in_worker_process=execution_location == "remote")
+                             )
+
                 every_n_records = ceil(self.number_of_records / n_rows)
                 sample_df = self.data_frame.gather_every(every_n_records)
         else:
@@ -1596,7 +1601,7 @@ class FlowDataEngine:
                 self.collect(n_rows)
             sample_df = self.data_frame.head(n_rows)
 
-        return FlowDataEngine(sample_df, schema=self.schema, number_of_records=n_records)
+        return FlowDataEngine(sample_df, schema=self.schema)
 
     def get_subset(self, n_rows: int = 100) -> "FlowDataEngine":
         """Gets the first `n_rows` from the DataFrame.
@@ -1746,26 +1751,14 @@ class FlowDataEngine:
         left = self.data_frame.select(left_select).rename(cross_join_input.left_select.rename_table)
         right = other.data_frame.select(right_select).rename(cross_join_input.right_select.rename_table)
 
-        if verify_integrity:
-            n_records = self.get_number_of_records() * other.get_number_of_records()
-            if n_records > 1_000_000_000:
-                raise Exception("Join will result in too many records, ending process")
-        else:
-            n_records = -1
-
         joined_df = left.join(right, how='cross')
 
         cols_to_delete_after = [col.new_name for col in
                                 cross_join_input.left_select.renames + cross_join_input.left_select.renames
                                 if col.join_key and not col.keep and col.is_available]
 
-        if verify_integrity:
-            return FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                                 number_of_records=n_records, streamable=False)
-        else:
-            fl = FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False,
-                               number_of_records=0, streamable=False)
-            return fl
+        fl = FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False, streamable=False)
+        return fl
 
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
              verify_integrity: bool, other: "FlowDataEngine") -> "FlowDataEngine":
@@ -1901,7 +1894,7 @@ class FlowDataEngine:
         other.number_of_records = -1
         other = other.select_columns(self.columns)
 
-        if self.get_number_of_records() != other.get_number_of_records():
+        if self.get_number_of_records_in_process() != other.get_number_of_records_in_process():
             raise Exception('Number of records is not equal')
 
         if self.columns != other.columns:
@@ -1937,6 +1930,18 @@ class FlowDataEngine:
         ).result
         return number_of_records
 
+    def get_number_of_records_in_process(self, force_calculate: bool = False):
+        """
+        Get the number of records in the DataFrame in the local process.
+
+        args:
+            force_calculate: If True, forces recalculation even if a value is cached.
+
+        Returns:
+            The total number of records.
+        """
+        return self.get_number_of_records(force_calculate=force_calculate)
+
     def get_number_of_records(self, warn: bool = False, force_calculate: bool = False,
                               calculate_in_worker_process: bool = False) -> int:
         """Gets the total number of records in the DataFrame.
@@ -1956,7 +1961,6 @@ class FlowDataEngine:
         """
         if self.is_future and not self.is_collected:
             return -1
-        calculate_in_worker_process = False if not OFFLOAD_TO_WORKER else calculate_in_worker_process
         if self.number_of_records is None or self.number_of_records < 0 or force_calculate:
             if self._number_of_records_callback is not None:
                 self._number_of_records_callback(self)

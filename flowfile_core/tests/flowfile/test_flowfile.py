@@ -20,6 +20,19 @@ from typing import List, Dict, Literal
 from copy import deepcopy
 
 
+def find_parent_directory(target_dir_name,):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(__file__)
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
+
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
@@ -252,11 +265,16 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
 
 def test_running_performance_mode():
     graph = create_graph()
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
     add_node_promise_on_type(graph, 'read', 1, 1)
-    received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
-                                                path='flowfile_core/tests/support_files/data/table.parquet')
+    from flowfile_core.configs.flow_logger import main_logger
+    received_table = input_schema.ReceivedTable(
+        file_type='parquet', name='table.parquet',
+        path=str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/data/table.parquet'))
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
     graph.add_read(node_read)
+    main_logger.warning(str(graph))
+    main_logger.warning(OFFLOAD_TO_WORKER)
     add_node_promise_on_type(graph, 'record_count', 2)
     connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
     add_connection(graph, connection)
@@ -267,6 +285,7 @@ def test_running_performance_mode():
     graph.reset()
     graph.flow_settings.execution_mode = 'Development'
     slow = graph.run_graph()
+
     assert slow.node_step_result[1].run_time > fast.node_step_result[1].run_time, 'Performance mode should be faster'
 
 
@@ -1103,20 +1122,20 @@ def test_add_cloud_writer(flow_logger):
 
 
 def test_complex_cloud_write_scenario():
+
     ensure_cloud_storage_connection_is_available_and_get_connection()
     handler = FlowfileHandler()
-    flow_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/test_cloud_local.flowfile"))
+
+    flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
     graph = handler.get_flow(flow_id)
     node= graph.get_node(3)
-    node.get_table_example(True)
-    graph.run_graph()
+    example_data = node.get_table_example(True)
+    assert example_data.number_of_columns == 4
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
 
 
 def test_no_re_calculate_example_data_after_change_no_run():
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
-    OFFLOAD_TO_WORKER.value = False
-
     graph = get_dependency_example()
     graph.flow_settings.execution_location = "local"
     graph.run_graph()
@@ -1152,11 +1171,8 @@ def test_no_re_calculate_example_data_after_change_no_run():
 
     assert after_change_data_after_run != first_data, 'Data should be different after run'
 
-    OFFLOAD_TO_WORKER.value = True
 
 def test_add_fuzzy_match_only_local():
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-    OFFLOAD_TO_WORKER.value = False
     graph = create_graph()
     graph.flow_settings.execution_location = "local"
     input_data = [{'name': 'eduward'},
@@ -1186,4 +1202,38 @@ def test_add_fuzzy_match_only_local():
                                    {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
                                   )
     output_data.assert_equal(expected_data)
-    OFFLOAD_TO_WORKER.value = True
+
+
+def test_changes_execution_mode():
+
+    settings = {'flow_id': 1, 'node_id': 1, 'pos_x': 304.8727272727273,
+                'pos_y': 549.5272727272727, 'is_setup': True, 'description': 'Test csv',
+                'received_file': {'id': None, 'name': 'fake_data.csv',
+                                  'path': str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/data/fake_data.csv'),
+                                  'directory': None, 'analysis_file_available': False, 'status': None,
+                                  'file_type': 'csv', 'fields': [], 'reference': '', 'starting_from_line': 0,
+                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
+                                  'row_delimiter': '', 'quote_char': '', 'infer_schema_length': 20000,
+                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': None,
+                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
+                                  'type_inference': False}}
+    graph = create_graph()
+    add_node_promise_on_type(graph, 'read', 1)
+    input_file = input_schema.NodeRead(**settings)
+    graph.add_read(input_file)
+    run_info = graph.run_graph()
+    graph.add_select(select_settings=input_schema.NodeSelect(flow_id=1, node_id=2,
+                                                             select_input=[transform_schema.SelectInput("City")],
+                                                             keep_missing=True))
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    explain_node_2 = graph.get_node(2).get_resulting_data().data_frame.explain()
+    assert "flowfile_core/tests/support_files/data/fake_data.csv" not in explain_node_2
+    graph.execution_location = "local"
+
+    explain_node_2 = graph.get_node(2).get_resulting_data().data_frame.explain()
+    # now it should read from the actual source, since we do not cache the data with the external worker
+
+    assert "flowfile_core/tests/support_files/data/fake_data.csv" in explain_node_2
+
+
+
