@@ -18,7 +18,7 @@ import pytest
 from pathlib import Path
 from typing import List, Dict, Literal
 from copy import deepcopy
-
+from time import sleep
 
 def find_parent_directory(target_dir_name,):
     """Navigate up directories until finding the target directory"""
@@ -327,12 +327,46 @@ def test_add_fuzzy_match():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
-                                  )
+    output_data.to_dict()
+    expected_data = FlowDataEngine({
+        'name': ['edward', 'eduward', 'courtney', 'edward', 'eduward'],
+        'name_right': ['edward', 'edward', 'courtney', 'eduward', 'eduward'],
+        'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 0.8571428571428572, 1.0]}
+    )
+    output_data.assert_equal(expected_data)
+
+
+def test_add_fuzzy_match_lcoal():
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    graph = create_graph()
+    graph.flow_settings.execution_location = "local"
+    OFFLOAD_TO_WORKER.value = False
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'fuzzy_match', 2)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                           'valid': True}],
+         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
+    run_info = graph.run_graph()
+    handle_run_info(run_info)
+    output_data = graph.get_node(2).get_resulting_data()
+    expected_data = FlowDataEngine({
+        'name': ['edward', 'eduward', 'courtney', 'edward', 'eduward'],
+        'name_right': ['edward', 'edward', 'courtney', 'eduward', 'eduward'],
+        'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 0.8571428571428572, 1.0]}
+    )
     output_data.assert_equal(expected_data)
 
 
@@ -1077,7 +1111,7 @@ def test_schema_callback_cloud_read(flow_logger):
                                                         cloud_storage_settings=read_settings)
     graph.add_cloud_storage_reader(node_settings)
     node = graph.get_node(1)
-    assert node.schema_callback.future is not None, 'Schema callback future should be set'
+    assert node.schema_callback._future is not None, 'Schema callback future should be set'
     assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
     original_schema_callback = id(node.schema_callback)
     graph.add_cloud_storage_reader(node_settings)
@@ -1195,12 +1229,11 @@ def test_add_fuzzy_match_only_local():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     output_data = graph.get_node(2).get_resulting_data()
-    expected_data = FlowDataEngine([{'name': 'eduward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'edward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 1.0, 'name_right': 'edward'},
-                                   {'name': 'eduward', 'fuzzy_score_0': 1.0, 'name_right': 'eduward'},
-                                   {'name': 'edward', 'fuzzy_score_0': 0.8571428571428572, 'name_right': 'eduward'},
-                                   {'name': 'courtney', 'fuzzy_score_0': 1.0, 'name_right': 'courtney'}]
-                                  )
+    expected_data = FlowDataEngine(
+        {'name': ['courtney', 'eduward', 'edward', 'eduward', 'edward'],
+         'name_right': ['courtney', 'edward', 'edward', 'eduward', 'eduward'],
+         'name_vs_name_right_levenshtein': [1.0, 0.8571428571428572, 1.0, 1.0, 0.8571428571428572]}
+    )
     output_data.assert_equal(expected_data)
 
 
@@ -1237,3 +1270,44 @@ def test_changes_execution_mode():
 
 
 
+def test_fuzzy_match_schema_predict(flow_logger):
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, 'fuzzy_match', 2)
+    left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    right_connection.input_connection.connection_class = 'input-1'
+    add_connection(graph, left_connection)
+    add_connection(graph, right_connection)
+    data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'join_input':
+        {'join_mapping': [{'left_col': 'name', 'right_col': 'name', 'threshold_score': 75, 'fuzzy_type': 'levenshtein',
+                           'valid': True}],
+         'left_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'right_select': {'renames': [{'old_name': 'name', 'new_name': 'name', 'join_key': True, }]},
+         'how': 'inner'}, 'auto_keep_all': True, 'auto_keep_right': True, 'auto_keep_left': True}
+    graph.add_fuzzy_match(input_schema.NodeFuzzyMatch(**data))
+    node = graph.get_node(2)
+    org_func = node._function
+
+    def test_func(*args, **kwargs):
+        raise ValueError('This is a test error')
+    node._function = test_func
+    # enforce to calculate the data based on the schema
+    predicted_data = node.get_predicted_resulting_data()
+    assert predicted_data.columns == ['name', 'name_right', 'name_vs_name_right_levenshtein']
+    input_data = [{'name': 'eduward', 'other_field': 'test'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    sleep(0.1)
+    predicted_data = node.get_predicted_resulting_data()  # Gives none because the schema predict is programmed to run only once.
+    flow_logger.info("This is the test")
+    flow_logger.info(str(len(predicted_data.columns)))
+    flow_logger.warning(str(predicted_data.collect()))
+    assert len(predicted_data.columns) == 5
+    node._function = org_func  # Restore the original function
+    result = node.get_resulting_data()
+    assert result.columns == predicted_data.columns

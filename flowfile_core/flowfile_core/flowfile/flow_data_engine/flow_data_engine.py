@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from math import ceil
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union, TypeVar, Literal, Generator
 
+from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+
 # Third-party imports
 from loky import Future
 import polars as pl
@@ -1655,8 +1657,7 @@ class FlowDataEngine:
             An `ExternalFuzzyMatchFetcher` object that can be used to track the
             progress and retrieve the result of the fuzzy join.
         """
-        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
-                                                    fuzzy_match_input=fuzzy_match_input)
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other, fuzzy_match_input=fuzzy_match_input)
         return ExternalFuzzyMatchFetcher(left_df, right_df,
                                          fuzzy_maps=fuzzy_match_input.fuzzy_maps,
                                          file_ref=file_ref + '_fm',
@@ -1664,59 +1665,33 @@ class FlowDataEngine:
                                          flow_id=flow_id,
                                          node_id=node_id)
 
-    def do_fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
-                      other: "FlowDataEngine", file_ref: str, flow_id: int = -1,
-                      node_id: int | str = -1) -> "FlowDataEngine":
-        """Performs a fuzzy join with another DataFrame.
+    def fuzzy_join_external(self,
+                            fuzzy_match_input: transform_schemas.FuzzyMatchInput,
+                            other: "FlowDataEngine",
+                            file_ref: str = None,
+                            flow_id: int = -1,
+                            node_id: int = -1
+                            ):
+        if file_ref is None:
+            file_ref = str(id(self)) + '_' + str(id(other))
 
-        This method blocks until the fuzzy join operation is complete.
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other, fuzzy_match_input=fuzzy_match_input)
+        external_tracker = ExternalFuzzyMatchFetcher(left_df, right_df,
+                                                     fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+                                                     file_ref=file_ref + '_fm',
+                                                     wait_on_completion=False,
+                                                     flow_id=flow_id,
+                                                     node_id=node_id)
+        return FlowDataEngine(external_tracker.get_result())
 
-        Args:
-            fuzzy_match_input: A `FuzzyMatchInput` object with the matching parameters.
-            other: The right `FlowDataEngine` to join with.
-            file_ref: A reference string for temporary files.
-            flow_id: The flow ID for tracking.
-            node_id: The node ID for tracking.
-
-        Returns:
-            A new `FlowDataEngine` instance with the result of the fuzzy join.
-        """
-        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
-                                                    fuzzy_match_input=fuzzy_match_input)
-        f = ExternalFuzzyMatchFetcher(left_df, right_df,
-                                      fuzzy_maps=fuzzy_match_input.fuzzy_maps,
-                                      file_ref=file_ref + '_fm',
-                                      wait_on_completion=True,
-                                      flow_id=flow_id,
-                                      node_id=node_id)
-        return FlowDataEngine(f.get_result())
-
-    def fuzzy_match(self, right: "FlowDataEngine", left_on: str, right_on: str,
-                    fuzzy_method: str = 'levenshtein', threshold: float = 0.75) -> "FlowDataEngine":
-        """Performs a simple fuzzy match between two DataFrames on a single column pair.
-
-        This is a convenience method for a common fuzzy join scenario.
-
-        Args:
-            right: The right `FlowDataEngine` to match against.
-            left_on: The column name from the left DataFrame to match on.
-            right_on: The column name from the right DataFrame to match on.
-            fuzzy_method: The fuzzy matching algorithm to use (e.g., 'levenshtein').
-            threshold: The similarity score threshold (0.0 to 1.0) for a match.
-
-        Returns:
-            A new `FlowDataEngine` with the matched data.
-        """
-        fuzzy_match_input = transform_schemas.FuzzyMatchInput(
-            [transform_schemas.FuzzyMap(
-                left_on, right_on,
-                fuzzy_type=fuzzy_method,
-                threshold_score=threshold
-            )],
-            left_select=self.columns,
-            right_select=right.columns
-        )
-        return self.do_fuzzy_join(fuzzy_match_input, right, str(id(self)))
+    def fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
+                   other: "FlowDataEngine",
+                   node_logger: NodeLogger = None) -> "FlowDataEngine":
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other, fuzzy_match_input=fuzzy_match_input)
+        fuzzy_mappings = [FuzzyMapping(**fm.__dict__) for fm in fuzzy_match_input.fuzzy_maps]
+        return FlowDataEngine(fuzzy_match_dfs(left_df, right_df, fuzzy_maps=fuzzy_mappings,
+                                              logger=node_logger.logger if node_logger else logger)
+                              .lazy())
 
     def do_cross_join(self, cross_join_input: transform_schemas.CrossJoinInput,
                       auto_generate_selection: bool, verify_integrity: bool,
@@ -1738,11 +1713,12 @@ class FlowDataEngine:
             Exception: If `verify_integrity` is True and the join would result in
                 an excessively large number of records.
         """
+
         self.lazy = True
+
         other.lazy = True
 
         verify_join_select_integrity(cross_join_input, left_columns=self.columns, right_columns=other.columns)
-
         right_select = [v.old_name for v in cross_join_input.right_select.renames
                         if (v.keep or v.join_key) and v.is_available]
         left_select = [v.old_name for v in cross_join_input.left_select.renames

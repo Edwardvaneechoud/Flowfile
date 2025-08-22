@@ -964,16 +964,16 @@ class FlowNode:
             logger.info(f'{self.node_id}: Node needs reset')
             self.node_stats.has_run_with_current_setup = False
             self.results.reset()
-            if self.is_correct:
-                self._schema_callback = None  # Ensure the schema callback is reset
-                if self.schema_callback:
-                    logger.info(f'{self.node_id}: Resetting the schema callback')
-                    self.schema_callback.start()
             self.node_schema.result_schema = None
             self.node_schema.predicted_schema = None
             self._hash = None
             self.node_information.is_setup = None
             self.results.errors = None
+            if self.is_correct:
+                self._schema_callback = None  # Ensure the schema callback is reset
+                if self.schema_callback:
+                    logger.info(f'{self.node_id}: Resetting the schema callback')
+                    self.schema_callback.start()
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
 

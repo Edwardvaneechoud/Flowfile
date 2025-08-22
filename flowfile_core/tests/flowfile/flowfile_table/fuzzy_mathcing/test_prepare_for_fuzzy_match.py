@@ -1,3 +1,5 @@
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.prepare_for_fuzzy_match import prepare_for_fuzzy_match
 from flowfile_core.schemas import transform_schema
@@ -12,7 +14,7 @@ def test_prepare_for_fuzzy_match():
 
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
     right_select = [transform_schema.SelectInput(c) for c in right_flowfile_table.columns]
-    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[transform_schema.FuzzyMap(left_col='name')],
+    fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[FuzzyMapping(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
 
