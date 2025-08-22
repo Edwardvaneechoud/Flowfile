@@ -2,7 +2,7 @@ from typing import Optional, List, Dict, Tuple, Any, Literal, Annotated
 from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints
 from flowfile_core.flowfile.utils import create_unique_id
 ExecutionModeLiteral = Literal['Development', 'Performance']
-ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
+ExecutionLocationsLiteral = Literal['local', 'remote']
 
 
 class FlowGraphConfig(BaseModel):
@@ -16,7 +16,7 @@ class FlowGraphConfig(BaseModel):
         name (str): The name of the flow.
         path (str): The file path associated with the flow.
         execution_mode (ExecutionModeLiteral): The mode of execution ('Development' or 'Performance').
-        execution_location (ExecutionLocationsLiteral): The location for execution ('auto', 'local', 'remote').
+        execution_location (ExecutionLocationsLiteral): The location for execution ('local', 'remote').
     """
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
     description: Optional[str] = None
