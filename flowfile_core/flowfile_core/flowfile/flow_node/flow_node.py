@@ -5,7 +5,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.configs.flow_logger import NodeLogger
-from flowfile_core.configs.settings import SINGLE_FILE_MODE, OFFLOAD_TO_WORKER
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
@@ -921,8 +920,14 @@ class FlowNode:
                                           node_logger=node_logger)
                     else:
                         self.results.errors = str(e)
-                        node_logger.error(f'Error with running the node: {e}')
-            elif ((run_location == 'local' or SINGLE_FILE_MODE) and
+                        if "Connection refused" in str(e) and "/submit_query/" in str(e):
+                            node_logger.warning("There was an issue connecting to the remote worker, "
+                                                "ensure the worker process is running, "
+                                                "or change the settings to, so it executes locally")
+                            node_logger.error("Could not execute in the remote worker. (Re)start the worker service, or change settings to local settings.")
+                        else:
+                            node_logger.error(f'Error with running the node: {e}')
+            elif ((run_location == 'local') and
                   (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
                 try:
                     node_logger.info('Executing fully locally')
