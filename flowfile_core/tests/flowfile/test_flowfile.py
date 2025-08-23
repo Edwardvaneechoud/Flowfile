@@ -1152,6 +1152,7 @@ def test_add_cloud_writer(flow_logger):
     handle_run_info(result)
 
 
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_complex_cloud_write_scenario():
 
     ensure_cloud_storage_connection_is_available_and_get_connection()
