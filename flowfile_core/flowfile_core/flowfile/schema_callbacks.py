@@ -1,24 +1,71 @@
 
 from typing import List
+
+from polars import datatypes
+import polars as pl
+
+from pl_fuzzy_frame_match.output_column_name_utils import set_name_in_fuzzy_mappings
+from pl_fuzzy_frame_match.pre_process import rename_fuzzy_right_mapping
+
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
+from flowfile_core.configs.flow_logger import main_logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas import input_schema
-from polars import datatypes
-import polars as pl
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
-from flowfile_core.configs.flow_logger import main_logger
 
 
-def calculate_uniqueness(a: float, b: float) -> float:
-    return ((pow(a + 0.5, 2) + pow(b + 0.5, 2)) / 2 - pow(0.5, 2)) + 0.5 * abs(a - b)
+def _ensure_all_columns_have_select(left_cols: List[str],
+                                    right_cols: List[str],
+                                    fuzzy_match_input: transform_schema.FuzzyMatchInput):
+    """
+    Ensure that all columns in the left and right FlowDataEngines are included in the fuzzy match input's select
+     statements.
+    Args:
+        left_cols (List[str]): List of column names in the left FlowDataEngine.
+        right_cols (List[str]): List of column names in the right FlowDataEngine.
+        fuzzy_match_input (FuzzyMatchInput): Fuzzy match input configuration containing select statements.
+
+    Returns:
+        None
+    """
+    right_cols_in_select = {c.old_name for c in fuzzy_match_input.right_select.renames}
+    left_cols_in_select = {c.old_name for c in fuzzy_match_input.left_select.renames}
+
+    fuzzy_match_input.left_select.renames.extend(
+        [transform_schema.SelectInput(col) for col in left_cols if col not in left_cols_in_select])
+    fuzzy_match_input.right_select.renames.extend(
+        [transform_schema.SelectInput(col) for col in right_cols if col not in right_cols_in_select]
+    )
+
+
+def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: transform_schema.JoinInputs) -> None:
+    """
+    Ensure that the select columns in the fuzzy match input match the order of the incoming columns.
+    This function modifies the join_inputs object in-place.
+
+    Returns:
+        None
+    """
+    select_map = {select.new_name: select for select in join_inputs.renames}
+    ordered_renames = [select_map[col] for col in col_order if col in select_map]
+    join_inputs.renames = ordered_renames
 
 
 def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
                                  left_schema: List[FlowfileColumn],
                                  right_schema: List[FlowfileColumn]):
-    print('calculating fuzzy match schema')
+    _ensure_all_columns_have_select(left_cols=[col.column_name for col in left_schema],
+                                    right_cols=[col.column_name for col in right_schema],
+                                    fuzzy_match_input=fm_input)
+    _order_join_inputs_based_on_col_order(col_order=[col.column_name for col in left_schema],
+                                          join_inputs=fm_input.left_select)
+    _order_join_inputs_based_on_col_order(col_order=[col.column_name for col in right_schema],
+                                          join_inputs=fm_input.right_select)
     left_schema_dict, right_schema_dict = ({ls.name: ls for ls in left_schema}, {rs.name: rs for rs in right_schema})
     fm_input.auto_rename()
+
+    right_renames = {column.old_name: column.new_name for column in fm_input.right_select.renames}
+    new_join_mapping = rename_fuzzy_right_mapping(fm_input.join_mapping, right_renames)
 
     output_schema = []
     for column in fm_input.left_select.renames:
@@ -31,9 +78,9 @@ def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
         if column_schema and column.keep:
             output_schema.append(FlowfileColumn.from_input(column.new_name, column_schema.data_type,
                                                            example_values=column_schema.example_values))
-
-    for i, fm in enumerate(fm_input.join_mapping):
-        output_schema.append(FlowfileColumn.from_input(f'fuzzy_score_{i}', 'Float64'))
+    set_name_in_fuzzy_mappings(new_join_mapping)
+    output_schema.extend([FlowfileColumn.from_input(fuzzy_mapping.output_column_name, 'Float64')
+                          for fuzzy_mapping in new_join_mapping])
     return output_schema
 
 

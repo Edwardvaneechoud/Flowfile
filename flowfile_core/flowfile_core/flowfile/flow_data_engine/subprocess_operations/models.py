@@ -1,6 +1,6 @@
 from typing import Any, Optional, Literal
 from pydantic import BaseModel
-from flowfile_core.schemas.transform_schema import FuzzyMap
+from pl_fuzzy_frame_match.models import FuzzyMapping
 
 OperationType = Literal['store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'store_sample']
 
@@ -20,8 +20,8 @@ class FuzzyJoinInput(BaseModel):
     cache_dir: Optional[str] = None
     left_df_operation: PolarsOperation
     right_df_operation: PolarsOperation
-    fuzzy_maps: list[FuzzyMap]
-    flowfile_node_id: int|str
+    fuzzy_maps: list[FuzzyMapping]
+    flowfile_node_id: int | str
     flowfile_flow_id: int
 
 

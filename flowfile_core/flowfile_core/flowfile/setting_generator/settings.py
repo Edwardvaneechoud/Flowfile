@@ -4,6 +4,7 @@ from typing import Callable, Iterable
 from functools import wraps
 from flowfile_core.schemas.output_model import NodeData
 from flowfile_core.flowfile.setting_generator.setting_generator import SettingGenerator, SettingUpdator
+from pl_fuzzy_frame_match.models import FuzzyMapping
 
 setting_generator = SettingGenerator()
 setting_updator = SettingUpdator()
@@ -135,7 +136,7 @@ def cross_join(node_data: NodeData):
 
 
 def check_if_fuzzy_match_is_valid(left_columns: Iterable[str], right_columns: Iterable[str],
-                                  fuzzy_map: transform_schema.FuzzyMap) -> bool:
+                                  fuzzy_map: FuzzyMapping) -> bool:
     if fuzzy_map.left_col not in left_columns:
         return False
     if fuzzy_map.right_col not in right_columns:

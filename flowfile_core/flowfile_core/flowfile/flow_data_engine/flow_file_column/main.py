@@ -76,6 +76,67 @@ class FlowfileColumn:
         self.__sql_type = None
         self.__perc_unique = None
 
+    def __repr__(self):
+        """
+        Provides a concise, developer-friendly representation of the object.
+        Ideal for debugging and console inspection.
+        """
+        return (f"FlowfileColumn(name='{self.column_name}', "
+                f"type={self.data_type}, "
+                f"size={self.size}, "
+                f"nulls={self.number_of_empty_values})")
+
+    def __str__(self):
+        """
+        Provides a detailed, readable summary of the column's metadata.
+        It conditionally omits any attribute that is None, ensuring a clean output.
+        """
+        # --- Header (Always Shown) ---
+        header = f"<FlowfileColumn: '{self.column_name}'>"
+        lines = []
+
+        # --- Core Attributes (Conditionally Shown) ---
+        if self.data_type is not None:
+            lines.append(f"  Type: {self.data_type}")
+        if self.size is not None:
+            lines.append(f"  Non-Nulls: {self.size}")
+
+        # Calculate and display nulls if possible
+        if self.size is not None and self.number_of_empty_values is not None:
+            total_entries = self.size + self.number_of_empty_values
+            if total_entries > 0:
+                null_perc = (self.number_of_empty_values / total_entries) * 100
+                null_info = f"{self.number_of_empty_values} ({null_perc:.1f}%)"
+            else:
+                null_info = "0 (0.0%)"
+            lines.append(f"  Nulls: {null_info}")
+
+        if self.number_of_unique_values is not None:
+            lines.append(f"  Unique: {self.number_of_unique_values}")
+
+        # --- Conditional Stats Section ---
+        stats = []
+        if self.min_value is not None:
+            stats.append(f"    Min: {self.min_value}")
+        if self.max_value is not None:
+            stats.append(f"    Max: {self.max_value}")
+        if self.average_value is not None:
+            stats.append(f"    Mean: {self.average_value}")
+
+        if stats:
+            lines.append("  Stats:")
+            lines.extend(stats)
+
+        # --- Conditional Examples Section ---
+        if self.example_values:
+            example_str = str(self.example_values)
+            # Truncate long example strings for cleaner display
+            if len(example_str) > 70:
+                example_str = example_str[:67] + '...'
+            lines.append(f"  Examples: {example_str}")
+
+        return f"{header}\n" + "\n".join(lines)
+
     @classmethod
     def create_from_polars_type(cls, polars_type: PlType, **kwargs) -> "FlowfileColumn":
         for k, v in kwargs.items():

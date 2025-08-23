@@ -4,6 +4,9 @@ import polars as pl
 from polars.testing import assert_frame_equal
 from pathlib import Path
 from uuid import uuid4
+
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
@@ -224,6 +227,39 @@ def join_input_dataset() -> tuple[input_schema.NodeManualInput, input_schema.Nod
         )
     )
     return left_data, right_data
+
+
+@pytest.fixture
+def fuzzy_join_left_data() -> input_schema.NodeManualInput:
+    return input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="address", data_type="String"),
+            ],
+            data=[[1, 2, 3, 4, 5], ["Edward", "Eduward", "Edvard", "Charles", "Charlie"],
+                  ["123 Main Str", "123 Main Street", "456 Elm Str", "789 Oak Str", "789 Oak Street"]]
+        )
+    )
+
+
+@pytest.fixture
+def fuzzy_join_right_data() -> input_schema.NodeManualInput:
+    return input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=2,
+        raw_data_format=input_schema.RawData(
+            columns=[
+                input_schema.MinimalFieldInfo(name="first_name", data_type="String"),
+                input_schema.MinimalFieldInfo(name="street", data_type="String"),
+            ],
+            data=[[1, 2, 3, 4, 5], ["Edward", "Eduward", "Edvard", "Charles", "Charlie"],
+                  ["main street 123", "main street 123", "elm street 456", "oak street 789", "oak street 789"]]
+        )
+    )
 
 
 @pytest.fixture
@@ -2592,3 +2628,52 @@ def test_cloud_storage_writer(file_format):
         cloud_ss.CloudStorageReadSettingsInternal(read_settings=read_settings, connection=get_cloud_connection())
     )
     assert fde.collect()[0, 0] == 5
+
+
+def test_fuzzy_match_single_file(fuzzy_join_left_data):
+    flow = create_basic_flow(1)
+    flow.add_manual_input(fuzzy_join_left_data)
+    settings = input_schema.NodeFuzzyMatch(flow_id=1, node_id=2, description='', auto_generate_selection=True,
+                                           join_input=transform_schema.FuzzyMatchInput(
+                                               join_mapping=[FuzzyMapping('name',threshold_score=75.0)],
+            left_select=[transform_schema.SelectInput(old_name='id', keep=True),
+                         transform_schema.SelectInput(old_name='name', keep=True),
+                         transform_schema.SelectInput(old_name='address', keep=True)],
+            right_select=[transform_schema.SelectInput(old_name='id', keep=True),
+                          transform_schema.SelectInput(old_name='name', keep=True),
+                          transform_schema.SelectInput(old_name='address', keep=True)],
+                                           ), auto_keep_all=True)
+    flow.add_fuzzy_match(settings)
+
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2, input_type="main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2, input_type="right"))
+
+    code = export_flow_to_polars(flow)
+
+    verify_if_execute(code)
+    result=get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)
+
+
+def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data):
+    flow = create_basic_flow(1)
+    flow.add_manual_input(fuzzy_join_left_data)
+    settings = input_schema.NodeFuzzyMatch(flow_id=1, node_id=2, description='', auto_generate_selection=True,
+                                           join_input=transform_schema.FuzzyMatchInput(
+                                               join_mapping=[FuzzyMapping('name',threshold_score=75.0)],
+            left_select=[transform_schema.SelectInput(old_name='name', keep=True),
+                         transform_schema.SelectInput(old_name='id', keep=True)],
+            right_select=[transform_schema.SelectInput(old_name='name', keep=True),
+                          transform_schema.SelectInput(old_name='id', keep=False)],
+                                           ), auto_keep_all=True)
+    flow.add_fuzzy_match(settings)
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2, input_type="main"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2, input_type="right"))
+
+    code = export_flow_to_polars(flow)
+
+    verify_if_execute(code)
+    result = get_result_from_generated_code(code)
+    expected_df = flow.get_node(2).get_resulting_data().data_frame
+    assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)
