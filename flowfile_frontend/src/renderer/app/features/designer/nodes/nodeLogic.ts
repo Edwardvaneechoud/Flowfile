@@ -4,6 +4,8 @@ import { NodeData, nodeData as nodeDataRef, TableExample, RunInformation} from '
 import { AxiosResponse } from 'axios';
 
 export type ExecutionMode = 'Development' | 'Performance';
+export type ExecutionLocation = 'local' | 'remote';
+
 
 export interface FlowSettings {
   flow_id: number
@@ -14,6 +16,7 @@ export interface FlowSettings {
   modified_on?: number
   path?: string
   execution_mode: ExecutionMode
+  execution_location: ExecutionLocation
   show_detailed_progress: boolean
   is_running: boolean
 }

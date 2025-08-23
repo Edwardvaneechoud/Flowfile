@@ -1,9 +1,6 @@
 # flowframe/__init__.py
 """A Polars-like API for building ETL graphs."""
 
-from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-OFFLOAD_TO_WORKER.value = False
-
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
 from pl_fuzzy_frame_match.models import FuzzyMapping  # noqa: F401

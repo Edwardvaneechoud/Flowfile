@@ -1,8 +1,35 @@
 from typing import Optional, List, Dict, Tuple, Any, Literal, Annotated
 from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints
 from flowfile_core.flowfile.utils import create_unique_id
+from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 ExecutionModeLiteral = Literal['Development', 'Performance']
-ExecutionLocationsLiteral = Literal['auto', 'local', 'remote']
+ExecutionLocationsLiteral = Literal['local', 'remote']
+
+
+def get_global_execution_location() -> ExecutionLocationsLiteral:
+    """
+    Calculates the default execution location based on the global settings
+    Returns
+    -------
+    ExecutionLocationsLiteral where the current
+    """
+    if OFFLOAD_TO_WORKER:
+        return "remote"
+    return "local"
+
+
+def is_valid_execution_location_in_current_global_settings(execution_location: ExecutionLocationsLiteral) -> bool:
+    return not (get_global_execution_location() == "local" and execution_location == "remote")
+
+
+def get_prio_execution_location(local_execution_location: ExecutionLocationsLiteral,
+                                global_execution_location: ExecutionLocationsLiteral) -> ExecutionLocationsLiteral:
+    if local_execution_location == global_execution_location:
+        return local_execution_location
+    elif global_execution_location == "local" and local_execution_location == "remote":
+        return "local"
+    else:
+        return local_execution_location
 
 
 class FlowGraphConfig(BaseModel):
@@ -16,7 +43,7 @@ class FlowGraphConfig(BaseModel):
         name (str): The name of the flow.
         path (str): The file path associated with the flow.
         execution_mode (ExecutionModeLiteral): The mode of execution ('Development' or 'Performance').
-        execution_location (ExecutionLocationsLiteral): The location for execution ('auto', 'local', 'remote').
+        execution_location (ExecutionLocationsLiteral): The location for execution ('local', 'remote').
     """
     flow_id: int = Field(default_factory=create_unique_id, description="Unique identifier for the flow.")
     description: Optional[str] = None
@@ -24,7 +51,23 @@ class FlowGraphConfig(BaseModel):
     name: str = ''
     path: str = ''
     execution_mode: ExecutionModeLiteral = 'Performance'
-    execution_location: ExecutionLocationsLiteral = "auto"
+    execution_location: ExecutionLocationsLiteral = Field(default_factory=get_global_execution_location)
+
+    @field_validator('execution_location', mode='before')
+    def validate_and_set_execution_location(cls, v: Optional[ExecutionLocationsLiteral]) -> ExecutionLocationsLiteral:
+        """
+        Validates and sets the execution location.
+        1.  **If `None` is provided**: It defaults to the location determined by global settings.
+        2.  **If a value is provided**: It checks if the value is compatible with the global
+            settings. If not (e.g., requesting 'remote' when only 'local' is possible),
+            it corrects the value to a compatible one.
+        """
+        if v is None:
+            return get_global_execution_location()
+        if v == "auto":
+            return get_global_execution_location()
+
+        return get_prio_execution_location(v, get_global_execution_location())
 
 
 class FlowSettings(FlowGraphConfig):

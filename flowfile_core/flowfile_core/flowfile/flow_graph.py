@@ -180,7 +180,7 @@ class FlowGraph:
     start_datetime: datetime = None
     end_datetime: datetime = None
     nodes_completed: int = 0
-    flow_settings: schemas.FlowSettings = None
+    _flow_settings: schemas.FlowSettings = None
     flow_logger: FlowLogger
 
     def __init__(self,
@@ -204,7 +204,7 @@ class FlowGraph:
         if isinstance(flow_settings, schemas.FlowGraphConfig):
             flow_settings = schemas.FlowSettings.from_flow_settings_input(flow_settings)
 
-        self.flow_settings = flow_settings
+        self._flow_settings = flow_settings
         self.uuid = str(uuid1())
         self.nodes_completed = 0
         self.start_datetime = None
@@ -229,7 +229,18 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
-        skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+    @property
+    def flow_settings(self) -> schemas.FlowSettings:
+        return self._flow_settings
+
+    @flow_settings.setter
+    def flow_settings(self, flow_settings: schemas.FlowSettings):
+        if (
+                (self._flow_settings.execution_location != flow_settings.execution_location) or
+                (self._flow_settings.execution_mode != flow_settings.execution_mode)
+        ):
+            self.reset()
+        self._flow_settings = flow_settings
 
     def add_node_promise(self, node_promise: input_schema.NodePromise):
         """Adds a placeholder node to the graph that is not yet fully configured.
@@ -320,6 +331,7 @@ class FlowGraph:
         if not self._node_db:
             self.flow_logger.info("Empty flow graph")
             return
+
         # Build node information
         node_info = build_node_info(self.nodes)
 
@@ -339,7 +351,7 @@ class FlowGraph:
 
         # Track which nodes connect to what
         merge_points = define_node_connections(node_info)
-
+        
         # Build the flow paths
 
         # Find the maximum label length for each depth level
@@ -348,7 +360,7 @@ class FlowGraph:
             if depth in depth_groups:
                 max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
                 max_label_length[depth] = max_len
-
+        
         # Draw the paths
         drawn_nodes = set()
         merge_drawn = set()
@@ -1583,6 +1595,8 @@ class FlowGraph:
         Args:
             execution_location: The execution location to set.
         """
+        if self.flow_settings.execution_location != execution_location:
+            self.reset()
         self.flow_settings.execution_location = execution_location
 
     def run_graph(self) -> RunInformation | None:
