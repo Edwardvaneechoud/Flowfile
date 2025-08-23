@@ -337,11 +337,8 @@ def test_add_fuzzy_match():
 
 
 def test_add_fuzzy_match_lcoal():
-    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-
     graph = create_graph()
     graph.flow_settings.execution_location = "local"
-    OFFLOAD_TO_WORKER.value = False
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
@@ -1237,8 +1234,7 @@ def test_add_fuzzy_match_only_local():
     output_data.assert_equal(expected_data)
 
 
-def test_changes_execution_mode():
-
+def test_changes_execution_mode(flow_logger):
     settings = {'flow_id': 1, 'node_id': 1, 'pos_x': 304.8727272727273,
                 'pos_y': 549.5272727272727, 'is_setup': True, 'description': 'Test csv',
                 'received_file': {'id': None, 'name': 'fake_data.csv',
@@ -1251,10 +1247,12 @@ def test_changes_execution_mode():
                                   'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
                                   'type_inference': False}}
     graph = create_graph()
+    flow_logger.warning(str(graph))
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
     graph.add_read(input_file)
     run_info = graph.run_graph()
+    handle_run_info(run_info)
     graph.add_select(select_settings=input_schema.NodeSelect(flow_id=1, node_id=2,
                                                              select_input=[transform_schema.SelectInput("City")],
                                                              keep_missing=True))

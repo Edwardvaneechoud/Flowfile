@@ -76,8 +76,12 @@
             style="width: 100%"
             @change="pushFlowSettings"
           >
-            <el-option v-for="executionLocationOption in executionLocationOptions"
-             :key="executionLocationOption.key" :label="executionLocationOption.label" :value="executionLocationOption.key" />
+            <el-option
+              v-for="executionLocationOption in executionLocationOptions"
+              :key="executionLocationOption.key"
+              :label="executionLocationOption.label"
+              :value="executionLocationOption.key"
+            />
           </el-select>
         </div>
         <div class="form-group">
@@ -128,16 +132,12 @@ interface ExecutionLocationOption {
   label: string;
 }
 
-
 const executionLocationOptions = ref<ExecutionLocationOption[]>([
-  {key: "local", label: "Local"},
-  {key: "remote", label: "Remote"}
-]
-)
+  { key: "local", label: "Local" },
+  { key: "remote", label: "Remote" },
+]);
 
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
-
-
 
 const loadFlowSettings = async () => {
   if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;

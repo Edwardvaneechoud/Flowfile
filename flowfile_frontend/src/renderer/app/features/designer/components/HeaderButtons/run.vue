@@ -33,7 +33,6 @@ const props = defineProps({
   },
 });
 
-
 const freezeFlow = () => {
   let vueFlowElement: VueFlowStore = nodeStore.vueFlowInstance;
   if (vueFlowElement) {
@@ -58,13 +57,18 @@ interface NotificationConfig {
   type: "success" | "error";
 }
 
-const showNotification = (title: string, message: string, type?: "success" | "error", dangerouslyUseHTMLString?: boolean) => {
+const showNotification = (
+  title: string,
+  message: string,
+  type?: "success" | "error",
+  dangerouslyUseHTMLString?: boolean,
+) => {
   ElNotification({
     title: title,
     message: message,
     type: type,
     position: "top-left",
-    dangerouslyUseHTMLString: dangerouslyUseHTMLString
+    dangerouslyUseHTMLString: dangerouslyUseHTMLString,
   });
 };
 
@@ -119,26 +123,25 @@ const checkRunStatus = async () => {
 };
 
 const runFlow = async () => {
-  
   const flowSettings: FlowSettings | null = await getFlowSettings(nodeStore.flow_id);
   if (!flowSettings) {
     throw new Error("Failed to retrieve flow settings");
   }
 
   const escapeHtml = (text: string): string => {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;}
-  
-  
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  };
+
   freezeFlow();
 
   nodeStore.resetNodeResult();
-  
-  const executionLocationText = flowSettings.execution_location === 'local' ? 'Local' : 'Remote';
-  
+
+  const executionLocationText = flowSettings.execution_location === "local" ? "Local" : "Remote";
+
   const escapedFlowName = escapeHtml(flowSettings.name);
-  
+
   const notificationMessage = `
     <div style="line-height: 1.4;">
       <div><strong>Flow:</strong> "${escapedFlowName}"</div>
@@ -146,8 +149,7 @@ const runFlow = async () => {
       <div><strong>Location:</strong> ${executionLocationText}</div>
     </div>
   `;
-  
-  
+
   showNotification("🚀 Flow Started", notificationMessage, undefined, true);
 
   try {
