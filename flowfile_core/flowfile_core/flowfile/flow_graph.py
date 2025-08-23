@@ -2,7 +2,6 @@ import datetime
 import pickle
 import polars as pl
 import fastexcel
-import re
 from fastapi.exceptions import HTTPException
 from time import time
 from functools import partial
@@ -33,7 +32,10 @@ from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
-from flowfile_core.flowfile.util.graph_tree import add_undrawn_nodes, build_flow_paths, build_node_info, calculate_depth, define_node_connections, draw_merged_paths, draw_standalone_paths, group_nodes_by_depth, trace_path
+from flowfile_core.flowfile.graph_tree.graph_tree import (add_un_drawn_nodes, build_flow_paths,
+                                                          build_node_info, calculate_depth,
+                                                          define_node_connections, draw_merged_paths,
+                                                          draw_standalone_paths, group_nodes_by_depth)
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
@@ -327,7 +329,7 @@ class FlowGraph:
     def print_tree(self):
         """Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art."""
         if not self._node_db:
-            print("Empty flow graph")
+            self.flow_logger.info("Empty flow graph")
             return
 
         # Build node information
@@ -339,40 +341,35 @@ class FlowGraph:
 
         # Group nodes by depth
         depth_groups, max_depth = group_nodes_by_depth(node_info)
-
+        
         # Sort nodes within each depth group
         for depth in depth_groups:
             depth_groups[depth].sort()
 
         # Create the main flow visualization
-        lines = []
-        lines.append("=" * 80)
-        lines.append("Flow Graph Visualization")
-        lines.append("=" * 80)
-        lines.append("")
+        lines = ["=" * 80, "Flow Graph Visualization", "=" * 80, ""]
 
         # Track which nodes connect to what
         merge_points = define_node_connections(node_info)
-
+        
         # Build the flow paths
-        paths = build_flow_paths(node_info,self._flow_starts, merge_points)
 
         # Find the maximum label length for each depth level
         max_label_length = {}
         for depth in range(max_depth + 1):
             if depth in depth_groups:
-                max_len = max(len(node_info[nid]['label']) for nid in depth_groups[depth])
+                max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
                 max_label_length[depth] = max_len
-
+        
         # Draw the paths
         drawn_nodes = set()
         merge_drawn = set()
-
+        
         # Group paths by their merge points
         paths_by_merge = {}
         standalone_paths = []
-
-        #Build flow paths
+        
+        # Build flow paths
         paths = build_flow_paths(node_info, self._flow_starts, merge_points)
 
         # Define paths to merge and standalone paths
@@ -386,27 +383,29 @@ class FlowGraph:
                 standalone_paths.append(path)
 
         # Draw merged paths
-        draw_merged_paths(node_info, merge_points, paths_by_merge,merge_drawn, drawn_nodes, lines)
+        draw_merged_paths(node_info, merge_points, paths_by_merge, merge_drawn, drawn_nodes, lines)
 
         # Draw standlone paths
         draw_standalone_paths(drawn_nodes, standalone_paths, lines, node_info)
 
         # Add undrawn nodes
-        add_undrawn_nodes(drawn_nodes, node_info, lines)
-
+        add_un_drawn_nodes(drawn_nodes, node_info, lines)
+        
         try:
-            skip_nodes, ordered_nodes = compute_execution_plan(nodes=self.nodes,flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            skip_nodes, ordered_nodes = compute_execution_plan(
+                nodes=self.nodes,
+                flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
             if ordered_nodes:
                 for i, node in enumerate(ordered_nodes, 1):
-                    lines.append(f"  {i:3d}. {node_info[node.node_id]['label']}")
+                    lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
         except Exception as e:
             lines.append(f"  Could not determine execution order: {e}")
-
+        
         # Print everything
         output = "\n".join(lines)
-
+        
         print(output)
-
+        
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""
         output = []
