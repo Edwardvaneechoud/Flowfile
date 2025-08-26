@@ -7,6 +7,7 @@ import argparse
 
 from passlib.context import CryptContext
 from starlette.config import Config
+from shared.storage_config import storage
 
 from flowfile_core.configs.utils import MutableBool
 
@@ -93,7 +94,7 @@ FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
 IS_RUNNING_IN_DOCKER = os.getenv('RUNNING_IN_DOCKER', 'false').lower() == 'true'
-TEMP_DIR = get_temp_dir()
+TEMP_DIR = storage.temp_directory
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120

@@ -23,7 +23,7 @@ def submit_query(polars_script: models.PolarsScript, background_tasks: Backgroun
 
     try:
         polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
-        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else CACHE_DIR.name
+        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else str(CACHE_DIR)
         polars_serializable_object = polars_script.polars_serializable_object()
         file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
         result_type = "polars" if polars_script.operation_type == "store" else "other"
