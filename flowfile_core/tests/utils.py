@@ -10,7 +10,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 
-def get_cloud_connection():
+def get_aws_cloud_connection():
     """Reusable AWS CLI connection configuration."""
     minio_connection = FullCloudStorageConnection(
         connection_name="minio-test",
