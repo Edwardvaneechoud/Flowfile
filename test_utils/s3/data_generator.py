@@ -24,6 +24,7 @@ MINIO_SECRET_KEY = os.environ.get("TEST_MINIO_SECRET_KEY", "minioadmin")
 MINIO_CONTAINER_NAME = os.environ.get("TEST_MINIO_CONTAINER", "test-minio-s3")
 MINIO_ENDPOINT_URL = f"http://{MINIO_HOST}:{MINIO_PORT}"
 
+
 def _create_single_csv_file(s3_client, df: pl.DataFrame, bucket_name: str):
     """Creates a single CSV file from a DataFrame and uploads it to S3."""
     logger.info("Writing single-file CSV...")

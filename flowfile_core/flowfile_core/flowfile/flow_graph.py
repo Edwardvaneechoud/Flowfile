@@ -2,7 +2,6 @@ import datetime
 import pickle
 import polars as pl
 import fastexcel
-import copy
 from fastapi.exceptions import HTTPException
 from time import time
 from functools import partial
@@ -14,16 +13,17 @@ from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.fuzzy_matching.settings_validator import (calculate_fuzzy_match_schema,
-                                                                                       pre_calculate_pivot_schema)
+
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.flowfile.flow_data_engine.read_excel_tables import get_open_xlsx_datatypes, \
-    get_calamine_xlsx_data_types
+from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (get_open_xlsx_datatypes,
+                                                                       get_calamine_xlsx_data_types)
+
+from flowfile_core.flowfile.schema_callbacks import (calculate_fuzzy_match_schema, pre_calculate_pivot_schema)
 from flowfile_core.flowfile.sources import external_sources
 from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.output_model import TableExample, NodeData, NodeResult, RunInformation
+from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal,
                                                          CloudStorageWriteSettingsInternal,
                                                          FullCloudStorageConnection,
@@ -31,7 +31,11 @@ from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSetting
 from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.flowfile.graph_tree.graph_tree import (add_un_drawn_nodes, build_flow_paths,
+                                                          build_node_info, calculate_depth,
+                                                          define_node_connections, draw_merged_paths,
+                                                          draw_standalone_paths, group_nodes_by_depth)
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
                                                                                                  ExternalDatabaseWriter,
@@ -47,6 +51,21 @@ from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layou
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
                     end_row: int, end_column: int, has_headers: bool):
+    """Calculates the schema of an XLSX file by reading a sample of rows.
+
+    Args:
+        engine: The engine to use for reading ('openpyxl' or 'calamine').
+        file_path: The path to the XLSX file.
+        sheet_name: The name of the sheet to read.
+        start_row: The starting row for data reading.
+        start_column: The starting column for data reading.
+        end_row: The ending row for data reading.
+        end_column: The ending column for data reading.
+        has_headers: A boolean indicating if the file has a header row.
+
+    Returns:
+        A list of FlowfileColumn objects representing the schema.
+    """
     try:
         logger.info('Starting to calculate the schema')
         if engine == 'openpyxl':
@@ -69,23 +88,64 @@ def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int
 
 
 def skip_node_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
+    """Logs a warning message listing all nodes that will be skipped during execution.
+
+    Args:
+        flow_logger: The logger instance for the flow.
+        nodes: A list of FlowNode objects to be skipped.
+    """
     if len(nodes) > 0:
         msg = "\n".join(str(node) for node in nodes)
         flow_logger.warning(f'skipping nodes:\n{msg}')
 
 
 def execution_order_message(flow_logger: FlowLogger, nodes: List[FlowNode]) -> None:
+    """Logs an informational message showing the determined execution order of nodes.
+
+    Args:
+        flow_logger: The logger instance for the flow.
+        nodes: A list of FlowNode objects in the order they will be executed.
+    """
     msg = "\n".join(str(node) for node in nodes)
     flow_logger.info(f'execution order:\n{msg}')
 
 
 def get_xlsx_schema_callback(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
                              end_row: int, end_column: int, has_headers: bool):
+    """Creates a partially applied function for lazy calculation of an XLSX schema.
+
+    Args:
+        engine: The engine to use for reading.
+        file_path: The path to the XLSX file.
+        sheet_name: The name of the sheet.
+        start_row: The starting row.
+        start_column: The starting column.
+        end_row: The ending row.
+        end_column: The ending column.
+        has_headers: A boolean indicating if the file has headers.
+
+    Returns:
+        A callable function that, when called, will execute `get_xlsx_schema`.
+    """
     return partial(get_xlsx_schema, engine=engine, file_path=file_path, sheet_name=sheet_name, start_row=start_row,
                    start_column=start_column, end_row=end_row, end_column=end_column, has_headers=has_headers)
 
 
-def get_cloud_connection_settings(connection_name: str, user_id: int, auth_mode: AuthMethod) -> FullCloudStorageConnection:
+def get_cloud_connection_settings(connection_name: str,
+                                  user_id: int, auth_mode: AuthMethod) -> FullCloudStorageConnection:
+    """Retrieves cloud storage connection settings, falling back to environment variables if needed.
+
+    Args:
+        connection_name: The name of the saved connection.
+        user_id: The ID of the user owning the connection.
+        auth_mode: The authentication method specified by the user.
+
+    Returns:
+        A FullCloudStorageConnection object with the connection details.
+
+    Raises:
+        HTTPException: If the connection settings cannot be found.
+    """
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
     if cloud_connection_settings is None and auth_mode in ("env_vars", "auto"):
         # If the auth mode is aws-cli, we do not need connection settings
@@ -98,18 +158,10 @@ def get_cloud_connection_settings(connection_name: str, user_id: int, auth_mode:
 
 
 class FlowGraph:
+    """A class representing a Directed Acyclic Graph (DAG) for data processing pipelines.
+
+    It manages nodes, connections, and the execution of the entire flow.
     """
-       FlowGraph is a class that enables Extract, Transform and Load (ETL) operations
-       on data. It allows you to create a Directed Acyclic Graph (DAG) where each
-       node represents a step in the ETL pipeline.
-
-       The class offers methods to add transformations and data sources, as well as
-       methods to run the transformations and generate results.
-
-       Attributes:
-           _input_cols (set): A set that stores the input columns for the transformations.
-           _output_cols (set): A set that stores the output columns from the transformations.
-       """
     uuid: str
     depends_on: Dict[int, Union[ParquetFile, FlowDataEngine, "FlowGraph", pl.DataFrame,]]
     _flow_id: int
@@ -128,25 +180,39 @@ class FlowGraph:
     start_datetime: datetime = None
     end_datetime: datetime = None
     nodes_completed: int = 0
-    flow_settings: schemas.FlowSettings = None
+    _flow_settings: schemas.FlowSettings = None
     flow_logger: FlowLogger
 
-    def __init__(self, flow_id: int,
-                 flow_settings: schemas.FlowSettings,
+    def __init__(self,
+                 flow_settings: schemas.FlowSettings | schemas.FlowGraphConfig,
                  name: str = None, input_cols: List[str] = None,
                  output_cols: List[str] = None,
                  path_ref: str = None,
                  input_flow: Union[ParquetFile, FlowDataEngine, "FlowGraph"] = None,
                  cache_results: bool = False):
-        self.flow_settings = flow_settings
+        """Initializes a new FlowGraph instance.
+
+        Args:
+            flow_settings: The configuration settings for the flow.
+            name: The name of the flow.
+            input_cols: A list of input column names.
+            output_cols: A list of output column names.
+            path_ref: An optional path to an initial data source.
+            input_flow: An optional existing data object to start the flow with.
+            cache_results: A global flag to enable or disable result caching.
+        """
+        if isinstance(flow_settings, schemas.FlowGraphConfig):
+            flow_settings = schemas.FlowSettings.from_flow_settings_input(flow_settings)
+
+        self._flow_settings = flow_settings
         self.uuid = str(uuid1())
         self.nodes_completed = 0
         self.start_datetime = None
         self.end_datetime = None
         self.latest_run_info = None
         self.node_results = []
-        self._flow_id = flow_id
-        self.flow_logger = FlowLogger(flow_id)
+        self._flow_id = flow_settings.flow_id
+        self.flow_logger = FlowLogger(flow_settings.flow_id)
         self._flow_starts: List[FlowNode] = []
         self._results = None
         self.schema = None
@@ -163,8 +229,27 @@ class FlowGraph:
         elif input_flow is not None:
             self.add_datasource(input_file=input_flow)
 
-    def add_node_promise(self, node_promise: input_schema.NodePromise):
+    @property
+    def flow_settings(self) -> schemas.FlowSettings:
+        return self._flow_settings
 
+    @flow_settings.setter
+    def flow_settings(self, flow_settings: schemas.FlowSettings):
+        if (
+                (self._flow_settings.execution_location != flow_settings.execution_location) or
+                (self._flow_settings.execution_mode != flow_settings.execution_mode)
+        ):
+            self.reset()
+        self._flow_settings = flow_settings
+
+    def add_node_promise(self, node_promise: input_schema.NodePromise):
+        """Adds a placeholder node to the graph that is not yet fully configured.
+
+        Useful for building the graph structure before all settings are available.
+
+        Args:
+            node_promise: A promise object containing basic node information.
+        """
         def placeholder(n: FlowNode = None):
             if n is None:
                 return FlowDataEngine()
@@ -174,9 +259,14 @@ class FlowGraph:
                            setting_input=node_promise)
 
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
-        """
-        Calculates and applies a layered layout to all nodes in the graph.
-        Updates the pos_x and pos_y attributes of the node setting inputs.
+        """Calculates and applies a layered layout to all nodes in the graph.
+
+        This updates their x and y positions for UI rendering.
+
+        Args:
+            y_spacing: The vertical spacing between layers.
+            x_spacing: The horizontal spacing between nodes in the same layer.
+            initial_y: The initial y-position for the first layer.
         """
         self.flow_logger.info("Applying layered layout...")
         start_time = time()
@@ -203,7 +293,7 @@ class FlowGraph:
                     else:
                         self.flow_logger.warning(f"Node {node_id} setting_input ({type(setting)}) lacks pos_x/pos_y attributes.")
                 elif node:
-                     self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
+                    self.flow_logger.warning(f"Node {node_id} lacks setting_input attribute.")
                 # else: Node not found, already warned by calculate_layered_layout
 
             end_time = time()
@@ -211,51 +301,20 @@ class FlowGraph:
 
         except Exception as e:
             self.flow_logger.error(f"Error applying layout: {e}")
-            raise # Optional: re-raise the exception
-
-    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
-        node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
-        self.add_explore_data(node_analysis)
-
-    def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
-        sample_size: int = 10000
-
-        def analysis_preparation(flowfile_table: FlowDataEngine):
-            if flowfile_table.number_of_records <= 0:
-                number_of_records = flowfile_table.get_number_of_records(calculate_in_worker_process=True)
-            else:
-                number_of_records = flowfile_table.number_of_records
-            if number_of_records > sample_size:
-                flowfile_table = flowfile_table.get_sample(sample_size, random=True)
-            external_sampler = ExternalDfFetcher(
-                lf=flowfile_table.data_frame,
-                file_ref="__gf_walker"+node.hash,
-                wait_on_completion=True,
-                node_id=node.node_id,
-                flow_id=self.flow_id,
-            )
-            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref)
-            return flowfile_table
-
-        def schema_callback():
-            node = self.get_node(node_analysis.node_id)
-            if len(node.all_inputs) == 1:
-                input_node = node.all_inputs[0]
-                return input_node.schema
-            else:
-                return [FlowfileColumn.from_input('col_1', 'na')]
-
-        self.add_node_step(node_id=node_analysis.node_id, node_type='explore_data',
-                           function=analysis_preparation,
-                           setting_input=node_analysis, schema_callback=schema_callback)
-        node = self.get_node(node_analysis.node_id)
+            raise  # Optional: re-raise the exception
 
     @property
     def flow_id(self) -> int:
+        """Gets the unique identifier of the flow."""
         return self._flow_id
 
     @flow_id.setter
     def flow_id(self, new_id: int):
+        """Sets the unique identifier for the flow and updates all child nodes.
+
+        Args:
+            new_id: The new flow ID.
+        """
         self._flow_id = new_id
         for node in self.nodes:
             if hasattr(node.setting_input, 'flow_id'):
@@ -263,84 +322,115 @@ class FlowGraph:
         self.flow_settings.flow_id = new_id
 
     def __repr__(self):
-        """
-        Official string representation of the FlowGraph class.
-        """
+        """Provides the official string representation of the FlowGraph instance."""
         settings_str = "  -" + '\n  -'.join(f"{k}: {v}" for k, v in self.flow_settings)
         return f"FlowGraph(\nNodes: {self._node_db}\n\nSettings:\n{settings_str}"
 
     def print_tree(self):
-        """
-        Print flow_graph as a tree.
-        """
-        max_node_id = max(self._node_db.keys())
+        """Print flow_graph as a visual tree structure, showing the DAG relationships with ASCII art."""
+        if not self._node_db:
+            self.flow_logger.info("Empty flow graph")
+            return
 
-        tree = ""
-        tabs = 0
+        # Build node information
+        node_info = build_node_info(self.nodes)
 
-        ordered_nodes = [i.node_id for i in self.execution_order]
+        # Calculate depths for all nodes
+        for node_id in node_info:
+            calculate_depth(node_id, node_info)
 
-        for node in ordered_nodes:
-            tabs += 1
-            node_input = node.setting_input
-            operation = str(self._node_db[node_input.node_id]).split("(")[1][:-1].replace("_", " ").title()
+        # Group nodes by depth
+        depth_groups, max_depth = group_nodes_by_depth(node_info)
+        
+        # Sort nodes within each depth group
+        for depth in depth_groups:
+            depth_groups[depth].sort()
 
-            if operation == "Formula":
-                operation = "With Columns"
+        # Create the main flow visualization
+        lines = ["=" * 80, "Flow Graph Visualization", "=" * 80, ""]
 
+        # Track which nodes connect to what
+        merge_points = define_node_connections(node_info)
+        
+        # Build the flow paths
 
-            tree += str(operation) + " (id=" + str(node_input.node_id) + ")"
+        # Find the maximum label length for each depth level
+        max_label_length = {}
+        for depth in range(max_depth + 1):
+            if depth in depth_groups:
+                max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
+                max_label_length[depth] = max_len
+        
+        # Draw the paths
+        drawn_nodes = set()
+        merge_drawn = set()
+        
+        # Group paths by their merge points
+        paths_by_merge = {}
+        standalone_paths = []
+        
+        # Build flow paths
+        paths = build_flow_paths(node_info, self._flow_starts, merge_points)
 
-            if show_descriptions & show_schema:
-                raise ValueError('show_descriptions and show_schema cannot be True simultaneously')
-            if show_descriptions:
-                tree += ": " + str(node_input.description)
-            elif show_schema:
-                tree += " -> ["
-                if operation == "Manual Input":
-                    schema = ", ".join([str(i.name) + ": " + str(i.data_type) for i in node_input.raw_data_format.columns])
-                    tree += schema
-                elif operation == "With Columns":
-                    tree_with_col_schema = ", " + node_input.function.field.name + ": " + node_input.function.field.data_type 
-                    tree += schema + tree_with_col_schema
-                elif operation == "Filter":
-                    index = node_input.filter_input.advanced_filter.find("]")
-                    filtered_column = str(node_input.filter_input.advanced_filter[1:index])
-                    schema = re.sub('({str(filtered_column)}: [A-Za-z0-9]+\,\s)', "", schema)
-                    tree += schema
-                elif operation == "Group By":
-                    for col in node_input.groupby_input.agg_cols:
-                        schema = re.sub(str(col.old_name) + ': [a-z0-9]+\, ', "", schema)
-                    tree += schema
-                tree += "]"
+        # Define paths to merge and standalone paths
+        for path in paths:
+            if len(path) > 1 and path[-1] in merge_points and len(merge_points[path[-1]]) > 1:
+                merge_id = path[-1]
+                if merge_id not in paths_by_merge:
+                    paths_by_merge[merge_id] = []
+                paths_by_merge[merge_id].append(path)
             else:
-                if operation == "Manual Input":
-                    tree += ": " + str(node_input.raw_data_format.data)
-                elif operation == "With Columns":
-                    tree += ": " + str(node_input.function)
-                elif operation == "Filter":
-                    tree += ": " + str(node_input.filter_input.advanced_filter)
-                elif operation == "Group By":
-                    tree += ": groupby=[" + ", ".join([col.old_name for col in node_input.groupby_input.agg_cols if col.agg == "groupby"]) + "], "
-                    tree += "agg=[" + ", ".join([str(col.agg) + "(" + str(col.old_name) + ")" for col in node_input.groupby_input.agg_cols if col.agg != "groupby"]) + "]"
+                standalone_paths.append(path)
 
-            if node_input.node_id < max_node_id:
-                tree += "\n" + "# " + " "*3*(tabs-1) + "|___ "
-            print("\n"*2)
+        # Draw merged paths
+        draw_merged_paths(node_info, merge_points, paths_by_merge, merge_drawn, drawn_nodes, lines)
 
-        return print(tree)
+        # Draw standlone paths
+        draw_standalone_paths(drawn_nodes, standalone_paths, lines, node_info)
+
+        # Add undrawn nodes
+        add_un_drawn_nodes(drawn_nodes, node_info, lines)
+        
+        try:
+            skip_nodes, ordered_nodes = compute_execution_plan(
+                nodes=self.nodes,
+                flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            if ordered_nodes:
+                for i, node in enumerate(ordered_nodes, 1):
+                    lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
+        except Exception as e:
+            lines.append(f"  Could not determine execution order: {e}")
+        
+        # Print everything
+        output = "\n".join(lines)
+        
+        print(output)
         
     def get_nodes_overview(self):
+        """Gets a list of dictionary representations for all nodes in the graph."""
         output = []
         for v in self._node_db.values():
             output.append(v.get_repr())
         return output
 
     def remove_from_output_cols(self, columns: List[str]):
+        """Removes specified columns from the list of expected output columns.
+
+        Args:
+            columns: A list of column names to remove.
+        """
         cols = set(columns)
         self._output_cols = [c for c in self._output_cols if c not in cols]
 
-    def get_node(self, node_id: Union[int, str] = None) -> FlowNode:
+    def get_node(self, node_id: Union[int, str] = None) -> FlowNode | None:
+        """Retrieves a node from the graph by its ID.
+
+        Args:
+            node_id: The ID of the node to retrieve. If None, retrieves the last added node.
+
+        Returns:
+            The FlowNode object, or None if not found.
+        """
         if node_id is None:
             node_id = self._node_ids[-1]
         node = self._node_db.get(node_id)
@@ -348,6 +438,12 @@ class FlowGraph:
             return node
 
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
+        """Adds a pivot node to the graph.
+
+        Args:
+            pivot_settings: The settings for the pivot operation.
+        """
+
         def _func(fl: FlowDataEngine):
             return fl.do_pivot(pivot_settings.pivot_input, self.flow_logger.get_node_logger(pivot_settings.node_id))
 
@@ -367,6 +463,11 @@ class FlowGraph:
         node.schema_callback = schema_callback
 
     def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):
+        """Adds an unpivot node to the graph.
+
+        Args:
+            unpivot_settings: The settings for the unpivot operation.
+        """
 
         def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.unpivot(unpivot_settings.unpivot_input)
@@ -378,6 +479,12 @@ class FlowGraph:
                            input_node_ids=[unpivot_settings.depending_on_id])
 
     def add_union(self, union_settings: input_schema.NodeUnion):
+        """Adds a union node to combine multiple data streams.
+
+        Args:
+            union_settings: The settings for the union operation.
+        """
+
         def _func(*flowfile_tables: FlowDataEngine):
             dfs: List[pl.LazyFrame] | List[pl.DataFrame] = [flt.data_frame for flt in flowfile_tables]
             return FlowDataEngine(pl.concat(dfs, how='diagonal_relaxed'))
@@ -388,7 +495,60 @@ class FlowGraph:
                            setting_input=union_settings,
                            input_node_ids=union_settings.depending_on_ids)
 
+    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
+        """Adds a data exploration/analysis node based on a node promise.
+
+        Args:
+            node_promise: The promise representing the node to be analyzed.
+        """
+        node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
+        self.add_explore_data(node_analysis)
+
+    def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
+        """Adds a specialized node for data exploration and visualization.
+
+        Args:
+            node_analysis: The settings for the data exploration node.
+        """
+        sample_size: int = 10000
+
+        def analysis_preparation(flowfile_table: FlowDataEngine):
+            if flowfile_table.number_of_records <= 0:
+                number_of_records = flowfile_table.get_number_of_records(calculate_in_worker_process=True)
+            else:
+                number_of_records = flowfile_table.number_of_records
+            if number_of_records > sample_size:
+                flowfile_table = flowfile_table.get_sample(sample_size, random=True)
+            external_sampler = ExternalDfFetcher(
+                lf=flowfile_table.data_frame,
+                file_ref="__gf_walker"+node.hash,
+                wait_on_completion=True,
+                node_id=node.node_id,
+                flow_id=self.flow_id,
+            )
+            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref,
+                                                                  n=min(sample_size, number_of_records))
+            return flowfile_table
+
+        def schema_callback():
+            node = self.get_node(node_analysis.node_id)
+            if len(node.all_inputs) == 1:
+                input_node = node.all_inputs[0]
+                return input_node.schema
+            else:
+                return [FlowfileColumn.from_input('col_1', 'na')]
+
+        self.add_node_step(node_id=node_analysis.node_id, node_type='explore_data',
+                           function=analysis_preparation,
+                           setting_input=node_analysis, schema_callback=schema_callback)
+        node = self.get_node(node_analysis.node_id)
+
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
+        """Adds a group-by aggregation node to the graph.
+
+        Args:
+            group_by_settings: The settings for the group-by operation.
+        """
 
         def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.do_group_by(group_by_settings.groupby_input, False)
@@ -402,6 +562,7 @@ class FlowGraph:
         node = self.get_node(group_by_settings.node_id)
 
         def schema_callback():
+
             output_columns = [(c.old_name, c.new_name, c.output_type) for c in group_by_settings.groupby_input.agg_cols]
             depends_on = node.node_inputs.main_inputs[0]
             input_schema_dict: Dict[str, str] = {s.name: s.data_type for s in depends_on.schema}
@@ -413,22 +574,13 @@ class FlowGraph:
 
         node.schema_callback = schema_callback
 
-    def add_or_update_column_func(self, col_name: str, pl_dtype: pl.DataType, depends_on: FlowNode):
-        col_output = FlowfileColumn.from_input(column_name=col_name, data_type=str(pl_dtype))
-        schema = depends_on.schema
-        col_exist = depends_on.get_flow_file_column_schema(col_name)
-        if col_exist is None:
-            new_schema = schema + [col_output]
-        else:
-            new_schema = []
-            for s in self.schema:
-                if s.name == col_name:
-                    new_schema.append(col_output)
-                else:
-                    new_schema.append(s)
-        return new_schema
-
     def add_filter(self, filter_settings: input_schema.NodeFilter):
+        """Adds a filter node to the graph.
+
+        Args:
+            filter_settings: The settings for the filter operation.
+        """
+
         is_advanced = filter_settings.filter_input.filter_type == 'advanced'
         if is_advanced:
             predicate = filter_settings.filter_input.advanced_filter
@@ -462,6 +614,12 @@ class FlowGraph:
                            )
 
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
+        """Adds a filter node to the graph.
+
+        Args:
+            node_number_of_records: The settings for the record count operation.
+        """
+
         def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.get_record_count()
 
@@ -472,6 +630,12 @@ class FlowGraph:
                            input_node_ids=[node_number_of_records.depending_on_id])
 
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
+        """Adds a node that executes custom Polars code.
+
+        Args:
+            node_polars_code: The settings for the Polars code node.
+        """
+
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
         self.add_node_step(node_id=node_polars_code.node_id,
@@ -489,17 +653,13 @@ class FlowGraph:
     def add_dependency_on_polars_lazy_frame(self,
                                             lazy_frame: pl.LazyFrame,
                                             node_id: int):
-        """
-        Adds a dependency on a Polars LazyFrame to the FlowGraph. Because of this, the graph will not work in the
-        editor. However, it is a shortcut for supporting methods that are only implemented on the FlowGraph.
-        Parameters
-        ----------
-        lazy_frame
-        node_id
+        """Adds a special node that directly injects a Polars LazyFrame into the graph.
 
-        Returns
-        -------
+        Note: This is intended for backend use and will not work in the UI editor.
 
+        Args:
+            lazy_frame: The Polars LazyFrame to inject.
+            node_id: The ID for the new node.
         """
         def _func():
             return FlowDataEngine(lazy_frame)
@@ -510,6 +670,11 @@ class FlowGraph:
                            setting_input=node_promise)
 
     def add_unique(self, unique_settings: input_schema.NodeUnique):
+        """Adds a node to find and remove duplicate rows.
+
+        Args:
+            unique_settings: The settings for the unique operation.
+        """
 
         def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.make_unique(unique_settings.unique_input)
@@ -522,6 +687,16 @@ class FlowGraph:
                            input_node_ids=[unique_settings.depending_on_id])
 
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
+        """Adds a node that solves graph-like problems within the data.
+
+        This node can be used for operations like finding network paths,
+        calculating connected components, or performing other graph algorithms
+        on relational data that represents nodes and edges.
+
+        Args:
+            graph_solver_settings: The settings object defining the graph inputs
+                and the specific algorithm to apply.
+        """
         def _func(fl: FlowDataEngine) -> FlowDataEngine:
             return fl.solve_graph(graph_solver_settings.graph_solver_input)
 
@@ -532,6 +707,12 @@ class FlowGraph:
                            input_node_ids=[graph_solver_settings.depending_on_id])
 
     def add_formula(self, function_settings: input_schema.NodeFormula):
+        """Adds a node that applies a formula to create or modify a column.
+
+        Args:
+            function_settings: The settings for the formula operation.
+        """
+
         error = ""
         if function_settings.function.field.data_type not in (None, "Auto"):
             output_type = cast_str_to_polars_type(function_settings.function.field.data_type)
@@ -563,6 +744,14 @@ class FlowGraph:
             return True, ""
 
     def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "FlowGraph":
+        """Adds a cross join node to the graph.
+
+        Args:
+            cross_join_settings: The settings for the cross join operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
 
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in cross_join_settings.cross_join_input.left_select.renames:
@@ -584,6 +773,15 @@ class FlowGraph:
         return self
 
     def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":
+        """Adds a join node to combine two data streams based on key columns.
+
+        Args:
+            join_settings: The settings for the join operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in join_settings.join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
@@ -604,30 +802,59 @@ class FlowGraph:
         return self
 
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "FlowGraph":
+        """Adds a fuzzy matching node to join data on approximate string matches.
+
+        Args:
+            fuzzy_settings: The settings for the fuzzy match operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
+            node = self.get_node(node_id=fuzzy_settings.node_id)
+            if self.execution_location == "local":
+                return main.fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input,
+                                       other=right,
+                                       node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id))
+
             f = main.start_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
                                       flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
             logger.info("Started the fuzzy match action")
-            node._fetch_cached_df = f
+            node._fetch_cached_df = f  # Add to the node so it can be cancelled and fetch later if needed
             return FlowDataEngine(f.get_result())
+
+        def schema_callback():
+            fm_input_copy = deepcopy(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
+            node = self.get_node(node_id=fuzzy_settings.node_id)
+            return calculate_fuzzy_match_schema(fm_input_copy,
+                                                left_schema=node.node_inputs.main_inputs[0].schema,
+                                                right_schema=node.node_inputs.right_input.schema
+                                                )
 
         self.add_node_step(node_id=fuzzy_settings.node_id,
                            function=_func,
                            input_columns=[],
                            node_type='fuzzy_match',
-                           setting_input=fuzzy_settings)
-        node = self.get_node(node_id=fuzzy_settings.node_id)
+                           setting_input=fuzzy_settings,
+                           input_node_ids=fuzzy_settings.depending_on_ids,
+                           schema_callback=schema_callback)
 
-        def schema_callback():
-            return calculate_fuzzy_match_schema(fuzzy_settings.join_input,
-                                                left_schema=node.node_inputs.main_inputs[0].schema,
-                                                right_schema=node.node_inputs.right_input.schema
-                                                )
-
-        node.schema_callback = schema_callback
         return self
 
     def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "FlowGraph":
+        """Adds a node that splits cell values into multiple rows.
+
+        This is useful for un-nesting data where a single field contains multiple
+        values separated by a delimiter.
+
+        Args:
+            node_text_to_rows: The settings object that specifies the column to split
+                and the delimiter to use.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
         def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.split(node_text_to_rows.text_to_rows_input)
 
@@ -639,6 +866,15 @@ class FlowGraph:
         return self
 
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "FlowGraph":
+        """Adds a node to sort the data based on one or more columns.
+
+        Args:
+            sort_settings: The settings for the sort operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
         def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.do_sort(sort_settings.sort_input)
 
@@ -650,6 +886,14 @@ class FlowGraph:
         return self
 
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "FlowGraph":
+        """Adds a node to take a random or top-N sample of the data.
+
+        Args:
+            sample_settings: The settings object specifying the size of the sample.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
         def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.get_sample(sample_settings.sample_size)
 
@@ -662,6 +906,15 @@ class FlowGraph:
         return self
 
     def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "FlowGraph":
+        """Adds a node to create a new column with a unique ID for each record.
+
+        Args:
+            record_id_settings: The settings object specifying the name of the
+                new record ID column.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
 
         def _func(table: FlowDataEngine) -> FlowDataEngine:
             return table.add_record_id(record_id_settings.record_id_input)
@@ -675,6 +928,15 @@ class FlowGraph:
         return self
 
     def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
+        """Adds a node to select, rename, reorder, or drop columns.
+
+        Args:
+            select_settings: The settings for the select operation.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
+
         select_cols = select_settings.select_input
         drop_cols = tuple(s.old_name for s in select_settings.select_input)
 
@@ -708,9 +970,18 @@ class FlowGraph:
 
     @property
     def graph_has_functions(self) -> bool:
+        """Checks if the graph has any nodes."""
         return len(self._node_ids) > 0
 
     def delete_node(self, node_id: Union[int, str]):
+        """Deletes a node from the graph and updates all its connections.
+
+        Args:
+            node_id: The ID of the node to delete.
+
+        Raises:
+            Exception: If the node with the given ID does not exist.
+        """
         logger.info(f"Starting deletion of node with ID: {node_id}")
 
         node = self._node_db.get(node_id)
@@ -743,6 +1014,7 @@ class FlowGraph:
 
     @property
     def graph_has_input_data(self) -> bool:
+        """Checks if the graph has an initial input data source."""
         return self._input_data is not None
 
     def add_node_step(self,
@@ -757,6 +1029,24 @@ class FlowGraph:
                       cache_results: bool = None,
                       schema_callback: Callable = None,
                       input_node_ids: List[int] = None) -> FlowNode:
+        """The core method for adding or updating a node in the graph.
+
+        Args:
+            node_id: The unique ID for the node.
+            function: The core processing function for the node.
+            input_columns: A list of input column names required by the function.
+            output_schema: A predefined schema for the node's output.
+            node_type: A string identifying the type of node (e.g., 'filter', 'join').
+            drop_columns: A list of columns to be dropped after the function executes.
+            renew_schema: If True, the schema is recalculated after execution.
+            setting_input: A configuration object containing settings for the node.
+            cache_results: If True, the node's results are cached for future runs.
+            schema_callback: A function that dynamically calculates the output schema.
+            input_node_ids: A list of IDs for the nodes that this node depends on.
+
+        Returns:
+            The created or updated FlowNode object.
+        """
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:
@@ -802,6 +1092,11 @@ class FlowGraph:
         return node
 
     def add_include_cols(self, include_columns: List[str]):
+        """Adds columns to both the input and output column lists.
+
+        Args:
+            include_columns: A list of column names to include.
+        """
         for column in include_columns:
             if column not in self._input_cols:
                 self._input_cols.append(column)
@@ -810,6 +1105,12 @@ class FlowGraph:
         return self
 
     def add_output(self, output_file: input_schema.NodeOutput):
+        """Adds an output node to write the final data to a destination.
+
+        Args:
+            output_file: The settings for the output file.
+        """
+
         def _func(df: FlowDataEngine):
             output_file.output_settings.populate_abs_file_path()
             execute_remote = self.execution_location != 'local'
@@ -831,7 +1132,12 @@ class FlowGraph:
                            input_node_ids=[input_node_id])
 
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
-        logger.info("Adding database reader")
+        """Adds a node to write data to a database.
+
+        Args:
+            node_database_writer: The settings for the database writer node.
+        """
+
         node_type = 'database_writer'
         database_settings: input_schema.DatabaseWriteSettings = node_database_writer.database_write_settings
         database_connection: Optional[input_schema.DatabaseConnection | input_schema.FullDatabaseConnection]
@@ -879,6 +1185,12 @@ class FlowGraph:
         node = self.get_node(node_database_writer.node_id)
 
     def add_database_reader(self, node_database_reader: input_schema.NodeDatabaseReader):
+        """Adds a node to read data from a database.
+
+        Args:
+            node_database_reader: The settings for the database reader node.
+        """
+
         logger.info("Adding database reader")
         node_type = 'database_reader'
         database_settings: input_schema.DatabaseSettings = node_database_reader.database_settings
@@ -952,10 +1264,22 @@ class FlowGraph:
             self._node_ids.append(node_database_reader.node_id)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
+        """Adds a node that reads data from a SQL source.
+
+        This is a convenience alias for `add_external_source`.
+
+        Args:
+            external_source_input: The settings for the external SQL source node.
+        """
         logger.info('Adding sql source')
         self.add_external_source(external_source_input)
 
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
+        """Adds a node to write data to a cloud storage provider.
+
+        Args:
+            node_cloud_storage_writer: The settings for the cloud storage writer node.
+        """
 
         node_type = "cloud_storage_writer"
         def _func(df: FlowDataEngine):
@@ -1010,12 +1334,10 @@ class FlowGraph:
         node = self.get_node(node_cloud_storage_writer.node_id)
 
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
-        """
-        Adds a cloud storage read node to the flow graph.
+        """Adds a cloud storage read node to the flow graph.
+
         Args:
-            node_cloud_storage_reader (input_schema.NodeCloudStorageReader):
-            The settings for the cloud storage read node.
-        Returns:
+            node_cloud_storage_reader: The settings for the cloud storage read node.
         """
         node_type = "cloud_storage_reader"
         logger.info("Adding cloud storage reader")
@@ -1044,6 +1366,11 @@ class FlowGraph:
 
     def add_external_source(self,
                             external_source_input: input_schema.NodeExternalSource):
+        """Adds a node for a custom external data source.
+
+        Args:
+            external_source_input: The settings for the external source node.
+        """
 
         node_type = 'external_source'
         external_source_script = getattr(external_sources.custom_external_sources, external_source_input.identifier)
@@ -1100,6 +1427,12 @@ class FlowGraph:
                            setting_input=external_source_input)
 
     def add_read(self, input_file: input_schema.NodeRead):
+        """Adds a node to read data from a local file (e.g., CSV, Parquet, Excel).
+
+        Args:
+            input_file: The settings for the read operation.
+        """
+
         if input_file.received_file.file_type in ('xlsx', 'excel') and input_file.received_file.sheet_name == '':
             sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
             input_file.received_file.sheet_name = sheet_name
@@ -1168,7 +1501,18 @@ class FlowGraph:
             node.schema_callback = schema_callback
         return self
 
-    def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput):
+    def add_datasource(self, input_file: Union[input_schema.NodeDatasource, input_schema.NodeManualInput]) -> "FlowGraph":
+        """Adds a data source node to the graph.
+
+        This method serves as a factory for creating starting nodes, handling both
+        file-based sources and direct manual data entry.
+
+        Args:
+            input_file: The configuration object for the data source.
+
+        Returns:
+            The `FlowGraph` instance for method chaining.
+        """
         if isinstance(input_file, input_schema.NodeManualInput):
             input_data = FlowDataEngine(input_file.raw_data_format)
             ref = 'manual_input'
@@ -1194,29 +1538,35 @@ class FlowGraph:
         return self
 
     def add_manual_input(self, input_file: input_schema.NodeManualInput):
+        """Adds a node for manual data entry.
+
+        This is a convenience alias for `add_datasource`.
+
+        Args:
+            input_file: The settings and data for the manual input node.
+        """
         self.add_datasource(input_file)
 
     @property
     def nodes(self) -> List[FlowNode]:
+        """Gets a list of all FlowNode objects in the graph."""
+
         return list(self._node_db.values())
 
-    def check_for_missed_cols(self, expected_cols: List):
-        not_filled_cols = set(expected_cols) - set(self._output_cols)
-        cols_available = list(not_filled_cols & set([c.name for c in self._input_data.schema]))
-        self._output_cols += cols_available
-
     @property
-    def input_data_columns(self) -> List[str] | None:
-        if self._input_cols:
-            return list(set([col for col in self._input_cols if
-                             col in [table_col.name for table_col in self._input_data.schema]]))
-
-    @property
-    def execution_mode(self) -> str:
+    def execution_mode(self) -> schemas.ExecutionModeLiteral:
+        """Gets the current execution mode ('Development' or 'Performance')."""
         return self.flow_settings.execution_mode
 
     def get_implicit_starter_nodes(self) -> List[FlowNode]:
-        """Ensures that nodes that can be a start (e.g. polars code), will be a starting node"""
+        """Finds nodes that can act as starting points but are not explicitly defined as such.
+
+        Some nodes, like the Polars Code node, can function without an input. This
+        method identifies such nodes if they have no incoming connections.
+
+        Returns:
+            A list of `FlowNode` objects that are implicit starting nodes.
+        """
         starting_node_ids = [node.node_id for node in self._flow_starts]
         implicit_starting_nodes = []
         for node in self.nodes:
@@ -1226,17 +1576,41 @@ class FlowGraph:
 
     @execution_mode.setter
     def execution_mode(self, mode: schemas.ExecutionModeLiteral):
+        """Sets the execution mode for the flow.
+
+        Args:
+            mode: The execution mode to set.
+        """
         self.flow_settings.execution_mode = mode
 
     @property
     def execution_location(self) -> schemas.ExecutionLocationsLiteral:
+        """Gets the current execution location."""
         return self.flow_settings.execution_location
 
     @execution_location.setter
     def execution_location(self, execution_location: schemas.ExecutionLocationsLiteral):
+        """Sets the execution location for the flow.
+
+        Args:
+            execution_location: The execution location to set.
+        """
+        if self.flow_settings.execution_location != execution_location:
+            self.reset()
         self.flow_settings.execution_location = execution_location
 
-    def run_graph(self):
+    def run_graph(self) -> RunInformation | None:
+        """Executes the entire data flow graph from start to finish.
+
+        It determines the correct execution order, runs each node,
+        collects results, and handles errors and cancellations.
+
+        Returns:
+            A RunInformation object summarizing the execution results.
+
+        Raises:
+            Exception: If the flow is already running.
+        """
         if self.flow_settings.is_running:
             raise Exception('Flow is already running')
         try:
@@ -1249,11 +1623,7 @@ class FlowGraph:
             self.end_datetime = None
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            self.skip_nodes = [node for node in self.nodes if not node.is_correct]
-            self.skip_nodes.extend([lead_to_node for node in self.skip_nodes for lead_to_node in node.leads_to_nodes])
-            self.execution_order = determine_execution_order(all_nodes=[node for node in self.nodes if
-                                                                   node not in self.skip_nodes],
-                                                        flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+            skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
 
             skip_node_message(self.flow_logger, self.skip_nodes)
             execution_order_message(self.flow_logger, self.execution_order)
@@ -1306,6 +1676,11 @@ class FlowGraph:
             self.flow_settings.is_running = False
 
     def get_run_info(self) -> RunInformation:
+        """Gets a summary of the most recent graph execution.
+
+        Returns:
+            A RunInformation object with details about the last run.
+        """
         if self.latest_run_info is None:
             node_results = self.node_results
             success = all(nr.success for nr in node_results)
@@ -1325,6 +1700,11 @@ class FlowGraph:
 
     @property
     def node_connections(self) -> List[Tuple[int, int]]:
+        """Computes and returns a list of all connections in the graph.
+
+        Returns:
+            A list of tuples, where each tuple is a (source_id, target_id) pair.
+        """
         connections = set()
         for node in self.nodes:
             outgoing_connections = [(node.node_id, ltn.node_id) for ltn in node.leads_to_nodes]
@@ -1336,28 +1716,30 @@ class FlowGraph:
                     connections.add(node_connection)
         return list(connections)
 
-    def get_schema(self) -> List[FlowfileColumn]:
-        if self.schema is None:
-            if len(self._node_ids) > 0:
-                self.schema = self._node_db[self._node_ids[0]].schema
-        return self.schema
-
-    def get_example_data(self, node_id: int) -> TableExample | None:
-        node = self._node_db[node_id]
-        return node.get_table_example(include_data=True)
-
     def get_node_data(self, node_id: int, include_example: bool = True) -> NodeData:
+        """Retrieves all data needed to render a node in the UI.
+
+        Args:
+            node_id: The ID of the node.
+            include_example: Whether to include data samples in the result.
+
+        Returns:
+            A NodeData object, or None if the node is not found.
+        """
         node = self._node_db[node_id]
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
 
     def get_node_storage(self) -> schemas.FlowInformation:
+        """Serializes the entire graph's state into a storable format.
 
+        Returns:
+            A FlowInformation object representing the complete graph.
+        """
         node_information = {node.node_id: node.get_node_information() for
                             node in self.nodes if node.is_setup and node.is_correct}
 
         return schemas.FlowInformation(flow_id=self.flow_id,
                                        flow_name=self.__name__,
-                                       storage_location=self.flow_settings.path,
                                        flow_settings=self.flow_settings,
                                        data=node_information,
                                        node_starts=[v.node_id for v in self._flow_starts],
@@ -1365,6 +1747,8 @@ class FlowGraph:
                                        )
 
     def cancel(self):
+        """Cancels an ongoing graph execution."""
+
         if not self.flow_settings.is_running:
             return
         self.flow_settings.is_canceled = True
@@ -1372,15 +1756,30 @@ class FlowGraph:
             node.cancel()
 
     def close_flow(self):
+        """Performs cleanup operations, such as clearing node caches."""
+
         for node in self.nodes:
             node.remove_cache()
 
     def save_flow(self, flow_path: str):
+        """Saves the current state of the flow graph to a file.
+
+        Args:
+            flow_path: The path where the flow file will be saved.
+        """
         with open(flow_path, 'wb') as f:
             pickle.dump(self.get_node_storage(), f)
         self.flow_settings.path = flow_path
 
-    def get_frontend_data(self):
+    def get_frontend_data(self) -> dict:
+        """Formats the graph structure into a JSON-like dictionary for a specific legacy frontend.
+
+        This method transforms the graph's state into a format compatible with the
+        Drawflow.js library.
+
+        Returns:
+            A dictionary representing the graph in Drawflow format.
+        """
         result = {
             'Home': {
                 "data": {}
@@ -1451,6 +1850,11 @@ class FlowGraph:
         return result
 
     def get_vue_flow_input(self) -> schemas.VueFlowInput:
+        """Formats the graph's nodes and edges into a schema suitable for the VueFlow frontend.
+
+        Returns:
+            A VueFlowInput object.
+        """
         edges: List[schemas.NodeEdge] = []
         nodes: List[schemas.NodeInput] = []
         for node in self.nodes:
@@ -1459,11 +1863,19 @@ class FlowGraph:
         return schemas.VueFlowInput(node_edges=edges, node_inputs=nodes)
 
     def reset(self):
+        """Forces a deep reset on all nodes in the graph."""
+
         for node in self.nodes:
             node.reset(True)
 
     def copy_node(self, new_node_settings: input_schema.NodePromise, existing_setting_input: Any, node_type: str) -> None:
-        """Copy an existing node with potentially new settings."""
+        """Creates a copy of an existing node.
+
+        Args:
+            new_node_settings: The promise containing new settings (like ID and position).
+            existing_setting_input: The settings object from the node being copied.
+            node_type: The type of the node being copied.
+        """
         self.add_node_promise(new_node_settings)
 
         if isinstance(existing_setting_input, input_schema.NodePromise):
@@ -1474,69 +1886,26 @@ class FlowGraph:
         )
         getattr(self, f"add_{node_type}")(combined_settings)
 
-
-def combine_flow_graphs(*flow_graphs: FlowGraph) -> FlowGraph:
-    """
-    Combine multiple flow graphs into a single graph, ensuring node IDs don't overlap.
-
-    Args:
-        *flow_graphs: Multiple FlowGraph instances to combine
-
-    Returns:
-        A new FlowGraph containing all nodes and edges from the input graphs with remapped IDs
-
-    Raises:
-        ValueError: If any flow_ids overlap
-    """
-    # Validate flow IDs are unique
-    _validate_unique_flow_ids(flow_graphs)
-
-    # Create ID mapping for all nodes
-    node_id_mapping = _create_node_id_mapping(flow_graphs)
-
-    # Remap and combine nodes
-    all_nodes = _remap_nodes(flow_graphs, node_id_mapping)
-
-    # Create a new combined flow graph
-    combined_flow_id = hash(tuple(fg.flow_id for fg in flow_graphs))
-    # return FlowGraph(flow_id=combined_flow_id, nodes=all_nodes, edges=all_edges)
-
-
-def _validate_unique_flow_ids(flow_graphs: Tuple[FlowGraph, ...]) -> None:
-    """Ensure all flow graphs have unique flow_ids."""
-    all_flow_ids = [fg.flow_id for fg in flow_graphs]
-    if len(all_flow_ids) != len(set(all_flow_ids)):
-        raise ValueError("Cannot combine overlapping graphs, make sure the graphs have a unique identifier")
-
-
-def _create_node_id_mapping(flow_graphs: Tuple[FlowGraph, ...]) -> Dict[int, Dict[int, int]]:
-    """Create a mapping from original node IDs to new unique node IDs."""
-    node_id_mapping: Dict[int, Dict[int, int]] = {}
-    next_node_id = 0
-
-    for fg in flow_graphs:
-        node_id_mapping[fg.flow_id] = {}
-        for node in fg.nodes:
-            node_id_mapping[fg.flow_id][node.node_id] = next_node_id
-            next_node_id += 1
-
-    return node_id_mapping
-
-
-def _remap_nodes(flow_graphs: Tuple[FlowGraph, ...],
-                 node_id_mapping: Dict[int, Dict[int, int]]) -> List:
-    """Create new nodes with remapped IDs."""
-    all_nodes = []
-    for fg in flow_graphs:
-        for node in fg.nodes:
-            new_node = copy.deepcopy(node)
-            new_node.node_id = node_id_mapping[fg.flow_id][node.node_id]
-            all_nodes.append(new_node)
-    return all_nodes
+    def generate_code(self):
+        """Generates code for the flow graph.
+        This method exports the flow graph to a Polars-compatible format.
+        """
+        from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
+        print(export_flow_to_polars(self))
 
 
 def combine_existing_settings_and_new_settings(setting_input: Any, new_settings: input_schema.NodePromise) -> Any:
-    """Combine excopy_nodeisting settings with new settings from a NodePromise."""
+    """Merges settings from an existing object with new settings from a NodePromise.
+
+    Typically used when copying a node to apply a new ID and position.
+
+    Args:
+        setting_input: The original settings object.
+        new_settings: The NodePromise with new positional and ID data.
+
+    Returns:
+        A new settings object with the merged properties.
+    """
     copied_setting_input = deepcopy(setting_input)
 
     # Update only attributes that exist on new_settings
@@ -1555,7 +1924,13 @@ def combine_existing_settings_and_new_settings(setting_input: Any, new_settings:
     return copied_setting_input
 
 
-def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection):
+def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection) -> None:
+    """Adds a connection between two nodes in the flow graph.
+
+    Args:
+        flow: The FlowGraph instance to modify.
+        node_connection: An object defining the source and target of the connection.
+    """
     logger.info('adding a connection')
     from_node = flow.get_node(node_connection.output_connection.node_id)
     to_node = flow.get_node(node_connection.input_connection.node_id)
@@ -1567,7 +1942,12 @@ def add_connection(flow: FlowGraph, node_connection: input_schema.NodeConnection
 
 
 def delete_connection(graph, node_connection: input_schema.NodeConnection):
-    """Delete the connection between two nodes."""
+    """Deletes a connection between two nodes in the flow graph.
+
+    Args:
+        graph: The FlowGraph instance to modify.
+        node_connection: An object defining the connection to be removed.
+    """
     from_node = graph.get_node(node_connection.output_connection.node_id)
     to_node = graph.get_node(node_connection.input_connection.node_id)
     connection_valid = to_node.node_inputs.validate_if_input_connection_exists(
@@ -1584,5 +1964,3 @@ def delete_connection(graph, node_connection: input_schema.NodeConnection):
             node_connection.output_connection.node_id,
             connection_type=node_connection.input_connection.connection_class,
         )
-
-

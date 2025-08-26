@@ -9,11 +9,12 @@ from uuid import uuid4
 import polars as pl
 import requests
 
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 from flowfile_core.configs import logger
 from flowfile_core.configs.settings import WORKER_URL
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import (
     FuzzyJoinInput,
-    FuzzyMap,
     OperationType,
     PolarsOperation,
     Status
@@ -53,7 +54,7 @@ def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, flow_id: int, node
 
 
 def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
-                                  fuzzy_maps: List[FuzzyMap],
+                                  fuzzy_maps: List[FuzzyMapping],
                                   file_ref: str,
                                   flow_id: int,
                                   node_id: int | str) -> Status:
@@ -122,6 +123,8 @@ def results_exists(file_ref: str):
         return False
     except requests.RequestException as e:
         logger.error(f"Failed to check results existence: {str(e)}")
+        if "Connection refused" in str(e):
+            logger.info("")
         return False
 
 

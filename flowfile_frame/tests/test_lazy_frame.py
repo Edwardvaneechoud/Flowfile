@@ -929,14 +929,14 @@ def test_first(fruits_cars: FlowFrame) -> None:
 
 
 def test_join_suffix() -> None:
-    df_left = pl.DataFrame(
+    df_left = FlowFrame(
         {
             "a": ["a", "b", "a", "z"],
             "b": [1, 2, 3, 4],
             "c": [6, 5, 4, 3],
         }
     )
-    df_right = pl.DataFrame(
+    df_right = FlowFrame(
         {
             "a": ["b", "c", "b", "a"],
             "b": [0, 3, 9, 6],
@@ -944,6 +944,8 @@ def test_join_suffix() -> None:
         }
     )
     out = df_left.join(df_right, on="a", suffix="_bar")
+    print(out.flow_graph.print_tree())
+
     assert out.columns == ["a", "b", "c", "b_bar", "c_bar"]
     out = df_left.lazy().join(df_right.lazy(), on="a", suffix="_bar").collect()
     assert out.columns == ["a", "b", "c", "b_bar", "c_bar"]

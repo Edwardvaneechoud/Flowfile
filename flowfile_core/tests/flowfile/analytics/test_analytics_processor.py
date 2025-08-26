@@ -4,6 +4,21 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, delete_connection
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from pathlib import Path
+
+
+def find_parent_directory(target_dir_name, start_path=None):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(start_path) if start_path else Path.cwd()
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
 def get_starting_gw_node_settings() -> input_schema.NodeExploreData:
@@ -512,3 +527,22 @@ def test_analytics_processor_from_parquet_file_run_performance():
     node_step = graph.get_node(2)
     assert node_step.results.analysis_data_generator, 'The node should have to run'
     assert node_step.results.analysis_data_generator().__len__() == 1000, 'There should be 1000 rows in the data'
+
+
+def test_analytics_processor_from_parquet_file_run_in_one_local_process():
+    graph = create_graph()
+
+    graph.flow_settings.execution_location = "local"
+    add_node_promise_on_type(graph, 'read', 1, 1)
+
+    received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
+                                                path=str(Path(find_parent_directory('Flowfile'))/'flowfile_core/tests/support_files/data/large_table.parquet'))
+    node_read = input_schema.NodeRead(flow_id=1, node_id=1, received_file=received_table)
+    graph.add_read(node_read)
+    add_node_promise_on_type(graph, 'explore_data', 2, 1)
+    connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+    add_connection(graph, connection)
+    node_step = graph.get_node(2)
+    graph.run_graph()
+    assert node_step.results.analysis_data_generator, 'The node should have to run'
+    assert node_step.results.analysis_data_generator().__len__() == 10_000, 'There should be 1000 rows in the data'

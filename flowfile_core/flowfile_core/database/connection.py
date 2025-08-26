@@ -26,8 +26,6 @@ def get_app_data_dir() -> Path:
             base_dir = os.path.join(os.path.expanduser("~"), ".local", "share")
 
     app_dir = Path(base_dir) / app_name
-
-    print(f"Using application data directory: {app_dir}")
     app_dir.mkdir(parents=True, exist_ok=True)
 
     return app_dir
@@ -48,7 +46,7 @@ def get_database_url():
     app_dir = get_app_data_dir()
 
     db_path = app_dir / "flowfile.db"
-    logger.info(f"Using database URL: sqlite:///{db_path}")
+    logger.debug(f"Using database URL: sqlite:///{db_path}")
     return f"sqlite:///{db_path}"
 
 

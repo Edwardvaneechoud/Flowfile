@@ -50,3 +50,4 @@ saved_flows/
 **/test_flowfile.db
 /flowfile/flowfile/web/static/
 flowfile.db
+local_data
