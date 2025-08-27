@@ -26,7 +26,7 @@ from flowfile_core.configs.node_store import nodes
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
 # File handling
 from flowfile_core.fileExplorer.funcs import (
-    FileExplorer,
+    SecureFileExplorer,
     FileInfo,
     get_files_from_directory
 )
@@ -39,9 +39,11 @@ from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 # Schema and models
+
+from shared.storage_config import storage
 from flowfile_core.schemas import input_schema, schemas, output_model
 from flowfile_core.utils import excel_file_manager
-from flowfile_core.utils.fileManager import create_dir, remove_paths
+from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from flowfile_core import flow_file_handler
 from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
@@ -54,7 +56,10 @@ from flowfile_core.database.connection import get_db
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 # Initialize services
-file_explorer = FileExplorer('/app/shared' if IS_RUNNING_IN_DOCKER else None)
+file_explorer = SecureFileExplorer(
+    start_path=storage.user_data_directory,
+    sandbox_root=storage.user_data_directory
+)
 
 
 def get_node_model(setting_name_ref: str):
@@ -148,7 +153,7 @@ async def get_directory_contents(directory: str, file_types: List[str] = None,
     Returns:
         A list of `FileInfo` objects representing the directory's contents.
     """
-    directory_explorer = FileExplorer(directory)
+    directory_explorer = SecureFileExplorer(directory, storage.user_data_directory)
     try:
         return directory_explorer.list_contents(show_hidden=include_hidden, file_types=file_types)
     except Exception as e:

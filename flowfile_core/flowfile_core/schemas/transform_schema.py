@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
+FuzzyMap = FuzzyMapping  # For backwards compatibility
 
 def get_func_type_mapping(func: str):
     """Infers the output data type of common aggregation functions."""

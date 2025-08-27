@@ -28,12 +28,11 @@ services:
       # User data directory for file explorer and user files
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - RUNNING_IN_DOCKER=true
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
     volumes:
-      # User data volume - for flows, uploads, outputs (user-accessible)
       - flowfile-user-data:/app/user_data
-      # Internal storage volume - for logs, cache, temp (shared between containers)
       - flowfile-internal-storage:/app/internal_storage
-      # Backward compatibility (can be removed in future versions)
       - ./saved_flows:/app/flowfile_core/saved_flows
     networks:
       - flowfile-network
@@ -53,6 +52,8 @@ services:
       # Access to user data for processing
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - RUNNING_IN_DOCKER=true
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
     volumes:
       # User data volume - for accessing user files
       - flowfile-user-data:/app/user_data

@@ -20,12 +20,12 @@ from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
+storage.cleanup_directories()
 
 os.environ["FLOWFILE_MODE"] = "electron"
 
 should_exit = False
 server_instance = None
-
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
@@ -80,7 +80,7 @@ app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
 
-storage.cleanup_directories()
+
 
 @app.post("/shutdown")
 async def shutdown():
