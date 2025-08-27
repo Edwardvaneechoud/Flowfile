@@ -33,7 +33,7 @@ async def shutdown_handler(app: FastAPI):
                 logger.error(f"Error cleaning up process: {e}")
 
         try:
-            storage.cleanup_temp_directory()
+            storage.cleanup_directories()
         except Exception as e:
             print(f"Error cleaning up cache directory: {e}")
 

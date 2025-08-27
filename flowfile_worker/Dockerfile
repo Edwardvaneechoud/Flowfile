@@ -30,15 +30,17 @@ RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
 # Install additional package that wasn't in requirements.txt
 RUN pip install --no-cache-dir --only-binary=:all: connectorx==0.4.3a1
 
+# Copy the shared package
+COPY shared /app/shared
+
 # Copy the flowfile_worker package contents into the container
 COPY flowfile_worker/flowfile_worker /app/flowfile_worker
 
 # Expose the port the app runs on
 EXPOSE 63579
 
-# Set Python path to recognize the package
+# Set Python path to recognize the packages
 ENV PYTHONPATH=/app
-
 ENV RUNNING_IN_DOCKER=true
 
 # Change working directory to where the module is located
