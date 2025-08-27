@@ -4,8 +4,11 @@ import signal
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+
+from shared.storage_config import storage
+
 from flowfile_worker.routes import router
-from flowfile_worker import mp_context, CACHE_DIR
+from flowfile_worker import mp_context
 from flowfile_worker.configs import logger, FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT
 
 
@@ -30,7 +33,7 @@ async def shutdown_handler(app: FastAPI):
                 logger.error(f"Error cleaning up process: {e}")
 
         try:
-            CACHE_DIR.cleanup()
+            storage.cleanup_directories()
         except Exception as e:
             print(f"Error cleaning up cache directory: {e}")
 

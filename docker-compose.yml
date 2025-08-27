@@ -23,12 +23,17 @@ services:
       - "63578:63578"
     environment:
       - WORKER_HOST=flowfile-worker
-      - TEMP_DIR=/app/temp
-
+      # Internal storage for container communication (logs, cache, temp)
+      - FLOWFILE_STORAGE_DIR=/app/internal_storage
+      # User data directory for file explorer and user files
+      - FLOWFILE_USER_DATA_DIR=/app/user_data
+      - RUNNING_IN_DOCKER=true
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
     volumes:
-      - ./shared_data:/app/shared
+      - flowfile-user-data:/app/user_data
+      - flowfile-internal-storage:/app/internal_storage
       - ./saved_flows:/app/flowfile_core/saved_flows
-      - temp-storage:/app/temp
     networks:
       - flowfile-network
     secrets:
@@ -40,12 +45,20 @@ services:
       dockerfile: flowfile_worker/Dockerfile
     ports:
       - "63579:63579"
-    volumes:
-      - ./shared_data:/app/shared
-      - temp-storage:/app/temp
     environment:
       - CORE_HOST=flowfile-core
-      - TEMP_DIR=/app/temp
+      # Same internal storage as core for communication
+      - FLOWFILE_STORAGE_DIR=/app/internal_storage
+      # Access to user data for processing
+      - FLOWFILE_USER_DATA_DIR=/app/user_data
+      - RUNNING_IN_DOCKER=true
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # User data volume - for accessing user files
+      - flowfile-user-data:/app/user_data
+      # Internal storage volume - shared with core
+      - flowfile-internal-storage:/app/internal_storage
     networks:
       - flowfile-network
     secrets:
@@ -56,9 +69,14 @@ networks:
     driver: bridge
 
 volumes:
-  temp-storage:
+  # Internal container communication (logs, cache, temp files)
+  # This volume is ephemeral and can be recreated
+  flowfile-internal-storage:
     driver: local
-  shared_data:
+
+  # User-accessible data (flows, uploads, outputs)
+  # This volume should be persistent and backed up
+  flowfile-user-data:
     driver: local
 
 secrets:

@@ -7,6 +7,8 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from shared.storage_config import storage
+
 from flowfile_core import ServerRun
 from flowfile_core.configs.settings import (SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL,)
 
@@ -18,12 +20,12 @@ from flowfile_core.routes.logs import router as logs_router
 from flowfile_core.routes.cloud_connections import router as cloud_connections_router
 
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
+storage.cleanup_directories()
 
 os.environ["FLOWFILE_MODE"] = "electron"
 
 should_exit = False
 server_instance = None
-
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
@@ -77,6 +79,7 @@ app.include_router(logs_router, tags=["logs"])
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(secrets_router, prefix="/secrets", tags=["secrets"])
 app.include_router(cloud_connections_router, prefix="/cloud_connections", tags=["cloud_connections"])
+
 
 
 @app.post("/shutdown")

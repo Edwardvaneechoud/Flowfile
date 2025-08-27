@@ -9,6 +9,7 @@ packages = [
     { include = "flowfile_worker", from = "flowfile_worker" },
     { include = "build_backends", from = "build_backends" },
     { include = "flowfile_frame", from = "flowfile_frame" },
+    { include = "shared" },
     { include = "test_utils" },
     { include = "flowfile", from = "flowfile"},
 ]

@@ -5,37 +5,21 @@ import os
 import sys
 from pathlib import Path
 from flowfile_core.configs import logger
+from shared.storage_config import storage
 
 
 def get_app_data_dir() -> Path:
     """Get the appropriate application data directory for the current platform."""
-    app_name = "Flowfile"
 
-    if sys.platform == "win32":
-        # Windows: C:\Users\{username}\AppData\Local\flowfile
-        base_dir = os.environ.get("LOCALAPPDATA")
-        if not base_dir:
-            base_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    elif sys.platform == "darwin":
-        # macOS: ~/Library/Application Support/flowfile
-        base_dir = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
-    else:
-        # Linux: ~/.local/share/flowfile or use XDG_DATA_HOME
-        base_dir = os.environ.get("XDG_DATA_HOME")
-        if not base_dir:
-            base_dir = os.path.join(os.path.expanduser("~"), ".local", "share")
-
-    app_dir = Path(base_dir) / app_name
-    app_dir.mkdir(parents=True, exist_ok=True)
-
-    return app_dir
+    return storage.database_directory
 
 
 def get_database_url():
     """Get the database URL based on the current environment."""
     if os.environ.get("TESTING") == "True":
         # Use a temporary test database
-        test_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../test_flowfile.db")
+        test_db_path = storage.temp_directory / "test_flowfile.db"
+        logger.debug(f"Using TESTING database URL: sqlite:///{test_db_path}")
         return f"sqlite:///{test_db_path}"
 
     custom_db_path = os.environ.get("FLOWFILE_DB_PATH")
