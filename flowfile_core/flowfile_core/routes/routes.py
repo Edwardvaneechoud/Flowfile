@@ -444,11 +444,24 @@ def get_generated_code(flow_id: int) -> str:
 
 
 @router.post('/editor/create_flow/', tags=['editor'])
-def create_flow(flow_path: str):
+def create_flow(flow_path: str = None, name: str = None):
     """Creates a new, empty flow file at the specified path and registers a session for it."""
-    flow_path = Path(flow_path)
-    logger.info('Creating flow')
-    return flow_file_handler.add_flow(name=flow_path.stem, flow_path=str(flow_path))
+    if flow_path is not None and name is None:
+        name = Path(flow_path).stem
+    elif flow_path is not None and name is not None:
+        if name not in flow_path and flow_path.endswith(".flowfile"):
+            raise HTTPException(422, 'The name must be part of the flow path when a full path is provided')
+        elif name in flow_path and not flow_path.endswith(".flowfile"):
+            flow_path = str(Path(flow_path) / (name + ".flowfile"))
+        elif name not in flow_path and name.endswith(".flowfile"):
+            flow_path = str(Path(flow_path) / name)
+        elif name not in flow_path and not name.endswith(".flowfile"):
+            flow_path = str(Path(flow_path) / (name + ".flowfile"))
+    if flow_path is not None:
+        flow_path_ref = Path(flow_path)
+        if not flow_path_ref.parent.exists():
+            raise HTTPException(422, 'The directory does not exist')
+    return flow_file_handler.add_flow(name=name, flow_path=flow_path)
 
 
 @router.post('/editor/close_flow/', tags=['editor'])

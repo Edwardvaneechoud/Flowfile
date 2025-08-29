@@ -2,6 +2,7 @@ import os
 import threading
 import pickle
 import pytest
+from pathlib import Path
 
 from pydantic import SecretStr
 from fastapi.testclient import TestClient
@@ -23,6 +24,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                delete_database_connection,
                                                                                get_all_database_connections_interface,
                                                                                get_local_cloud_connection,)
+from shared.storage_config import storage
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
@@ -980,3 +982,61 @@ def test_create_cloud_storage_reader():
     r = client.post("/update_settings/", json=node_settings.model_dump(), params={"node_type": "cloud_storage_reader"})
     assert r.status_code == 200, 'Settings not updated'
     assert node.node_schema.result_schema is not None, "Node schema should be set after run"
+
+
+def test_editor_create_flow_only_name():
+    response = client.post("/editor/create_flow/", params={'name': 'test_flow_1'})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert ".flowfile/temp/flows/test_flow_1.flowfile" in flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_no_params():
+    response = client.post("/editor/create_flow/")
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert ".flowfile/temp/flows/" in flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_only_path():
+    path = str(storage.flows_directory / "test_flow_1.flowfile")
+    response = client.post("/editor/create_flow/", params={'flow_path': path})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert path == flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_both_name_and_full_path():
+    path = str(storage.flows_directory / "test_flow_1.flowfile")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert path == flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_both_name_and_path():
+    path = str(storage.flows_directory)
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert storage.flows_directory / "test_flow_1.flowfile" == Path(flow_info.path)
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_both_name_and_non_existing_path():
+    path = str(storage.flows_directory/"WRONG_SUBDIR")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 422, "Flow should not be created"
+    assert response.json()["detail"] == "The directory does not exist"
+
+
+def test_editor_create_flow_with_both_name_no_overlap():
+    path = str(storage.flows_directory/"test_flow_2.flowfile")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 422, "Flow should not be created"
+    assert response.json()["detail"] == 'The name must be part of the flow path when a full path is provided'
+
