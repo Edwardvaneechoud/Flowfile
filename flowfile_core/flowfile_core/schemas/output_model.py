@@ -61,6 +61,7 @@ class TableExample(BaseModel):
     table_schema: List[FileColumn]
     columns: List[str]
     data: Optional[List[Dict]] = {}
+    has_run: bool = False
 
 
 class NodeData(BaseModel):

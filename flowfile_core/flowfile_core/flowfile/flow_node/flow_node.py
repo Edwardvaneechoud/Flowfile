@@ -680,7 +680,7 @@ class FlowNode:
             logger.warning('Not implemented')
 
     def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None,
-                  execution_location: schemas.ExecutionLocationsLiteral = "worker") -> bool:
+                  execution_location: schemas.ExecutionLocationsLiteral = "remote") -> bool:
         """Determines if the node needs to be executed.
 
         The decision is based on its run state, caching settings, and execution mode.
@@ -855,7 +855,8 @@ class FlowNode:
         self.node_stats.is_canceled = True
 
     def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
-                     performance_mode: bool = False, retry: bool = True, node_logger: NodeLogger = None):
+                     performance_mode: bool = False, retry: bool = True, node_logger: NodeLogger = None,
+                     optimize_for_downstream: bool = True):
         """Orchestrates the execution, handling location, caching, and retries.
 
         Args:
@@ -864,13 +865,16 @@ class FlowNode:
             performance_mode: If True, optimizes for speed over diagnostics.
             retry: If True, allows retrying execution on recoverable errors.
             node_logger: The logger for this node execution.
+            optimize_for_downstream: If true, operations that shuffle the order of rows are fully cached and provided as
+            input to downstream steps
 
         Raises:
             Exception: If the node_logger is not defined.
         """
         if node_logger is None:
             raise Exception('Flow logger is not defined')
-        # node_logger = flow_logger.get_node_logger(self.node_id)
+        #  TODO: Simplify which route is being picked there are many duplicate checks
+
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run_with_current_setup = False
@@ -881,8 +885,10 @@ class FlowNode:
                     and not (run_location == 'local')):
                 self.prepare_before_run()
                 try:
-                    if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
-                            and not run_location == 'local')) or self.node_settings.cache_results:
+                    if (((run_location == 'remote' or
+                         (self.node_default.transform_type == 'wide' and optimize_for_downstream) and
+                         not run_location == 'local'))
+                            or self.node_settings.cache_results):
                         node_logger.info('Running the node remotely')
                         if self.node_settings.cache_results:
                             performance_mode = False
@@ -1136,10 +1142,13 @@ class FlowNode:
                 data = []
             schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             fl = self.get_resulting_data()
+            has_example_data = self.results.example_data_generator is not None
+
             return TableExample(node_id=self.node_id,
                                 name=str(self.node_id), number_of_records=999,
                                 number_of_columns=fl.number_of_fields,
-                                table_schema=schema, columns=fl.columns, data=data)
+                                table_schema=schema, columns=fl.columns, data=data,
+                                has_run=has_example_data)
         else:
             logger.warning('getting the table example but the node has not run')
             try:

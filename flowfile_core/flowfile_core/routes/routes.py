@@ -203,6 +203,24 @@ async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
     return [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
 
 
+@router.post("/node/trigger_fetch_data", tags=['editor'])
+async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: BackgroundTasks):
+    """Fetches and refreshes the data for a specific node."""
+    flow = flow_file_handler.get_flow(flow_id)
+    lock = get_flow_run_lock(flow_id)
+    async with lock:
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, 'Flow is already running')
+        try:
+            flow.validate_if_node_can_be_fetched(node_id)
+        except Exception as e:
+            raise HTTPException(422, str(e))
+        background_tasks.add_task(flow.fetch_node, node_id)
+    return JSONResponse(content={"message": "Data started",
+                                 "flow_id": flow_id,
+                                 "node_id": node_id}, status_code=status.HTTP_200_OK)
+
+
 @router.post('/flow/run/', tags=['editor'])
 async def run_flow(flow_id: int, background_tasks: BackgroundTasks) -> JSONResponse:
     """Executes a flow in a background task.

@@ -125,7 +125,9 @@ def test_import_flow():
     handler = create_flowfile_handler()
     flow_path = "flowfile_core/tests/support_files/flows/read_csv.flowfile"
     flow_id = handler.import_flow(Path(flow_path))
-    assert flow_id == 1, 'Flow ID should be 1'
+    flow = handler.get_flow(flow_id)
+    run_results = flow.run_graph()
+    handle_run_info(run_results)
 
 
 def test_create_graph():

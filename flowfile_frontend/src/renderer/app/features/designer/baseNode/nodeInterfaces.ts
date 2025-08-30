@@ -20,6 +20,7 @@ export interface TableExample {
   table_schema: FileColumn[]
   columns: string[]
   data: Record<string, any>[]
+  has_run?: boolean
 }
 
 export interface NodeData {

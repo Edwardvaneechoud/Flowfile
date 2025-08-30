@@ -8,6 +8,8 @@ import pytest
 from pathlib import Path
 from typing import List, Dict
 
+from tests.flowfile.test_flowfile import find_parent_directory
+
 
 @pytest.fixture
 def flow_logger() -> FlowLogger:
@@ -71,11 +73,13 @@ def test_register_second_flow():
 
 def test_import_flow():
     handler = create_flowfile_handler()
-    flow_path = "flowfile_core/tests/support_files/flows/read_csv.flowfile"
+
+    flow_path = find_parent_directory("Flowfile")/"flowfile_core/tests/support_files/flows/read_csv.flowfile"
     flow_id = handler.import_flow(Path(flow_path))
+
     assert handler.flowfile_flows[0].flow_id == flow_id, "Flow should be imported"
     assert handler.get_flow(flow_id).flow_settings.name == 'read_csv', "First flow should be named read_csv"
-    assert handler.get_flow(flow_id).flow_settings.path == flow_path, "Path should be correct"
+    assert handler.get_flow(flow_id).flow_settings.path == str(flow_path), "Path should be correct"
 
 
 def test_import_second_flow():
@@ -100,9 +104,9 @@ def test_get_flow():
 
 def test_add_flow():
     handler = create_flowfile_handler()
-    first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/read_csv.flowfile')
+    first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/new_flow.flowfile')
     sleep(1)
-    second_id = handler.add_flow('second_flow', 'flowfile_core/tests/support_files/flows/text_to_rows.flowfile')
+    second_id = handler.add_flow('second_flow', 'flowfile_core/tests/support_files/flows/second_flow.flowfile')
     assert len(handler.flowfile_flows) == 2, "Two flows should be added"
     assert handler.flowfile_flows[0].flow_settings.name == 'new_flow', "First flow should be named new_flow"
     assert handler.flowfile_flows[1].flow_settings.name == 'second_flow', "Second flow should be named second_flow"

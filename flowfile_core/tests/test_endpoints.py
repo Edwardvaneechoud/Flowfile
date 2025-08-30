@@ -25,6 +25,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                get_all_database_connections_interface,
                                                                                get_local_cloud_connection,)
 from shared.storage_config import storage
+from tests.flowfile.test_flowfile import find_parent_directory
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
@@ -119,7 +120,7 @@ def ensure_no_flow_registered():
 
 
 def ensure_clean_flow() -> FlowId:
-    flow_path: str = 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile'
+    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile')
     remove_flow(flow_path)  # Remove the flow if it exists
     sleep(.1)
     r = client.post("editor/create_flow", params={'flow_path': flow_path})
@@ -1040,3 +1041,19 @@ def test_editor_create_flow_with_both_name_no_overlap():
     assert response.status_code == 422, "Flow should not be created"
     assert response.json()["detail"] == 'The name must be part of the flow path when a full path is provided'
 
+
+def test_get_table_example():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.get("/node/data", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node data not retrieved'
+    assert response.json()["data"] == [], "Node data should be empty"
+
+
+def test_fetch_node_data():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.post("/node/trigger_fetch_data", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node data not retrieved'
+    response = client.get("/node/data", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node data not retrieved'
+    assert len(response.json()["data"]) > 0 , "Data should not be empty"
+    assert response.json()["has_run"], "Node should have run"
