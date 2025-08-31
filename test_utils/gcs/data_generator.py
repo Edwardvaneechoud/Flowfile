@@ -118,7 +118,7 @@ def _create_delta_lake_table(gcs_client, arrow_table: pa.Table, bucket_name: str
     logger.info("Writing Delta Lake table...")
     bucket = gcs_client.bucket(bucket_name)
     blob = bucket.blob(f"delta-lake-table")
-    for root, _, files in os.walk(table_path):
+    for root, _, files in os.walk(f"http://{bucket_name}/delta-lake-table"):
         for f in files:
             local_path = os.path.join(root, f)
             rel_path = os.path.relpath(local_path, arrow_table)
@@ -272,7 +272,7 @@ def populate_test_data(endpoint_url: str, bucket_name: str):
     # Convert to PyArrow table once for Delta and Iceberg
     arrow_table = df.to_arrow()
 
-    _create_delta_lake_table(arrow_table, bucket_name)
+    _create_delta_lake_table(gcs_client, arrow_table, bucket_name)
     _create_iceberg_table(df, bucket_name, endpoint_url, gcs_client)
 
     logger.info("✅ All test data populated successfully.")

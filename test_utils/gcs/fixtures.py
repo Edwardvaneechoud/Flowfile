@@ -180,7 +180,7 @@ def start_gcs() -> bool:
             "-e", f"GCS_ROOT_USER={GCS_ROOT_USER}",
             "-e", f"GCS_ROOT_PASSWORD={GCS_ROOT_PASSWORD}",
             "-v", f"{GCS_SERVER_NAME}-data:/data",
-            "fsouza/fake-gcs-server", "server", "/data", "-data" ,"--console-address", ":4443", "-scheme", "both"
+            "fsouza/fake-gcs-server", "-scheme", "http", "server", "/data", "-data" ,"--console-address", ":4443"
         ], check=True)
 
         # Wait for GCS Server to be ready
