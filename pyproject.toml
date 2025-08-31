@@ -47,6 +47,7 @@ python-jose = "^3.4.0"
 bcrypt = "^4.3.0"
 connectorx = "^0.4.2"
 polars_simed = "^0.3.4"
+requests = "^2.32.5"
 
 # Only install pendulum for Python versions below 3.12
 pendulum = { version = "2.1.2", markers = "python_version < '3.12'" }

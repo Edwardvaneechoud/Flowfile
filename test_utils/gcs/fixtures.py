@@ -9,7 +9,8 @@ from google.cloud import storage
 from google.auth.credentials import AnonymousCredentials
 from test_utils.gcs.data_generator import populate_test_data
 from test_utils.gcs.demo_data_generator import create_demo_data
-
+from requests import Session
+from google.auth.transport.requests import AuthorizedSession
 
 
 logger = logging.getLogger("gcs_fixture")
@@ -17,7 +18,7 @@ logger = logging.getLogger("gcs_fixture")
 GCS_HOST = os.environ.get("TEST_GCS_HOST", "localhost")
 GCS_PORT = int(os.environ.get("TEST_GCS_PORT", 4443))
 GCS_BUCKET_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs")
-GCS_ENDPOINT_URL = f"https://{GCS_HOST}:{GCS_PORT}"
+GCS_ENDPOINT_URL = f"http://{GCS_HOST}:{GCS_PORT}"
 GCS_SERVER_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs-server")
 GCS_ROOT_USER = "GCS"
 GCS_ROOT_PASSWORD = "gcsadmin"
@@ -29,10 +30,26 @@ IS_WINDOWS = os.name == 'nt'
 
 def get_gcs_client():
     """Get google.storage client for GCS Server"""
-    return storage.Client(
-    client_options={"credentials": AnonymousCredentials(), "api_endpoint": GCS_ENDPOINT_URL},
-)
 
+    
+    session = Session()
+    session.verify = False
+
+    transport = AuthorizedSession(
+        AnonymousCredentials()
+    )
+    transport.session = session
+
+    try:
+        gcs_client = storage.Client(
+            project="test-project",
+            credentials= AnonymousCredentials(),
+            client_options={"api_endpoint": GCS_ENDPOINT_URL},
+            _http=transport)
+    except Exception as e:
+        logger.error(f"Failed to create GCS client: {e}")
+    
+    return gcs_client
 
 def wait_for_gcs_server(max_retries=30, interval=1):
     """Wait for GCS Server to be ready"""
@@ -44,6 +61,7 @@ def wait_for_gcs_server(max_retries=30, interval=1):
             return True
         except Exception:
             if i < max_retries - 1:
+                logger.info("Retrying connection to GCS Server...")
                 time.sleep(interval)
             continue
     return False
@@ -162,16 +180,25 @@ def start_gcs() -> bool:
             "-e", f"GCS_ROOT_USER={GCS_ROOT_USER}",
             "-e", f"GCS_ROOT_PASSWORD={GCS_ROOT_PASSWORD}",
             "-v", f"{GCS_SERVER_NAME}-data:/data",
-            "fsouza/fake-gcs-server", "server", "/data", "-data" ,"--console-address", ":4443", "-scheme", "https"
+            "fsouza/fake-gcs-server", "server", "/data", "-data" ,"--console-address", ":4443", "-scheme", "both"
         ], check=True)
 
         # Wait for GCS Server to be ready
         if wait_for_gcs_server():
-            create_test_buckets()
-            populate_test_data(endpoint_url=GCS_ENDPOINT_URL,
-                               bucket_name="test-bucket")
-            create_demo_data(endpoint_url=GCS_ENDPOINT_URL,
-                               bucket_name="demo-bucket")
+            try:
+                create_test_buckets()
+            except Exception as e:
+                logger.error(f"Failed to create test buckets: {e}")
+            try:
+                populate_test_data(endpoint_url=GCS_ENDPOINT_URL,
+                                   bucket_name="test-bucket")
+            except Exception as e:
+                logger.error(f"Failed to populate test data: {e}")
+            try:
+                create_demo_data(endpoint_url=GCS_ENDPOINT_URL,
+                                 bucket_name="demo-bucket")
+            except Exception as e:
+                logger.error(f"Failed to create demo data: {e}")
             return True
         return False
 

@@ -94,15 +94,17 @@ def _create_products_data(df: pl.DataFrame):
     logger.info(f"Finished writing products data to {file_path}")
 
 
-def create_demo_data(endpoint_url: str, access_key: str, secret_key: str, bucket_name: str):
+def create_demo_data(endpoint_url: str, bucket_name: str):
     """
     Populates a MinIO bucket with test data matching the schemas from the examples.
     """
     logger.info("🚀 Starting data population for flowfile examples...")
-    gcs_client = storage.client(
-        endpoint_url=GCS_ENDPOINT_URL,
+
+    gcs_client = storage.Client(
+        project="test-project",
         credentials=AnonymousCredentials(),
-    )
+        client_options={"api_endpoint": f"{endpoint_url}"}
+        )
 
     # --- Generate Core DataFrames ---
     DATA_SIZE = 15_000 # Increased data size for more variety

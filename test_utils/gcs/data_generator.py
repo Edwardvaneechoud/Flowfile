@@ -12,6 +12,8 @@ from pyiceberg.catalog import load_catalog
 import mimetypes
 from typing import Dict
 from google.auth.credentials import AnonymousCredentials
+import requests
+import google.auth.transport.requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 GCS_HOST = os.environ.get("TEST_GCS_HOST", "localhost")
 GCS_PORT = int(os.environ.get("TEST_GCS_PORT", 4443))
 GCS_BUCKET_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs")
-GCS_ENDPOINT_URL = f"https://{GCS_HOST}:{GCS_PORT}"
+GCS_ENDPOINT_URL = f"http://{GCS_HOST}:{GCS_PORT}"
 FAKE_GCS_SERVER_NAME = os.environ.get("TEST_MINIO_CONTAINER", "test-gcs-server")
 
 def _create_single_csv_file(gcs_client, df: pl.DataFrame, bucket_name: str):
@@ -220,7 +222,7 @@ def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str,
 """)
 
 
-def populate_test_data(endpoint_url: str, app_credentials_path: str, bucket_name: str):
+def populate_test_data(endpoint_url: str, bucket_name: str):
     """
     Populates a MinIO bucket with a variety of large-scale test data formats.
 
@@ -231,12 +233,24 @@ def populate_test_data(endpoint_url: str, app_credentials_path: str, bucket_name
         bucket_name (str): The name of the bucket to populate.
     """
     logger.info("🚀 Starting data population...")
-    # --- S3 Client and Storage Options ---
-    if "localhost" in endpoint_url:
-        gcs_client = client_options={"credntials": AnonymousCredentials(), "api_endpoint": "{endpoint_url}"}
-    else:
-        gcs_client = storage.Client.from_service_account_json(app_credentials_path)
 
+    # ---- Custom transport that skips SSL verification ----
+    session = requests.Session()
+    session.verify = False  # disable SSL cert verification
+
+    transport = google.auth.transport.requests.AuthorizedSession(
+        AnonymousCredentials()
+    )
+    transport.session = session  # inject custom session
+    
+    # --- S3 Client and Storage Options ---
+    gcs_client = storage.Client(
+        project="test-project",
+        credentials=AnonymousCredentials(),
+        client_options={"api_endpoint": f"{endpoint_url}"},
+        _http=transport
+        )
+   
     # --- Data Generation ---
     data_size = 100_000
     df = pl.DataFrame({
