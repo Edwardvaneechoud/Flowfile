@@ -1056,4 +1056,4 @@ def test_fetch_node_data():
     response = client.get("/node/data", params={'flow_id': flow_id, 'node_id': 2})
     assert response.status_code == 200, 'Node data not retrieved'
     assert len(response.json()["data"]) > 0 , "Data should not be empty"
-    assert response.json()["has_run"], "Node should have run"
+    assert response.json()["has_run_with_current_setup"], "Node should have run"
