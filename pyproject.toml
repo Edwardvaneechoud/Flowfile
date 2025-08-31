@@ -58,6 +58,7 @@ httpx = "^0.28.1"
 tqdm = "^4.67.1"
 s3fs = "^2025.7.0"
 pl-fuzzy-frame-match = ">=0.4.0"
+google-auth = "^2.40.0"
 google-cloud-storage = "^3.0.0"
 azure-storage-blob = "^12.26.0"
 
@@ -71,8 +72,8 @@ stop_postgres = "test_utils.postgres.commands:stop_postgres"
 flowfile = "flowfile.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
-start_gcs_server = "test_utils.gcs.commands:start_fake_gcs_server"
-stop_gcs_server = "test_utils.gcs.commands:stop_fake_gcs_server"
+start_gcs = "test_utils.gcs.commands:start_gcs"
+stop_gcs = "test_utils.gcs.commands:stop_gcs"
 
 
 [tool.poetry.group.dev.dependencies]

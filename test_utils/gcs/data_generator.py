@@ -11,6 +11,7 @@ from deltalake import write_deltalake
 from pyiceberg.catalog import load_catalog
 import mimetypes
 from typing import Dict
+from google.auth.credentials import AnonymousCredentials
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,6 +21,7 @@ GCS_HOST = os.environ.get("TEST_GCS_HOST", "localhost")
 GCS_PORT = int(os.environ.get("TEST_GCS_PORT", 4443))
 GCS_BUCKET_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs")
 GCS_ENDPOINT_URL = f"https://{GCS_HOST}:{GCS_PORT}"
+FAKE_GCS_SERVER_NAME = os.environ.get("TEST_MINIO_CONTAINER", "test-gcs-server")
 
 def _create_single_csv_file(gcs_client, df: pl.DataFrame, bucket_name: str):
     """Creates a single CSV file from a DataFrame and uploads it to GCS."""
@@ -231,7 +233,7 @@ def populate_test_data(endpoint_url: str, app_credentials_path: str, bucket_name
     logger.info("🚀 Starting data population...")
     # --- S3 Client and Storage Options ---
     if "localhost" in endpoint_url:
-        gcs_client = client_options={"api_endpoint": "{endpoint_url}"}
+        gcs_client = client_options={"credntials": AnonymousCredentials(), "api_endpoint": "{endpoint_url}"}
     else:
         gcs_client = storage.Client.from_service_account_json(app_credentials_path)
 
