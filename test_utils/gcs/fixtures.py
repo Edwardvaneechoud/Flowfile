@@ -62,7 +62,7 @@ def is_container_running(container_name: str) -> bool:
         return False
 
 
-def stop_gcs_container() -> bool:
+def stop_gcs() -> bool:
     """Stop the Fake GCS Server container and remove its data volume for a clean shutdown."""
     container_name = FAKE_GCS_SERVER_NAME
     volume_name = f"{container_name}-data"
@@ -104,12 +104,11 @@ def create_test_buckets():
     buckets = ['test-bucket', 'flowfile-test', 'sample-data', 'worker-test-bucket', 'demo-bucket']
     for bucket in buckets:
         try:
-            client.create_bucket(Bucket=bucket)
+            client.bucket(bucket)
+            client.create_bucket(bucket)
             logger.info(f"Created bucket: {bucket}")
-        except client.exceptions.BucketAlreadyExists:
-            logger.info(f"Bucket already exists: {bucket}")
-        except client.exceptions.BucketAlreadyOwnedByYou:
-            logger.info(f"Bucket already owned: {bucket}")
+        except Exception:
+            logger.info(f"Could not create Bucket: {bucket}")
 
 
 def is_docker_available() -> bool:
@@ -149,7 +148,7 @@ def is_docker_available() -> bool:
         return False
 
 
-def start_gcs_container() -> bool:
+def start_gcs() -> bool:
     """Start Fake GCS Server container with initialization"""
     if is_container_running(FAKE_GCS_SERVER_NAME):
         logger.info(f"Container {FAKE_GCS_SERVER_NAME} is already running")
@@ -178,14 +177,14 @@ def start_gcs_container() -> bool:
 
     except Exception as e:
         logger.error(f"Failed to start GCS Server: {e}")
-        stop_gcs_container()
+        stop_gcs()
         return False
 
 
 @contextmanager
 def managed_gcs() -> Generator[Dict[str, any], None, None]:
     """Context manager for GCS Server container with full connection info"""
-    if not start_gcs_container():
+    if not start_gcs():
         yield {}
         return
 
@@ -201,4 +200,4 @@ def managed_gcs() -> Generator[Dict[str, any], None, None]:
     finally:
         # Optionally keep container running for debugging
         if os.environ.get("KEEP_GCS_RUNNING", "false").lower() != "true":
-            stop_gcs_container()
+            stop_gcs()

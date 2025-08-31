@@ -21,7 +21,7 @@ def start_gcs():
         return 0  # Return success to allow pipeline to continue
 
 
-    if fixtures.start_gcs_container():
+    if fixtures.start_gcs():
         print(f"MinIO started at http://localhost:{fixtures.GCS_PORT}")
         return 0
     return 1
@@ -39,7 +39,7 @@ def stop_gcs():
         print("=" * 50 + "\n")
         return 0
 
-    if fixtures.stop_gcs_container():
+    if fixtures.stop_gcs():
         print("MinIO stopped successfully")
         return 0
     return 1
