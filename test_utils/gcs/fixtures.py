@@ -18,7 +18,7 @@ GCS_HOST = os.environ.get("TEST_GCS_HOST", "localhost")
 GCS_PORT = int(os.environ.get("TEST_GCS_PORT", 4443))
 GCS_BUCKET_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs")
 GCS_ENDPOINT_URL = f"https://{GCS_HOST}:{GCS_PORT}"
-FAKE_GCS_SERVER_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs-server")
+GCS_SERVER_NAME = os.environ.get("TEST_GCS_CONTAINER", "test-gcs-server")
 GCS_ROOT_USER = "GCS"
 GCS_ROOT_PASSWORD = "gcsadmin"
 
@@ -64,7 +64,7 @@ def is_container_running(container_name: str) -> bool:
 
 def stop_gcs() -> bool:
     """Stop the Fake GCS Server container and remove its data volume for a clean shutdown."""
-    container_name = FAKE_GCS_SERVER_NAME
+    container_name = GCS_SERVER_NAME
     volume_name = f"{container_name}-data"
 
     if not is_container_running(container_name):
@@ -150,19 +150,19 @@ def is_docker_available() -> bool:
 
 def start_gcs() -> bool:
     """Start Fake GCS Server container with initialization"""
-    if is_container_running(FAKE_GCS_SERVER_NAME):
-        logger.info(f"Container {FAKE_GCS_SERVER_NAME} is already running")
+    if is_container_running(GCS_SERVER_NAME):
+        logger.info(f"Container {GCS_SERVER_NAME} is already running")
         return True
     try:
         # Start GCS Server with volume for persistence
         subprocess.run([
             "docker", "run", "-d",
-            "--name", FAKE_GCS_SERVER_NAME,
+            "--name", GCS_SERVER_NAME,
             "-p", f"{GCS_PORT}:4443",
             "-e", f"GCS_ROOT_USER={GCS_ROOT_USER}",
             "-e", f"GCS_ROOT_PASSWORD={GCS_ROOT_PASSWORD}",
-            "-v", f"{FAKE_GCS_SERVER_NAME}-data:/data",
-            "fsouza/fake-gcs-server", "server", "/data", "--console-address", ":4443", "-scheme", "https"
+            "-v", f"{GCS_SERVER_NAME}-data:/data",
+            "fsouza/fake-gcs-server", "server", "/data", "-data" ,"--console-address", ":4443", "-scheme", "https"
         ], check=True)
 
         # Wait for GCS Server to be ready
