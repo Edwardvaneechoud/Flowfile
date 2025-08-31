@@ -6,6 +6,18 @@
 
   <!-- Table Container -->
   <div v-show="!isLoading" class="table-container">
+    
+    <!-- Button for when there is sample data, but the sample dat is outdated -->
+    <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
+      <p>
+        Displayed data might be outdated.
+        <button @click="handleRefresh" class="refresh-link-button">
+          Click here to refresh.
+        </button>
+      </p>
+      <button @click="dismissOutdatedBanner" class="dismiss-button">&times;</button>
+    </div>
+
     <!-- AG Grid -->
     <ag-grid-vue
       :default-col-def="defaultColDef"
@@ -13,26 +25,27 @@
       class="ag-theme-balham"
       :row-data="rowData"
       :style="{ width: '100%', height: gridHeightComputed }"
+      :overlay-no-rows-template="overlayNoRowsTemplate"
       @grid-ready="onGridReady"
     />
     
-    <!-- Fetch Data Button (shown when has_run is false) -->
     <div v-if="showFetchButton" class="fetch-data-section">
-      <p>{{ fetchStatusMessage }}</p>
+      <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
       <button 
         @click="handleFetchData" 
         class="fetch-data-button"
-        :disabled="isFetching"
+        :disabled="nodeStore.isRunning"
       >
-        <span v-if="!isFetching">Fetch Data</span>
+        <span v-if="!nodeStore.isRunning">Fetch Data</span>
         <span v-else>Fetching...</span>
       </button>
     </div>
   </div>
+
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { TableExample } from "./baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
@@ -58,8 +71,9 @@ const gridApi = ref<GridApi | null>(null);
 const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
-const isFetching = ref(false);
-const pendingFetch = ref(false);
+const showOutdatedDataBanner = ref(false); // <-- ADD THIS NEW STATE VARIABLE
+
+
 
 interface Props {
   showFileStats?: boolean;
@@ -72,38 +86,31 @@ const props = withDefaults(defineProps<Props>(), {
   hideTitle: true,
 });
 
-// Use the flow execution composable
-const { triggerNodeFetch, isPolling } = useFlowExecution(
+// Use the flow execution composable with persistent polling for node fetches
+const { triggerNodeFetch, isPollingActive } = useFlowExecution(
   props.flowId || nodeStore.flow_id,
-  { interval: 2000, enabled: true }
+  { interval: 2000, enabled: true },
+  { 
+    persistPolling: true,  // Keep polling even when component unmounts
+    pollingKey: `table_flow_${props.flowId || nodeStore.flow_id}`
+  }
 );
-
-// Computed property for fetch status message
-const fetchStatusMessage = computed(() => {
-  if (pendingFetch.value) {
-    return "Fetch completed! Refreshing data...";
-  }
-  if (isFetching.value) {
-    return "Fetching data, please wait...";
-  }
-  return "Data has not been generated yet";
-});
 
 // Computed property for dynamic grid height
 const gridHeightComputed = computed(() => {
   if (showFetchButton.value) {
-    return '80px'; // Just show headers when has_run is false
+    return '80px';
   }
   return gridHeight.value || '100%';
 });
 
-// Watch for component becoming visible again to check if fetch completed
-watch(() => showTable.value, (newVal) => {
-  if (newVal && pendingFetch.value && currentNodeId.value) {
-    // Component is visible again and there was a pending fetch
-    downloadData(currentNodeId.value);
-    pendingFetch.value = false;
+// Custom overlay template to hide "no rows" message when fetch button is available
+const overlayNoRowsTemplate = computed(() => {
+  if (showFetchButton.value) {
+    return '<span></span>';
   }
+  // Return undefined to use AG-Grid's default "No Rows To Show" message
+  return undefined;
 });
 
 const defaultColDef = {
@@ -115,7 +122,22 @@ const defaultColDef = {
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
+  
+  // Optionally, you can also programmatically control the overlay
+  if (showFetchButton.value) {
+    gridApi.value.hideOverlay();
+  }
 };
+
+function dismissOutdatedBanner() {
+  showOutdatedDataBanner.value = false;
+}
+
+async function handleRefresh() {
+  // Hide banner and trigger the existing fetch logic
+  showOutdatedDataBanner.value = false;
+  await handleFetchData();
+}
 
 const calculateGridHeight = () => {
   const otherElementsHeight = 300;
@@ -129,26 +151,18 @@ async function downloadData(nodeId: number) {
   try {
     isLoading.value = true;
     showFetchButton.value = false;
+    showOutdatedDataBanner.value = false;
     currentNodeId.value = nodeId;
-    
-    // Check if there's an active fetch for this node
-    if (isPolling(nodeId)) {
-      isFetching.value = true;
-      // Don't proceed with loading data yet, just show the fetching state
-      return;
-    }
-    
-    isFetching.value = false;
     
     let resp = await nodeStore.getTableExample(nodeStore.flow_id, nodeId);
 
     if (resp) {
       dataPreview.value = resp;
-      
+      showOutdatedDataBanner.value = !resp.has_run_with_current_setup && resp.has_example_data;
       // Always set up columns
       const _cd: Array<{ field: string; headerName: string; resizable: boolean }> = [];
       const _columns = dataPreview.value.table_schema;
-
+      
       if (props.showFileStats) {
         _columns?.forEach((item) => {
           _cd.push({ 
@@ -171,7 +185,7 @@ async function downloadData(nodeId: number) {
       columnDefs.value = _cd;
       
       // Check if data has been run
-      if (resp.has_run === false) {
+      if (resp.has_example_data === false) {
         showFetchButton.value = true;
         // Show empty grid with just headers
         rowData.value = [];
@@ -195,26 +209,32 @@ async function downloadData(nodeId: number) {
 }
 
 async function handleFetchData() {
-  if (currentNodeId.value !== null && !isFetching.value) {
+  if (currentNodeId.value !== null) {
     try {
-      isFetching.value = true;
+      // Check if already fetching this node
+      if (isPollingActive(`node_${currentNodeId.value}`)) {
+        console.log("Fetch already in progress for this node");
+        return;
+      }
       
-      // Trigger node fetch with completion callback
-      await triggerNodeFetch(currentNodeId.value, async () => {
-        // This callback runs when the fetch completes
-        pendingFetch.value = true;
-        isFetching.value = false;
-        
-        // If the component is still mounted, reload the data
-        if (showTable.value && currentNodeId.value) {
-          await downloadData(currentNodeId.value);
-          pendingFetch.value = false;
+      // Use the composable to trigger node fetch with proper state management
+      await triggerNodeFetch(currentNodeId.value);
+      
+      // Set up a watcher for when the fetch completes
+      // Since polling is persistent, we need to check periodically
+      const checkInterval = setInterval(async () => {
+        if (!isPollingActive(`node_${currentNodeId.value}`)) {
+          clearInterval(checkInterval);
+          // Reload the data once fetch is complete
+          await downloadData(currentNodeId.value!);
         }
-        // Otherwise, the watch will handle it when component becomes visible
-      });
+      }, 1000);
+      
+      // Safety timeout to prevent infinite checking
+      setTimeout(() => clearInterval(checkInterval), 60000); // 1 minute max
     } catch (error) {
       console.error("Failed to fetch node data:", error);
-      isFetching.value = false;
+      // Error notification is already handled by the composable
     }
   }
 }
@@ -226,8 +246,6 @@ function removeData() {
   columnDefs.value = [{}];
   showFetchButton.value = false;
   currentNodeId.value = null;
-  isFetching.value = false;
-  pendingFetch.value = false;
 }
 
 const parentElement = ref(null);
@@ -235,16 +253,10 @@ const parentElement = ref(null);
 onMounted(() => {
   calculateGridHeight();
   window.addEventListener("resize", calculateGridHeight);
-  
-  // Check if there's an ongoing fetch for this node when component mounts
-  if (currentNodeId.value && isPolling(currentNodeId.value)) {
-    isFetching.value = true;
-  }
 });
 
 onUnmounted(() => {
   window.removeEventListener("resize", calculateGridHeight);
-  // Note: We do NOT stop polling here - it continues in the service
 });
 
 defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
@@ -287,7 +299,9 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   flex-direction: column;
   height: 100%;
   width: 100%;
+  position: relative;
 }
+
 
 .fetch-data-section {
   padding: 20px;
@@ -302,7 +316,6 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   color: #6b7280;
   font-size: 14px;
   margin-bottom: 12px;
-  font-weight: 500;
 }
 
 .fetch-data-button {
@@ -337,4 +350,56 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   --ag-row-background-color: rgb(255, 255, 255);
   --ag-header-background-color: rgb(246, 247, 251);
 }
+
+.outdated-data-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: #fffbe6; /* Light yellow */
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  font-size: 14px;
+  color: #92400e;
+}
+
+.outdated-data-banner p {
+  margin: 0;
+  margin-right: 16px;
+}
+
+.refresh-link-button {
+  background: none;
+  border: none;
+  color: #065fd4;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+}
+
+.refresh-link-button:hover {
+  color: #04499b;
+}
+
+.dismiss-button {
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #9ca3af;
+  padding: 0 4px;
+}
+
+.dismiss-button:hover {
+  color: #4b5563;
+}
+
 </style>

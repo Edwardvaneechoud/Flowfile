@@ -128,6 +128,25 @@ def results_exists(file_ref: str):
         return False
 
 
+def clear_task_from_worker(file_ref: str) -> bool:
+    """
+    Clears a task from the worker service by making a DELETE request. It also removes associated cached files.
+    Args:
+        file_ref (str): The unique identifier of the task to clear.
+
+    Returns:
+        bool: True if the task was successfully cleared, False otherwise.
+    """
+    try:
+        f = requests.delete(f'{WORKER_URL}/clear_task/{file_ref}')
+        if f.status_code == 200:
+            return True
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Failed to remove results: {str(e)}")
+        return False
+
+
 def get_df_result(encoded_df: str) -> pl.LazyFrame:
     r = decodebytes(encoded_df.encode())
     return pl.LazyFrame.deserialize(io.BytesIO(r))

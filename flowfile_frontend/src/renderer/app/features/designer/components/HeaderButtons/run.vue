@@ -10,7 +10,7 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps, onMounted } from "vue";
+import { defineProps } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import { useFlowExecution } from "../../composables/useFlowExecution";
 
@@ -26,37 +26,39 @@ const props = defineProps({
       maxAttempts: Infinity,
     }),
   },
+  persistPolling: {
+    type: Boolean,
+    default: false, // RunButton doesn't need persistent polling by default
+  },
 });
 
-// Use the composable - polling is managed by the service
+// Use the composable
 const { 
   runFlow, 
   cancelFlow, 
   showNotification,
-  isPolling,
-  service
-} = useFlowExecution(props.flowId, props.pollingConfig);
-
-// Check on mount if there's an active flow running
-onMounted(() => {
-  // If there's already polling for this flow, ensure the state is correct
-  if (isPolling()) {
-    nodeStore.isRunning = true;
+  startPolling,
+  stopPolling,
+  checkRunStatus 
+} = useFlowExecution(
+  props.flowId, 
+  props.pollingConfig,
+  { 
+    persistPolling: props.persistPolling,
+    pollingKey: `run_button_${props.flowId}`
   }
-});
+);
 
 const emit = defineEmits(["logs-start", "logs-stop"]);
 
 // Expose methods if parent component needs them
 defineExpose({
+  startPolling,
+  stopPolling,
+  checkRunStatus,
+  showNotification,
   runFlow,
   cancelFlow,
-  showNotification,
-  isPolling,
-  // Expose service methods for backwards compatibility if needed
-  startPolling: () => console.warn('Polling is now managed by the service'),
-  stopPolling: () => service.stopAllFlowPolling(props.flowId),
-  checkRunStatus: () => service.checkRunStatus(props.flowId, nodeStore),
 });
 </script>
 

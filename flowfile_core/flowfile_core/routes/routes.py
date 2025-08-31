@@ -215,7 +215,7 @@ async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: 
             flow.validate_if_node_can_be_fetched(node_id)
         except Exception as e:
             raise HTTPException(422, str(e))
-        background_tasks.add_task(flow.fetch_node, node_id)
+        background_tasks.add_task(flow.trigger_fetch_node, node_id)
     return JSONResponse(content={"message": "Data started",
                                  "flow_id": flow_id,
                                  "node_id": node_id}, status_code=status.HTTP_200_OK)

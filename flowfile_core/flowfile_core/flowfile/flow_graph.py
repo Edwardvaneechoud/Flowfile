@@ -1609,7 +1609,8 @@ class FlowGraph:
         if flow_node.node_id in [skip_node.node_id for skip_node in skip_nodes]:
             raise Exception("Node can not be executed because it does not have it's inputs")
 
-    def fetch_node(self, node_id: int) -> RunInformation | None:
+    def trigger_fetch_node(self, node_id: int) -> RunInformation | None:
+        """Executes a specific node in the graph by its ID."""
         if self.flow_settings.is_running:
             raise Exception("Flow is already running")
         flow_node = self.get_node(node_id)
@@ -1626,7 +1627,8 @@ class FlowGraph:
             flow_node.execute_node(run_location=self.flow_settings.execution_location,
                                    performance_mode=False,
                                    node_logger=node_logger,
-                                   optimize_for_downstream=False)
+                                   optimize_for_downstream=False,
+                                   reset_cache=True)
             node_result.error = str(flow_node.results.errors)
             if self.flow_settings.is_canceled:
                 node_result.success = None
@@ -1673,7 +1675,6 @@ class FlowGraph:
             self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
             skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
-
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'

@@ -20,7 +20,8 @@ export interface TableExample {
   table_schema: FileColumn[]
   columns: string[]
   data: Record<string, any>[]
-  has_run?: boolean
+  has_example_data: boolean
+  has_run_with_current_setup: boolean
 }
 
 export interface NodeData {
