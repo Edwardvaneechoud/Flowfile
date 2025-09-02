@@ -100,7 +100,6 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
       },
     };
 
-    nodeStore.node_id = globalNodeId.value;
     await nodeStore.updateSettingsDirectly(saveData);
     console.log("Node settings updated successfully.");
     return true;

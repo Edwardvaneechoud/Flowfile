@@ -23,6 +23,7 @@ import {
   NodeConnection,
 } from "./backendInterface";
 import DraggableItem from "./DraggableItem/DraggableItem.vue";
+import layoutControls from "./DraggableItem/layoutControls.vue";
 import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
@@ -90,6 +91,7 @@ interface EdgeChange {
 }
 
 const handleCanvasClick = (event: any | PointerEvent) => {
+  console.log("Closing drawer")
   nodeStore.closeDrawer();
   showTablePreview.value = false;
   nodeStore.hideLogViewer();
@@ -121,7 +123,7 @@ const selectNodeExternally = (nodeId: number) => {
     setNodeTableView(nodeId);
   });
   fitView({ nodes: [nodeId.toString()] });
-  nodeStore.node_id = nodeId;
+  // nodeStore.node_id = nodeId;
 };
 
 async function onConnect(params: any) {
@@ -146,8 +148,10 @@ const NodeIsSelected = (nodeId: string) => {
 };
 
 const nodeClick = (mouseEvent: any) => {
+  console.log(mouseEvent)
   showTablePreview.value = true;
   nextTick().then(() => {
+    console.log(mouseEvent.node.id)
     if (
       (mouseEvent.node.id && !NodeIsSelected(mouseEvent.node.id)) ||
       (dataPreview.value &&
@@ -205,6 +209,23 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
       deleteConnection(nodeStore.flow_id, nodeConnection);
     }
   }
+};
+
+const handleOpenDrawer = async (nodeId: number) => {
+  console.log("Opening drawer for node:", nodeId);
+  
+  // Check if drawer is already open for this node
+  if (nodeStore.node_id === nodeId && nodeStore.isDrawerOpen) {
+    console.log("Drawer already open for this node");
+    return;
+  }
+  nodeStore.closeDrawer();
+  nodeStore.node_id = nodeId;
+  nodeStore.isDrawerOpen = true;
+  await nextTick();
+  window.dispatchEvent(new CustomEvent('open-node-drawer', { 
+    detail: { nodeId } 
+  }));
 };
 
 const handleDrop = (event: DragEvent) => {
@@ -341,6 +362,7 @@ defineExpose({
         @action="handleContextMenuAction"
       />
     </main>
+    {{ nodeStore.node_id }}
     <draggable-item
       id="dataActions"
       :show-left="true"
@@ -348,7 +370,7 @@ defineExpose({
       initial-position="left"
       title="Data actions"
       :allow-free-move="true"
-    >
+      :prevent-overlap="false" >
       <NodeList @dragstart="onDragStart" />
     </draggable-item>
     <draggable-item
@@ -358,8 +380,9 @@ defineExpose({
       title="Log overview"
       :allow-full-screen="true"
       initial-position="bottom"
+      :initial-left="200"
       :on-minize="nodeStore.toggleLogViewer"
-    >
+      group="bottomPanels" :sync-dimensions="true" :prevent-overlap="false" >
       <LogViewer :flow-id="1" />
     </draggable-item>
     <draggable-item
@@ -370,7 +393,7 @@ defineExpose({
       initial-position="right"
       :initial-width="400"
       :initial-top="-50"
-    >
+      group="rightPanels" :prevent-overlap="false" >
       <FlowResults :on-click="selectNodeExternally" />
     </draggable-item>
     <draggable-item
@@ -382,7 +405,8 @@ defineExpose({
       initial-position="bottom"
       :on-minize="toggleShowTablePreview"
       :initial-height="tablePreviewHeight"
-    >
+      :initial-left="200"
+      group="bottomPanels" :sync-dimensions="true" :prevent-overlap="false" >
       <data-preview ref="dataPreview"> text </data-preview>
     </draggable-item>
     <draggable-item
@@ -396,7 +420,7 @@ defineExpose({
       title="Node Settings"
       :on-minize="nodeStore.closeDrawer"
       :allow-full-screen="true"
-    >
+      group="rightPanels" :prevent-overlap="false" >
       <div id="nodesettings" class="content"></div>
     </draggable-item>
     <draggable-item
@@ -408,10 +432,13 @@ defineExpose({
       :allow-free-move="true"
       :allow-full-screen="true"
       :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
+      :prevent-overlap="false"
     >
       <CodeGenerator />
     </draggable-item>
+    <layoutControls/>
   </div>
+
 </template>
 
 <style>

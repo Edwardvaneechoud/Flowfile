@@ -43,7 +43,9 @@ const closeOnDrawer = () => {
 };
 
 const openDrawer = async () => {
+  console.log("open drawer fuzzy match")
   if (nodeStore.node_id === props.nodeId) {
+    console.log("NO CHANGE DETECTED")
     // nodeStore.openDrawer(closeOnDrawer);
     return;
   }
@@ -53,8 +55,10 @@ const openDrawer = async () => {
   nodeStore.isDrawerOpen = true;
   await nextTick();
   if (nodeStore.node_id === props.nodeId && drawerOpen) {
+    console.log("No change detected")
     return;
   }
+  console.log("Change detected")
   if (childComp.value) {
     childComp.value.loadNodeData(props.nodeId);
     nodeStore.openDrawer(closeOnDrawer);

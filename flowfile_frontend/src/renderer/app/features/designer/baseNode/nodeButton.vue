@@ -178,6 +178,7 @@ const getNodeDescription = async () => {
 const emits = defineEmits(["click"]);
 
 const onClick = () => {
+  console.log("Clicking ", props.nodeId)
   emits("click");
 };
 

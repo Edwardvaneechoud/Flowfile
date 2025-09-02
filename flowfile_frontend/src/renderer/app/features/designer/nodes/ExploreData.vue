@@ -43,8 +43,6 @@ const openDrawer = async () => {
 
   drawer.value = true;
   nodeStore.openDrawer(closeOnDrawer);
-  nodeStore.node_id = props.nodeId;
-
   await nextTick();
 
   if (childComp.value) {

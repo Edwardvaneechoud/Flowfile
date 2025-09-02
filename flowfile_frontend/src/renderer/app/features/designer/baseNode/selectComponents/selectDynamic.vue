@@ -1,112 +1,106 @@
 <template>
-  <div v-if="dataLoaded">
-    <!-- Remove Missing Fields Button -->
-    <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
-      <UnavailableField tooltip-text="Field not available click for removing them for memory" />
-      <span>Remove Missing Fields</span>
-    </div>
+  <div>
+    <div v-if="dataLoaded">
+      <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
+        <UnavailableField tooltip-text="Field not available click for removing them for memory" />
+        <span>Remove Missing Fields</span>
+      </div>
 
-    <!-- Title -->
-    <div v-if="props.showTitle" class="listbox-subtitle">
-      {{ props.title }}
-    </div>
+      <div v-if="props.showTitle" class="listbox-subtitle">
+        {{ props.title }}
+      </div>
 
-    <!-- Table Wrapper -->
-    <div class="listbox-wrapper">
-      <div class="table-wrapper">
-        <table class="styled-table">
-          <thead>
-            <tr v-if="props.showHeaders">
-              <th
-                v-if="props.showOldColumns"
-                :style="{ width: standardColumnWidth }"
-                @click="toggleSort"
+      <div class="listbox-wrapper">
+        <div class="table-wrapper">
+          <table class="styled-table">
+            <thead>
+              <tr v-if="props.showHeaders">
+                <th
+                  v-if="props.showOldColumns"
+                  :style="{ width: standardColumnWidth }"
+                  @click="toggleSort"
+                >
+                  {{ originalColumnHeader }}
+                  <span v-if="props.sortedBy === 'asc'">▲</span>
+                  <span v-else-if="props.sortedBy === 'desc'">▼</span>
+                </th>
+                <th v-if="props.showNewColumns" :style="{ width: standardColumnWidth }">
+                  New column name
+                </th>
+                <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">Data type</th>
+                <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
+              </tr>
+            </thead>
+            <tbody id="selectable-container">
+              <tr
+                v-for="(column, index) in localSelectInputs"
+                :key="column.old_name"
+                :class="{ 'drag-over': dragOverIndex === index }"
+                :style="{ opacity: column.is_available ? 1 : 0.6 }"
+                draggable="true"
+                @dragstart="handleDragStart(index, $event)"
+                @dragover.prevent="handleDragOver(index)"
+                @drop="handleDrop(index)"
               >
-                {{ originalColumnHeader }}
-                <span v-if="props.sortedBy === 'asc'">▲</span>
-                <span v-else-if="props.sortedBy === 'desc'">▼</span>
-              </th>
-              <th v-if="props.showNewColumns" :style="{ width: standardColumnWidth }">
-                New column name
-              </th>
-              <th v-if="props.showDataType" :style="{ width: standardColumnWidth }">Data type</th>
-              <th v-if="props.showKeepOption" :style="{ width: selectColumnWidth }">Select</th>
-            </tr>
-          </thead>
-          <tbody id="selectable-container">
-            <tr
-              v-for="(column, index) in localSelectInputs"
-              :key="column.old_name"
-              :class="{ 'drag-over': dragOverIndex === index }"
-              :style="{ opacity: column.is_available ? 1 : 0.6 }"
-              draggable="true"
-              @dragstart="handleDragStart(index, $event)"
-              @dragover.prevent="handleDragOver(index)"
-              @drop="handleDrop(index)"
-            >
-              <!-- Old Column -->
-              <td
-                v-if="props.showOldColumns"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-                @click="handleItemClick(index, column.old_name, $event)"
-                @contextmenu.prevent="openContextMenu(index, column.old_name, $event)"
-              >
-                <div v-if="!column.is_available" class="unavailable-field">
-                  <UnavailableField />
-                  <span style="margin-left: 20px">{{ column.old_name }}</span>
-                </div>
-                <div v-else>
-                  {{ column.old_name }}
-                </div>
-              </td>
+                <td
+                  v-if="props.showOldColumns"
+                  :class="{ 'highlight-row': isSelected(column.old_name) }"
+                  @click="handleItemClick(index, column.old_name, $event)"
+                  @contextmenu.prevent="openContextMenu(index, column.old_name, $event)"
+                >
+                  <div v-if="!column.is_available" class="unavailable-field">
+                    <UnavailableField />
+                    <span style="margin-left: 20px">{{ column.old_name }}</span>
+                  </div>
+                  <div v-else>
+                    {{ column.old_name }}
+                  </div>
+                </td>
 
-              <!-- New Column -->
-              <td
-                v-if="props.showNewColumns"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-              >
-                <el-input v-model="column.new_name" size="small" class="smaller-el-input" />
-              </td>
+                <td
+                  v-if="props.showNewColumns"
+                  :class="{ 'highlight-row': isSelected(column.old_name) }"
+                >
+                  <el-input v-model="column.new_name" size="small" class="smaller-el-input" />
+                </td>
 
-              <!-- Data Type -->
-              <td
-                v-if="props.showDataType"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-              >
-                <el-select v-model="column.data_type" size="small">
-                  <el-option
-                    v-for="dataType in dataTypes"
-                    :key="dataType"
-                    :label="dataType"
-                    :value="dataType"
-                  />
-                </el-select>
-              </td>
+                <td
+                  v-if="props.showDataType"
+                  :class="{ 'highlight-row': isSelected(column.old_name) }"
+                >
+                  <el-select v-model="column.data_type" size="small">
+                    <el-option
+                      v-for="dataType in dataTypes"
+                      :key="dataType"
+                      :label="dataType"
+                      :value="dataType"
+                    />
+                  </el-select>
+                </td>
 
-              <!-- Keep Option -->
-              <td
-                v-if="props.showKeepOption"
-                :class="{ 'highlight-row': isSelected(column.old_name) }"
-              >
-                <el-checkbox v-model="column.keep" />
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                <td
+                  v-if="props.showKeepOption"
+                  :class="{ 'highlight-row': isSelected(column.old_name) }"
+                >
+                  <el-checkbox v-model="column.keep" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- Context Menu -->
-  <div
-    v-if="showContextMenu"
-    class="context-menu"
-    :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
-  >
-    <button @click="selectAllSelected">Select</button>
-    <button @click="deselectAllSelected">Deselect</button>
+    <div
+      v-if="showContextMenu"
+      class="context-menu"
+      :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
+    >
+      <button @click="selectAllSelected">Select</button>
+      <button @click="deselectAllSelected">Deselect</button>
+    </div>
   </div>
-</template>
+  </template>
 
 <script lang="ts" setup>
 import {
@@ -345,7 +339,7 @@ defineExpose({ localSelectInputs });
 }
 
 /* Adjusted font size for input fields */
-::v-deep(.smaller-el-input .el-input__inner) {
+:deep(.smaller-el-input .el-input__inner) {
   padding: 2px 10px;
   font-size: 12px;
   height: 24px;
@@ -399,7 +393,7 @@ defineExpose({ localSelectInputs });
 }
 
 /* Adjustments for el-checkbox component */
-::v-deep .el-checkbox {
+:deep(.el-checkbox) {
   font-size: 12px;
   height: 20px;
   line-height: 20px;
@@ -407,18 +401,18 @@ defineExpose({ localSelectInputs });
   align-items: center;
 }
 
-::v-deep .el-checkbox .el-checkbox__input {
+:deep(.el-checkbox .el-checkbox__input) {
   height: 16px;
   width: 16px;
   margin: 0;
 }
 
-::v-deep .el-checkbox .el-checkbox__inner {
+:deep(.el-checkbox .el-checkbox__inner) {
   height: 16px;
   width: 16px;
 }
 
-::v-deep .el-checkbox .el-checkbox__label {
+:deep(.el-checkbox .el-checkbox__label) {
   font-size: 12px;
   line-height: 20px;
   margin-left: 4px;
