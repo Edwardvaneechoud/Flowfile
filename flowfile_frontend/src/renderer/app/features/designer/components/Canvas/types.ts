@@ -1,5 +1,5 @@
 import { NodeBase } from './../../baseNode/nodeInput'
-
+import { NodeTemplate } from '../../types'
 
 export interface NodeCopyValue {
     nodeIdToCopyFrom: number
@@ -11,6 +11,7 @@ export interface NodeCopyValue {
     multi?: boolean;
     typeSnakeCase: string;
     flowIdToCopyFrom: number
+    nodeTemplate?: NodeTemplate; // Add this
 }
 
 

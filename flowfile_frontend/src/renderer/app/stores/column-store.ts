@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
+import type { Component } from 'vue'
 import axios from 'axios'
 import {
   NodeData,
@@ -11,9 +12,9 @@ import {
   NodeValidation,
   NodeDescriptionDictionary,
   ExpressionsOverview,
+  NodeTitleInfo,
 } from '../features/designer/baseNode/nodeInterfaces'
 import { VueFlowStore, Node } from '@vue-flow/core';
-import { get } from 'lodash';
 
 const FLOW_ID_STORAGE_KEY = 'last_flow_id';
 
@@ -34,6 +35,7 @@ export const useColumnStore = defineStore('column', {
     },
   },
 })
+
 
 export const getDownstreamNodeIds = async (flow_id: number, node_id: number): Promise<number[]> => {
   const response = await axios.get('/node/downstream_node_ids', {
@@ -83,6 +85,8 @@ export const useNodeStore = defineStore('node', {
       isStreamingLogs: false,
       displayLogViewer: true,
       showCodeGenerator: false,
+      activeDrawerComponent: shallowRef<Component | null>(null),
+      drawerProps: ref<Record<string, any>>({}),
     }
   },
 
@@ -255,6 +259,11 @@ export const useNodeStore = defineStore('node', {
         return '';
       }
     },
+    getters: {
+      isDrawerOpen(): boolean {
+        return !!this.activeDrawerComponent;
+      }
+    },
 
     async setNodeDescription(nodeId: number, description: string): Promise<void> {
       try {
@@ -309,25 +318,26 @@ export const useNodeStore = defineStore('node', {
       }
     },
 
-    openDrawer(close_function?: () => void) {
-      console.log('openDrawer in column-store.ts')
-      if (this.isDrawerOpen) {
-        console.log('pushing data')
-        this.pushNodeData()
-      }
-      if (close_function) {
-        this.drawCloseFunction = close_function
-      }
+    openDrawer(component: Component, nodeTitleInfo: NodeTitleInfo, props: Record<string, any> = {}) {
+      // This action now sets the component and its props in the store
+      this.activeDrawerComponent = component;
+      this.drawerProps = {...nodeTitleInfo, ...props};
       this.isDrawerOpen = true
     },
 
     closeDrawer() {
-      this.isDrawerOpen = false
+      this.activeDrawerComponent = null;
+      console.log("closing")
+      this.node_id = -1; // Reset the active node
+      // console.log("Pushing node data", this.drawCloseFunction)
       if (this.drawCloseFunction) {
-        this.pushNodeData()
+        
+        // this.pushNodeData()
       }
       this.node_id = -1
     },
+
+
     openAnalysisDrawer(close_function?: () => void) {
       console.log('openAnalysisDrawer in column-store.ts')
       if (this.isAnalysisOpen) {
@@ -414,20 +424,18 @@ export const useNodeStore = defineStore('node', {
     async reloadCurrentNodeData(): Promise<NodeData | null> {
       return this.getNodeData(this.node_id, false)
     },
+
     setFlowIdAndNodeId(flow_id: number, node_id: number) {
       if (this.node_id === node_id && this.flow_id === flow_id) {
         return
       }
       console.log('Automatically pushing the node data ')
-      this.pushNodeData()
-      this.previous_node_id = this.node_id
-
       if (this.flow_id !== flow_id) {
         this.setFlowId(flow_id);
       }
-
       this.node_id = node_id
     },
+
     getCurrentNodeData(): NodeData | null {
       return this.nodeData
     },
@@ -492,13 +500,9 @@ export const useNodeStore = defineStore('node', {
 
     async updateSettings(inputData: any): Promise<any> {
       try {
-        const node = this.vueFlowInstance?.findNode(String(this.node_id)) as Node
-
+        const node = this.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node
         inputData.value.pos_x = node.position.x
         inputData.value.pos_y = node.position.y
-        console.log("updating settings")
-        console.log('node', node)
-        console.log("node name", node.data.component.__name)
         const response = await axios.post('/update_settings/', inputData.value, {
           params: {
             node_type: node.data.component.__name,

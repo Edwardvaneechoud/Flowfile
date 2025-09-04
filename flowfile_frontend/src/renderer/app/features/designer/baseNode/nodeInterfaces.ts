@@ -93,3 +93,8 @@ export interface ExpressionsOverview {
   expression_type: string
   expressions: ExpressionRef[]
 }
+
+export interface NodeTitleInfo {
+  title: string
+  intro: string
+}

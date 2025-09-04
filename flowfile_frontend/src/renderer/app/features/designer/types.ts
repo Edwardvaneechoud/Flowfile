@@ -9,6 +9,8 @@ export interface NodeTemplate {
   multi: boolean;
   node_group: string;
   prod_ready: boolean;
+  drawer_title: string; 
+  drawer_intro: string;
 }
 
 export interface NodeInput extends NodeTemplate {

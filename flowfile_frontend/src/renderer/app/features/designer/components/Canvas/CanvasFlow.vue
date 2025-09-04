@@ -15,6 +15,7 @@ import useDragAndDrop from "./useDnD";
 import CodeGenerator from "./codeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../../../stores/column-store";
+import NodeSettingsDrawer from "./NodeSettingsDrawer.vue"
 import {
   getFlowData,
   deleteConnection,
@@ -29,6 +30,8 @@ import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import { NodeCopyInput, NodeCopyValue, ContextMenuAction, CursorPosition } from "./types";
+
+
 
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
@@ -92,8 +95,9 @@ interface EdgeChange {
 
 const handleCanvasClick = (event: any | PointerEvent) => {
   console.log("Closing drawer")
-  nodeStore.closeDrawer();
   showTablePreview.value = false;
+  nodeStore.node_id = -1;
+  nodeStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
   clickedPosition.value = {
     x: event.x,
@@ -123,7 +127,6 @@ const selectNodeExternally = (nodeId: number) => {
     setNodeTableView(nodeId);
   });
   fitView({ nodes: [nodeId.toString()] });
-  // nodeStore.node_id = nodeId;
 };
 
 async function onConnect(params: any) {
@@ -148,10 +151,12 @@ const NodeIsSelected = (nodeId: string) => {
 };
 
 const nodeClick = (mouseEvent: any) => {
-  console.log(mouseEvent)
   showTablePreview.value = true;
+  
   nextTick().then(() => {
     console.log(mouseEvent.node.id)
+    nodeStore.node_id = parseInt(mouseEvent.node.id)
+
     if (
       (mouseEvent.node.id && !NodeIsSelected(mouseEvent.node.id)) ||
       (dataPreview.value &&
@@ -211,22 +216,6 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
   }
 };
 
-const handleOpenDrawer = async (nodeId: number) => {
-  console.log("Opening drawer for node:", nodeId);
-  
-  // Check if drawer is already open for this node
-  if (nodeStore.node_id === nodeId && nodeStore.isDrawerOpen) {
-    console.log("Drawer already open for this node");
-    return;
-  }
-  nodeStore.closeDrawer();
-  nodeStore.node_id = nodeId;
-  nodeStore.isDrawerOpen = true;
-  await nextTick();
-  window.dispatchEvent(new CustomEvent('open-node-drawer', { 
-    detail: { nodeId } 
-  }));
-};
 
 const handleDrop = (event: DragEvent) => {
   if (!nodeStore.isRunning) {
@@ -332,6 +321,7 @@ defineExpose({
 
 <template>
   <div class="container">
+
     <main ref="mainContainerRef" @drop="handleDrop" @dragover="onDragOver">
       <VueFlow
         ref="vueFlow"
@@ -362,7 +352,6 @@ defineExpose({
         @action="handleContextMenuAction"
       />
     </main>
-    {{ nodeStore.node_id }}
     <draggable-item
       id="dataActions"
       :show-left="true"
@@ -414,14 +403,13 @@ defineExpose({
       id="nodeSettings"
       :show-right="true"
       initial-position="right"
-      :initial-top="0"
       :initial-width="800"
       :initial-height="nodeSettingsHeight"
       title="Node Settings"
-      :on-minize="nodeStore.closeDrawer"
+      :on-minize="handleCanvasClick"
       :allow-full-screen="true"
-      group="rightPanels" :prevent-overlap="false" >
-      <div id="nodesettings" class="content"></div>
+      :prevent-overlap="false" >
+      <NodeSettingsDrawer/>
     </draggable-item>
     <draggable-item
       v-if="nodeStore.showCodeGenerator"
