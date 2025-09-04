@@ -116,6 +116,7 @@ export interface NodeBase {
   pos_y: number
   is_setup?: boolean
   description?: string
+  is_flow_output: boolean
 }
 
 interface ExternalSource {

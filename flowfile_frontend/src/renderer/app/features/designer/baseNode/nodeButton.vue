@@ -5,8 +5,6 @@
       <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
     </button>
   </div>
-
-  {{ drawerComponent }}
 </template>
 
 <script setup lang="ts">

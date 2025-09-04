@@ -92,6 +92,11 @@ export const useNodeStore = defineStore('node', {
 
   actions: {
 
+    async executeDrawCloseFunction() {
+      console.log("Executing draw close function")
+      this.drawCloseFunction()
+    },
+
     toggleCodeGenerator() {
       this.showCodeGenerator = !this.showCodeGenerator;
     },
@@ -322,6 +327,7 @@ export const useNodeStore = defineStore('node', {
       // This action now sets the component and its props in the store
       this.activeDrawerComponent = component;
       this.drawerProps = {...nodeTitleInfo, ...props};
+      console.log("props", this.drawerProps)
       this.isDrawerOpen = true
     },
 
@@ -474,11 +480,8 @@ export const useNodeStore = defineStore('node', {
     async updateSettingsDirectly(inputData: any): Promise<any> {
       try {
         const node = this.vueFlowInstance?.findNode(String(this.node_id)) as Node
-
         inputData.pos_x = node.position.x
         inputData.pos_y = node.position.y
-        console.log("updating settings")
-        console.log('node', node)
         const response = await axios.post('/update_settings/', inputData, {
           params: {
             node_type: node.data.component.__name,
@@ -500,12 +503,15 @@ export const useNodeStore = defineStore('node', {
 
     async updateSettings(inputData: any): Promise<any> {
       try {
+        console.log("inputData", inputData)
+
         const node = this.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node
+        console.log('nodeData', )
         inputData.value.pos_x = node.position.x
         inputData.value.pos_y = node.position.y
         const response = await axios.post('/update_settings/', inputData.value, {
           params: {
-            node_type: node.data.component.__name,
+            node_type: node.data.nodeTemplate.item,
           },
         }
         )

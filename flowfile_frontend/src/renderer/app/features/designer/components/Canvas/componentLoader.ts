@@ -1,5 +1,4 @@
 import { DefineComponent, markRaw } from "vue";
-import { toTitleCase } from "./utils";
 import { NodeTemplate } from "../../types";
 import GenericNode from "../../nodes/GenericNode.vue"; // Import GenericNode directly
 
