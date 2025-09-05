@@ -193,8 +193,6 @@ const removeColumn = (type: "add", column: string) => {
 
 const pushNodeData = async () => {
   nodeStore.updateSettings(nodeRecordId);
-  dataLoaded.value = false;
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

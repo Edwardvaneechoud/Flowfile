@@ -243,7 +243,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
 };
 
 const handleClickOutside = (event: MouseEvent) => {
@@ -260,7 +259,6 @@ const pushNodeData = async () => {
   if (pivotInput.value) {
     nodeStore.updateSettings(nodePivot);
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

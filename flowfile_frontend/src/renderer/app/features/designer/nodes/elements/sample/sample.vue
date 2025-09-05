@@ -61,7 +61,6 @@ const pushNodeData = async () => {
   }
   nodeStore.updateSettings(nodeSample);
   dataLoaded.value = false;
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

@@ -130,7 +130,6 @@ const loadNodeData = async (nodeId: number) => {
   if (result.value) {
     dataLoaded.value = true;
   }
-  nodeStore.isDrawerOpen = true;
 };
 
 const addJoinCondition = () => {
@@ -169,7 +168,6 @@ const pushNodeData = async () => {
   console.log("Pushing node data");
   nodeStore.updateSettings(nodeJoin);
   //dataLoaded.value = false
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

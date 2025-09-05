@@ -143,7 +143,6 @@ const handleChange = (newValue: string, type: "columnToSplit" | "splitValueColum
 
 const pushNodeData = async () => {
   isLoaded.value = false;
-  nodeStore.isDrawerOpen = false;
   if (nodeTextToRows.value) {
     nodeTextToRows.value.is_setup = true;
   }

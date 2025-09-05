@@ -25,7 +25,6 @@
           <div class="card-header">
             <h3 class="section-title">Fuzzy match settings</h3>
           </div>
-
           <div class="card-content">
             <div v-if="nodeFuzzyJoin?.join_input" class="join-settings">
               <div
@@ -255,8 +254,10 @@ const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoin
 };
 
 const loadNodeData = async (nodeId: number) => {
-  result.value = await nodeStore.getNodeData(nodeId, true);
+  result.value = await nodeStore.getNodeData(nodeId, false);
+  console.log(`resulting node data for ${nodeId}`, result.value)
   nodeFuzzyJoin.value = result.value?.setting_input;
+  console.log("Loading node data")
   if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
     if (nodeFuzzyJoin.value) {
       if (result.value?.main_input.columns && result.value?.right_input?.columns) {
@@ -301,8 +302,6 @@ const handleChange = (newValue: string, index: number, side: string) => {
 };
 
 const pushNodeData = async () => {
-  isLoaded.value = false;
-  nodeStore.isDrawerOpen = false;
   if (nodeFuzzyJoin.value) {
     nodeFuzzyJoin.value.is_setup = true;
   }

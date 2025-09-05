@@ -200,7 +200,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
 };
 
 const handleClickOutside = (event: MouseEvent) => {
@@ -217,7 +216,6 @@ const pushNodeData = async () => {
   if (nodeGraphSolver.value) {
     nodeStore.updateSettings(nodeGraphSolver);
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

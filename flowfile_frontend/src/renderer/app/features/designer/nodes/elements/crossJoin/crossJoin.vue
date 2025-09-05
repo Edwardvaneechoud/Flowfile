@@ -55,14 +55,11 @@ const loadNodeData = async (nodeId: number) => {
     console.log("Data loaded");
     dataLoaded.value = true;
   }
-  nodeStore.isDrawerOpen = true;
 };
 
 const pushNodeData = async () => {
   console.log("Pushing node data");
   nodeStore.updateSettings(nodeCrossJoin);
-  //dataLoaded.value = false
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({
