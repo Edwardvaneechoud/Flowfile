@@ -144,11 +144,11 @@ export const useItemStore = defineStore('itemStore', () => {
 
   const arrangeItems = (arrangement: 'cascade' | 'tile' | 'stack') => {
     const visibleItems = Object.entries(items.value)
-      .filter(([_, item]) => !item.fullScreen)
+      .filter(([, item]) => !item.fullScreen)
       .sort((a, b) => a[1].zIndex - b[1].zIndex);
     
     switch (arrangement) {
-      case 'cascade':
+      case 'cascade': {
         let offset = 0;
         visibleItems.forEach(([id, item]) => {
           item.left = 100 + offset;
@@ -158,8 +158,9 @@ export const useItemStore = defineStore('itemStore', () => {
           saveItemState(id);
         });
         break;
+      }
         
-      case 'tile':
+      case 'tile': {
         const screenWidth = window.innerWidth;
         const screenHeight = window.innerHeight;
         const itemCount = visibleItems.length;
@@ -179,8 +180,9 @@ export const useItemStore = defineStore('itemStore', () => {
           saveItemState(id);
         });
         break;
+      }
         
-      case 'stack':
+      case 'stack': {
         visibleItems.forEach(([id, item]) => {
           item.left = 100;
           item.top = 100;
@@ -188,6 +190,7 @@ export const useItemStore = defineStore('itemStore', () => {
           saveItemState(id);
         });
         break;
+      }
     }
   };
 
