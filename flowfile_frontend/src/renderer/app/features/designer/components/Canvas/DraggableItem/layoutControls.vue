@@ -52,7 +52,7 @@ import { useItemStore } from "./stateStore";
 
 // Define emits for parent component communication
 const emit = defineEmits<{
-  'reset-layout-graph': []
+  "reset-layout-graph": [];
 }>();
 
 const itemStore = useItemStore();
@@ -222,7 +222,7 @@ const resetLayout = () => {
 
 // NEW: Reset layout graph - emits event to parent
 const resetLayoutGraph = () => {
-  emit('reset-layout-graph');
+  emit("reset-layout-graph");
 };
 
 // Cleanup

@@ -39,7 +39,6 @@ const dataLoaded = ref(false);
 
 const loadNodeData = async (nodeId: number) => {
   const result = await nodeStore.getNodeData(nodeId, false);
-  console.log("got result data");
   if (result) {
     const main_input = result.main_input;
     try {
@@ -51,7 +50,6 @@ const loadNodeData = async (nodeId: number) => {
         throw new Error("Setting input not available");
       }
     } catch (error) {
-      console.log("doing this");
       if (main_input && nodeSelect.value) {
         nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
         nodeSelect.value.depending_on_id = main_input.node_id;

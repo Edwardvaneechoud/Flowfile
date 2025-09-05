@@ -31,7 +31,7 @@ import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import { NodeCopyInput, NodeCopyValue, ContextMenuAction, CursorPosition } from "./types";
-import { applyStandardLayout } from "./editorLayoutInterface"
+import { applyStandardLayout } from "./editorLayoutInterface";
 
 const itemStore = useItemStore();
 const availableHeight = ref(0);
@@ -214,8 +214,7 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
     return;
   }
   for (const edgeChange of edgeChanges) {
-    if (edgeChange.type === "add") {
-    } else if (edgeChange.type === "remove") {
+    if (edgeChange.type === "remove") {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
       deleteConnection(nodeStore.flow_id, nodeConnection);
     }
@@ -261,14 +260,14 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
 };
 
 const handleResetLayoutGraph = async () => {
-  await applyStandardLayout(nodeStore.flow_id)
-  loadFlow()
-}
+  await applyStandardLayout(nodeStore.flow_id);
+  loadFlow();
+};
 
 const hideLogViewer = () => {
-  nodeStore.hideLogViewerForThisRun = true
-  nodeStore.hideLogViewer()
-}
+  nodeStore.hideLogViewerForThisRun = true;
+  nodeStore.hideLogViewer();
+};
 
 const handleKeyDown = (event: KeyboardEvent) => {
   let eventKeyClicked = event.ctrlKey || event.metaKey;
@@ -447,7 +446,7 @@ defineExpose({
     >
       <CodeGenerator />
     </draggable-item>
-    <layoutControls @reset-layout-graph="handleResetLayoutGraph"/>
+    <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
   </div>
 </template>
 
