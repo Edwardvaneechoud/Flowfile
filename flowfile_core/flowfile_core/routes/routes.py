@@ -495,6 +495,8 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     This endpoint dynamically determines the correct Pydantic model and update
     function based on the `node_type` parameter.
     """
+    print("this is input_data ", input_data)
+    print("This is the the node type, ", node_type)
     input_data['user_id'] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
@@ -507,6 +509,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     add_func = getattr(flow, 'add_' + node_type)
     parsed_input = None
     setting_name_ref = 'node' + node_type.replace('_', '')
+
     if add_func is None:
         raise HTTPException(404, 'could not find the function')
     try:
