@@ -6,16 +6,19 @@
 
   <!-- Table Container -->
   <div v-show="!isLoading" class="table-container">
-    
-    <!-- Button for when there is sample data, but the sample dat is outdated -->
+    <!-- Button for when there is sample data, but the sample data is outdated -->
     <div v-if="showOutdatedDataBanner" class="outdated-data-banner">
       <p>
         Displayed data might be outdated.
-        <button @click="handleRefresh" class="refresh-link-button">
-          Click here to refresh.
-        </button>
+        <button class="refresh-link-button" @click="handleRefresh">Refresh now</button>
       </p>
-      <button @click="dismissOutdatedBanner" class="dismiss-button">&times;</button>
+      <button
+        class="dismiss-button"
+        aria-label="Dismiss notification"
+        @click="dismissOutdatedBanner"
+      >
+        ×
+      </button>
     </div>
 
     <!-- AG Grid -->
@@ -28,20 +31,15 @@
       :overlay-no-rows-template="overlayNoRowsTemplate"
       @grid-ready="onGridReady"
     />
-    
+
     <div v-if="showFetchButton" class="fetch-data-section">
       <p>Step has not stored any data yet. Click here to trigger a run for this node</p>
-      <button 
-        @click="handleFetchData" 
-        class="fetch-data-button"
-        :disabled="nodeStore.isRunning"
-      >
+      <button class="fetch-data-button" :disabled="nodeStore.isRunning" @click="handleFetchData">
         <span v-if="!nodeStore.isRunning">Fetch Data</span>
         <span v-else>Fetching...</span>
       </button>
     </div>
   </div>
-
 </template>
 
 <script setup lang="ts">
@@ -71,9 +69,7 @@ const gridApi = ref<GridApi | null>(null);
 const columnDefs = ref([{}]);
 const showFetchButton = ref(false);
 const currentNodeId = ref<number | null>(null);
-const showOutdatedDataBanner = ref(false); // <-- ADD THIS NEW STATE VARIABLE
-
-
+const showOutdatedDataBanner = ref(false);
 
 interface Props {
   showFileStats?: boolean;
@@ -90,24 +86,24 @@ const props = withDefaults(defineProps<Props>(), {
 const { triggerNodeFetch, isPollingActive } = useFlowExecution(
   props.flowId || nodeStore.flow_id,
   { interval: 2000, enabled: true },
-  { 
-    persistPolling: true,  // Keep polling even when component unmounts
-    pollingKey: `table_flow_${props.flowId || nodeStore.flow_id}`
-  }
+  {
+    persistPolling: true, // Keep polling even when component unmounts
+    pollingKey: `table_flow_${props.flowId || nodeStore.flow_id}`,
+  },
 );
 
 // Computed property for dynamic grid height
 const gridHeightComputed = computed(() => {
   if (showFetchButton.value) {
-    return '80px';
+    return "80px";
   }
-  return gridHeight.value || '100%';
+  return gridHeight.value || "100%";
 });
 
 // Custom overlay template to hide "no rows" message when fetch button is available
 const overlayNoRowsTemplate = computed(() => {
   if (showFetchButton.value) {
-    return '<span></span>';
+    return "<span></span>";
   }
   // Return undefined to use AG-Grid's default "No Rows To Show" message
   return undefined;
@@ -122,7 +118,7 @@ const defaultColDef = {
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api;
-  
+
   // Optionally, you can also programmatically control the overlay
   if (showFetchButton.value) {
     gridApi.value.hideOverlay();
@@ -153,7 +149,7 @@ async function downloadData(nodeId: number) {
     showFetchButton.value = false;
     showOutdatedDataBanner.value = false;
     currentNodeId.value = nodeId;
-    
+
     let resp = await nodeStore.getTableExample(nodeStore.flow_id, nodeId);
 
     if (resp) {
@@ -162,28 +158,28 @@ async function downloadData(nodeId: number) {
       // Always set up columns
       const _cd: Array<{ field: string; headerName: string; resizable: boolean }> = [];
       const _columns = dataPreview.value.table_schema;
-      
+
       if (props.showFileStats) {
         _columns?.forEach((item) => {
-          _cd.push({ 
-            field: item.name, 
+          _cd.push({
+            field: item.name,
             headerName: item.name,
-            resizable: true 
+            resizable: true,
           });
           schema_dict[item.name] = item;
         });
       } else {
         _columns?.forEach((item) => {
-          _cd.push({ 
-            field: item.name, 
+          _cd.push({
+            field: item.name,
             headerName: item.name,
-            resizable: true 
+            resizable: true,
           });
         });
       }
 
       columnDefs.value = _cd;
-      
+
       // Check if data has been run
       if (resp.has_example_data === false) {
         showFetchButton.value = true;
@@ -216,10 +212,10 @@ async function handleFetchData() {
         console.log("Fetch already in progress for this node");
         return;
       }
-      
+
       // Use the composable to trigger node fetch with proper state management
       await triggerNodeFetch(currentNodeId.value);
-      
+
       // Set up a watcher for when the fetch completes
       // Since polling is persistent, we need to check periodically
       const checkInterval = setInterval(async () => {
@@ -229,12 +225,11 @@ async function handleFetchData() {
           await downloadData(currentNodeId.value!);
         }
       }, 1000);
-      
+
       // Safety timeout to prevent infinite checking
       setTimeout(() => clearInterval(checkInterval), 60000); // 1 minute max
     } catch (error) {
-      console.error("Failed to fetch node data:", error);
-      // Error notification is already handled by the composable
+      console.error("Error fetching data:", error);
     }
   }
 }
@@ -302,7 +297,173 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   position: relative;
 }
 
+/* Modern Outdated Data Banner Styles */
+.outdated-data-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 380px;
+  max-width: 90%;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(254, 243, 199, 0.98) 0%, rgba(253, 230, 138, 0.98) 100%);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 12px;
+  box-shadow:
+    0 4px 20px rgba(251, 191, 36, 0.15),
+    0 2px 8px rgba(0, 0, 0, 0.05);
+  font-size: 14px;
+  animation: slideDown 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
 
+/* Shimmer effect */
+.outdated-data-banner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: shimmer 3s infinite;
+}
+
+/* Warning icon animation */
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    left: -100%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.outdated-data-banner p {
+  margin: 0;
+  color: #78350f;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Add warning icon */
+.outdated-data-banner p::before {
+  content: "⚠️";
+  font-size: 16px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.refresh-link-button {
+  background: linear-gradient(135deg, #ffffff 0%, #fef3c7 100%);
+  border: 1px solid #f59e0b;
+  color: #92400e;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+
+/* Refresh icon */
+.refresh-link-button::before {
+  content: "↻";
+  font-size: 14px;
+  transition: transform 0.3s ease;
+}
+
+.refresh-link-button:hover {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  color: white;
+  border-color: #d97706;
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px rgba(245, 158, 11, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.refresh-link-button:hover::before {
+  transform: rotate(180deg);
+}
+
+.refresh-link-button:active {
+  transform: translateY(0);
+  box-shadow:
+    0 2px 6px rgba(245, 158, 11, 0.2),
+    inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.dismiss-button {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: #92400e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+  margin-left: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.dismiss-button:hover {
+  background: white;
+  border-color: #f59e0b;
+  color: #78350f;
+  transform: rotate(90deg) scale(1.1);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+}
+
+.dismiss-button:active {
+  transform: rotate(90deg) scale(0.95);
+}
+
+/* Fetch Data Section Styles */
 .fetch-data-section {
   padding: 20px;
   text-align: center;
@@ -332,10 +493,12 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 
 .fetch-data-button:hover:not(:disabled) {
   background-color: #2980b9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
 }
 
 .fetch-data-button:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: translateY(0);
 }
 
 .fetch-data-button:disabled {
@@ -344,62 +507,12 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   opacity: 0.7;
 }
 
+/* AG Grid Theme Customization */
 .ag-theme-balham {
   max-width: 100%;
+  position: relative;
   --ag-odd-row-background-color: rgb(255, 255, 255);
   --ag-row-background-color: rgb(255, 255, 255);
   --ag-header-background-color: rgb(246, 247, 251);
 }
-
-.outdated-data-banner {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background-color: #fffbe6; /* Light yellow */
-  border: 1px solid #fde68a;
-  border-radius: 8px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-  font-size: 14px;
-  color: #92400e;
-}
-
-.outdated-data-banner p {
-  margin: 0;
-  margin-right: 16px;
-}
-
-.refresh-link-button {
-  background: none;
-  border: none;
-  color: #065fd4;
-  text-decoration: underline;
-  cursor: pointer;
-  padding: 0;
-  font-size: inherit;
-}
-
-.refresh-link-button:hover {
-  color: #04499b;
-}
-
-.dismiss-button {
-  background: none;
-  border: none;
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-  color: #9ca3af;
-  padding: 0 4px;
-}
-
-.dismiss-button:hover {
-  color: #4b5563;
-}
-
 </style>

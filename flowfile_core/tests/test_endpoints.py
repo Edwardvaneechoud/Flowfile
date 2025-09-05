@@ -306,7 +306,7 @@ def test_run_error_flow_with_join():
     assert response.status_code == 200, 'Connection not deleted, breaking off test'
     response = client.post("/flow/run/", params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow should just start as normal'
-    assert len(flow.node_results) == 2, 'Flow should have only executed 2 nodes'
+    assert len(flow.latest_run_info.node_step_result) == 2, 'Flow should have only executed 2 nodes'
 
 
 def test_import_flow():
@@ -379,15 +379,8 @@ def test_get_flow_data_v2():
     client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
     response = client.get('/flow_data/v2', params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow data not retrieved'
+    expected_data = {'node_edges': [{'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}], 'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1, 'image': 'manual_input.png', 'multi': False, 'node_group': 'input', 'prod_ready': True, 'can_be_start': False, 'drawer_title': 'Node title', 'drawer_intro': 'Provide fixed data that can be used and combined with other tables.', 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0}, {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1, 'image': 'select.png', 'multi': False, 'node_group': 'transform', 'prod_ready': True, 'can_be_start': False, 'drawer_title': 'Node title', 'drawer_intro': 'Provide fixed data that can be used and combined with other tables.', 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
 
-    expected_data = {'node_edges': [
-        {'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}],
-        'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
-                         'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
-                         'prod_ready': True, 'can_be_start': False, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
-                        {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
-                         'image': 'select.png', 'multi': False, 'node_group': 'transform',
-                         'prod_ready': True, 'can_be_start': False, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
     assert response.json() == expected_data, 'Flow data not correct'
 
 
@@ -545,7 +538,8 @@ def test_flow_cancel():
     flow = flow_file_handler.get_flow(flow_id)
     thread = threading.Thread(target=flow.run_graph)
     thread.start()
-    while 2 not in [n.node_id for n in flow.node_results]:
+    sleep(0.5)
+    while flow.latest_run_info is not None and 2 not in [n.node_id for n in flow.latest_run_info.node_step_result]:
         sleep(0.5)
     sleep(2)  # give it some time to start up
     # actual start of the test

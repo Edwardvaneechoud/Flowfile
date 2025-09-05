@@ -210,7 +210,7 @@ const loadNodeData = async (nodeId: number) => {
 
   if (nodeResult?.setting_input) {
     nodeManualInput.value = nodeResult.setting_input;
-    console.log("nodeManualInput.value from input", nodeManualInput.value)
+    console.log("nodeManualInput.value from input", nodeManualInput.value);
     if (
       nodeResult.setting_input.raw_data_format &&
       nodeResult.setting_input.raw_data_format.columns &&
@@ -224,7 +224,7 @@ const loadNodeData = async (nodeId: number) => {
     }
   } else {
     nodeManualInput.value = createManualInput(nodeStore.flow_id, nodeStore.node_id).value;
-    console.log("nodeManualInput.value no data available", nodeManualInput.value)
+    console.log("nodeManualInput.value no data available", nodeManualInput.value);
     initializeEmptyTable();
   }
 

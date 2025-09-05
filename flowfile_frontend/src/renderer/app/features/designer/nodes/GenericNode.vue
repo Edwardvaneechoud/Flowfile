@@ -1,12 +1,3 @@
-<style scoped>
-.error-node {
-  padding: 8px;
-  background: #ffcccc;
-  border-radius: 4px;
-  font-size: 12px;
-}
-</style>
-
 <template>
   <node-button
     ref="nodeButton"
@@ -19,15 +10,21 @@
 </template>
 
 <script setup lang="ts">
-import { markRaw, computed, defineAsyncComponent, onErrorCaptured, shallowRef, onMounted } from "vue";
+import {
+  markRaw,
+  computed,
+  defineAsyncComponent,
+  onErrorCaptured,
+  shallowRef,
+  onMounted,
+} from "vue";
 import NodeButton from "../baseNode/nodeButton.vue";
 import { toTitleCase } from "../components/Canvas/utils";
 import type { NodeTemplate } from "../types";
 
-
 // Import all components in the elements folder at build time
 // This tells Vite to include all these files in the bundle
-const drawerModules = import.meta.glob('./elements/**/*.vue');
+const drawerModules = import.meta.glob("./elements/**/*.vue");
 
 interface Props {
   nodeId: number;
@@ -58,23 +55,24 @@ const loadDrawerComponent = () => {
     const componentName = toTitleCase(props.nodeData.item);
     // Convert snake_case to camelCase for folder name
     const folderName = toCamelCase(props.nodeData.item.toLowerCase());
-    
+
     console.log("Loading component:", componentName, "from folder:", folderName);
-    
+
     // Build the expected path
     const componentPath = `./elements/${folderName}/${componentName}.vue`;
-    
+
     // Check if the component exists
     const componentLoader = drawerModules[componentPath];
-    
+
     if (!componentLoader) {
       console.error(`Component not found at path: ${componentPath}`);
-      console.log("Available paths:", Object.keys(drawerModules).filter(path => 
-        path.includes(`/${folderName}/`)
-      ));
+      console.log(
+        "Available paths:",
+        Object.keys(drawerModules).filter((path) => path.includes(`/${folderName}/`)),
+      );
       return;
     }
-    
+
     // Create the async component
     drawerComponent.value = markRaw(
       defineAsyncComponent({
@@ -88,8 +86,8 @@ const loadDrawerComponent = () => {
           } else {
             fail();
           }
-        }
-      })
+        },
+      }),
     );
   } catch (error) {
     console.error(`Error setting up drawer component for ${props.nodeData.item}:`, error);
@@ -98,24 +96,33 @@ const loadDrawerComponent = () => {
 
 // These can remain as computed since they're lightweight
 const imageSrc = computed(() => {
-  return props.nodeData?.image || 'default.png';
+  return props.nodeData?.image || "default.png";
 });
 
 const nodeTitle = computed(() => {
-  const displayName = props.nodeData?.label || props.nodeData?.name || 'Node';
+  const displayName = props.nodeData?.label || props.nodeData?.name || "Node";
   return `${props.nodeId}: ${displayName}`;
 });
 
 const nodeTitleInfo = computed(() => {
   return {
-    title: props.nodeData?.drawer_title || 'Node Configuration',
-    intro: props.nodeData?.drawer_intro || 'Configure node settings'
+    title: props.nodeData?.drawer_title || "Node Configuration",
+    intro: props.nodeData?.drawer_intro || "Configure node settings",
   };
 });
 
 // Error handling for component loading issues
 onErrorCaptured((error) => {
-  console.error('Error in GenericNode component:', error);
+  console.error("Error in GenericNode component:", error);
   return false; // Propagate the error
 });
 </script>
+
+<style scoped>
+.error-node {
+  padding: 8px;
+  background: #ffcccc;
+  border-radius: 4px;
+  font-size: 12px;
+}
+</style>

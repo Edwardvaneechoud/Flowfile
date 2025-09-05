@@ -161,17 +161,6 @@
           <span class="material-icons">open_in_new</span>
           Open File
         </el-button>
-        <el-button
-          v-if="mode === 'open' && selectedFile && !selectedFile.is_directory"
-          type="primary"
-          :disabled="loading"
-          size="small"
-          style="background-color: rgb(92, 92, 92); color: white"
-          @click="handleOpenFile"
-        >
-          <span class="material-icons">open_in_new</span>
-          Open File
-        </el-button>
       </div>
     </div>
 

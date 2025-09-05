@@ -68,6 +68,7 @@ export const useNodeStore = defineStore('node', {
       dataTypes: ['String', 'Datetime', 'Int64', 'Int32', 'Int16', 'Float64', 'Float32', 'Boolean'],
       isDrawerOpen: false,
       isAnalysisOpen: false,
+
       drawCloseFunction: null as any,
       initialEditorData: '' as string,
       runResults: {} as RunInformationDictionary,
@@ -81,6 +82,7 @@ export const useNodeStore = defineStore('node', {
       resultVersion: 0,
       vueFlowInstance: null as any | VueFlowStore,
       allExpressions: null as null| ExpressionsOverview[],
+      hideLogViewerForThisRun: false,
       isShowingLogViewer : false,
       isStreamingLogs: false,
       displayLogViewer: true,
@@ -162,7 +164,7 @@ export const useNodeStore = defineStore('node', {
       this.currentRunResult = runResult;
       this.runResults[runResult.flow_id] = runResult;
       this.showFlowResult = showResult;
-      this.isShowingLogViewer = this.displayLogViewer && showResult;
+      this.isShowingLogViewer = this.displayLogViewer && showResult  && !this.hideLogViewerForThisRun;
       this.initializeResultCache(runResult.flow_id);
       runResult.node_step_result.forEach((nodeResult) => {
         this.runNodeResults[runResult.flow_id][nodeResult.node_id] = nodeResult;

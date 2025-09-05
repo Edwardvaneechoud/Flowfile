@@ -61,21 +61,25 @@ def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
                                           join_inputs=fm_input.left_select)
     _order_join_inputs_based_on_col_order(col_order=[col.column_name for col in right_schema],
                                           join_inputs=fm_input.right_select)
+    for column in fm_input.left_select.renames:
+        if column.join_key:
+            column.keep = True
+    for column in fm_input.right_select.renames:
+        if column.join_key:
+            column.keep = True
     left_schema_dict, right_schema_dict = ({ls.name: ls for ls in left_schema}, {rs.name: rs for rs in right_schema})
     fm_input.auto_rename()
-
     right_renames = {column.old_name: column.new_name for column in fm_input.right_select.renames}
     new_join_mapping = rename_fuzzy_right_mapping(fm_input.join_mapping, right_renames)
-
     output_schema = []
     for column in fm_input.left_select.renames:
         column_schema = left_schema_dict.get(column.old_name)
-        if column_schema and column.keep:
+        if column_schema and (column.keep or column.join_key):
             output_schema.append(FlowfileColumn.from_input(column.new_name, column_schema.data_type,
                                                            example_values=column_schema.example_values))
     for column in fm_input.right_select.renames:
         column_schema = right_schema_dict.get(column.old_name)
-        if column_schema and column.keep:
+        if column_schema and (column.keep or column.join_key):
             output_schema.append(FlowfileColumn.from_input(column.new_name, column_schema.data_type,
                                                            example_values=column_schema.example_values))
     set_name_in_fuzzy_mappings(new_join_mapping)

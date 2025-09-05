@@ -33,21 +33,11 @@ const props = defineProps({
 });
 
 // Use the composable
-const { 
-  runFlow, 
-  cancelFlow, 
-  showNotification,
-  startPolling,
-  stopPolling,
-  checkRunStatus 
-} = useFlowExecution(
-  props.flowId, 
-  props.pollingConfig,
-  { 
+const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
+  useFlowExecution(props.flowId, props.pollingConfig, {
     persistPolling: props.persistPolling,
-    pollingKey: `run_button_${props.flowId}`
-  }
-);
+    pollingKey: `run_button_${props.flowId}`,
+  });
 
 const emit = defineEmits(["logs-start", "logs-stop"]);
 

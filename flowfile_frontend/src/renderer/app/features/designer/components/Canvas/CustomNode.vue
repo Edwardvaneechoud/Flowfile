@@ -43,15 +43,13 @@
     </div>
     <div ref="nodeEl" class="custom-node" @contextmenu.prevent="showContextMenu">
       <!-- Use GenericNode if nodeTemplate exists, otherwise use the component directly -->
-      <generic-node v-if="data.nodeTemplate"
+      <generic-node
+        v-if="data.nodeTemplate"
         :node-id="data.id"
         :node-data="{ ...data.nodeTemplate, id: data.id, label: data.label }"
       />
-      <component v-else-if="data.component" 
-        :is="data.component" 
-        :node-id="data.id" 
-      />
-      
+      <component :is="data.component" v-else-if="data.component" :node-id="data.id" />
+
       <!-- Handles are always rendered -->
       <div
         v-for="(input, index) in data.inputs"
@@ -228,10 +226,11 @@ const copyNode = () => {
     description: description.value,
     numberOfInputs: props.data.inputs.length,
     numberOfOutputs: props.data.outputs.length,
-    typeSnakeCase: props.data.nodeTemplate?.item || toSnakeCase(props.data.component?.__name || "unknown"),
+    typeSnakeCase:
+      props.data.nodeTemplate?.item || toSnakeCase(props.data.component?.__name || "unknown"),
     flowIdToCopyFrom: nodeStore.flow_id,
     multi: props.data.nodeTemplate?.multi,
-    nodeTemplate: props.data.nodeTemplate
+    nodeTemplate: props.data.nodeTemplate,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
 

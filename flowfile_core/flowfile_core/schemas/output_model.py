@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
 import time
@@ -21,10 +21,11 @@ class RunInformation(BaseModel):
     flow_id: int
     start_time: Optional[datetime] = Field(default_factory=datetime.now)
     end_time: Optional[datetime] = None
-    success: bool
+    success: Optional[bool] = None
     nodes_completed: int = 0
     number_of_nodes: int = 0
     node_step_result: List[NodeResult]
+    run_type: Literal["fetch_one", "full_run"]
 
 
 class BaseItem(BaseModel):

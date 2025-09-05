@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from "vue";
+import { ref, onMounted } from "vue";
 import HeaderButtons from "../features/designer/components/HeaderButtons/HeaderButtons.vue";
 import Status from "../features/designer/editor/status.vue";
 import CanvasFlow from "../features/designer/components/Canvas/CanvasFlow.vue";
@@ -276,15 +276,15 @@ onMounted(async () => {
     align-items: stretch;
     height: 50px;
   }
-  
+
   .header-top {
     display: contents; /* Makes children behave as direct children of .header */
   }
-  
+
   .header-bottom {
     display: contents;
   }
-  
+
   .left-section {
     min-width: 250px;
     padding: 0 16px;
@@ -306,7 +306,7 @@ onMounted(async () => {
     align-items: center;
     justify-content: flex-end;
   }
-  
+
   .canvas {
     height: calc(100vh - 50px);
   }
@@ -318,7 +318,7 @@ onMounted(async () => {
     height: auto;
     min-height: 80px;
   }
-  
+
   .header-top {
     display: flex;
     justify-content: space-between;
@@ -326,13 +326,13 @@ onMounted(async () => {
     height: 50px;
     border-bottom: 1px solid #e5e7eb;
   }
-  
+
   .header-bottom {
     display: flex;
     height: 40px;
     padding: 0 8px;
   }
-  
+
   .left-section {
     padding: 0 12px;
     display: flex;
@@ -353,7 +353,7 @@ onMounted(async () => {
     align-items: center;
     justify-content: flex-end;
   }
-  
+
   .canvas {
     height: calc(100vh - 90px);
   }
@@ -365,12 +365,12 @@ onMounted(async () => {
     padding: 0 8px;
     min-width: auto;
   }
-  
+
   .right-section {
     padding: 0 8px;
     min-width: auto;
   }
-  
+
   .middle-section {
     padding: 0 4px;
   }

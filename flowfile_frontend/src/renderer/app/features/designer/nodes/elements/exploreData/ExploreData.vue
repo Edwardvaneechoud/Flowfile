@@ -6,6 +6,7 @@ import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
 import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useItemStore } from "../../../components/Canvas/DraggableItem/stateStore";
 
 const isLoading = ref(false);
 const nodeData = ref<NodeGraphicWalker | null>(null);
@@ -15,7 +16,7 @@ const fields = ref<IMutField[]>([]);
 const errorMessage = ref<string | null>(null);
 const nodeStore = useNodeStore();
 const globalNodeId = ref(-1);
-
+const windowStore = useItemStore();
 const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
 
 const canDisplayVisualization = computed(() => !isLoading.value && !errorMessage.value);
@@ -24,10 +25,11 @@ const loadNodeData = async (nodeId: number) => {
   isLoading.value = true;
   errorMessage.value = null;
   globalNodeId.value = nodeId;
-  nodeData.value = null; // Reset previous data
+  nodeData.value = null;
   data.value = [];
   fields.value = [];
   chartList.value = [];
+  windowStore.setFullScreen("nodeSettings", true);
 
   try {
     const fetchedNodeData = await fetchGraphicWalkerData(nodeStore.flow_id, nodeId);
@@ -112,6 +114,7 @@ const saveSpecToNodeStore = async (specsToSave: IChart[]) => {
 
 const pushNodeData = async () => {
   errorMessage.value = null; // Clear previous errors
+  windowStore.setFullScreen("nodeSettings", false);
   const currentSpec = await getCurrentSpec();
 
   if (currentSpec === null) {

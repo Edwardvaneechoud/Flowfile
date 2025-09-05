@@ -93,19 +93,19 @@ function getProcessEnv(): NodeJS.ProcessEnv {
   const isWindows = platform() === "win32";
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
-  
+
   // Create standardized Flowfile storage directory
   const flowfileStorageDir = join(homeDir, ".flowfile");
-  
+
   // Ensure the base directory and subdirectories exist
   const requiredDirs = [
     flowfileStorageDir,
     join(flowfileStorageDir, "cache"),
-    join(flowfileStorageDir, "temp"), 
-    join(flowfileStorageDir, "logs"),          // Flowfile application logs
-    join(flowfileStorageDir, "system_logs"),  // System/Electron logs
+    join(flowfileStorageDir, "temp"),
+    join(flowfileStorageDir, "logs"), // Flowfile application logs
+    join(flowfileStorageDir, "system_logs"), // System/Electron logs
     join(flowfileStorageDir, "flows"),
-    join(flowfileStorageDir, "database")
+    join(flowfileStorageDir, "database"),
   ];
 
   for (const dir of requiredDirs) {

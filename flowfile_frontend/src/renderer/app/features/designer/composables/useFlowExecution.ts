@@ -191,7 +191,7 @@ export function useFlowExecution(
         nodeStore.isRunning = false;
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
-        console.log(response.data);
+        console.log("response data" , response.data);
         const notificationConfig = createNotificationConfig(response.data);
         if (customSuccessMessage && response.data.success) {
           notificationConfig.message = customSuccessMessage;
@@ -238,6 +238,7 @@ export function useFlowExecution(
     nodeStore.resetNodeResult();
     isExecuting.value = true;
     nodeStore.isRunning = true;
+    nodeStore.hideLogViewerForThisRun = false
     state.setExecutionState(getPollingKey(), true);
 
     const executionLocationText = flowSettings.execution_location === "local" ? "Local" : "Remote";

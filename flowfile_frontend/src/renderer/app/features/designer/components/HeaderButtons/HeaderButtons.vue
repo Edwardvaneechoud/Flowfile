@@ -68,7 +68,7 @@
         />
       </div>
       <div class="preview-text">
-        <strong>File will be created as:</strong><br>
+        <strong>File will be created as:</strong><br />
         <code>{{ getPreviewFileName() }}</code>
       </div>
     </div>
@@ -173,12 +173,12 @@ const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"])
 const generateDefaultFileName = (): string => {
   const now = new Date();
   const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const seconds = String(now.getSeconds()).padStart(2, '0');
-  
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+
   return `${year}${month}${day}_${hours}${minutes}${seconds}_flow.flowfile`;
 };
 
@@ -186,7 +186,7 @@ const generateDefaultFileName = (): string => {
 const getPreviewFileName = (): string => {
   if (quickCreateName.value.trim()) {
     const name = quickCreateName.value.trim();
-    return name.endsWith('.flowfile') ? name : `${name}.flowfile`;
+    return name.endsWith(".flowfile") ? name : `${name}.flowfile`;
   }
   return generateDefaultFileName();
 };
@@ -277,13 +277,13 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
 const handleQuickCreateAction = async () => {
   const fileName = getPreviewFileName();
   // Use temp storage path - you'll need to replace 'temp://' with your actual temp storage path
-  
+
   try {
-    const createdFlowId = await createFlow(null, fileName);    
+    const createdFlowId = await createFlow(null, fileName);
     modalVisibleForQuickCreate.value = false;
     quickCreateName.value = ""; // Reset the input
     nodeStore.flow_id = createdFlowId;
-    
+
     emit("refreshFlow");
   } catch (error) {
     console.error("Failed to create quick flow:", error);
@@ -423,7 +423,7 @@ onMounted(async () => {
   background-color: rgba(16, 24, 40, 0.08);
   padding: 2px 6px;
   border-radius: 3px;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
   font-size: 12px;
 }
 

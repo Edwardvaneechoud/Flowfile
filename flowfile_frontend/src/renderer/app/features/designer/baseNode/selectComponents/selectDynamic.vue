@@ -100,7 +100,7 @@
       <button @click="deselectAllSelected">Deselect</button>
     </div>
   </div>
-  </template>
+</template>
 
 <script lang="ts" setup>
 import {

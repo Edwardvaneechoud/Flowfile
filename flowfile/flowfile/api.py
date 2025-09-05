@@ -455,7 +455,6 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
             return False
 
         flow_id = import_flow_to_editor(flow_file_path, auth_token)
-        print(flow_id, "flow_id", flow_in_single_mode, automatically_open_browser)
         if flow_id is not None:
             if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)

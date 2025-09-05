@@ -2,11 +2,11 @@
   <div
     :id="props.id"
     class="overlay"
-    :class="{ 
-      'no-transition': isResizing, 
+    :class="{
+      'no-transition': isResizing,
       minimized: isMinimized,
       'in-group': itemState.group,
-      'synced': itemState.syncDimensions
+      synced: itemState.syncDimensions,
     }"
     :style="{
       width: isMinimized ? 'auto' : itemState.width + 'px',
@@ -26,7 +26,7 @@
       >
         <span class="icon">{{ isMinimized ? "+" : "−" }}</span>
       </button>
-      
+
       <button
         v-if="showRight && itemState.stickynessPosition !== 'right'"
         class="minimal-button"
@@ -81,17 +81,15 @@
       >
         <span class="icon">❐</span>
       </button>
-      <span v-if="itemState.group" 
-            class="group-badge" >
-            {{ title }}
+      <span class="group-badge" @mousedown="startMove">
+        {{ title }}
       </span>
-      
     </div>
-    
+
     <div class="content" @click="registerClick">
       <slot v-if="!isMinimized"></slot>
     </div>
-    
+
     <div
       class="draggable-line right-vertical"
       @mousedown.stop="startResizeRight"
@@ -116,7 +114,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, defineProps, getCurrentInstance, nextTick, watch } from "vue";
+import {
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  defineExpose,
+  defineProps,
+  getCurrentInstance,
+  nextTick,
+  watch,
+} from "vue";
 import { useItemStore } from "./stateStore";
 import type { ItemLayout } from "./stateStore";
 
@@ -226,21 +233,10 @@ const instance = getCurrentInstance();
 const activeLine = ref<HTMLElement | null>(null);
 let resizeTimeout: ReturnType<typeof setTimeout>;
 
-const resizeDirection = ref<'top' | 'bottom' | 'left' | 'right' | null>(null);
-const initialGroupStates = ref<Record<string, { top: number; left: number; width: number; height: number }>>({});
-
-
-const syncWithGroup = () => {
-  if (itemState.value.group) {
-    itemStore.syncGroupDimensions(itemState.value.group, props.id);
-    loadPositionAndSize();
-  }
-};
-
-const applyPreset = (presetName: 'dataView' | 'logView' | 'sidePanel' | 'bottomPanel') => {
-  itemStore.applyPreset(props.id, presetName);
-  loadPositionAndSize();
-};
+const resizeDirection = ref<"top" | "bottom" | "left" | "right" | null>(null);
+const initialGroupStates = ref<
+  Record<string, { top: number; left: number; width: number; height: number }>
+>({});
 
 const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
 const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
@@ -277,11 +273,11 @@ const savePositionAndSize = () => {
     zIndex: itemState.value.zIndex,
     fullScreen: itemState.value.fullScreen,
     group: itemState.value.group,
-    syncDimensions: itemState.value.syncDimensions
+    syncDimensions: itemState.value.syncDimensions,
   });
-  
+
   itemStore.saveItemState(props.id);
-  
+
   if (itemState.value.group && itemState.value.syncDimensions && isResizing.value) {
     const groupItems = itemStore.groups[itemState.value.group];
     if (groupItems) {
@@ -291,21 +287,20 @@ const savePositionAndSize = () => {
       const deltaX = itemState.value.left - initialActiveState.left;
       const deltaY = itemState.value.top - initialActiveState.top;
 
-      groupItems.forEach(itemId => {
+      groupItems.forEach((itemId) => {
         if (itemId === props.id) return;
 
         const initialItemState = initialGroupStates.value[itemId];
         if (itemStore.items[itemId]?.syncDimensions && initialItemState) {
-          
           const updates: Partial<ItemLayout> = {
             width: itemState.value.width,
             height: itemState.value.height,
           };
 
-          if (resizeDirection.value === 'top') {
+          if (resizeDirection.value === "top") {
             updates.top = initialItemState.top + deltaY;
           }
-          if (resizeDirection.value === 'left') {
+          if (resizeDirection.value === "left") {
             updates.left = initialItemState.left + deltaX;
           }
 
@@ -348,7 +343,7 @@ const captureGroupInitialStates = () => {
     initialGroupStates.value = {};
     const groupItems = itemStore.groups[itemState.value.group];
     if (groupItems) {
-      groupItems.forEach(id => {
+      groupItems.forEach((id) => {
         const item = itemStore.items[id];
         if (item) {
           initialGroupStates.value[id] = {
@@ -366,7 +361,7 @@ const captureGroupInitialStates = () => {
 const startResizeRight = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
-  resizeDirection.value = 'right';
+  resizeDirection.value = "right";
   captureGroupInitialStates();
   startX.value = e.clientX;
   startWidth.value = itemState.value.width;
@@ -388,7 +383,7 @@ const onResizeWidth = (e: MouseEvent) => {
 const startResizeBottom = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
-  resizeDirection.value = 'bottom';
+  resizeDirection.value = "bottom";
   captureGroupInitialStates();
   startY.value = e.clientY;
   startHeight.value = itemState.value.height;
@@ -410,7 +405,7 @@ const onResizeHeight = (e: MouseEvent) => {
 const startResizeTop = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
-  resizeDirection.value = 'top';
+  resizeDirection.value = "top";
   captureGroupInitialStates();
   startY.value = e.clientY;
   startTop.value = itemState.value.top;
@@ -435,7 +430,7 @@ const onResizeTop = (e: MouseEvent) => {
 const startResizeLeft = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
-  resizeDirection.value = 'left';
+  resizeDirection.value = "left";
   captureGroupInitialStates();
   startX.value = e.clientX;
   startLeft.value = itemState.value.left;
@@ -479,10 +474,10 @@ const startMove = (e: MouseEvent) => {
   e.preventDefault();
   if (
     (e.target as HTMLElement).classList.contains("icon") ||
-    (e.target as HTMLElement).classList.contains("minimal-button") ||
-    (e.target as HTMLElement).classList.contains("group-badge")
+    (e.target as HTMLElement).classList.contains("minimal-button")
   )
     return;
+
   isDragging.value = true;
   startX.value = e.clientX;
   startY.value = e.clientY;
@@ -507,7 +502,7 @@ const stopMove = () => {
     isDragging.value = false;
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", stopMove);
-    
+
     savePositionAndSize();
 
     if (props.preventOverlap) {
@@ -577,7 +572,7 @@ const applyStickyPosition = () => {
     console.warn(`No parent element found for ${props.id}`);
     return;
   }
-  
+
   switch (itemState.value.stickynessPosition) {
     case "top":
       itemState.value.left = parentElement.offsetLeft;
@@ -586,15 +581,19 @@ const applyStickyPosition = () => {
         itemState.value.width = parentElement.offsetWidth;
       }
       break;
-      
+
     case "bottom":
       itemState.value.left = parentElement.offsetLeft + (props.initialLeft || 0);
-      itemState.value.top = parentElement.offsetTop + parentElement.offsetHeight - itemState.value.height - (props.initialTop || 0);
+      itemState.value.top =
+        parentElement.offsetTop +
+        parentElement.offsetHeight -
+        itemState.value.height -
+        (props.initialTop || 0);
       if (itemState.value.fullWidth) {
         itemState.value.width = parentElement.offsetWidth - (props.initialLeft || 0);
       }
       break;
-      
+
     case "left":
       itemState.value.left = parentElement.offsetLeft;
       itemState.value.top = parentElement.offsetTop + (props.initialTop || 0);
@@ -602,21 +601,22 @@ const applyStickyPosition = () => {
         itemState.value.height = parentElement.offsetHeight - (props.initialTop || 0);
       }
       break;
-      
+
     case "right":
-      itemState.value.left = parentElement.offsetLeft + parentElement.offsetWidth - itemState.value.width;
+      itemState.value.left =
+        parentElement.offsetLeft + parentElement.offsetWidth - itemState.value.width;
       itemState.value.top = parentElement.offsetTop + (props.initialTop || 0);
       if (itemState.value.fullHeight) {
         itemState.value.height = parentElement.offsetHeight - (props.initialTop || 0);
       }
       break;
-      
+
     case "free":
     default:
       // Keep current position
       break;
   }
-  
+
   // Save the new position
   savePositionAndSize();
 };
@@ -662,31 +662,35 @@ const setFullScreen = (makeFull: boolean) => {
   loadPositionAndSize();
 };
 
-watch(() => itemStore.items[props.id], (newState) => {
-  if (newState) {
-    if (isDragging.value || isResizing.value) {
-      itemState.value.zIndex = newState.zIndex;
-    } else {
-      itemState.value = { ...newState };
+watch(
+  () => itemStore.items[props.id],
+  (newState) => {
+    if (newState) {
+      if (isDragging.value || isResizing.value) {
+        itemState.value.zIndex = newState.zIndex;
+      } else {
+        itemState.value = { ...newState };
+      }
     }
-  }
-}, { deep: true });
+  },
+  { deep: true },
+);
 
-watch(() => ({ group: props.group, syncDimensions: props.syncDimensions }), 
+watch(
+  () => ({ group: props.group, syncDimensions: props.syncDimensions }),
   ({ group, syncDimensions }) => {
     itemStore.setItemState(props.id, {
       group,
-      syncDimensions
+      syncDimensions,
     });
     itemState.value.group = group;
     itemState.value.syncDimensions = syncDimensions;
-  }
+  },
 );
 
 nextTick().then(() => {
   observeParentResize();
 });
-
 
 onMounted(() => {
   // Calculate initial values based on props
@@ -694,7 +698,7 @@ onMounted(() => {
   const initialHeight = calculateHeight();
   const initialLeft = props.initialLeft || 100;
   const initialTop = props.initialTop || 100;
-  
+
   // IMPORTANT: Register the true initial state FIRST
   itemStore.registerInitialState(props.id, {
     width: initialWidth,
@@ -705,12 +709,12 @@ onMounted(() => {
     fullWidth: !props.initialWidth,
     fullHeight: !props.initialHeight,
     group: props.group,
-    syncDimensions: props.syncDimensions
+    syncDimensions: props.syncDimensions,
   });
 
   // Check if there's a saved state
   const hasSavedState = localStorage.getItem(`overlayPositionAndSize_${props.id}`) !== null;
-  
+
   if (!hasSavedState) {
     // No saved state, use initial values
     itemStore.setItemState(props.id, {
@@ -725,7 +729,7 @@ onMounted(() => {
       syncDimensions: props.syncDimensions,
     });
     itemState.value = itemStore.items[props.id];
-    
+
     // Apply sticky position after DOM is ready
     if (props.initialPosition !== "free") {
       nextTick(() => {
@@ -735,42 +739,44 @@ onMounted(() => {
   } else {
     // Load saved state
     loadPositionAndSize();
-    
+
     // If the saved state has a sticky position, re-apply it
-    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== 'free') {
+    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
       nextTick(() => {
         applyStickyPosition();
       });
     }
   }
-  
+
   // Listen for layout reset events
   const handleLayoutReset = (event: Event) => {
-  
-    
     // Get the updated state from the store
     itemState.value = { ...itemStore.items[props.id] };
-    
+
     // Re-apply sticky position if not "free"
-    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== 'free') {
+    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
       nextTick(() => {
         applyStickyPosition();
       });
     }
   };
-  
-  window.addEventListener('layout-reset', handleLayoutReset);
+
+  window.addEventListener("layout-reset", handleLayoutReset);
   document.addEventListener("mouseup", stopResize);
-  
+
   // Store the event handler for cleanup
   (window as any)[`resetHandler_${props.id}`] = handleLayoutReset;
+});
+
+defineExpose({
+  setFullScreen,
 });
 
 // Update the onBeforeUnmount to clean up the event listener
 onBeforeUnmount(() => {
   const handler = (window as any)[`resetHandler_${props.id}`];
   if (handler) {
-    window.removeEventListener('layout-reset', handler);
+    window.removeEventListener("layout-reset", handler);
     delete (window as any)[`resetHandler_${props.id}`];
   }
   document.removeEventListener("mouseup", stopResize);
@@ -813,7 +819,9 @@ onBeforeUnmount(() => {
   font-size: 12px;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.2s, visibility 0.2s;
+  transition:
+    opacity 0.2s,
+    visibility 0.2s;
   pointer-events: none;
   z-index: 100000;
 }
@@ -828,7 +836,9 @@ onBeforeUnmount(() => {
   border-color: transparent transparent #333 transparent;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.2s, visibility 0.2s;
+  transition:
+    opacity 0.2s,
+    visibility 0.2s;
   pointer-events: none;
   z-index: 100000;
 }
@@ -845,7 +855,7 @@ onBeforeUnmount(() => {
   background-color: #9facff;
 }
 .group-badge {
-  background-color: #0d6bb8;
+  background-color: #074273;
   color: white;
   padding: 2px 6px;
   border-radius: 3px;
@@ -893,7 +903,7 @@ onBeforeUnmount(() => {
   padding: 4px;
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
-  background: linear-gradient(135deg, #d7d7d7 0%, #f0f0f0d3 100%);
+  background: linear-gradient(135deg, #2189791d 0%, #15a2da25 100%);
   min-height: 35px;
   box-sizing: border-box;
   overflow: hidden;
@@ -941,6 +951,6 @@ onBeforeUnmount(() => {
   background-color: #080b0e43;
 }
 .draggable-line:hover {
-  background-color: #2196F330;
+  background-color: #2196f330;
 }
 </style>

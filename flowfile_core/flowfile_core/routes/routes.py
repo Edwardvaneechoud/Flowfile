@@ -251,6 +251,16 @@ def cancel_flow(flow_id: int):
     flow.cancel()
 
 
+@router.post("/flow/apply_standard_layout/", tags=["editor"])
+def apply_standard_layout(flow_id: int):
+    flow = flow_file_handler.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    if flow.flow_settings.is_running:
+        raise HTTPException(422, "Flow is running")
+    flow.apply_layout()
+
+
 @router.get('/flow/run_status/', tags=['editor'],
             response_model=output_model.RunInformation)
 def get_run_status(flow_id: int, response: Response):
@@ -263,8 +273,8 @@ def get_run_status(flow_id: int, response: Response):
         raise HTTPException(status_code=404, detail="Flow not found")
     if flow.flow_settings.is_running:
         response.status_code = status.HTTP_202_ACCEPTED
-        return flow.get_run_info()
-    response.status_code = status.HTTP_200_OK
+    else:
+        response.status_code = status.HTTP_200_OK
     return flow.get_run_info()
 
 

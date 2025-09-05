@@ -724,6 +724,8 @@ class FlowNode:
         Raises:
             Exception: Propagates exceptions from the execution.
         """
+        self.clear_table_example()
+
         def example_data_generator():
             example_data = None
 
@@ -736,6 +738,7 @@ class FlowNode:
         resulting_data = self.get_resulting_data()
 
         if not performance_mode:
+            self.node_stats.has_run_with_current_setup = True
             self.results.example_data_generator = example_data_generator()
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True
@@ -875,11 +878,10 @@ class FlowNode:
         Raises:
             Exception: If the node_logger is not defined.
         """
-
         if node_logger is None:
             raise Exception('Flow logger is not defined')
         #  TODO: Simplify which route is being picked there are many duplicate checks
-        self.clear_table_example()
+
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run_with_current_setup = False
@@ -889,6 +891,7 @@ class FlowNode:
             node_logger.info(f'Starting to run {self.__name__}')
             if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
                     and not (run_location == 'local')):
+                self.clear_table_example()
                 self.prepare_before_run()
                 self.reset()
                 try:
@@ -937,7 +940,7 @@ class FlowNode:
                     node_logger.error(f'Error with running the node: {e}')
                     self.node_stats.error = str(e)
                     self.node_stats.has_completed_last_run = False
-                self.node_stats.has_run_with_current_setup = True
+
             else:
                 node_logger.info('Node has already run, not running the node')
         else:

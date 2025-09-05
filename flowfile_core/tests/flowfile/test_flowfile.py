@@ -1317,7 +1317,6 @@ def test_fuzzy_match_schema_predict_no_selection(flow_logger):
     input_data = [{'name': 'eduward'},
                   {'name': 'edward'},
                   {'name': 'courtney'}]
-    breakpoint()
     add_manual_input(graph, data=input_data)
     add_node_promise_on_type(graph, 'fuzzy_match', 2)
     left_connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
@@ -1366,8 +1365,8 @@ def test_no_data_available_performance_with_cache():
     assert not first_table_example.has_run_with_current_setup, "There should be no run with current setup"
 
     # Trigger a fetch operation for our data
-
-    graph.trigger_fetch_node(3)
+    data=graph.trigger_fetch_node(3)
+    graph.get_run_info()
     after_fetch_table_example = node.get_table_example(True)
     assert len(after_fetch_table_example.data) > 0, "There should be data after fetch operation"
     assert after_fetch_table_example.has_example_data, "There should be example data after fetch operation"
@@ -1418,12 +1417,12 @@ def test_no_data_available_performance_with_cache():
     graph.trigger_fetch_node(3)
 
 
-def test_fetch_after_run():
+def test_no_data_available_performance_with_cache():
 
     graph = get_dependency_example()
-    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.execution_location = "local"
     graph.flow_settings.execution_mode = "Performance"
-
+    graph.run_graph()
     graph.add_formula(
         input_schema.NodeFormula(
             flow_id=1,
@@ -1433,9 +1432,114 @@ def test_fetch_after_run():
         )
     )
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
-    graph.trigger_fetch_node(3)
+
+    #  Initial graph to test with
+
+    node = graph.get_node(3)
+    first_table_example = node.get_table_example(True)
+    assert len(first_table_example.data) == 0, 'Since running in performance mode there is no data expected'
+    assert not first_table_example.has_example_data, \
+        'Since performance mode does not trigger explicit run of the example data, it should not have example data'
+    assert not first_table_example.has_run_with_current_setup, "There should be no run with current setup"
+
+    # Trigger a fetch operation for our data
+    data=graph.trigger_fetch_node(3)
+    graph.get_run_info()
+    after_fetch_table_example = node.get_table_example(True)
+    assert len(after_fetch_table_example.data) > 0, "There should be data after fetch operation"
+    assert after_fetch_table_example.has_example_data, "There should be example data after fetch operation"
+    assert after_fetch_table_example.has_run_with_current_setup, "There should be a run with current setup after fetch operation"
+    after_fetch_data = [row["titleCity"] for row in after_fetch_table_example.data]
+
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="lowercase([city])"),
+        )
+    )
+
+    after_change_before_run_table_example = node.get_table_example(True)
+    assert len(after_change_before_run_table_example.data) > 0, "There should be data after fetch operation"
+    assert after_change_before_run_table_example.has_example_data, "There should be example data after fetch operation"
+    assert not after_change_before_run_table_example.has_run_with_current_setup, "After change there should be no run with current setup"
+    after_fetch_after_change_data = [row["titleCity"] for row in after_change_before_run_table_example.data]
+    assert after_fetch_data == after_fetch_after_change_data, 'Data should be the same after change without run'
+    # Validate that the impact of running the graph again
     graph.run_graph()
+    after_change_after_run_table_example = node.get_table_example(True)
+    assert len(after_change_after_run_table_example.data) == 0, 'Since running in performance mode there is no data expected'
+    assert not after_change_after_run_table_example.has_example_data, \
+        'Since performance mode does not trigger explicit run of the example data, it should not have example data'
+    assert not after_change_after_run_table_example.has_run_with_current_setup, "There should be no run with current setup"
+
+    # Fetch again
 
     graph.trigger_fetch_node(3)
+    after_change_and_fetch_table_example = node.get_table_example(True)
+    assert len(after_change_and_fetch_table_example.data) > 0, "There should be data after fetch operation"
+    assert after_change_and_fetch_table_example.has_example_data, "There should be example data after fetch operation"
+    assert after_change_and_fetch_table_example.has_run_with_current_setup, \
+        "There should be a run with current setup after fetch operation"
+    after_second_fetch_data = [row["titleCity"] for row in after_change_and_fetch_table_example.data]
+
+    assert after_second_fetch_data != after_fetch_data, 'Data should be different after run'
+
+    # Run again
+    graph.run_graph()
+
+    # Fetch again
+    graph.trigger_fetch_node(3)
+
+
+def test_fetch_after_run_performance():
+    graph = get_dependency_example()
+    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.execution_mode = "Performance"
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="titlecase([city])"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
+    graph.run_graph()
+    graph.trigger_fetch_node(3)
+
+    node = graph.get_node(3)
+    example_data = node.get_table_example(True)
+    assert len(example_data.data) > 0, "There should be data after fetch operation"
+
+
+def test_fetch_before_run_debug():
+    """
+    Test scenario in which the graph is set to debug mode, and a node is fetched before run, and afterwards,
+    without changes to the node, the graph is run. The data should still be available after the run.
+    """
+    graph = get_dependency_example()
+    graph.flow_settings.execution_location = "remote"
+    graph.flow_settings.execution_mode = "Development"
+    graph.add_formula(
+        input_schema.NodeFormula(
+            flow_id=1,
+            node_id=3,
+            function=transform_schema.FunctionInput(transform_schema.FieldInput(name="titleCity"),
+                                                    function="titlecase([city])"),
+        )
+    )
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=3))
+
+    graph.trigger_fetch_node(3)
+    node = graph.get_node(3)
+    example_data_before_run = node.get_table_example(True)
+
+    assert len(example_data_before_run.data) > 0, "There should be data after fetch operation"
+    graph.run_graph()
+    example_data_after_run = node.get_table_example(True).data
+
+    assert len(example_data_after_run) > 0, "There should be data after fetch operation"
 
 
