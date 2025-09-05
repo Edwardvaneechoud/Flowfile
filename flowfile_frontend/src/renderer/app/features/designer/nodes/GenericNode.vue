@@ -23,7 +23,7 @@ import { markRaw, computed, defineAsyncComponent, onErrorCaptured, shallowRef, o
 import NodeButton from "../baseNode/nodeButton.vue";
 import { toTitleCase } from "../components/Canvas/utils";
 import type { NodeTemplate } from "../types";
-import { nodeData } from "../baseNode/nodeInterfaces";
+
 
 // Import all components in the elements folder at build time
 // This tells Vite to include all these files in the bundle

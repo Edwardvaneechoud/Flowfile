@@ -197,9 +197,6 @@ export const useNodeStore = defineStore('node', {
       if (func) {
         func()
       }
-      else {
-        console.warn('No validation function found for node', nodeId)
-      }
     },
 
     setFlowId(flowId: number) {
@@ -479,12 +476,15 @@ export const useNodeStore = defineStore('node', {
 
     async updateSettingsDirectly(inputData: any): Promise<any> {
       try {
-        const node = this.vueFlowInstance?.findNode(String(this.node_id)) as Node
+        console.log("THIS IS SOMETHING THAT IS GOING ON")
+        console.log("inputData", inputData)
+        const node = this.vueFlowInstance?.findNode(String(inputData.node_id)) as Node
+        console.log("node that we found", node)
         inputData.pos_x = node.position.x
         inputData.pos_y = node.position.y
         const response = await axios.post('/update_settings/', inputData, {
           params: {
-            node_type: node.data.component.__name,
+            node_type: node.data.nodeTemplate.item,
           },
         }
         )
@@ -496,7 +496,7 @@ export const useNodeStore = defineStore('node', {
 
         return response.data;
       } catch (error: any) {
-        console.error('Error updating settings:', error.response?.data)
+        console.error('Error updating settings directly:', error.response?.data)
         throw error
       }
     },
@@ -506,7 +506,6 @@ export const useNodeStore = defineStore('node', {
         console.log("inputData", inputData)
 
         const node = this.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node
-        console.log('nodeData', )
         inputData.value.pos_x = node.position.x
         inputData.value.pos_y = node.position.y
         const response = await axios.post('/update_settings/', inputData.value, {
@@ -517,6 +516,7 @@ export const useNodeStore = defineStore('node', {
         )
         const downstreamNodeIds = await loadDownstreamNodeIds(this.flow_id, inputData.value.node_id)
         downstreamNodeIds.map((nodeId) => {
+          console.log(`Validating node: ${nodeId}`)
           this.validateNode(nodeId)
         }
         )

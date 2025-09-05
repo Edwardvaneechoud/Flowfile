@@ -130,7 +130,6 @@ const pushNodeData = async () => {
   } else {
     console.log("Save process failed.");
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 // --- Expose Methods ---

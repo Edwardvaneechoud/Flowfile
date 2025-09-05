@@ -92,7 +92,6 @@ const setUniqueColumns = () => {
 const loadNodeData = async (nodeId: number) => {
   loadData(nodeId);
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
 };
 
 const handleClickOutside = (event: MouseEvent) => {
@@ -167,7 +166,6 @@ const instantValidate = async () => {
 const pushNodeData = async () => {
   dataLoaded.value = false;
   setUniqueColumns();
-  nodeStore.isDrawerOpen = false;
   console.log("doing this");
   console.log(nodeUnique.value?.is_setup);
   console.log(nodeUnique.value);

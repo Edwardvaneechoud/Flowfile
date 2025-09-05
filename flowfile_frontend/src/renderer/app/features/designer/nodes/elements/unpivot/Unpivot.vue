@@ -239,7 +239,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
   console.log("loadNodeData from groupby");
 };
 
@@ -263,7 +262,6 @@ const pushNodeData = async () => {
     nodeUnpivot.value!.unpivot_input = unpivotInput.value;
     nodeStore.updateSettings(nodeUnpivot);
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

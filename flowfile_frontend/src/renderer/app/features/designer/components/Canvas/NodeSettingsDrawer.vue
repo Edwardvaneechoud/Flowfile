@@ -6,7 +6,6 @@
     ref="drawerComponentInstance"
   />
 </template>
-
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue';
 import { useNodeStore } from "../../../../stores/column-store";
@@ -32,6 +31,7 @@ const lastExecutedState = ref({
 const executeCleanup = async () => {
   // Check if we actually need to execute cleanup
   if (lastExecutedState.value.componentInstance) {
+    console.log(`executing cleanup for node ${lastExecutedState.value.nodeId}`)
     await nodeStore.executeDrawCloseFunction();
   }
 };
@@ -54,13 +54,12 @@ const setupNewNode = () => {
 watch(
   [() => drawerComponentInstance.value, () => nodeStore.node_id],
   async ([newInstance, newNodeId], [oldInstance, oldNodeId]) => {
-    // Determine if we need to execute cleanup
-    const instanceChanged = newInstance !== oldInstance;
+    // Only execute cleanup when node ID changes (not on initial mount or instance changes)
     const nodeIdChanged = newNodeId !== oldNodeId;
-    
-    // Execute cleanup only once if either changed
-    if ((instanceChanged || nodeIdChanged) && 
-        (oldInstance || oldNodeId !== -1) &&
+    console.log("DOING THIS THIS THIS")
+    // Execute cleanup only when node ID changes and we have a previous valid state
+    if (nodeIdChanged && 
+        oldNodeId !== -1 &&
         lastExecutedState.value.componentInstance) {
       await executeCleanup();
       // Reset the tracked state after cleanup

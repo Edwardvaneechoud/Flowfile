@@ -179,18 +179,8 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const handleClickOutside = (event: MouseEvent) => {
-  if (!contextMenuRef.value?.contains(event.target as Node)) {
-    showContextMenu.value = false;
-    contextMenuColumn.value = null;
-    showContextMenuRemove.value = false;
-  }
-};
-
 const pushNodeData = async () => {
   nodeStore.updateSettings(nodeSort);
-  dataLoaded.value = false;
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({
@@ -198,14 +188,6 @@ defineExpose({
   pushNodeData,
 });
 
-onMounted(async () => {
-  await nextTick();
-  window.addEventListener("click", handleClickOutside);
-});
-
-onUnmounted(() => {
-  window.removeEventListener("click", handleClickOutside);
-});
 </script>
 
 <style scoped>

@@ -222,7 +222,6 @@ const loadData = async (nodeId: number) => {
 const loadNodeData = async (nodeId: number) => {
   loadData(nodeId);
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
 };
 
 const handleClickOutside = (event: MouseEvent) => {
@@ -302,7 +301,6 @@ const instantValidate = async () => {
 
 const pushNodeData = async () => {
   dataLoaded.value = false;
-  nodeStore.isDrawerOpen = false;
   if (nodeGroupBy.value?.is_setup) {
     nodeGroupBy.value.is_setup = true;
   }
