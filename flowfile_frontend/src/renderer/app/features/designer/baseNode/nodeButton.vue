@@ -1,6 +1,10 @@
 <!-- nodeButton.vue - add this right after your button -->
 <template>
   <div class="component-wrapper">
+    <div class="status-indicator" :class="nodeResult?.statusIndicator">
+      <span class="tooltip-text">{{ tooltipContent }}</span>
+    </div>
+    
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
       <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
     </button>
@@ -18,8 +22,6 @@ const mouseX = ref(0);
 const mouseY = ref(0);
 const nodeStore = useNodeStore();
 const showDrawer = ref(false)
-
-
 
 const props = defineProps<{
   nodeId: number;
