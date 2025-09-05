@@ -38,7 +38,6 @@ const startStreamingLogs = async () => {
   connectionRetries.value = 0;
   errorMessage.value = null;
   connectionStatus.value = "disconnected";
-  console.log("Starting log streaming");
 
   try {
     // Get the auth token
@@ -80,7 +79,6 @@ const startStreamingLogs = async () => {
       if (!hasReceivedMessage && nodeStore.isRunning) {
         if (connectionRetries.value < maxRetries) {
           connectionRetries.value++;
-          console.log(`Retrying log connection (${connectionRetries.value}/${maxRetries})...`);
           errorMessage.value = `Connection failed. Retrying (${connectionRetries.value}/${maxRetries})...`;
           connectionStatus.value = "error";
           stopStreamingLogs();

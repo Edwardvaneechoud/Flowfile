@@ -175,14 +175,12 @@ export default function useDragAndDrop() {
     const nodeData: NodeTemplate = JSON.parse(
       event.dataTransfer.getData("application/vueflow"),
     );
-    console.log('nodeData from drag:', nodeData)
     const nodeId = getId();
 
     // Get component (will be GenericNode)
     getComponent(nodeData)
       .then((component) => {
         const numberOfInputs: number = (nodeData.multi) ? 1 : nodeData.input;
-        console.log('Creating node with nodeTemplate:', nodeData)
         
         const newNode: Node = {
           id: String(nodeId),
@@ -205,7 +203,6 @@ export default function useDragAndDrop() {
           },
         };
         
-        console.log('New node data object:', newNode.data);
         
         const { off } = onNodesInitialized(() => {
           updateNode(String(nodeId), (node) => ({

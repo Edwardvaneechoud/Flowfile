@@ -309,7 +309,6 @@ export const useNodeStore = defineStore('node', {
     },
 
     toggleDrawer() {
-      console.log('toggleDrawer in column-store.ts')
       if (this.isDrawerOpen && this.drawCloseFunction) {
         this.pushNodeData()
       }
@@ -326,13 +325,11 @@ export const useNodeStore = defineStore('node', {
       // This action now sets the component and its props in the store
       this.activeDrawerComponent = component;
       this.drawerProps = {...nodeTitleInfo, ...props};
-      console.log("props", this.drawerProps)
       this.isDrawerOpen = true
     },
 
     closeDrawer() {
       this.activeDrawerComponent = null;
-      console.log("closing")
       this.node_id = -1; // Reset the active node
       // console.log("Pushing node data", this.drawCloseFunction)
       if (this.drawCloseFunction) {
@@ -478,10 +475,7 @@ export const useNodeStore = defineStore('node', {
 
     async updateSettingsDirectly(inputData: any): Promise<any> {
       try {
-        console.log("THIS IS SOMETHING THAT IS GOING ON")
-        console.log("inputData", inputData)
         const node = this.vueFlowInstance?.findNode(String(inputData.node_id)) as Node
-        console.log("node that we found", node)
         inputData.pos_x = node.position.x
         inputData.pos_y = node.position.y
         const response = await axios.post('/update_settings/', inputData, {
@@ -505,7 +499,6 @@ export const useNodeStore = defineStore('node', {
 
     async updateSettings(inputData: any): Promise<any> {
       try {
-        console.log("inputData", inputData)
 
         const node = this.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node
         inputData.value.pos_x = node.position.x
@@ -518,7 +511,6 @@ export const useNodeStore = defineStore('node', {
         )
         const downstreamNodeIds = await loadDownstreamNodeIds(this.flow_id, inputData.value.node_id)
         downstreamNodeIds.map((nodeId) => {
-          console.log(`Validating node: ${nodeId}`)
           this.validateNode(nodeId)
         }
         )

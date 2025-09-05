@@ -255,9 +255,7 @@ const getEmptySetup = (left_fields: string[], right_fields: string[]): FuzzyJoin
 
 const loadNodeData = async (nodeId: number) => {
   result.value = await nodeStore.getNodeData(nodeId, false);
-  console.log(`resulting node data for ${nodeId}`, result.value);
   nodeFuzzyJoin.value = result.value?.setting_input;
-  console.log("Loading node data");
   if (!nodeFuzzyJoin.value?.is_setup && result.value?.main_input) {
     if (nodeFuzzyJoin.value) {
       if (result.value?.main_input.columns && result.value?.right_input?.columns) {
@@ -270,7 +268,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   } else {
     isLoaded.value = true;
-    console.log("Data reloaded");
   }
   isLoaded.value = true;
 };

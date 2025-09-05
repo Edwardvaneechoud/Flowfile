@@ -56,7 +56,6 @@ def cross_join(node_data: "NodeData") -> NodeData:
         ji = transform_schema.CrossJoinInput(left_select=node_data.main_input.columns,
                                              right_select=node_data.right_input.columns)
         ji.auto_rename()
-        print(ji)
         node_data.setting_input = input_schema.NodeCrossJoin(flow_id=node_data.flow_id,
                                                              node_id=node_data.node_id,
                                                              cross_join_input=ji)

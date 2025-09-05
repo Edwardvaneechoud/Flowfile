@@ -180,7 +180,6 @@ const nodeClick = (mouseEvent: any) => {
 };
 
 const setNodeTableView = (nodeId: number) => {
-  console.log(dataPreview.value);
   if (dataPreview.value) {
     dataPreview.value.downloadData(nodeId);
   }
@@ -214,13 +213,10 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
     console.log("Edge changes length is 2 so coming from a node change event");
     return;
   }
-  console.log("Edge changes", edgeChanges);
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "add") {
-      console.log("This edge change does not work");
     } else if (edgeChange.type === "remove") {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
-      console.log("Removing connection", nodeConnection);
       deleteConnection(nodeStore.flow_id, nodeConnection);
     }
   }

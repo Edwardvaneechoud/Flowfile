@@ -228,7 +228,6 @@ const loadNodeData = async (nodeId: number) => {
   console.log("loadNodeData from unpivot ");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeUnpivot.value = nodeData.value?.setting_input as NodeUnpivot;
-  console.log(nodeUnpivot.value);
   if (nodeData.value) {
     if (nodeUnpivot.value) {
       if (nodeUnpivot.value.unpivot_input) {
