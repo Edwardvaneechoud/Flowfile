@@ -19,6 +19,21 @@ def find_parent_directory(target_dir_name, start_path=None):
         current_path = current_path.parent
 
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
+from pathlib import Path
+
+
+def find_parent_directory(target_dir_name, start_path=None):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(start_path) if start_path else Path.cwd()
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
 def get_starting_gw_node_settings() -> input_schema.NodeExploreData:
