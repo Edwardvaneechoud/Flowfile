@@ -1,29 +1,50 @@
 import { DefineComponent, markRaw } from "vue";
-import { toTitleCase } from "./utils";
+import { NodeTemplate } from "../../types";
+import GenericNode from "../../nodes/GenericNode.vue"; // Import GenericNode directly
 
-const componentCache: Record<string, Promise<DefineComponent>> = {};
+const componentCache: Map<string, Promise<DefineComponent>> = new Map();
 
-export function getComponent(name: string): Promise<DefineComponent> {
-  if (!componentCache[name]) {
-    componentCache[name] = import(`../../nodes/${toTitleCase(name)}.vue`).then(
-      (module) => {
-        const component = markRaw(module.default);
-        return component;
-      },
-    );
+/**
+ * ALWAYS returns the GenericNode component
+ * The nodeOrItem parameter is kept for backward compatibility but not used
+ */
+export function getComponent(nodeOrItem: NodeTemplate | string): Promise<DefineComponent> {
+  // Always return the same GenericNode component for ALL nodes
+  const cacheKey = 'generic-node';
+  
+  if (componentCache.has(cacheKey)) {
+    return componentCache.get(cacheKey)!;
   }
-  return componentCache[name];
+  
+  // Just return the GenericNode component wrapped in a Promise
+  const componentPromise = Promise.resolve(markRaw(GenericNode as any));
+  
+  componentCache.set(cacheKey, componentPromise);
+  return componentPromise;
 }
 
-
+/**
+ * Gets a component using the raw name (without case conversion)
+ * This is kept for backward compatibility but also returns GenericNode
+ */
 export function getComponentRaw(name: string): Promise<DefineComponent> {
-  if (!componentCache[name]) {
-    componentCache[name] = import(`../../nodes/${name}.vue`).then(
-      (module) => {
-        const component = markRaw(module.default);
-        return component;
-      },
-    );
-  }
-  return componentCache[name];
+  // Also return GenericNode for raw components
+  return getComponent(name);
+}
+
+/**
+ * Clears the component cache
+ * Useful for development or when components might have changed
+ */
+export function clearComponentCache(): void {
+  componentCache.clear();
+}
+
+/**
+ * Preload multiple components
+ * Since we're using GenericNode for everything, this just ensures it's loaded
+ */
+export async function preloadComponents(items: string[]): Promise<void> {
+  // Just load the GenericNode once
+  await getComponent('generic');
 }

@@ -1,11 +1,15 @@
 import datetime
 import pickle
+
+import os
+
 import polars as pl
+
 import fastexcel
 from fastapi.exceptions import HTTPException
 from time import time
 from functools import partial
-from typing import List, Dict, Union, Callable, Any, Optional, Tuple
+from typing import List, Dict, Union, Callable, Any, Optional, Tuple, Literal
 from uuid import uuid1
 from copy import deepcopy
 from pyarrow.parquet import ParquetFile
@@ -175,11 +179,9 @@ class FlowGraph:
     schema: Optional[List[FlowfileColumn]] = None
     has_over_row_function: bool = False
     _flow_starts: List[Union[int, str]] = None
-    node_results: List[NodeResult] = None
     latest_run_info: Optional[RunInformation] = None
     start_datetime: datetime = None
     end_datetime: datetime = None
-    nodes_completed: int = 0
     _flow_settings: schemas.FlowSettings = None
     flow_logger: FlowLogger
 
@@ -206,11 +208,9 @@ class FlowGraph:
 
         self._flow_settings = flow_settings
         self.uuid = str(uuid1())
-        self.nodes_completed = 0
         self.start_datetime = None
         self.end_datetime = None
         self.latest_run_info = None
-        self.node_results = []
         self._flow_id = flow_settings.flow_id
         self.flow_logger = FlowLogger(flow_settings.flow_id)
         self._flow_starts: List[FlowNode] = []
@@ -814,11 +814,11 @@ class FlowGraph:
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             node = self.get_node(node_id=fuzzy_settings.node_id)
             if self.execution_location == "local":
-                return main.fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input,
+                return main.fuzzy_join(fuzzy_match_input=deepcopy(fuzzy_settings.join_input),
                                        other=right,
                                        node_logger=self.flow_logger.get_node_logger(fuzzy_settings.node_id))
 
-            f = main.start_fuzzy_join(fuzzy_match_input=fuzzy_settings.join_input, other=right, file_ref=node.hash,
+            f = main.start_fuzzy_join(fuzzy_match_input=deepcopy(fuzzy_settings.join_input), other=right, file_ref=node.hash,
                                       flow_id=self.flow_id, node_id=fuzzy_settings.node_id)
             logger.info("Started the fuzzy match action")
             node._fetch_cached_df = f  # Add to the node so it can be cancelled and fetch later if needed
@@ -1599,6 +1599,66 @@ class FlowGraph:
             self.reset()
         self.flow_settings.execution_location = execution_location
 
+    def validate_if_node_can_be_fetched(self, node_id: int) -> None:
+        flow_node = self._node_db.get(node_id)
+        if not flow_node:
+            raise Exception("Node not found found")
+        skip_nodes, execution_order = compute_execution_plan(
+            nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes()
+        )
+        if flow_node.node_id in [skip_node.node_id for skip_node in skip_nodes]:
+            raise Exception("Node can not be executed because it does not have it's inputs")
+
+    def create_initial_run_information(self, number_of_nodes: int,
+                                       run_type: Literal["fetch_one", "full_run"]):
+        return RunInformation(
+            flow_id=self.flow_id, start_time=datetime.datetime.now(), end_time=None,
+            success=None, number_of_nodes=number_of_nodes, node_step_result=[],
+            run_type=run_type
+        )
+
+    def trigger_fetch_node(self, node_id: int) -> RunInformation | None:
+        """Executes a specific node in the graph by its ID."""
+        if self.flow_settings.is_running:
+            raise Exception("Flow is already running")
+        flow_node = self.get_node(node_id)
+        self.flow_settings.is_running = True
+        self.flow_settings.is_canceled = False
+        self.flow_logger.clear_log_file()
+        self.latest_run_info = self.create_initial_run_information(1, "fetch_one")
+        node_logger = self.flow_logger.get_node_logger(flow_node.node_id)
+        node_result = NodeResult(node_id=flow_node.node_id, node_name=flow_node.name)
+        logger.info(f'Starting to run: node {flow_node.node_id}, start time: {node_result.start_timestamp}')
+        try:
+            self.latest_run_info.node_step_result.append(node_result)
+            flow_node.execute_node(run_location=self.flow_settings.execution_location,
+                                   performance_mode=False,
+                                   node_logger=node_logger,
+                                   optimize_for_downstream=False,
+                                   reset_cache=True)
+            node_result.error = str(flow_node.results.errors)
+            if self.flow_settings.is_canceled:
+                node_result.success = None
+                node_result.success = None
+                node_result.is_running = False
+            node_result.success = flow_node.results.errors is None
+            node_result.end_timestamp = time()
+            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.is_running = False
+            self.latest_run_info.nodes_completed += 1
+            self.latest_run_info.end_time = datetime.datetime.now()
+            self.flow_settings.is_running = False
+            return self.get_run_info()
+        except Exception as e:
+            node_result.error = 'Node did not run'
+            node_result.success = False
+            node_result.end_timestamp = time()
+            node_result.run_time = int(node_result.end_timestamp - node_result.start_timestamp)
+            node_result.is_running = False
+            node_logger.error(f'Error in node {flow_node.node_id}: {e}')
+        finally:
+            self.flow_settings.is_running = False
+
     def run_graph(self) -> RunInformation | None:
         """Executes the entire data flow graph from start to finish.
 
@@ -1614,20 +1674,23 @@ class FlowGraph:
         if self.flow_settings.is_running:
             raise Exception('Flow is already running')
         try:
+
             self.flow_settings.is_running = True
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
-            self.nodes_completed = 0
-            self.node_results = []
-            self.start_datetime = datetime.datetime.now()
-            self.end_datetime = None
-            self.latest_run_info = None
             self.flow_logger.info('Starting to run flowfile flow...')
-            skip_nodes, execution_order = compute_execution_plan(nodes=self.nodes, flow_starts=self._flow_starts+self.get_implicit_starter_nodes())
+
+            skip_nodes, execution_order = compute_execution_plan(
+                nodes=self.nodes,
+                flow_starts=self._flow_starts+self.get_implicit_starter_nodes()
+            )
+
+            self.latest_run_info = self.create_initial_run_information(len(execution_order), "full_run")
 
             skip_node_message(self.flow_logger, skip_nodes)
             execution_order_message(self.flow_logger, execution_order)
             performance_mode = self.flow_settings.execution_mode == 'Performance'
+
             for node in execution_order:
                 node_logger = self.flow_logger.get_node_logger(node.node_id)
                 if self.flow_settings.is_canceled:
@@ -1637,7 +1700,7 @@ class FlowGraph:
                     node_logger.info(f'Skipping node {node.node_id}')
                     continue
                 node_result = NodeResult(node_id=node.node_id, node_name=node.name)
-                self.node_results.append(node_result)
+                self.latest_run_info.node_step_result.append(node_result)
                 logger.info(f'Starting to run: node {node.node_id}, start time: {node_result.start_timestamp}')
                 node.execute_node(run_location=self.flow_settings.execution_location,
                                   performance_mode=performance_mode,
@@ -1663,7 +1726,7 @@ class FlowGraph:
                 if not node_result.success:
                     skip_nodes.extend(list(node.get_all_dependent_nodes()))
                 node_logger.info(f'Completed node with success: {node_result.success}')
-                self.nodes_completed += 1
+                self.latest_run_info.nodes_completed += 1
             self.flow_logger.info('Flow completed!')
             self.end_datetime = datetime.datetime.now()
             self.flow_settings.is_running = False
@@ -1675,28 +1738,23 @@ class FlowGraph:
         finally:
             self.flow_settings.is_running = False
 
-    def get_run_info(self) -> RunInformation:
+    def get_run_info(self) -> RunInformation | None:
         """Gets a summary of the most recent graph execution.
 
         Returns:
             A RunInformation object with details about the last run.
         """
+        is_running = self.flow_settings.is_running
         if self.latest_run_info is None:
-            node_results = self.node_results
-            success = all(nr.success for nr in node_results)
-            self.latest_run_info = RunInformation(start_time=self.start_datetime, end_time=self.end_datetime,
-                                                  success=success,
-                                                  node_step_result=node_results, flow_id=self.flow_id,
-                                                  nodes_completed=self.nodes_completed,
-                                                  number_of_nodes=len(self.nodes))
-        elif self.latest_run_info.nodes_completed != self.nodes_completed:
-            node_results = self.node_results
-            self.latest_run_info = RunInformation(start_time=self.start_datetime, end_time=self.end_datetime,
-                                                  success=all(nr.success for nr in node_results),
-                                                  node_step_result=node_results, flow_id=self.flow_id,
-                                                  nodes_completed=self.nodes_completed,
-                                                  number_of_nodes=len(self.nodes))
-        return self.latest_run_info
+            return
+
+        elif not is_running and self.latest_run_info.success is not None:
+            return self.latest_run_info
+
+        run_info = self.latest_run_info
+        if not is_running:
+            run_info.success = all(nr.success for nr in run_info.node_step_result)
+        return run_info
 
     @property
     def node_connections(self) -> List[Tuple[int, int]]:
@@ -1767,8 +1825,14 @@ class FlowGraph:
         Args:
             flow_path: The path where the flow file will be saved.
         """
-        with open(flow_path, 'wb') as f:
-            pickle.dump(self.get_node_storage(), f)
+        logger.info("Saving flow to %s", flow_path)
+        os.makedirs(os.path.dirname(flow_path), exist_ok=True)
+        try:
+            with open(flow_path, 'wb') as f:
+                pickle.dump(self.get_node_storage(), f)
+        except Exception as e:
+            logger.error(f"Error saving flow: {e}")
+
         self.flow_settings.path = flow_path
 
     def get_frontend_data(self) -> dict:

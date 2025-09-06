@@ -27,14 +27,12 @@ const loadNodeData = async (nodeId: number) => {
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeRecordCount.value = nodeData.value?.setting_input as NodeBase;
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
 };
 
 const pushNodeData = async () => {
   if (nodeRecordCount.value) {
     nodeStore.updateSettings(nodeRecordCount);
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

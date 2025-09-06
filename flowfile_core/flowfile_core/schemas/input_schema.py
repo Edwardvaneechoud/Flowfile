@@ -196,7 +196,6 @@ class NodeBase(BaseModel):
     user_id: Optional[int] = None
     is_flow_output: Optional[bool] = False
 
-
 class NodeSingleInput(NodeBase):
     """A base model for any node that takes a single data input."""
     depending_on_id: Optional[int] = -1

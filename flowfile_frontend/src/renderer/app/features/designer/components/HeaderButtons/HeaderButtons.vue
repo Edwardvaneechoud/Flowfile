@@ -12,6 +12,10 @@
       <span class="material-icons btn-icon">add_circle_outline</span>
       <span class="btn-text">Create</span>
     </button>
+    <button class="action-btn" @click="modalVisibleForQuickCreate = true">
+      <span class="material-icons btn-icon">flash_on</span>
+      <span class="btn-text">Quick Create</span>
+    </button>
     <button class="action-btn" @click="openSettingsModal">
       <span class="material-icons btn-icon">settings</span>
       <span class="btn-text">Settings</span>
@@ -50,6 +54,30 @@
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
     />
+  </el-dialog>
+
+  <el-dialog v-model="modalVisibleForQuickCreate" title="Create New Flow" width="400px">
+    <div class="quick-create-modal">
+      <div class="form-group">
+        <label for="flow-name">Flow Name (optional):</label>
+        <el-input
+          id="flow-name"
+          v-model="quickCreateName"
+          placeholder="Leave empty for auto-generated name"
+          clearable
+        />
+      </div>
+      <div class="preview-text">
+        <strong>File will be created as:</strong><br />
+        <code>{{ getPreviewFileName() }}</code>
+      </div>
+    </div>
+    <template #footer>
+      <span class="dialog-footer">
+        <el-button @click="modalVisibleForQuickCreate = false">Cancel</el-button>
+        <el-button type="primary" @click="handleQuickCreateAction">Create Flow</el-button>
+      </span>
+    </template>
   </el-dialog>
 
   <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
@@ -119,11 +147,13 @@ const nodeStore = useNodeStore();
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
+const modalVisibleForQuickCreate = ref(false);
 const modalVisibleForSettings = ref(false);
 
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
+const quickCreateName = ref<string>("");
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 
@@ -138,6 +168,28 @@ const executionLocationOptions = ref<ExecutionLocationOption[]>([
 ]);
 
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
+
+// Generate default filename with current datetime
+const generateDefaultFileName = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+
+  return `${year}${month}${day}_${hours}${minutes}${seconds}_flow.flowfile`;
+};
+
+// Get preview filename for the modal
+const getPreviewFileName = (): string => {
+  if (quickCreateName.value.trim()) {
+    const name = quickCreateName.value.trim();
+    return name.endsWith(".flowfile") ? name : `${name}.flowfile`;
+  }
+  return generateDefaultFileName();
+};
 
 const loadFlowSettings = async () => {
   if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
@@ -215,12 +267,28 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const normalizedPath = `${pathWithoutExtension}.flowfile`;
 
   const createdFlowId = await createFlow(normalizedPath);
-  await saveFlow(createdFlowId, normalizedPath);
 
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;
 
   emit("refreshFlow");
+};
+
+const handleQuickCreateAction = async () => {
+  const fileName = getPreviewFileName();
+  // Use temp storage path - you'll need to replace 'temp://' with your actual temp storage path
+  console.log("Creating flow with name:", fileName);
+  try {
+    const createdFlowId = await createFlow(null, fileName);
+    modalVisibleForQuickCreate.value = false;
+    quickCreateName.value = ""; // Reset the input
+    nodeStore.flow_id = createdFlowId;
+
+    emit("refreshFlow");
+  } catch (error) {
+    console.error("Failed to create quick flow:", error);
+    // You might want to show an error message to the user here
+  }
 };
 
 const openSettingsModal = () => {
@@ -239,6 +307,7 @@ watch(
 defineExpose({
   loadFlowSettings,
   openCreateDialog: () => (modalVisibleForCreate.value = true),
+  handleQuickCreateAction,
   openOpenDialog: () => (modalVisibleForOpen.value = true),
   openSaveModal: () => (modalVisibleForSave.value = true),
   runFlow,
@@ -323,5 +392,43 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 500;
   color: rgba(16, 24, 40, 0.9);
+}
+
+.quick-create-modal {
+  padding: 16px 0;
+}
+
+.quick-create-modal .form-group {
+  margin-bottom: 20px;
+}
+
+.quick-create-modal label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(16, 24, 40, 0.9);
+}
+
+.preview-text {
+  padding: 12px;
+  background-color: rgba(3, 11, 27, 0.03);
+  border: 1px solid rgba(16, 24, 40, 0.08);
+  border-radius: 6px;
+  font-size: 13px;
+  color: rgba(16, 24, 40, 0.7);
+}
+
+.preview-text code {
+  background-color: rgba(16, 24, 40, 0.08);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
+  font-size: 12px;
+}
+
+.dialog-footer {
+  display: flex;
+  gap: 8px;
 }
 </style>

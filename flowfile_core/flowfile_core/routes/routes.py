@@ -203,6 +203,24 @@ async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
     return [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
 
 
+@router.post("/node/trigger_fetch_data", tags=['editor'])
+async def trigger_fetch_node_data(flow_id: int, node_id: int, background_tasks: BackgroundTasks):
+    """Fetches and refreshes the data for a specific node."""
+    flow = flow_file_handler.get_flow(flow_id)
+    lock = get_flow_run_lock(flow_id)
+    async with lock:
+        if flow.flow_settings.is_running:
+            raise HTTPException(422, 'Flow is already running')
+        try:
+            flow.validate_if_node_can_be_fetched(node_id)
+        except Exception as e:
+            raise HTTPException(422, str(e))
+        background_tasks.add_task(flow.trigger_fetch_node, node_id)
+    return JSONResponse(content={"message": "Data started",
+                                 "flow_id": flow_id,
+                                 "node_id": node_id}, status_code=status.HTTP_200_OK)
+
+
 @router.post('/flow/run/', tags=['editor'])
 async def run_flow(flow_id: int, background_tasks: BackgroundTasks) -> JSONResponse:
     """Executes a flow in a background task.
@@ -233,6 +251,16 @@ def cancel_flow(flow_id: int):
     flow.cancel()
 
 
+@router.post("/flow/apply_standard_layout/", tags=["editor"])
+def apply_standard_layout(flow_id: int):
+    flow = flow_file_handler.get_flow(flow_id)
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found")
+    if flow.flow_settings.is_running:
+        raise HTTPException(422, "Flow is running")
+    flow.apply_layout()
+
+
 @router.get('/flow/run_status/', tags=['editor'],
             response_model=output_model.RunInformation)
 def get_run_status(flow_id: int, response: Response):
@@ -243,10 +271,12 @@ def get_run_status(flow_id: int, response: Response):
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
+    if flow.latest_run_info is None:
+        raise HTTPException(status_code=404, detail="No run information available")
     if flow.flow_settings.is_running:
         response.status_code = status.HTTP_202_ACCEPTED
-        return flow.get_run_info()
-    response.status_code = status.HTTP_200_OK
+    else:
+        response.status_code = status.HTTP_200_OK
     return flow.get_run_info()
 
 
@@ -444,11 +474,24 @@ def get_generated_code(flow_id: int) -> str:
 
 
 @router.post('/editor/create_flow/', tags=['editor'])
-def create_flow(flow_path: str):
+def create_flow(flow_path: str = None, name: str = None):
     """Creates a new, empty flow file at the specified path and registers a session for it."""
-    flow_path = Path(flow_path)
-    logger.info('Creating flow')
-    return flow_file_handler.add_flow(name=flow_path.stem, flow_path=str(flow_path))
+    if flow_path is not None and name is None:
+        name = Path(flow_path).stem
+    elif flow_path is not None and name is not None:
+        if name not in flow_path and flow_path.endswith(".flowfile"):
+            raise HTTPException(422, 'The name must be part of the flow path when a full path is provided')
+        elif name in flow_path and not flow_path.endswith(".flowfile"):
+            flow_path = str(Path(flow_path) / (name + ".flowfile"))
+        elif name not in flow_path and name.endswith(".flowfile"):
+            flow_path = str(Path(flow_path) / name)
+        elif name not in flow_path and not name.endswith(".flowfile"):
+            flow_path = str(Path(flow_path) / (name + ".flowfile"))
+    if flow_path is not None:
+        flow_path_ref = Path(flow_path)
+        if not flow_path_ref.parent.exists():
+            raise HTTPException(422, 'The directory does not exist')
+    return flow_file_handler.add_flow(name=name, flow_path=flow_path)
 
 
 @router.post('/editor/close_flow/', tags=['editor'])
@@ -476,6 +519,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     add_func = getattr(flow, 'add_' + node_type)
     parsed_input = None
     setting_name_ref = 'node' + node_type.replace('_', '')
+
     if add_func is None:
         raise HTTPException(404, 'could not find the function')
     try:

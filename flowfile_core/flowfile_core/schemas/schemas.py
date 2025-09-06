@@ -138,6 +138,8 @@ class NodeTemplate(BaseModel):
     node_group: str
     prod_ready: bool = True
     can_be_start: bool = False
+    drawer_title: str = "Node title"
+    drawer_intro: str = "Drawer into"
 
 
 class NodeInformation(BaseModel):

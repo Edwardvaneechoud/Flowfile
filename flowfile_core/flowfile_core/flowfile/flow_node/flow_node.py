@@ -12,7 +12,7 @@ from flowfile_core.configs.node_store import nodes as node_interface
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    ExternalDfFetcher, ExternalSampler, results_exists, get_external_df_result,
+    ExternalDfFetcher, ExternalSampler, clear_task_from_worker, results_exists, get_external_df_result,
     ExternalDatabaseFetcher, ExternalDatabaseWriter, ExternalCloudWriter)
 from flowfile_core.flowfile.flow_node.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
                                                      NodeStepStats, NodeResults)
@@ -678,9 +678,10 @@ class FlowNode:
 
         if results_exists(self.hash):
             logger.warning('Not implemented')
+            clear_task_from_worker(self.hash)
 
     def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None,
-                  execution_location: schemas.ExecutionLocationsLiteral = "worker") -> bool:
+                  execution_location: schemas.ExecutionLocationsLiteral = "remote") -> bool:
         """Determines if the node needs to be executed.
 
         The decision is based on its run state, caching settings, and execution mode.
@@ -723,6 +724,8 @@ class FlowNode:
         Raises:
             Exception: Propagates exceptions from the execution.
         """
+        self.clear_table_example()
+
         def example_data_generator():
             example_data = None
 
@@ -735,6 +738,7 @@ class FlowNode:
         resulting_data = self.get_resulting_data()
 
         if not performance_mode:
+            self.node_stats.has_run_with_current_setup = True
             self.results.example_data_generator = example_data_generator()
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True
@@ -854,8 +858,12 @@ class FlowNode:
             logger.warning('No external process to cancel')
         self.node_stats.is_canceled = True
 
-    def execute_node(self, run_location: schemas.ExecutionLocationsLiteral, reset_cache: bool = False,
-                     performance_mode: bool = False, retry: bool = True, node_logger: NodeLogger = None):
+    def execute_node(self, run_location: schemas.ExecutionLocationsLiteral,
+                     reset_cache: bool = False,
+                     performance_mode: bool = False,
+                     retry: bool = True,
+                     node_logger: NodeLogger = None,
+                     optimize_for_downstream: bool = True):
         """Orchestrates the execution, handling location, caching, and retries.
 
         Args:
@@ -864,25 +872,33 @@ class FlowNode:
             performance_mode: If True, optimizes for speed over diagnostics.
             retry: If True, allows retrying execution on recoverable errors.
             node_logger: The logger for this node execution.
+            optimize_for_downstream: If true, operations that shuffle the order of rows are fully cached and provided as
+            input to downstream steps
 
         Raises:
             Exception: If the node_logger is not defined.
         """
         if node_logger is None:
             raise Exception('Flow logger is not defined')
-        # node_logger = flow_logger.get_node_logger(self.node_id)
+        #  TODO: Simplify which route is being picked there are many duplicate checks
+
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run_with_current_setup = False
             self.node_stats.has_completed_last_run = False
+
         if self.is_setup:
             node_logger.info(f'Starting to run {self.__name__}')
             if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
                     and not (run_location == 'local')):
+                self.clear_table_example()
                 self.prepare_before_run()
+                self.reset()
                 try:
-                    if ((run_location == 'remote' or (self.node_default.transform_type == 'wide')
-                            and not run_location == 'local')) or self.node_settings.cache_results:
+                    if (((run_location == 'remote' or
+                         (self.node_default.transform_type == 'wide' and optimize_for_downstream) and
+                         not run_location == 'local'))
+                            or self.node_settings.cache_results):
                         node_logger.info('Running the node remotely')
                         if self.node_settings.cache_results:
                             performance_mode = False
@@ -924,7 +940,7 @@ class FlowNode:
                     node_logger.error(f'Error with running the node: {e}')
                     self.node_stats.error = str(e)
                     self.node_stats.has_completed_last_run = False
-                self.node_stats.has_run_with_current_setup = True
+
             else:
                 node_logger.info('Node has already run, not running the node')
         else:
@@ -1108,6 +1124,17 @@ class FlowNode:
         if self.singular_input:
             return self.all_inputs[0]
 
+    def clear_table_example(self) -> None:
+        """
+        Clear the table example in the results so that it clears the existing results
+        Returns:
+            None
+        """
+
+        self.results.example_data = None
+        self.results.example_data_generator = None
+        self.results.example_data_path = None
+
     def get_table_example(self, include_data: bool = False) -> TableExample | None:
         """Generates a `TableExample` model summarizing the node's output.
 
@@ -1136,10 +1163,15 @@ class FlowNode:
                 data = []
             schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             fl = self.get_resulting_data()
+            has_example_data = self.results.example_data_generator is not None
+
             return TableExample(node_id=self.node_id,
                                 name=str(self.node_id), number_of_records=999,
                                 number_of_columns=fl.number_of_fields,
-                                table_schema=schema, columns=fl.columns, data=data)
+                                table_schema=schema, columns=fl.columns, data=data,
+                                has_example_data=has_example_data,
+                                has_run_with_current_setup=self.node_stats.has_run_with_current_setup
+                                )
         else:
             logger.warning('getting the table example but the node has not run')
             try:

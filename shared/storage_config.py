@@ -112,6 +112,11 @@ class FlowfileStorage:
         """Directory for temporary files (internal)."""
         return self.base_directory / "temp"
 
+    @property
+    def temp_directory_for_flows(self) -> Path:
+        """Directory for temporary files specific to flows (internal)."""
+        return self.temp_directory / "flows"
+
     def _ensure_directories(self) -> None:
         """Create all necessary directories if they don't exist."""
         # Internal directories (always created in base_directory)
@@ -121,6 +126,7 @@ class FlowfileStorage:
             self.logs_directory,
             self.temp_directory,
             self.system_logs_directory,
+            self.temp_directory_for_flows,
         ]
 
         # User-accessible directories (location depends on environment)
@@ -192,7 +198,7 @@ class FlowfileStorage:
 
     def cleanup_directories(self) -> None:
         """Clean up temporary files older than specified hours."""
-        self.cleanup_directory("temp_directory", storage_duration_hours=1)
+        self.cleanup_directory("temp_directory", storage_duration_hours=24)
         self.cleanup_directory("cache_directory", storage_duration_hours=1)
         self.cleanup_directory("logs_directory", storage_duration_hours=168)
         self.cleanup_directory("system_logs_directory", storage_duration_hours=168)

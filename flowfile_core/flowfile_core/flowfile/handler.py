@@ -3,11 +3,25 @@ from dataclasses import dataclass
 from typing import Dict, List
 import os
 from pathlib import Path
+from datetime import datetime
 
 from flowfile_core.flowfile.manage.open_flowfile import open_flow
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas.schemas import FlowSettings
 from flowfile_core.flowfile.utils import create_unique_id
+from shared.storage_config import storage
+
+
+def get_flow_save_location(flow_name: str) -> Path:
+    """Gets the initial save location for flow files"""
+    if ".flowfile" not in flow_name:
+        flow_name += ".flowfile"
+    return storage.temp_directory_for_flows / flow_name
+
+
+def create_flow_name() -> str:
+    """Creates a unique flow name"""
+    return datetime.now().strftime("%Y%m%d_%H_%M_%S")+"_flow.flowfile"
 
 
 @dataclass
@@ -57,7 +71,7 @@ class FlowfileHandler:
         else:
             raise Exception('Flow not found')
 
-    def add_flow(self, name: str, flow_path: str) -> int:
+    def add_flow(self, name: str = None, flow_path: str = None) -> int:
         """
         Creates a new flow with a reference to the flow path
         Args:
@@ -69,8 +83,13 @@ class FlowfileHandler:
 
         """
         next_id = create_unique_id()
-        flow_info = FlowSettings(name=name, flow_id=next_id, save_location='', path=flow_path)
-        _ = self.register_flow(flow_info)
+        if not name:
+            name = create_flow_name()
+        if not flow_path:
+            flow_path = get_flow_save_location(name)
+        flow_info = FlowSettings(name=name, flow_id=next_id, save_location=str(flow_path), path=str(flow_path))
+        flow = self.register_flow(flow_info)
+        flow.save_flow(flow.flow_settings.path)
         return next_id
 
     def get_flow_info(self, flow_id: int) -> FlowSettings:

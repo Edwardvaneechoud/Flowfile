@@ -15,6 +15,7 @@ import useDragAndDrop from "./useDnD";
 import CodeGenerator from "./codeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../../../stores/column-store";
+import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
 import {
   getFlowData,
   deleteConnection,
@@ -23,12 +24,16 @@ import {
   NodeConnection,
 } from "./backendInterface";
 import DraggableItem from "./DraggableItem/DraggableItem.vue";
+import layoutControls from "./DraggableItem/layoutControls.vue";
+import { useItemStore } from "./DraggableItem/stateStore";
 import DataPreview from "../../dataPreview.vue";
 import FlowResults from "../../editor/results.vue";
 import LogViewer from "./canvasFlow/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import { NodeCopyInput, NodeCopyValue, ContextMenuAction, CursorPosition } from "./types";
+import { applyStandardLayout } from "./editorLayoutInterface";
 
+const itemStore = useItemStore();
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const rawCustomNode = markRaw(CustomNode);
@@ -90,9 +95,19 @@ interface EdgeChange {
 }
 
 const handleCanvasClick = (event: any | PointerEvent) => {
-  nodeStore.closeDrawer();
   showTablePreview.value = false;
+  nodeStore.node_id = -1;
+  nodeStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
+  clickedPosition.value = {
+    x: event.x,
+    y: event.y,
+  };
+};
+
+const handleNodeSettingsClose = (event: any | PointerEvent) => {
+  nodeStore.node_id = -1;
+  nodeStore.activeDrawerComponent = null;
   clickedPosition.value = {
     x: event.x,
     y: event.y,
@@ -121,7 +136,6 @@ const selectNodeExternally = (nodeId: number) => {
     setNodeTableView(nodeId);
   });
   fitView({ nodes: [nodeId.toString()] });
-  nodeStore.node_id = nodeId;
 };
 
 async function onConnect(params: any) {
@@ -147,7 +161,12 @@ const NodeIsSelected = (nodeId: string) => {
 
 const nodeClick = (mouseEvent: any) => {
   showTablePreview.value = true;
+
   nextTick().then(() => {
+    nodeStore.node_id = parseInt(mouseEvent.node.id);
+    itemStore.bringToFront("tablePreview");
+    itemStore.bringToFront("nodeSettings");
+
     if (
       (mouseEvent.node.id && !NodeIsSelected(mouseEvent.node.id)) ||
       (dataPreview.value &&
@@ -161,7 +180,6 @@ const nodeClick = (mouseEvent: any) => {
 };
 
 const setNodeTableView = (nodeId: number) => {
-  console.log(dataPreview.value);
   if (dataPreview.value) {
     dataPreview.value.downloadData(nodeId);
   }
@@ -195,13 +213,9 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
     console.log("Edge changes length is 2 so coming from a node change event");
     return;
   }
-  console.log("Edge changes", edgeChanges);
   for (const edgeChange of edgeChanges) {
-    if (edgeChange.type === "add") {
-      console.log("This edge change does not work");
-    } else if (edgeChange.type === "remove") {
+    if (edgeChange.type === "remove") {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
-      console.log("Removing connection", nodeConnection);
       deleteConnection(nodeStore.flow_id, nodeConnection);
     }
   }
@@ -243,6 +257,16 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   } else if (actionId === "paste-node") {
     copyValue(position.x, position.y);
   }
+};
+
+const handleResetLayoutGraph = async () => {
+  await applyStandardLayout(nodeStore.flow_id);
+  loadFlow();
+};
+
+const hideLogViewer = () => {
+  nodeStore.hideLogViewerForThisRun = true;
+  nodeStore.hideLogViewer();
 };
 
 const handleKeyDown = (event: KeyboardEvent) => {
@@ -348,6 +372,7 @@ defineExpose({
       initial-position="left"
       title="Data actions"
       :allow-free-move="true"
+      :prevent-overlap="false"
     >
       <NodeList @dragstart="onDragStart" />
     </draggable-item>
@@ -358,9 +383,13 @@ defineExpose({
       title="Log overview"
       :allow-full-screen="true"
       initial-position="bottom"
-      :on-minize="nodeStore.toggleLogViewer"
+      :initial-left="200"
+      :on-minize="hideLogViewer"
+      group="bottomPanels"
+      :sync-dimensions="true"
+      :prevent-overlap="false"
     >
-      <LogViewer :flow-id="1" />
+      <LogViewer />
     </draggable-item>
     <draggable-item
       v-if="nodeStore.showFlowResult"
@@ -369,7 +398,8 @@ defineExpose({
       title="flow results"
       initial-position="right"
       :initial-width="400"
-      :initial-top="-50"
+      group="rightPanels"
+      :prevent-overlap="false"
     >
       <FlowResults :on-click="selectNodeExternally" />
     </draggable-item>
@@ -382,6 +412,10 @@ defineExpose({
       initial-position="bottom"
       :on-minize="toggleShowTablePreview"
       :initial-height="tablePreviewHeight"
+      :initial-left="200"
+      group="bottomPanels"
+      :sync-dimensions="true"
+      :prevent-overlap="false"
     >
       <data-preview ref="dataPreview"> text </data-preview>
     </draggable-item>
@@ -390,14 +424,14 @@ defineExpose({
       id="nodeSettings"
       :show-right="true"
       initial-position="right"
-      :initial-top="0"
       :initial-width="800"
       :initial-height="nodeSettingsHeight"
       title="Node Settings"
-      :on-minize="nodeStore.closeDrawer"
+      :on-minize="handleNodeSettingsClose"
       :allow-full-screen="true"
+      :prevent-overlap="false"
     >
-      <div id="nodesettings" class="content"></div>
+      <NodeSettingsDrawer />
     </draggable-item>
     <draggable-item
       v-if="nodeStore.showCodeGenerator"
@@ -408,9 +442,11 @@ defineExpose({
       :allow-free-move="true"
       :allow-full-screen="true"
       :on-minize="() => nodeStore.setCodeGeneratorVisibility(false)"
+      :prevent-overlap="false"
     >
       <CodeGenerator />
     </draggable-item>
+    <layoutControls @reset-layout-graph="handleResetLayoutGraph" />
   </div>
 </template>
 

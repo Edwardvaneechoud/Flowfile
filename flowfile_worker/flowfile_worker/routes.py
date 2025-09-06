@@ -416,6 +416,37 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/clear_task/{task_id}")
+def clear_task(task_id: str):
+    """
+    Clear task data and status by ID.
+
+    Args:
+        task_id: Unique identifier of the task to clear
+    Returns:
+        dict: Success message
+    Raises:
+        HTTPException: If task not found
+    """
+
+    logger.info(f"Clearing task: {task_id}")
+    status = status_dict.get(task_id)
+    if not status:
+        logger.warning(f"Task not found for clearing: {task_id}")
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        if os.path.exists(status.file_ref):
+            os.remove(status.file_ref)
+            logger.debug(f"Removed file: {status.file_ref}")
+    except Exception as e:
+        logger.error(f"Error removing file {status.file_ref}: {str(e)}", exc_info=True)
+    with status_dict_lock:
+        status_dict.pop(task_id, None)
+        PROCESS_MEMORY_USAGE.pop(task_id, None)
+        logger.info(f"Successfully cleared task: {task_id}")
+    return {"message": f"Task {task_id} has been cleared."}
+
+
 @router.post("/cancel_task/{task_id}")
 def cancel_task(task_id: str):
     """Cancel a running task by ID.

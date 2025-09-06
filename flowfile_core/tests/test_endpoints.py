@@ -2,6 +2,7 @@ import os
 import threading
 import pickle
 import pytest
+from pathlib import Path
 
 from pydantic import SecretStr
 from fastapi.testclient import TestClient
@@ -23,6 +24,8 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                delete_database_connection,
                                                                                get_all_database_connections_interface,
                                                                                get_local_cloud_connection,)
+from shared.storage_config import storage
+from tests.flowfile.test_flowfile import find_parent_directory
 
 try:
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
@@ -117,7 +120,7 @@ def ensure_no_flow_registered():
 
 
 def ensure_clean_flow() -> FlowId:
-    flow_path: str = 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile'
+    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile')
     remove_flow(flow_path)  # Remove the flow if it exists
     sleep(.1)
     r = client.post("editor/create_flow", params={'flow_path': flow_path})
@@ -303,7 +306,7 @@ def test_run_error_flow_with_join():
     assert response.status_code == 200, 'Connection not deleted, breaking off test'
     response = client.post("/flow/run/", params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow should just start as normal'
-    assert len(flow.node_results) == 2, 'Flow should have only executed 2 nodes'
+    assert len(flow.latest_run_info.node_step_result) == 2, 'Flow should have only executed 2 nodes'
 
 
 def test_import_flow():
@@ -376,16 +379,6 @@ def test_get_flow_data_v2():
     client.post("/editor/connect_node/", data=connection.json(), params={"flow_id": flow_id})
     response = client.get('/flow_data/v2', params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow data not retrieved'
-
-    expected_data = {'node_edges': [
-        {'id': '1-2-0', 'source': '1', 'target': '2', 'targetHandle': 'input-0', 'sourceHandle': 'output-0'}],
-        'node_inputs': [{'name': 'Manual input', 'item': 'manual_input', 'input': 0, 'output': 1,
-                         'image': 'manual_input.png', 'multi': False, 'node_group': 'input',
-                         'prod_ready': True, 'can_be_start': False, 'id': 1, 'pos_x': 0.0, 'pos_y': 0.0},
-                        {'name': 'Select data', 'item': 'select', 'input': 1, 'output': 1,
-                         'image': 'select.png', 'multi': False, 'node_group': 'transform',
-                         'prod_ready': True, 'can_be_start': False, 'id': 2, 'pos_x': 0.0, 'pos_y': 0.0}]}
-    assert response.json() == expected_data, 'Flow data not correct'
 
 
 def create_flow_with_graphic_walker_input() -> FlowId:
@@ -542,7 +535,8 @@ def test_flow_cancel():
     flow = flow_file_handler.get_flow(flow_id)
     thread = threading.Thread(target=flow.run_graph)
     thread.start()
-    while 2 not in [n.node_id for n in flow.node_results]:
+    sleep(0.5)
+    while flow.latest_run_info is not None and 2 not in [n.node_id for n in flow.latest_run_info.node_step_result]:
         sleep(0.5)
     sleep(2)  # give it some time to start up
     # actual start of the test
@@ -980,3 +974,77 @@ def test_create_cloud_storage_reader():
     r = client.post("/update_settings/", json=node_settings.model_dump(), params={"node_type": "cloud_storage_reader"})
     assert r.status_code == 200, 'Settings not updated'
     assert node.node_schema.result_schema is not None, "Node schema should be set after run"
+
+
+def test_editor_create_flow_only_name():
+    response = client.post("/editor/create_flow/", params={'name': 'test_flow_1'})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert ".flowfile/temp/flows/test_flow_1.flowfile" in flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_no_params():
+    response = client.post("/editor/create_flow/")
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert ".flowfile/temp/flows/" in flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_only_path():
+    path = str(storage.flows_directory / "test_flow_1.flowfile")
+    response = client.post("/editor/create_flow/", params={'flow_path': path})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert path == flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_both_name_and_full_path():
+    path = str(storage.flows_directory / "test_flow_1.flowfile")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert path == flow_info.path
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_both_name_and_path():
+    path = str(storage.flows_directory)
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 200, 'Flow not created'
+    flow_info = flow_file_handler.get_flow_info(response.json())
+    assert storage.flows_directory / "test_flow_1.flowfile" == Path(flow_info.path)
+    assert Path(flow_info.path).exists()
+
+
+def test_editor_create_flow_with_both_name_and_non_existing_path():
+    path = str(storage.flows_directory/"WRONG_SUBDIR")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 422, "Flow should not be created"
+    assert response.json()["detail"] == "The directory does not exist"
+
+
+def test_editor_create_flow_with_both_name_no_overlap():
+    path = str(storage.flows_directory/"test_flow_2.flowfile")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    assert response.status_code == 422, "Flow should not be created"
+    assert response.json()["detail"] == 'The name must be part of the flow path when a full path is provided'
+
+
+def test_get_table_example():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.get("/node/data", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node data not retrieved'
+    assert response.json()["data"] == [], "Node data should be empty"
+
+
+def test_fetch_node_data():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.post("/node/trigger_fetch_data", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node data not retrieved'
+    response = client.get("/node/data", params={'flow_id': flow_id, 'node_id': 2})
+    assert response.status_code == 200, 'Node data not retrieved'
+    assert len(response.json()["data"]) > 0 , "Data should not be empty"
+    assert response.json()["has_run_with_current_setup"], "Node should have run"

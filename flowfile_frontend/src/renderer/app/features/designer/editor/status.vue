@@ -52,10 +52,12 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useItemStore } from "./../components/Canvas/DraggableItem/stateStore";
 import { View, Minus } from "@element-plus/icons-vue";
 import PopOver from "../editor/PopOver.vue";
 
 const nodeStore = useNodeStore();
+const draggableItemStore = useItemStore();
 const lastStatusChange = ref(new Date());
 
 const isRunning = computed(() => nodeStore.isRunning);
@@ -102,6 +104,10 @@ const buttonText = computed(() => (showFlowResult.value ? "Hide Results" : "Show
 const toggleResults = () => {
   nodeStore.showFlowResult = !nodeStore.showFlowResult;
   nodeStore.isShowingLogViewer = nodeStore.showFlowResult;
+  if (nodeStore.isShowingLogViewer) {
+    draggableItemStore.bringToFront("logViewer");
+    draggableItemStore.bringToFront("flowresults");
+  }
 };
 </script>
 

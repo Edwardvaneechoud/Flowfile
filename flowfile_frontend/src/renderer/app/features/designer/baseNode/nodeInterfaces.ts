@@ -20,6 +20,8 @@ export interface TableExample {
   table_schema: FileColumn[]
   columns: string[]
   data: Record<string, any>[]
+  has_example_data: boolean
+  has_run_with_current_setup: boolean
 }
 
 export interface NodeData {
@@ -90,4 +92,9 @@ export interface ExpressionRef {
 export interface ExpressionsOverview {
   expression_type: string
   expressions: ExpressionRef[]
+}
+
+export interface NodeTitleInfo {
+  title: string
+  intro: string
 }

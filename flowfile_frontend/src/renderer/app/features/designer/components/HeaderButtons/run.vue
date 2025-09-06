@@ -10,16 +10,11 @@
 </template>
 
 <script setup lang="ts">
-import axios from "axios";
-import { defineProps, ref, onUnmounted } from "vue";
+import { defineProps } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
-import { RunInformation } from "../../baseNode/nodeInterfaces";
-import { ElNotification } from "element-plus";
-import { updateRunStatus, getFlowSettings, FlowSettings } from "../../nodes/nodeLogic";
-import { VueFlowStore } from "@vue-flow/core";
+import { useFlowExecution } from "../../composables/useFlowExecution";
 
 const nodeStore = useNodeStore();
-const pollingInterval = ref<number | null>(null);
 
 const props = defineProps({
   flowId: { type: Number, required: true },
@@ -31,164 +26,22 @@ const props = defineProps({
       maxAttempts: Infinity,
     }),
   },
+  persistPolling: {
+    type: Boolean,
+    default: false, // RunButton doesn't need persistent polling by default
+  },
 });
 
-const freezeFlow = () => {
-  let vueFlowElement: VueFlowStore = nodeStore.vueFlowInstance;
-  if (vueFlowElement) {
-    vueFlowElement.nodesDraggable.value = false;
-    vueFlowElement.nodesConnectable.value = false;
-    vueFlowElement.elementsSelectable.value = false;
-  }
-};
-
-const unFreezeFlow = () => {
-  let vueFlowElement: VueFlowStore = nodeStore.vueFlowInstance;
-  if (vueFlowElement) {
-    vueFlowElement.nodesDraggable.value = true;
-    vueFlowElement.nodesConnectable.value = true;
-    vueFlowElement.elementsSelectable.value = true;
-  }
-};
-
-interface NotificationConfig {
-  title: string;
-  message: string;
-  type: "success" | "error";
-}
-
-const showNotification = (
-  title: string,
-  message: string,
-  type?: "success" | "error",
-  dangerouslyUseHTMLString?: boolean,
-) => {
-  ElNotification({
-    title: title,
-    message: message,
-    type: type,
-    position: "top-left",
-    dangerouslyUseHTMLString: dangerouslyUseHTMLString,
+// Use the composable
+const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkRunStatus } =
+  useFlowExecution(props.flowId, props.pollingConfig, {
+    persistPolling: props.persistPolling,
+    pollingKey: `run_button_${props.flowId}`,
   });
-};
-
-const startPolling = (checkFn: () => Promise<void>) => {
-  if (pollingInterval.value === null && props.pollingConfig.enabled) {
-    pollingInterval.value = setInterval(checkFn, props.pollingConfig.interval) as unknown as number;
-  }
-};
-
-const stopPolling = () => {
-  if (pollingInterval.value !== null) {
-    clearInterval(pollingInterval.value);
-    pollingInterval.value = null;
-  }
-};
-
-const createNotificationConfig = (runInfo: RunInformation): NotificationConfig => ({
-  title: runInfo.success ? "Success" : "Error",
-  message: runInfo.success
-    ? "The flow has completed"
-    : "There were issues with the flow run, check the logging for more information",
-  type: runInfo.success ? "success" : "error",
-});
-
-const checkRunStatus = async () => {
-  try {
-    const response = await updateRunStatus(props.flowId, nodeStore);
-
-    if (response.status === 200) {
-      stopPolling();
-      unFreezeFlow();
-      nodeStore.isRunning = false;
-
-      const notificationConfig = createNotificationConfig(response.data);
-      showNotification(
-        notificationConfig.title,
-        notificationConfig.message,
-        notificationConfig.type,
-      );
-    } else if (response.status === 404) {
-      stopPolling();
-      unFreezeFlow();
-      nodeStore.isRunning = false;
-      nodeStore.runResults = {};
-    }
-  } catch (error) {
-    console.error("Error checking run status:", error);
-    stopPolling();
-    unFreezeFlow();
-    nodeStore.isRunning = false;
-  }
-};
-
-const runFlow = async () => {
-  const flowSettings: FlowSettings | null = await getFlowSettings(nodeStore.flow_id);
-  if (!flowSettings) {
-    throw new Error("Failed to retrieve flow settings");
-  }
-
-  const escapeHtml = (text: string): string => {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-  };
-
-  freezeFlow();
-
-  nodeStore.resetNodeResult();
-
-  const executionLocationText = flowSettings.execution_location === "local" ? "Local" : "Remote";
-
-  const escapedFlowName = escapeHtml(flowSettings.name);
-
-  const notificationMessage = `
-    <div style="line-height: 1.4;">
-      <div><strong>Flow:</strong> "${escapedFlowName}"</div>
-      <div><strong>Mode:</strong> ${flowSettings.execution_mode}</div>
-      <div><strong>Location:</strong> ${executionLocationText}</div>
-    </div>
-  `;
-
-  showNotification("🚀 Flow Started", notificationMessage, undefined, true);
-
-  try {
-    await axios.post("/flow/run/", null, {
-      params: { flow_id: props.flowId },
-      headers: { accept: "application/json" },
-    });
-    nodeStore.isRunning = true;
-    nodeStore.showLogViewer();
-    startPolling(checkRunStatus);
-  } catch (error) {
-    console.error("Error starting run:", error);
-    unFreezeFlow();
-    nodeStore.isRunning = false;
-  }
-};
-
-const cancelFlow = async () => {
-  try {
-    await axios.post("/flow/cancel/", null, {
-      params: { flow_id: props.flowId },
-      headers: { accept: "application/json" },
-    });
-    showNotification("Cancelling", "The flow is being cancelled");
-    unFreezeFlow();
-    nodeStore.isRunning = false;
-    stopPolling();
-  } catch (error) {
-    console.error("Error cancelling run:", error);
-    showNotification("Error", "Failed to cancel the flow", "error");
-  }
-};
 
 const emit = defineEmits(["logs-start", "logs-stop"]);
 
-onUnmounted(() => {
-  stopPolling();
-});
-
+// Expose methods if parent component needs them
 defineExpose({
   startPolling,
   stopPolling,

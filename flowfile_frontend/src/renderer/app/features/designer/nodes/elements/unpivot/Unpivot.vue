@@ -228,7 +228,6 @@ const loadNodeData = async (nodeId: number) => {
   console.log("loadNodeData from unpivot ");
   nodeData.value = await nodeStore.getNodeData(nodeId, false);
   nodeUnpivot.value = nodeData.value?.setting_input as NodeUnpivot;
-  console.log(nodeUnpivot.value);
   if (nodeData.value) {
     if (nodeUnpivot.value) {
       if (nodeUnpivot.value.unpivot_input) {
@@ -239,7 +238,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
   console.log("loadNodeData from groupby");
 };
 
@@ -263,7 +261,6 @@ const pushNodeData = async () => {
     nodeUnpivot.value!.unpivot_input = unpivotInput.value;
     nodeStore.updateSettings(nodeUnpivot);
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({
