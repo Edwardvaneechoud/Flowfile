@@ -406,9 +406,9 @@ export const useNodeStore = defineStore('node', {
       }
 
       try {
-        this.setFlowIdAndNodeId(this.flow_id, node_id)
+        console.log("Getting node data")
         const response = await axios.get<NodeData>('/node', {
-          params: { flow_id: this.flow_id, node_id: this.node_id },
+          params: { flow_id: this.flow_id, node_id: node_id },
           headers: { accept: 'application/json' },
         })
         this.nodeData = response.data
