@@ -1,6 +1,10 @@
 import datetime
 import pickle
+
+import os
+
 import polars as pl
+
 import fastexcel
 from fastapi.exceptions import HTTPException
 from time import time
@@ -1821,8 +1825,14 @@ class FlowGraph:
         Args:
             flow_path: The path where the flow file will be saved.
         """
-        with open(flow_path, 'wb') as f:
-            pickle.dump(self.get_node_storage(), f)
+        logger.info("Saving flow to %s", flow_path)
+        os.makedirs(os.path.dirname(flow_path), exist_ok=True)
+        try:
+            with open(flow_path, 'wb') as f:
+                pickle.dump(self.get_node_storage(), f)
+        except Exception as e:
+            logger.error(f"Error saving flow: {e}")
+
         self.flow_settings.path = flow_path
 
     def get_frontend_data(self) -> dict:

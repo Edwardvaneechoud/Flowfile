@@ -205,6 +205,7 @@ const openFlowDialog = () => {
 
 const openQuickCreateDialog = () => {
   if (headerButtons.value) {
+    console.log("Opening quick create dialog");
     headerButtons.value.handleQuickCreateAction();
   }
 };
