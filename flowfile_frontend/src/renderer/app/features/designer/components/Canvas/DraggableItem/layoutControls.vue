@@ -20,7 +20,7 @@
             <span class="icon">◫</span> Cascade
           </button>
           <button class="control-btn" @click="runAction(resetLayout)">
-            <span class="icon">↺</span> Reset Layout
+            <span class="icon">↺</span> Reset window Layout
           </button>
           <button class="control-btn accent" @click="runAction(resetLayoutGraph)">
             <span class="icon">⟲</span> Reset Layout Graph
