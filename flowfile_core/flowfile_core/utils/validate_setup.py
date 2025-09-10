@@ -31,6 +31,8 @@ def validate_setup():
     Raises ValueError if any node is missing either.
     """
     for node in nodes_list:
+        if node.custom_node:
+            continue
         check_if_node_has_add_function_in_flow_graph(node)
         check_if_node_has_input_schema_definition(node)
 

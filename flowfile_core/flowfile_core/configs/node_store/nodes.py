@@ -1,8 +1,7 @@
-from typing import List
-from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault, TransformTypeLiteral, NodeTypeLiteral
 
 from typing import List
-from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault, TransformTypeLiteral, NodeTypeLiteral
+from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault
+from flowfile_core.configs.node_store.custom_node import SimpleFilterNode
 
 nodes_list: List[NodeTemplate] = [
     NodeTemplate(
@@ -11,6 +10,8 @@ nodes_list: List[NodeTemplate] = [
         input=0,
         output=1,
         image='external_source.png',
+        node_type="input",
+        transform_type="other",
         node_group='input',
         prod_ready=False,
         drawer_title="External Source",
@@ -22,6 +23,8 @@ nodes_list: List[NodeTemplate] = [
         item='manual_input',
         input=0,
         output=1,
+        transform_type="other",
+        node_type="input",
         image='manual_input.png',
         node_group='input',
         drawer_title="Manual Input",
@@ -33,6 +36,8 @@ nodes_list: List[NodeTemplate] = [
         item='read',
         input=0,
         output=1,
+        transform_type="other",
+        node_type="input",
         image='input_data.png',
         node_group='input',
         drawer_title="Read Data",
@@ -44,6 +49,8 @@ nodes_list: List[NodeTemplate] = [
         item='join',
         input=2,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='join.png',
         node_group='combine',
         drawer_title="Join Datasets",
@@ -55,6 +62,8 @@ nodes_list: List[NodeTemplate] = [
         item='formula',
         input=1,
         output=1,
+        transform_type="narrow",
+        node_type="process",
         image='formula.png',
         node_group='transform',
         drawer_title="Formula Editor",
@@ -66,7 +75,9 @@ nodes_list: List[NodeTemplate] = [
         item='output',
         input=1,
         output=0,
+        transform_type="other",
         image='output.png',
+        node_type="output",
         node_group='output',
         drawer_title="Write Data",
         drawer_intro="Save your data as CSV, Excel, or Parquet files"
@@ -77,6 +88,8 @@ nodes_list: List[NodeTemplate] = [
         item='select',
         input=1,
         output=1,
+        transform_type="narrow",
+        node_type="process",
         image='select.png',
         node_group='transform',
         drawer_title="Select Columns",
@@ -88,6 +101,8 @@ nodes_list: List[NodeTemplate] = [
         item='filter',
         input=1,
         output=1,
+        transform_type="narrow",
+        node_type="process",
         image='filter.png',
         node_group='transform',
         drawer_title="Filter Rows",
@@ -99,6 +114,8 @@ nodes_list: List[NodeTemplate] = [
         item='group_by',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='group_by.png',
         node_group='aggregate',
         drawer_title="Group By",
@@ -110,7 +127,9 @@ nodes_list: List[NodeTemplate] = [
         item='fuzzy_match',
         input=2,
         output=1,
+        transform_type="wide",
         image='fuzzy_match.png',
+        node_type="process",
         node_group='combine',
         drawer_title="Fuzzy Match",
         drawer_intro="Join datasets based on similar values instead of exact matches"
@@ -121,6 +140,8 @@ nodes_list: List[NodeTemplate] = [
         item='sort',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='sort.png',
         node_group='transform',
         drawer_title="Sort Data",
@@ -132,6 +153,8 @@ nodes_list: List[NodeTemplate] = [
         item='record_id',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='record_id.png',
         node_group='transform',
         drawer_title="Add Record ID",
@@ -143,6 +166,8 @@ nodes_list: List[NodeTemplate] = [
         item='sample',
         input=1,
         output=1,
+        transform_type="narrow",
+        node_type="process",
         image='sample.png',
         node_group='transform',
         drawer_title="Take Sample",
@@ -154,6 +179,8 @@ nodes_list: List[NodeTemplate] = [
         item='explore_data',
         input=1,
         output=0,
+        transform_type="other",
+        node_type="output",
         image='explore_data.png',
         node_group='output',
         drawer_title="Explore Data",
@@ -165,7 +192,9 @@ nodes_list: List[NodeTemplate] = [
         item='pivot',
         input=1,
         output=1,
+        transform_type="wide",
         image='pivot.png',
+        node_type="process",
         node_group='aggregate',
         drawer_title="Pivot Data",
         drawer_intro="Convert data from long format to wide format"
@@ -176,6 +205,8 @@ nodes_list: List[NodeTemplate] = [
         item='unpivot',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='unpivot.png',
         node_group='aggregate',
         drawer_title="Unpivot Data",
@@ -187,6 +218,8 @@ nodes_list: List[NodeTemplate] = [
         item='union',
         input=10,
         output=1,
+        transform_type="narrow",
+        node_type="process",
         image='union.png',
         multi=True,
         node_group='combine',
@@ -199,6 +232,8 @@ nodes_list: List[NodeTemplate] = [
         item='unique',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='unique.png',
         node_group='transform',
         drawer_title="Drop Duplicates",
@@ -210,6 +245,8 @@ nodes_list: List[NodeTemplate] = [
         item='graph_solver',
         input=1,
         output=1,
+        transform_type="other",
+        node_type="process",
         image='graph_solver.png',
         node_group='combine',
         drawer_title="Graph Solver",
@@ -221,6 +258,8 @@ nodes_list: List[NodeTemplate] = [
         item='record_count',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='record_count.png',
         node_group='aggregate',
         drawer_title="Count Records",
@@ -232,6 +271,8 @@ nodes_list: List[NodeTemplate] = [
         item='cross_join',
         input=2,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='cross_join.png',
         node_group='combine',
         drawer_title="Cross Join",
@@ -243,6 +284,8 @@ nodes_list: List[NodeTemplate] = [
         item='text_to_rows',
         input=1,
         output=1,
+        transform_type="wide",
+        node_type="process",
         image='text_to_rows.png',
         node_group='transform',
         drawer_title="Text to Rows",
@@ -254,8 +297,10 @@ nodes_list: List[NodeTemplate] = [
         item="polars_code",
         input=10,
         output=1,
+        transform_type="narrow",
         image='polars_code.png',
         node_group='transform',
+        node_type="process",
         multi=True,
         can_be_start=True,
         drawer_title="Polars Code",
@@ -267,6 +312,8 @@ nodes_list: List[NodeTemplate] = [
         item="database_reader",
         input=0,
         output=1,
+        node_type="input",
+        transform_type="other",
         image='database_reader.svg',
         node_group='input',
         drawer_title="Database Reader",
@@ -278,6 +325,8 @@ nodes_list: List[NodeTemplate] = [
         item='database_writer',
         input=1,
         output=0,
+        transform_type="other",
+        node_type="output",
         image='database_writer.svg',
         node_group='output',
         drawer_title="Database Writer",
@@ -289,6 +338,8 @@ nodes_list: List[NodeTemplate] = [
         item='cloud_storage_reader',
         input=0,
         output=1,
+        transform_type="other",
+        node_type="input",
         image='cloud_storage_reader.png',
         node_group='input',
         drawer_title="Cloud Storage Reader",
@@ -300,6 +351,8 @@ nodes_list: List[NodeTemplate] = [
         item='cloud_storage_writer',
         input=1,
         output=0,
+        transform_type="other",
+        node_type="output",
         image='cloud_storage_writer.png',
         node_group='output',
         drawer_title="Cloud Storage Writer",
@@ -307,52 +360,31 @@ nodes_list: List[NodeTemplate] = [
     ),
 ]
 
-nodes_list.sort(key=lambda x: x.name)
 
-output = ['Explore data', 'Write data', 'Write to Database', 'Write to cloud provider',]
-_input = [ 'Manual input', 'Read data', 'External source', 'Read from Database', "Read from cloud provider",]
-transform = ['Join', 'Formula', 'Select data', 'Filter data', 'Group by', 'Fuzzy match', 'Sort data', 'Add record Id',
-             'Take Sample', 'Pivot data', 'Unpivot data', 'Union data', 'Drop duplicates', 'Graph solver',
-             'Count records', 'Cross join', 'Text to rows', 'Polars code']
-narrow = ['Select data', 'Filter data', 'Take Sample', 'Formula', 'Read data', 'Union data', 'Polars code']
-wide = ['Join', 'Group by', 'Fuzzy match', 'Sort data', 'Pivot data', 'Unpivot data', 'Add record Id',
-        'Graph solver', 'Drop duplicates', 'Count records', 'Cross join', 'Text to rows']
-other = ['Explore data', 'Write data', 'Manual input', 'Read data', 'External source',
-         'Read from Database', 'Write to Database', "Read from cloud provider", 'Write to cloud provider',]
+def register_custom_node(node: NodeTemplate):
+    nodes_list.append(node)
+    node_dict[node.item] = node
+
+
+
+nodes_list.sort(key=lambda x: x.name)
 nodes_with_defaults = {'sample', 'sort', 'union', 'select', 'record_count'}
 
 
-def get_node_type(node_name: str) -> NodeTypeLiteral:
-    if node_name in output:
-        return 'output'
-    if node_name in _input:
-        return 'input'
-    if node_name in transform:
-        return 'process'
-    else:
-        raise ValueError(f'Node name {node_name} not found in any of the node types')
-
-
 def check_if_has_default_setting(node_item: str):
+
     return node_item in nodes_with_defaults
 
 
-def get_transform_type(node_name: str) -> TransformTypeLiteral:
-    if node_name in narrow:
-        return 'narrow'
-    if node_name in wide:
-        return 'wide'
-    if node_name in other:
-        return 'other'
-    else:
-        raise ValueError(f'Node name {node_name} not found in any of the transform types')
-
-
 node_defaults = {node.item: NodeDefault(node_name=node.name,
-                                        node_type=get_node_type(node.name),
-                                        transform_type=get_transform_type(node.name),
+                                        node_type=node.node_type,
+                                        transform_type=node.transform_type,
                                         has_default_settings=check_if_has_default_setting(node.item)
                                         ) for node in nodes_list}
 
 node_dict = {n.item: n for n in nodes_list}
-node_dict["polars_lazy_frame"] = NodeTemplate(name='LazyFrame node', item='polars_lazy_frame', input=0, output=1, node_group="special", image="",)
+
+register_custom_node(SimpleFilterNode().to_node_template())
+
+node_dict["polars_lazy_frame"] = NodeTemplate(name='LazyFrame node', item='polars_lazy_frame', input=0, output=1,
+                                              node_group="special", image="", node_type="input", transform_type="other",)

@@ -348,6 +348,10 @@ export interface NodeGraphSolver extends NodeSingleInput {
   graph_solver_input: GraphSolverInput
 }
 
+export interface NodeUserDefined extends NodeSingleInput {
+  userDefinedInput?: any
+}
+
 export interface NodeFormula extends NodeSingleInput {
   function: FormulaInput
 }
