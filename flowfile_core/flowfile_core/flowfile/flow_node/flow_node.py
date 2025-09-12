@@ -8,7 +8,7 @@ from flowfile_core.configs.flow_logger import NodeLogger
 
 from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
 from flowfile_core.flowfile.utils import get_hash
-from flowfile_core.configs.node_store import nodes as node_interface
+from flowfile_core.configs import node_store
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
@@ -27,7 +27,7 @@ class FlowNode:
     """
     parent_uuid: str
     node_type: str
-    node_template: node_interface.NodeTemplate
+    node_template: node_store.NodeTemplate
     node_default: schemas.NodeDefault
     node_schema: NodeSchemaInformation
     node_inputs: NodeStepInputs
@@ -251,10 +251,10 @@ class FlowNode:
         self.results.errors = None
         self.add_lead_to_in_depend_source()
         _ = self.hash
-        self.node_template = node_interface.node_dict.get(self.node_type)
+        self.node_template = node_store.node_dict.get(self.node_type)
         if self.node_template is None:
             raise Exception(f'Node template {self.node_type} not found')
-        self.node_default = node_interface.node_defaults.get(self.node_type)
+        self.node_default = node_store.node_defaults.get(self.node_type)
         self.setting_input = setting_input  # wait until the end so that the hash is calculated correctly
 
     @property

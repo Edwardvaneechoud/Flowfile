@@ -1,5 +1,8 @@
 import { ref } from 'vue'
 
+
+type DataTypeGroup = "String" | "Date" | "Numeric"
+
 export interface FileColumn {
   name: string
   data_type: string
@@ -10,6 +13,7 @@ export interface FileColumn {
   number_of_filled_values: number
   number_of_unique_values: number
   size: number
+  data_type_group: DataTypeGroup
 }
 
 export interface TableExample {

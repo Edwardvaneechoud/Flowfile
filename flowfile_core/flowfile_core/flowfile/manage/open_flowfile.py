@@ -4,6 +4,7 @@ from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_comp
 import pickle
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from pathlib import Path
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 
 
 def determine_insertion_order(node_storage: schemas.FlowInformation):
@@ -81,7 +82,14 @@ def open_flow(flow_path: Path) -> FlowGraph:
         new_flow.add_node_promise(node_promise)
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
-        getattr(new_flow, 'add_' + node_info.type)(node_info.setting_input)
+        if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
+            if node_info.type not in CUSTOM_NODE_STORE:
+                continue
+            user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
+            new_flow.add_user_defined_node(custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
+                                           user_defined_node_settings=node_info.setting_input)
+        else:
+            getattr(new_flow, 'add_' + node_info.type)(node_info.setting_input)
         from_node = new_flow.get_node(node_id)
         for output_node_id in node_info.outputs:
             to_node = new_flow.get_node(output_node_id)

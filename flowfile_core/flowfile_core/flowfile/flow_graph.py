@@ -16,7 +16,7 @@ from pyarrow.parquet import ParquetFile
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import cast_str_to_polars_type, FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
 from flowfile_core.utils.arrow_reader import get_read_top_n
@@ -51,6 +51,7 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
                                                                                get_local_cloud_connection)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
+from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -436,6 +437,24 @@ class FlowGraph:
         node = self._node_db.get(node_id)
         if node is not None:
             return node
+        
+    def add_user_defined_node(self, *,
+                              custom_node: CustomNodeBase,
+                              user_defined_node_settings: input_schema.UserDefinedNode
+                              ):
+       
+        def _func(*fdes: FlowDataEngine) -> FlowDataEngine | None:
+            output = custom_node.process(*(fde.data_frame for fde in fdes))
+            if isinstance(output, pl.LazyFrame | pl.DataFrame):
+                return FlowDataEngine(output)
+            return None
+        
+        self.add_node_step(node_id=user_defined_node_settings.node_id,
+                           function=_func,
+                           setting_input=user_defined_node_settings,
+                           input_node_ids=user_defined_node_settings.depending_on_ids,
+                           node_type=custom_node.item,
+                           )
 
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
         """Adds a pivot node to the graph.

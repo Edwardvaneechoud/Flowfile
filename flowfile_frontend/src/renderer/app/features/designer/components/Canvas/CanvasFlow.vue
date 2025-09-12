@@ -372,7 +372,7 @@ defineExpose({
       initial-position="left"
       title="Data actions"
       :allow-free-move="true"
-      :prevent-overlap="false"
+      :prevent-overlap="true"
     >
       <NodeList @dragstart="onDragStart" />
     </draggable-item>
@@ -387,7 +387,7 @@ defineExpose({
       :on-minize="hideLogViewer"
       group="bottomPanels"
       :sync-dimensions="true"
-      :prevent-overlap="false"
+      :prevent-overlap="true"
     >
       <LogViewer />
     </draggable-item>
@@ -399,7 +399,7 @@ defineExpose({
       initial-position="right"
       :initial-width="400"
       group="rightPanels"
-      :prevent-overlap="false"
+      :prevent-overlap="true"
     >
       <FlowResults :on-click="selectNodeExternally" />
     </draggable-item>

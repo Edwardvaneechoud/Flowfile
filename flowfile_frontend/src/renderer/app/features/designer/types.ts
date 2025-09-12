@@ -11,6 +11,7 @@ export interface NodeTemplate {
   prod_ready: boolean;
   drawer_title: string; 
   drawer_intro: string;
+  custom_node: boolean;
 }
 
 export interface NodeInput extends NodeTemplate {

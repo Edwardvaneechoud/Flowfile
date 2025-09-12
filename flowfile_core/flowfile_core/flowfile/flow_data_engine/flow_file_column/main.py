@@ -1,44 +1,13 @@
 
 from dataclasses import dataclass
-from typing import Optional, Any, List, Dict, Literal, Iterable
+from typing import Optional, Any, List, Dict, Iterable
 
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, DataTypeGroup
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
 import polars as pl
-# TODO: rename flow_file_column to flowfile_column
-DataTypeGroup = Literal['numeric', 'str', 'date']
-
-
-def convert_pl_type_to_string(pl_type: pl.DataType, inner: bool = False) -> str:
-    if isinstance(pl_type, pl.List):
-        inner_str = convert_pl_type_to_string(pl_type.inner, inner=True)
-        return f"pl.List({inner_str})"
-    elif isinstance(pl_type, pl.Array):
-        inner_str = convert_pl_type_to_string(pl_type.inner, inner=True)
-        return f"pl.Array({inner_str})"
-    elif isinstance(pl_type, pl.Decimal):
-        precision = pl_type.precision if hasattr(pl_type, 'precision') else None
-        scale = pl_type.scale if hasattr(pl_type, 'scale') else None
-        if precision is not None and scale is not None:
-            return f"pl.Decimal({precision}, {scale})"
-        elif precision is not None:
-            return f"pl.Decimal({precision})"
-        else:
-            return "pl.Decimal()"
-    elif isinstance(pl_type, pl.Struct):
-        # Handle Struct with field definitions
-        fields = []
-        if hasattr(pl_type, 'fields'):
-            for field in pl_type.fields:
-                field_name = field.name
-                field_type = convert_pl_type_to_string(field.dtype, inner=True)
-                fields.append(f'pl.Field("{field_name}", {field_type})')
-        field_str = ", ".join(fields)
-        return f"pl.Struct([{field_str}])"
-    else:
-        # For base types, we want the full pl.TypeName format
-        return str(pl_type.base_type()) if not inner else f"pl.{pl_type}"
 
 
 @dataclass
@@ -52,6 +21,7 @@ class FlowfileColumn:
     number_of_empty_values: int
     number_of_unique_values: int
     example_values: str
+    data_type_group: ReadableDataTypeGroup
     __sql_type: Optional[Any]
     __is_unique: Optional[bool]
     __nullable: Optional[bool]
@@ -75,6 +45,7 @@ class FlowfileColumn:
         self.__is_unique = None
         self.__sql_type = None
         self.__perc_unique = None
+        self.data_type_group = self.get_readable_datatype_group()
 
     def __repr__(self):
         """
@@ -220,6 +191,20 @@ class FlowfileColumn:
             return 'numeric'
         elif self.data_type in ('datetime', 'date', 'Date', 'Datetime', 'Time'):
             return 'date'
+        else:
+            return 'str'
+
+    def get_readable_datatype_group(self) -> ReadableDataTypeGroup:
+        if self.data_type in ('Utf8', 'VARCHAR', 'CHAR', 'NVARCHAR', 'String'):
+            return 'String'
+        elif self.data_type in ('fixed_decimal', 'decimal', 'float', 'integer', 'boolean', 'double', 'Int16', 'Int32',
+                                'Int64', 'Float32', 'Float64', 'Decimal', 'Binary', 'Boolean', 'Uint8', 'Uint16',
+                                'Uint32', 'Uint64'):
+            return 'Numeric'
+        elif self.data_type in ('datetime', 'date', 'Date', 'Datetime', 'Time'):
+            return 'Date'
+        else:
+            return 'Other'
 
     def get_polars_type(self) -> PlType:
         pl_datatype = cast_str_to_polars_type(self.data_type)

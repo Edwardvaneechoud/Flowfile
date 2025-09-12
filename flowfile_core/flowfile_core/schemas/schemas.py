@@ -5,6 +5,9 @@ from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['local', 'remote']
 
+# Type literals for classifying nodes.
+NodeTypeLiteral = Literal['input', 'output', 'process']
+TransformTypeLiteral = Literal['narrow', 'wide', 'other']
 
 def get_global_execution_location() -> ExecutionLocationsLiteral:
     """
@@ -135,11 +138,14 @@ class NodeTemplate(BaseModel):
     output: int
     image: str
     multi: bool = False
+    node_type: NodeTypeLiteral
+    transform_type: TransformTypeLiteral
     node_group: str
     prod_ready: bool = True
     can_be_start: bool = False
     drawer_title: str = "Node title"
     drawer_intro: str = "Drawer into"
+    custom_node: Optional[bool] = False
 
 
 class NodeInformation(BaseModel):
@@ -263,9 +269,6 @@ class VueFlowInput(BaseModel):
     node_inputs: List[NodeInput]
 
 
-# Type literals for classifying nodes.
-NodeTypeLiteral = Literal['input', 'output', 'process']
-TransformTypeLiteral = Literal['narrow', 'wide', 'other']
 
 
 class NodeDefault(BaseModel):

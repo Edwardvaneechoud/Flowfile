@@ -3,7 +3,7 @@ as have a component in flowfile_frontend"""
 
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.configs.node_store.nodes import nodes_list, NodeTemplate
+from flowfile_core.configs.node_store import nodes_list, NodeTemplate
 import inspect
 
 
@@ -31,6 +31,8 @@ def validate_setup():
     Raises ValueError if any node is missing either.
     """
     for node in nodes_list:
+        if node.custom_node:
+            continue
         check_if_node_has_add_function_in_flow_graph(node)
         check_if_node_has_input_schema_definition(node)
 

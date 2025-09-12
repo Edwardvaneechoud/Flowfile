@@ -124,3 +124,5 @@ nav:
     - Architecture: for-developers/architecture.md
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
+    - Create Custom Nodes: for-developers/creating-custom-nodes.md
+    - Building more custom Nodes: for-developers/custom-node-tutorial.md

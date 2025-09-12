@@ -52,11 +52,16 @@ const toCamelCase = (str: string): string => {
 // Function to load the drawer component
 const loadDrawerComponent = () => {
   try {
-    const componentName = toTitleCase(props.nodeData.item);
-    // Convert snake_case to camelCase for folder name
-    const folderName = toCamelCase(props.nodeData.item.toLowerCase());
+    let componentName;
+    let folderName;
 
-    console.log("Loading component:", componentName, "from folder:", folderName);
+    if (props.nodeData.custom_node) {
+      componentName = "CustomNode";
+      folderName = "customNode";
+    } else {
+      componentName = toTitleCase(props.nodeData.item);
+      folderName = toCamelCase(props.nodeData.item.toLowerCase());
+    }
 
     // Build the expected path
     const componentPath = `./elements/${folderName}/${componentName}.vue`;
