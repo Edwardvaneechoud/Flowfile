@@ -6,6 +6,7 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from pathlib import Path
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 
+
 def determine_insertion_order(node_storage: schemas.FlowInformation):
     ingest_order: List[int] = []
     ingest_order_set: set[int] = set()

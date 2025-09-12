@@ -1,7 +1,7 @@
 import polars as pl
 import pytest
 
-from flowfile_core.configs.node_store import register_custom_node, CUSTOM_NODE_STORE, nodes_list
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, nodes_list, add_to_custom_node_store
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.node_designer.custom_node import (
@@ -55,10 +55,10 @@ def UserDefinedNode():
         A custom node that adds a new column with a fixed, user-defined value.
         """
         # --- Node Metadata ---
-        node_name: str = "Fixed Column"
+        node_name: str = "Add Fixed Column"
         node_group: str = "custom"
         intro: str = "Adds a new column with a fixed value you provide."
-        title: str = "Fixed Column"
+        title: str = "Add Fixed Column"
         number_of_inputs: int = 1
         number_of_outputs: int = 1
 
@@ -102,7 +102,7 @@ def UserDefinedNode():
 
 
 def test_custom_node_registration(UserDefinedNode):
-    register_custom_node(UserDefinedNode().to_node_template())
+    add_to_custom_node_store(UserDefinedNode)
     assert UserDefinedNode().item in CUSTOM_NODE_STORE
     assert any(n.name == UserDefinedNode().node_name for n in nodes_list)
 
@@ -114,7 +114,7 @@ def test_custom_node_in_graph(UserDefinedNode):
                 "column_name": "new_col"
             }
         }
-    register_custom_node(UserDefinedNode().to_node_template())
+    add_to_custom_node_store(UserDefinedNode)
     graph = create_graph()
     add_manual_input(graph, [{"A": 1}, {"A": 2}], node_id=1)
     add_node_promise_on_type(graph, UserDefinedNode().item, node_id=2)
