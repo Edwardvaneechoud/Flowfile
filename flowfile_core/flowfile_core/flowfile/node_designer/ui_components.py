@@ -1,13 +1,12 @@
 # ui_components.py - Updated ColumnSelector
 
-from typing import List, Optional, Any, Literal, Union, Type, Set, Tuple, Dict, Annotated
-from pydantic import Field, field_validator, BaseModel, computed_field
-from pydantic import BeforeValidator
+from typing import List, Optional, Any, Literal, Union, Type, Tuple, Dict
 
+from pydantic import Field, BaseModel, computed_field
+
+from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec
 # Public API import
-from flowfile_core.flowfile.node_designer.data_types import Types, TypeGroup, DataType, TypeSpec
-
-from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec, check_column_type
+from flowfile_core.flowfile.node_designer.data_types import DataType, TypeSpec
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 
