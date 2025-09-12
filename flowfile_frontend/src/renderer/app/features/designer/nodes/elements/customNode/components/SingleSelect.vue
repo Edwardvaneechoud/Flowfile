@@ -1,13 +1,12 @@
-// 📄 MultiSelect.vue
+// 📄 SingleSelect.vue
 
 <template>
   <div class="component-container">
     <label class="listbox-subtitle">{{ schema.label }}</label>
     <el-select
       :model-value="modelValue"
-      multiple
       filterable
-      placeholder="Select one or more options"
+      placeholder="Select an option"
       style="width: 100%"
       size="large"
       @update:modelValue="$emit('update:modelValue', $event)"
@@ -25,16 +24,16 @@
 <script setup lang="ts">
 // No changes are needed in the <script> section
 import { computed, PropType } from "vue";
-import type { MultiSelectComponent } from "../interface";
+import type { SingleSelectComponent } from "../interface";
 
 const props = defineProps({
   schema: {
-    type: Object as PropType<MultiSelectComponent>,
+    type: Object as PropType<SingleSelectComponent>,
     required: true,
   },
   modelValue: {
-    type: Array as PropType<string[]>,
-    default: () => [],
+    type: [String, Number, Object],
+    default: null,
   },
   incomingColumns: {
     type: Array as PropType<string[]>,

@@ -3,7 +3,7 @@ as have a component in flowfile_frontend"""
 
 from flowfile_core.schemas import input_schema
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.configs.node_store.nodes import nodes_list, NodeTemplate
+from flowfile_core.configs.node_store import nodes_list, NodeTemplate
 import inspect
 
 

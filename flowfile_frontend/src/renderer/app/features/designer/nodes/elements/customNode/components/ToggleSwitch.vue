@@ -3,16 +3,16 @@
     <label class="listbox-subtitle">{{ schema.label }}</label>
     <el-switch
       :model-value="modelValue"
-      @update:modelValue="$emit('update:modelValue', $event)"
       size="large"
       inline-prompt
+      @update:modelValue="$emit('update:modelValue', $event)"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import type { PropType } from 'vue';
-import type { ToggleSwitchComponent } from '../interface';
+import type { PropType } from "vue";
+import type { ToggleSwitchComponent } from "../interface";
 
 defineProps({
   schema: {
@@ -22,5 +22,5 @@ defineProps({
   modelValue: Boolean,
 });
 
-defineEmits(['update:modelValue']);
+defineEmits(["update:modelValue"]);
 </script>

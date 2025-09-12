@@ -7,96 +7,142 @@
   <!-- This wrapper prevents rendering until the schema and formData are ready -->
   <div v-else-if="schema && formData && nodeUserDefined" class="custom-node-wrapper">
     <generic-node-settings v-model="nodeUserDefined">
+      <!-- Loop through each section in the settings_schema -->
+      <div
+        v-for="(section, sectionKey) in schema.settings_schema"
+        v-show="!section.hidden"
+        :key="sectionKey"
+        class="listbox-wrapper"
+      >
+        <div class="listbox-subtitle">
+          {{ section.title || sectionKey.toString().replace(/_/g, " ") }}
+        </div>
+        <p v-if="section.description" class="section-description">{{ section.description }}</p>
 
-    <!-- Loop through each section in the settings_schema -->
-    <div
-      v-for="(section, sectionKey) in schema.settings_schema"
-      :key="sectionKey"
-      v-show="!section.hidden"
-      class="listbox-wrapper"
-    >
-      <div class="listbox-subtitle">
-        {{ section.title || sectionKey.toString().replace(/_/g, ' ') }}
-      </div>
-      <p v-if="section.description" class="section-description">{{ section.description }}</p>
+        <div class="components-container">
+          <!-- Loop through each component within the section's 'components' object -->
+          <div
+            v-for="(component, componentKey) in section.components"
+            :key="componentKey"
+            class="component-item"
+          >
+            <TextInput
+              v-if="component.component_type === 'TextInput'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+            />
 
-      <div class="components-container">
-        <!-- Loop through each component within the section's 'components' object -->
-        <div v-for="(component, componentKey) in section.components" :key="componentKey" class="component-item">
-          
-          <!-- The label is now handled by the child components for better styling -->
-          <TextInput
-            v-if="component.component_type === 'TextInput'"
-            :schema="component"
-            v-model="formData[sectionKey][componentKey]"
-          />
-          <MultiSelect
-            v-else-if="component.component_type === 'MultiSelect'"
-            :schema="component"
-            v-model="formData[sectionKey][componentKey]"
-            :incoming-columns="availableColumns"
-          />
-          <ToggleSwitch
-            v-else-if="component.component_type === 'ToggleSwitch'"
-            :schema="component"
-            v-model="formData[sectionKey][componentKey]"
-          />
-          <div v-else class="text-red-500 text-xs">Unknown component type: {{ (component as any).component_type }}</div>
+            <NumericInput
+              v-else-if="component.component_type === 'NumericInput'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+            />
+
+            <SliderInput
+              v-else-if="component.component_type === 'SliderInput'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+            />
+
+            <MultiSelect
+              v-else-if="component.component_type === 'MultiSelect'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+              :incoming-columns="availableColumns"
+            />
+
+            <SingleSelect
+              v-else-if="component.component_type === 'SingleSelect'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+              :incoming-columns="availableColumns"
+            />
+
+            <ToggleSwitch
+              v-else-if="component.component_type === 'ToggleSwitch'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+            />
+
+            <ColumnSelector
+              v-else-if="component.component_type === 'ColumnSelector'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+              :incoming-columns="columnTypes"
+            />
+            <div v-else class="text-red-500 text-xs">
+              Unknown component type: {{ (component as any).component_type }}
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </generic-node-settings>
+    </generic-node-settings>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref } from "vue";
 import { CustomNodeSchema, SectionComponent } from "./interface";
 import { getCustomNodeSchema } from "./interface";
 import { useNodeStore } from "../../../../../stores/column-store";
-import { NodeData } from "../../../baseNode/nodeInterfaces";
-import {NodeUserDefined} from "../../../baseNode/nodeInput";
+import { NodeUserDefined } from "../../../baseNode/nodeInput";
+import { NodeData, FileColumn } from "../../../baseNode/nodeInterfaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 // Import individual UI components
 import MultiSelect from "./components/MultiSelect.vue";
-import ToggleSwitch from "./components/ToggleSwitch.vue"
+import ToggleSwitch from "./components/ToggleSwitch.vue";
 import TextInput from "./components/TextInput.vue";
+import NumericInput from "./components/NumericInput.vue";
+import SliderInput from "./components/SliderInput.vue";
+import SingleSelect from "./components/SingleSelect.vue";
+import ColumnSelector from "./components/ColumnSelector.vue";
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
 const formData = ref<any>(null);
 const loading = ref(true);
-const error = ref<string>('');
+const error = ref<string>("");
 const nodeStore = useNodeStore();
 const nodeData = ref<NodeData | null>(null);
 const availableColumns = ref<string[]>([]);
 const currentNodeId = ref<number | null>(null);
-const nodeUserDefined = ref<NodeUserDefined | null>(null)
+const nodeUserDefined = ref<NodeUserDefined | null>(null);
+const columnTypes = ref<FileColumn[]>([]);
 
 // --- Lifecycle Methods (exposed to parent) ---
 
 const loadNodeData = async (nodeId: number) => {
   loading.value = true;
-  error.value = '';
+  error.value = "";
   currentNodeId.value = nodeId;
 
   try {
-    const [schemaData, inputNodeData] = await Promise.all([
-      getCustomNodeSchema(),
-      nodeStore.getNodeData(nodeId, false)
-    ]);
+    const inputNodeData = await nodeStore.getNodeData(nodeId, false);
+    if (!inputNodeData) {
+      return;
+    }
+    const [schemaData] = await Promise.all([getCustomNodeSchema(nodeStore.flow_id, nodeId)]);
+
+    console.log("schemaData", schemaData);
 
     schema.value = schemaData;
     nodeData.value = inputNodeData;
-    nodeUserDefined.value = nodeData.value?.setting_input
+    nodeUserDefined.value = nodeData.value?.setting_input;
+
+    if (!nodeData.value?.setting_input.is_setup && nodeUserDefined.value) {
+      nodeUserDefined.value.settings = {};
+    }
+
     if (inputNodeData?.main_input?.columns) {
       availableColumns.value = inputNodeData.main_input.columns;
+      columnTypes.value = inputNodeData.main_input.table_schema;
     } else {
-      console.warn(`No main_input or columns found for node ${nodeId}. Select components may be empty.`);
+      console.warn(
+        `No main_input or columns found for node ${nodeId}. Select components may be empty.`,
+      );
     }
-    
-    initializeFormData(schemaData, inputNodeData?.setting_input);
 
+    initializeFormData(schemaData, inputNodeData?.setting_input);
   } catch (err: any) {
     error.value = err.message || "An unknown error occurred while loading node data.";
   } finally {
@@ -109,39 +155,38 @@ const pushNodeData = async () => {
     console.warn("Cannot push data: node data or ID is not available.");
     return;
   }
-  
-  // Construct the complete settings object that would be pushed to the store.
-  // This merges the original settings with the user's current changes.
-  const finalSettingsPayload = {
-    ...nodeData.value.setting_input, // Start with the existing settings from the store
-    ...formData.value               // Overwrite/add the current form values
-  };
-
-  console.log(`--- Would push the following settings for node ${currentNodeId.value} ---`);
-  console.log(JSON.stringify(finalSettingsPayload, null, 2));
-
-  // The actual store update would be called here:
-  // await nodeStore.updateSettings(currentNodeId.value, finalSettingsPayload);
+  if (nodeUserDefined.value) {
+    nodeUserDefined.value.settings = formData.value;
+    nodeUserDefined.value.is_user_defined = true;
+    nodeUserDefined.value.is_setup = true;
+  }
+  console.log(JSON.stringify(formData.value, null, 2));
+  nodeStore.updateUserDefinedSettings(nodeUserDefined);
 };
 
 // --- Helper Functions ---
 
 function initializeFormData(schemaData: CustomNodeSchema, savedSettings: any) {
   const data: any = {};
+
   for (const sectionKey in schemaData.settings_schema) {
     data[sectionKey] = {};
     const section: SectionComponent = schemaData.settings_schema[sectionKey];
-
     for (const componentKey in section.components) {
       const component = section.components[componentKey];
-      
+
       const savedValue = savedSettings?.[sectionKey]?.[componentKey];
-      
+
       if (savedValue !== undefined) {
+        // Use saved settings first (highest priority)
         data[sectionKey][componentKey] = savedValue;
+      } else if (component.value !== undefined) {
+        // Use component.value from schema (second priority)
+        data[sectionKey][componentKey] = component.value;
       } else {
+        // Use default value (lowest priority)
         let defaultValue = component.default ?? null;
-        if (component.input_type === 'array' && defaultValue === null) {
+        if (component.input_type === "array" && defaultValue === null) {
           defaultValue = [];
         }
         data[sectionKey][componentKey] = defaultValue;
@@ -196,4 +241,3 @@ defineExpose({
   gap: 1.25rem; /* space-y-5 */
 }
 </style>
-

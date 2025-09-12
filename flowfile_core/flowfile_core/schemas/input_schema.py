@@ -1,4 +1,4 @@
-from typing import List, Optional, Literal, Iterator
+from typing import List, Optional, Literal, Iterator, Any
 from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
@@ -195,6 +195,8 @@ class NodeBase(BaseModel):
     description: Optional[str] = ''
     user_id: Optional[int] = None
     is_flow_output: Optional[bool] = False
+    is_user_defined: Optional[bool] = False  # Indicator if the node is a user defined node
+
 
 class NodeSingleInput(NodeBase):
     """A base model for any node that takes a single data input."""
@@ -516,3 +518,8 @@ class NodeRecordCount(NodeSingleInput):
 class NodePolarsCode(NodeMultiInput):
     """Settings for a node that executes arbitrary user-provided Polars code."""
     polars_code_input: transform_schema.PolarsCodeInput
+
+
+class UserDefinedNode(NodeMultiInput):
+    """Settings for a node that contains the user defined node information"""
+    settings: Any

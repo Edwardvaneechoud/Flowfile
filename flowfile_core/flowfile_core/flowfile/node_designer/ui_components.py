@@ -1,66 +1,138 @@
-from typing import List, Optional, Any, Literal, Tuple, Union, Type, Dict
-from pydantic import BaseModel, Field
-import polars as pl
+# ui_components.py - Updated ColumnSelector
 
-# Define placeholder Polars data types for validation
-DataType = Any
-Date = pl.Date
-Datetime = pl.Datetime
-Int64 = pl.Int64
-Float64 = pl.Float64
+from typing import List, Optional, Any, Literal, Union, Type, Set, Tuple, Dict, Annotated
+from pydantic import Field, field_validator, BaseModel, computed_field
+from pydantic import BeforeValidator
+
+# Public API import
+from flowfile_core.flowfile.node_designer.data_types import Types, TypeGroup, DataType, TypeSpec
+
+from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec, check_column_type
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 
-# --- Base Component ---
 
+def normalize_input_to_data_types(
+    v: Any
+) -> Union[Literal["ALL"], List[DataType]]:
+    """
+    Normalizes a wide variety of inputs to either 'ALL' or a sorted list of DataType enums.
+    This function is used as a Pydantic BeforeValidator.
 
-class IncomingColumn(BaseModel):
-    """Represents a column from the input dataframe."""
-    column_name: str
-    data_type: DataType
+    Args:
+        v: The input value to normalize. Can be a string, a list of strings,
+           a DataType, a TypeGroup, or a list of those.
 
+    Returns:
+        Either the string "ALL" or a sorted list of unique DataType enums.
+    """
+    if v == "ALL":
+        return "ALL"
+    if isinstance(v, list) and all(isinstance(item, DataType) for item in v):
+        return v
 
-class IncomingColumns:
-    """A marker class to indicate that a component's options should be populated with columns from the input dataframe."""
-    pass
+    normalized_set = normalize_type_spec(v)
+
+    if normalized_set == set(DataType):
+        return "ALL"
+
+    return sorted(list(normalized_set), key=lambda x: x.value)
 
 
 class FlowfileInComponent(BaseModel):
-    """Base class for all UI components in the node settings panel."""
+    """
+    Base class for all UI components in the node settings panel.
+
+    This class provides the common attributes and methods that all UI components share.
+    It's not meant to be used directly, but rather to be inherited by specific
+    component classes.
+    """
     component_type: str = Field(..., description="Type of the UI component")
     value: Any = None
     label: Optional[str] = None
     input_type: InputType
 
     def set_value(self, value: Any):
-        """Sets the value of the component, received from the frontend."""
+        """
+        Sets the value of the component, received from the frontend.
+
+        This method is used internally by the framework to populate the component's
+        value when a user interacts with the UI.
+
+        Args:
+            value: The new value for the component.
+
+        Returns:
+            The component instance with the updated value.
+        """
         self.value = value
         return self
 
-    def to_frontend_dict(self) -> dict:
-        """Convert component to frontend-ready dictionary."""
-        data = self.model_dump(exclude_none=True)
 
-        # Handle special cases for options
-        if 'options' in data:
-            if data['options'] == IncomingColumns or (
-                    isinstance(data['options'], type) and issubclass(data['options'], IncomingColumns)
-            ):
-                data['options'] = {"__type__": "IncomingColumns"}
+class IncomingColumns:
+    """
+    A marker class used in `SingleSelect` and `MultiSelect` components.
 
-        return data
+    When `options` is set to this class, the component will be dynamically
+    populated with the column names from the node's input dataframe.
+    This allows users to select from the available columns at runtime.
+
+    Example:
+        class MyNodeSettings(NodeSettings):
+            column_to_process = SingleSelect(
+                label="Select a column",
+                options=IncomingColumns
+            )
+    """
+    pass
 
 
 class ColumnSelector(FlowfileInComponent):
-    """A specialized component to select one or more columns with data type filtering."""
+    """
+    A UI component that allows users to select one or more columns from the
+    input dataframe, with an optional filter based on column data types.
+
+    This is particularly useful when a node operation should only be applied
+    to columns of a specific type (e.g., numeric, string, date).
+    """
     component_type: Literal["ColumnSelector"] = "ColumnSelector"
     required: bool = False
-    data_types: Union[List[DataType], Literal["ALL"]] = "ALL"
     multiple: bool = False
+    input_type: InputType = "text"
+
+    # Normalized output: either "ALL" or list of DataType enums
+    data_type_filter_input: TypeSpec = Field(
+        default="ALL",
+        alias="data_types",
+        repr=False,
+        exclude=True
+    )
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    @computed_field
+    @property
+    def data_types_filter(self) -> Union[Literal["ALL"], List[DataType]]:
+        """
+        A computed field that normalizes the `data_type_filter_input` into a
+        standardized format for the frontend.
+        """
+        return normalize_input_to_data_types(self.data_type_filter_input)
+
+    def model_dump(self, **kwargs) -> dict:
+        """
+        Overrides the default `model_dump` to ensure `data_types` is in the
+        correct format for the frontend.
+        """
+        data = super().model_dump(**kwargs)
+        if 'data_types_filter' in data and data['data_types_filter'] != "ALL":
+            data['data_types'] = sorted([dt.value for dt in data['data_types_filter']])
+        return data
 
 
 class TextInput(FlowfileInComponent):
-    """A standard text input field."""
+    """A standard text input field for capturing string values."""
     component_type: Literal["TextInput"] = "TextInput"
     default: Optional[str] = ""
     placeholder: Optional[str] = ""
@@ -71,12 +143,9 @@ class TextInput(FlowfileInComponent):
         if self.value is None and self.default is not None:
             self.value = self.default
 
-    def __str__(self):
-        return str(self.value) if self.value is not None else ""
-
 
 class NumericInput(FlowfileInComponent):
-    """Numeric input with validation."""
+    """A numeric input field with optional minimum and maximum value validation."""
     component_type: Literal["NumericInput"] = "NumericInput"
     default: Optional[float] = None
     min_value: Optional[float] = None
@@ -89,31 +158,8 @@ class NumericInput(FlowfileInComponent):
             self.value = self.default
 
 
-class SliderInput(FlowfileInComponent):
-    """A slider for selecting a numeric value within a range."""
-    component_type: Literal["SliderInput"] = "SliderInput"
-    min_value: float
-    max_value: float
-    default: Optional[float] = None
-    step: float = 1.0
-    input_type: InputType = "number"
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.value is None and self.default is not None:
-            self.value = self.default
-        elif self.value is None:
-            self.value = self.min_value
-
-    def __float__(self):
-        return float(self.value)
-
-    def __int__(self):
-        return int(self.value)
-
-
 class ToggleSwitch(FlowfileInComponent):
-    """A boolean toggle switch."""
+    """A boolean toggle switch, typically used for enabling or disabling a feature."""
     component_type: Literal["ToggleSwitch"] = "ToggleSwitch"
     default: bool = False
     description: Optional[str] = None
@@ -125,11 +171,18 @@ class ToggleSwitch(FlowfileInComponent):
             self.value = self.default
 
     def __bool__(self):
+        """Allows the component instance to be evaluated as a boolean."""
         return bool(self.value)
 
 
 class SingleSelect(FlowfileInComponent):
-    """A dropdown for selecting a single option."""
+    """
+    A dropdown menu for selecting a single option from a list.
+
+    The options can be a static list of strings or tuples, or they can be
+    dynamically populated from the input dataframe's columns by using the
+    `IncomingColumns` marker.
+    """
     component_type: Literal["SingleSelect"] = "SingleSelect"
     options: Union[List[Union[str, Tuple[str, Any]]], Type[IncomingColumns]]
     default: Optional[Any] = None
@@ -140,12 +193,14 @@ class SingleSelect(FlowfileInComponent):
         if self.value is None and self.default is not None:
             self.value = self.default
 
-    def __str__(self):
-        return str(self.value) if self.value is not None else ""
-
 
 class MultiSelect(FlowfileInComponent):
-    """A multi-select dropdown for choosing multiple options."""
+    """
+    A multi-select dropdown for choosing multiple options from a list.
+
+    Like `SingleSelect`, the options can be static or dynamically populated
+    from the input columns using the `IncomingColumns` marker.
+    """
     component_type: Literal["MultiSelect"] = "MultiSelect"
     options: Union[List[Union[str, Tuple[str, Any]]], Type[IncomingColumns]]
     default: List[Any] = Field(default_factory=list)
@@ -156,120 +211,68 @@ class MultiSelect(FlowfileInComponent):
         if self.value is None:
             self.value = self.default if self.default else []
 
-    def __iter__(self):
-        return iter(self.value if self.value else [])
-
-
-# --- Section and NodeSettings ---
 
 class Section(BaseModel):
-    """A container for UI components. Accepts components as keyword arguments."""
+    """
+    A container for grouping related UI components in the node settings panel.
+
+    Sections help organize the UI by grouping components under a common title
+    and description. Components can be added as keyword arguments during
+    initialization or afterward.
+
+    Example:
+        main_section = Section(
+            title="Main Settings",
+            description="Configure the primary behavior of the node.",
+            my_text_input=TextInput(label="Enter a value")
+        )
+    """
+    title: Optional[str] = None
+    description: Optional[str] = None
+    hidden: bool = False
+
     class Config:
         extra = 'allow'
         arbitrary_types_allowed = True
 
-    def to_frontend_dict(self) -> dict:
-        """Convert section to frontend-ready dictionary."""
-        result = {}
-        for key, value in self.__dict__.items():
-            if key.startswith('_'):
-                continue
+    def __init__(self, **data):
+        """
+        Initialize a Section with components as keyword arguments.
+        """
+        super().__init__(**data)
+
+    def __call__(self, **kwargs) -> 'Section':
+        """
+        Allows adding components to the section after initialization.
+
+        This makes it possible to build up a section dynamically.
+        """
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        return self
+
+    def get_components(self) -> Dict[str, FlowfileInComponent]:
+        """
+        Get all FlowfileInComponent instances from the section.
+
+        This method collects all the UI components that have been added to the
+        section, whether as defined fields or as extra fields.
+
+        Returns:
+            A dictionary mapping component names to their instances.
+        """
+        components = {}
+
+        # Get from extra fields
+        for key, value in getattr(self, '__pydantic_extra__', {}).items():
             if isinstance(value, FlowfileInComponent):
-                result[key] = value.to_frontend_dict()
-            elif isinstance(value, BaseModel):
-                result[key] = value.model_dump(exclude_none=True)
-            else:
-                result[key] = value
-        return result
+                components[key] = value
 
+        # Get from defined fields (excluding metadata)
+        for field_name in self.model_fields:
+            if field_name not in {'title', 'description', 'hidden'}:
+                value = getattr(self, field_name, None)
+                if isinstance(value, FlowfileInComponent):
+                    components[field_name] = value
 
-class NodeSettings(BaseModel):
-    """The top-level container for all sections in a node's UI."""
-    class Config:
-        extra = 'allow'
-        arbitrary_types_allowed = True
-
-    def to_frontend_dict(self) -> dict:
-        """Convert all settings to frontend-ready dictionary."""
-        result = {}
-        for key, value in self.__dict__.items():
-            if key.startswith('_'):
-                continue
-            if isinstance(value, Section):
-                result[key] = value.to_frontend_dict()
-            elif isinstance(value, BaseModel):
-                result[key] = value.model_dump(exclude_none=True)
-            else:
-                result[key] = value
-        return result
-
-    def populate_values(self, values: Dict[str, Any]) -> 'NodeSettings':
-        """
-        Populate the settings with values from a dictionary.
-        The dictionary should have the same nested structure as the settings.
-        """
-        for section_name, section in self.__dict__.items():
-            if isinstance(section, Section) and section_name in values:
-                section_values = values[section_name]
-                for component_name, component in section.__dict__.items():
-                    if isinstance(component, FlowfileInComponent) and component_name in section_values:
-                        component.set_value(section_values[component_name])
-        return self
-
-
-# --- Custom Node Base ---
-
-class CustomNodeBase:
-    """
-    The base class for a custom node.
-
-    Developers should subclass this and define the 'settings_schema' attribute
-    by composing Section and NodeSettings objects.
-    """
-    node_name: str
-    node_category: str = "Custom"
-    node_icon: str = ""
-
-    # The developer defines the UI schema
-    settings_schema: NodeSettings = None
-
-    def __init__(self, initial_values: Optional[Dict[str, Any]] = None):
-        """
-        Initialize the node with optional initial values.
-
-        Args:
-            initial_values: A dictionary with the same structure as settings_schema
-                           to populate initial values
-        """
-        if self.settings_schema and initial_values:
-            self.settings_schema.populate_values(initial_values)
-
-    def get_frontend_schema(self) -> dict:
-        """Get the frontend-ready schema with current values."""
-        if self.settings_schema:
-            return self.settings_schema.to_frontend_dict()
-        return {}
-
-    def update_settings(self, values: Dict[str, Any]) -> 'CustomNodeBase':
-        """Update the settings with new values from frontend."""
-        if self.settings_schema:
-            self.settings_schema.populate_values(values)
-        return self
-
-    def process(self, inputs: list[pl.DataFrame], settings: NodeSettings) -> pl.DataFrame:
-        """
-        The core transformation logic for the node.
-
-        'settings' is a populated NodeSettings instance whose structure
-        matches the 'settings_schema' defined for the class.
-        """
-        raise NotImplementedError
-
-
-# --- Helper function for backward compatibility ---
-def to_frontend_schema(settings: NodeSettings) -> dict:
-    """
-    Convert a NodeSettings instance to a frontend-ready dictionary.
-    This is kept for backward compatibility.
-    """
-    return settings.to_frontend_dict()
+        return components

@@ -1,11 +1,14 @@
 <template>
   <div class="component-container">
     <label class="listbox-subtitle">{{ schema.label }}</label>
-    <el-input
+    <el-input-number
       :model-value="modelValue"
-      :placeholder="schema.placeholder || 'Enter value...'"
-      clearable
+      :min="schema.min_value"
+      :max="schema.max_value"
+      :placeholder="schema.placeholder || 'Enter number...'"
+      controls-position="right"
       size="large"
+      style="width: 100%"
       @update:modelValue="$emit('update:modelValue', $event)"
     />
   </div>
@@ -13,14 +16,14 @@
 
 <script setup lang="ts">
 import type { PropType } from "vue";
-import type { TextInputComponent } from "../interface";
+import type { NumericInputComponent } from "../interface";
 
 defineProps({
   schema: {
-    type: Object as PropType<TextInputComponent>,
+    type: Object as PropType<NumericInputComponent>,
     required: true,
   },
-  modelValue: String,
+  modelValue: Number,
 });
 
 defineEmits(["update:modelValue"]);

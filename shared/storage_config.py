@@ -9,7 +9,7 @@ from typing import Optional, Literal
 
 DirectoryOptions = Literal["temp_directory", "logs_directory",
                             "system_logs_directory", "database_directory",
-                            "cache_directory", "flows_directory"]
+                            "cache_directory", "flows_directory", "user_defined_nodes_directory"]
 
 
 class FlowfileStorage:
@@ -88,6 +88,19 @@ class FlowfileStorage:
             return self.base_directory / "uploads"
 
     @property
+    def user_defined_nodes_directory(self) -> Path:
+        """Directory for user-defined custom nodes (user-accessible)."""
+        if os.environ.get("RUNNING_IN_DOCKER") == "true":
+            return self.user_data_directory / "user_defined_nodes"
+        else:
+            return self.base_directory / "user_defined_nodes"
+
+    @property
+    def user_defined_nodes_icons(self) -> Path:
+        """Directory for user-defined custom node icon (user-accessible)."""
+        return self.user_defined_nodes_directory / "icons"
+
+    @property
     def outputs_directory(self) -> Path:
         """Directory for user outputs (user-accessible)."""
         if os.environ.get("RUNNING_IN_DOCKER") == "true":
@@ -134,6 +147,8 @@ class FlowfileStorage:
             self.flows_directory,
             self.uploads_directory,
             self.outputs_directory,
+            self.user_defined_nodes_directory,
+            self.user_defined_nodes_icons,
         ]
 
         for directory in internal_directories + user_directories:

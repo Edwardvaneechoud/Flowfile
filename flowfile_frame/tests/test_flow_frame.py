@@ -85,7 +85,6 @@ def test_select_columns_with_node_conversion(df):
     """
     Test selecting columns from a FlowFrame. All these select statements should result in a node select, so no custom
     polars code."""
-
     result = df.select("id", "name")
     assert result.columns == ["id", "name"]
     assert result.get_node_settings().node_type == 'select'

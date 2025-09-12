@@ -12,45 +12,40 @@ import logging
 import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body, Depends
 from fastapi.responses import JSONResponse, Response
 # External dependencies
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
+from sqlalchemy.orm import Session
 
+from flowfile_core import flow_file_handler
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
-from flowfile_core.configs.node_store import nodes
-from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
+from flowfile_core.configs.node_store import nodes_list, check_if_has_default_setting
+from flowfile_core.database.connection import get_db
 # File handling
 from flowfile_core.fileExplorer.funcs import (
     SecureFileExplorer,
     FileInfo,
     get_files_from_directory
 )
-from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
-from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
-from flowfile_core.flowfile.extensions import get_instant_func_results
-# Flow handling
-
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
-from flowfile_core.run_lock import get_flow_run_lock
-# Schema and models
-
-from shared.storage_config import storage
-from flowfile_core.schemas import input_schema, schemas, output_model
-from flowfile_core.utils import excel_file_manager
-from flowfile_core.utils.fileManager import create_dir
-from flowfile_core.utils.utils import camel_case_to_snake_case
-from flowfile_core import flow_file_handler
+from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
 from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
                                                                                get_database_connection,
                                                                                delete_database_connection,
                                                                                get_all_database_connections_interface)
-from flowfile_core.database.connection import get_db
+from flowfile_core.flowfile.extensions import get_instant_func_results
+from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
+from flowfile_core.run_lock import get_flow_run_lock
+from flowfile_core.schemas import input_schema, schemas, output_model
+from flowfile_core.utils import excel_file_manager
+from flowfile_core.utils.fileManager import create_dir
+from flowfile_core.utils.utils import camel_case_to_snake_case
+from shared.storage_config import storage
 
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
@@ -359,7 +354,7 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
         logger.info("Adding node")
         flow.add_node_promise(node_promise)
 
-    if nodes.check_if_has_default_setting(node_type):
+    if check_if_has_default_setting(node_type):
         logger.info(f'Found standard settings for {node_type}, trying to upload them')
         setting_name_ref = 'node' + node_type.replace('_', '')
         node_model = get_node_model(setting_name_ref)
@@ -545,10 +540,11 @@ def get_list_of_saved_flows(path: str):
     except:
         return []
 
-@router.get('/node_list', response_model=List[nodes.NodeTemplate])
-def get_node_list() -> List[nodes.NodeTemplate]:
+
+@router.get('/node_list', response_model=List[schemas.NodeTemplate])
+def get_node_list() -> List[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
-    return nodes.nodes_list
+    return nodes_list
 
 
 @router.get('/node', response_model=output_model.NodeData, tags=['editor'])

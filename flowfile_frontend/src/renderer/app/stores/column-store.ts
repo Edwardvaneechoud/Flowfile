@@ -497,15 +497,41 @@ export const useNodeStore = defineStore('node', {
       }
     },
 
-    async updateSettings(inputData: any): Promise<any> {
+    async updateUserDefinedSettings(inputData: any): Promise<any> {
       try {
-
         const node = this.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node
+        const nodeType = node.data.nodeTemplate.item;
+        inputData.value.pos_x = node.position.x
+        inputData.value.pos_y = node.position.y
+        const response = await axios.post('/user_defined_components/update_user_defined_node/', inputData.value, {
+          params: {
+            node_type: nodeType,
+          },
+        }
+        )
+        const downstreamNodeIds = await loadDownstreamNodeIds(this.flow_id, inputData.value.node_id)
+        downstreamNodeIds.map((nodeId) => {
+          this.validateNode(nodeId)
+        }
+        )
+        return response.data;
+      } catch (error: any) {
+        console.error('Error updating settings:', error.response?.data)
+        throw error
+      }
+    },
+
+    async updateSettings(inputData: any, inputNodeType?: string): Promise<any> {
+      try {
+        
+        const node = this.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node
+        const nodeType = inputNodeType ?? node.data.nodeTemplate.item;
+
         inputData.value.pos_x = node.position.x
         inputData.value.pos_y = node.position.y
         const response = await axios.post('/update_settings/', inputData.value, {
           params: {
-            node_type: node.data.nodeTemplate.item,
+            node_type: nodeType,
           },
         }
         )

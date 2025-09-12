@@ -28,6 +28,33 @@ export interface ToggleSwitchComponent extends BaseComponent {
   component_type: "ToggleSwitch";
 }
 
+export interface NumericInputComponent extends BaseComponent {
+  component_type: "NumericInput";
+  min_value?: number;
+  max_value?: number;
+  placeholder?: string;
+}
+
+export interface SliderInputComponent extends BaseComponent {
+  component_type: "SliderInput";
+  min_value: number;
+  max_value: number;
+  step?: number;
+}
+
+export interface SingleSelectComponent extends BaseComponent {
+  component_type: "SingleSelect";
+  options: { __type__: "IncomingColumns" } | string[];
+}
+
+export interface ColumnSelectorComponent extends BaseComponent {
+  component_type: "ColumnSelector";
+  required?: boolean;
+  data_types: string[] | "ALL";
+  multiple?: boolean;
+}
+
+
 // --- Section Component Type ---
 
 export interface SectionComponent {
@@ -42,7 +69,14 @@ export interface SettingsSchema {
   [sectionKey: string]: SectionComponent;
 }
 
-export type UIComponent = TextInputComponent | MultiSelectComponent | ToggleSwitchComponent;
+export type UIComponent = 
+  | TextInputComponent 
+  | MultiSelectComponent 
+  | ToggleSwitchComponent
+  | NumericInputComponent
+  | SliderInputComponent
+  | SingleSelectComponent
+  | ColumnSelectorComponent;
 
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";
@@ -66,8 +100,12 @@ export interface CustomNodeSchema {
 /**
  * Fetches the complete UI definition for a custom node from the backend.
  */
-export async function getCustomNodeSchema(): Promise<CustomNodeSchema> {
-  const response = await axios.get<CustomNodeSchema>("/custom_components/custom-node-schema");
+export async function getCustomNodeSchema(flowId: number, nodeId: number): Promise<CustomNodeSchema> {
+  const response = await axios.get<CustomNodeSchema>(`/user_defined_components/custom-node-schema`, {
+      params: { flow_id: flowId, node_id: nodeId },
+      headers: { accept: "application/json" },
+  })
+  
   return response.data;
 }
 

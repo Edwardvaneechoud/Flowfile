@@ -62,6 +62,9 @@ from polars.datatypes import (
     DataType, DataTypeClass, Field
 )
 
+from flowfile_core.flowfile import node_designer
+
+
 __all__ = [
     # Core FlowFrame classes
     'FlowFrame', 'GroupByFrame', 'FullCloudStorageConnection',
@@ -83,6 +86,8 @@ __all__ = [
     'datetime', 'date', 'time', 'duration', 'boolean',
     'categorical', 'object_', 'list_', 'struct', 'all_',
     'by_dtype', 'contains', 'starts_with', 'ends_with', 'matches',
+
+    "node_designer",
 
     # Utilities
     'create_flow_graph', 'open_graph_in_editor',
