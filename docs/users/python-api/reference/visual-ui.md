@@ -228,6 +228,7 @@ ff.open_graph_in_editor(pipeline3.flow_graph)  # Still same server
 ---
 
 !!! tip "Where to Go Next"
+
     -   **Explore Visual Nodes:** Learn the details of each node available in the [Visual Editor](../../visual-editor/nodes/index.md).
     -   **Convert Code to Visual:** See how your code translates into a visual workflow in the [Conversion Guide](../tutorials/flowfile_frame_api.md).
     -   **Build with Code:** Dive deeper into the [code-first approach](../../visual-editor/building-flows.md) for building pipelines.

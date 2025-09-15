@@ -147,7 +147,7 @@ class MyCustomNode(CustomNodeBase):
 
 #### 3. Process
 
-!! Warning "Only one input supported for now"
+!!! Warning "Only one input supported for now"
     Currently, custom nodes only support a single input DataFrame. Support for multiple inputs is planned for future releases.
 
 
@@ -314,8 +314,6 @@ Types.Decimal    # Decimal types
 data_types=[Types.Numeric, Types.Date]  # Numbers and dates only
 ```
 
-Combining these types will build the 
-
 ## Real-World Examples
 
 ### Data Quality Node
@@ -429,81 +427,10 @@ class TextCleanerNode(CustomNodeBase):
 
 ## Best Practices
 
-### 1. Organize Settings Logically
-Group related settings into sections:
+### 1. Performance
+Try to use Polars expressions and lazy evaluation to keep your nodes efficient. 
+A collect will be executed in the core process and can cause issues when using remote compute.
 
-```python
-settings_schema = MySettings(
-    input_config=Section(
-        title="Input Configuration",
-        # Input-related settings
-    ),
-    processing_options=Section(
-        title="Processing Options", 
-        # Algorithm settings
-    ),
-    output_settings=Section(
-        title="Output Settings",
-        # Output format settings
-    )
-)
-```
-
-### 2. Provide Good Defaults
-Make your nodes work out of the box:
-
-```python
-algorithm_type=SingleSelect(
-    label="Algorithm",
-    options=[...],
-    default="fast"  # Sensible default
-)
-```
-
-### 3. Use Descriptive Labels
-Help users understand what each setting does:
-
-```python
-threshold=NumericInput(
-    label="Similarity Threshold (0-100)",  # Clear range
-    default=75,
-    min_value=0,
-    max_value=100
-)
-```
-
-### 4. Handle Edge Cases
-Make your processing robust:
-
-```python
-def process(self, input_df: pl.LazyFrame) -> pl.LazyFrame:
-    column = self.settings_schema.main.column.value
-    
-    # Handle missing column
-    if column not in input_df.columns:
-        return input_df.with_columns([
-            pl.lit("Column not found").alias("error")
-        ])
-    
-    # Handle null values
-    result = input_df.with_columns([
-        pl.col(column).fill_null("N/A").alias("processed")
-    ])
-    
-    return result
-```
-
-### 5. Use Type Hints
-Make your code maintainable:
-
-```python
-def process(self, input_df: pl.LazyFrame) -> pl.LazyFrame:
-    # Type hints help with development
-    threshold: float = self.settings_schema.config.threshold.value
-    columns: List[str] = self.settings_schema.config.columns.value
-    
-    return input_df
-```
 
 ## Troubleshooting
 
