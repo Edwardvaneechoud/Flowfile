@@ -5,7 +5,7 @@ from typing import List, Any, Union, Literal
 # Note: For these imports to work, your project's source directory
 # (e.g., the directory containing `flowfile_core`) should be in your PYTHONPATH.
 from flowfile_core.flowfile.node_designer.ui_components import ColumnSelector
-from flowfile_core.flowfile.node_designer.data_types import DataType, TypeGroup
+from flowfile_core.flowfile.node_designer.data_types import DataType, TypeGroup, Types
 
 # Helper lists for expected sorted outputs from TypeGroups
 NUMERIC_TYPES_SORTED = sorted([
@@ -92,6 +92,14 @@ def test_model_dump_when_filter_is_all():
     assert "data_types" not in dumped_data
     # Ensure other essential fields are still present
     assert dumped_data["component_type"] == "ColumnSelector"
+
+
+def test_model_dump_when_filter_is_date():
+    selector = ColumnSelector(data_types=Types.Date)
+    dumped_data = selector.model_dump()
+    assert "data_types" in dumped_data
+    # Ensure other essential fields are still present
+    assert dumped_data["data_types"] == ["Date"]
 
 
 def test_model_dump_when_filter_is_specific():

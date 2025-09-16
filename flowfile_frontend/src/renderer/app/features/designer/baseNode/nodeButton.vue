@@ -322,7 +322,7 @@ onMounted(() => {
 .node-button {
   background-color: #ffffff;
   border-radius: 10px;
-  border-width: 0.5px;
+  border-width: 0.0px;
 }
 
 .node-button:hover {

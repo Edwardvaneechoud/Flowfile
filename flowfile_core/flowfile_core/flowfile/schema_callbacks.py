@@ -121,7 +121,7 @@ def pre_calculate_pivot_schema(node_input_schema: List[FlowfileColumn],
                             pivot_input.index_columns]
     val_column_schema = get_schema_of_column(node_input_schema, pivot_input.value_col)
     if output_fields is not None and len(output_fields) > 0:
-        return index_columns_schema+[FlowfileColumn(PlType(Plcolumn_name=output_field.name,
+        return index_columns_schema+[FlowfileColumn(PlType(column_name=output_field.name,
                                                            pl_datatype=output_field.data_type)) for output_field in
                                      output_fields]
 

@@ -27,6 +27,8 @@ from flowfile_frame.join import _normalize_columns_to_list, _create_join_mapping
 from flowfile_frame.utils import _check_if_convertible_to_code
 from flowfile_frame.config import logger
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
+from collections.abc import Mapping
+
 
 
 def can_be_expr(param: inspect.Parameter) -> bool:
@@ -890,13 +892,18 @@ class FlowFrame:
         self.flow_graph.add_record_count(node_number_of_records)
         return self._create_child_frame(new_node_id)
 
-    def select(self, *columns: Union[str, Expr, Selector], description: Optional[str] = None) -> "FlowFrame":
+    def rename(self, mapping: Mapping[str, str], *, strict: bool = True,
+               description: str = None) -> "FlowFrame":
+        """Rename columns based on a mapping or function."""
+        return self.select([col(old_name).alias(new_name) for old_name, new_name in mapping.items()],
+                           description=description, _keep_missing=True)
+
+    def select(self, *columns: Union[str, Expr, Selector], description: Optional[str] = None, _keep_missing: bool = False) -> "FlowFrame":
         """
         Select columns from the frame.
         """
         columns_iterable = list(_parse_inputs_as_iterable(columns))
         new_node_id = generate_node_id()
-
         if (len(columns_iterable) == 1 and isinstance(columns_iterable[0], Expr)
                 and str(columns_iterable[0]) == "pl.Expr(len()).alias('number_of_records')"):
             return self._add_number_of_records(new_node_id, description)
@@ -914,7 +921,6 @@ class FlowFrame:
         for expr_input in effective_columns_iterable:
             current_expr_obj = expr_input
             is_simple_col_for_native = False
-
             if isinstance(expr_input, str):
                 current_expr_obj = col(expr_input)
                 selected_col_names_for_native.append(transform_schema.SelectInput(old_name=expr_input))
@@ -942,14 +948,18 @@ class FlowFrame:
         if can_use_native_node:
             existing_cols = self.columns
             selected_col_names = {select_col.old_name for select_col in selected_col_names_for_native}
-            dropped_columns = [transform_schema.SelectInput(c, keep=False) for c in existing_cols if
+            not_selected_columns = [transform_schema.SelectInput(c, keep=_keep_missing) for c in existing_cols if
                                c not in selected_col_names]
-            selected_col_names_for_native.extend(dropped_columns)
+            selected_col_names_for_native.extend(not_selected_columns)
+            if _keep_missing:
+                lookup_selection = {_col.old_name: _col for _col in selected_col_names_for_native}
+                selected_col_names_for_native = [lookup_selection.get(_col) for
+                                                 _col in existing_cols if _col in lookup_selection]
             select_settings = input_schema.NodeSelect(
                 flow_id=self.flow_graph.flow_id,
                 node_id=new_node_id,
                 select_input=selected_col_names_for_native,
-                keep_missing=False,
+                keep_missing=_keep_missing,
                 pos_x=200,
                 pos_y=100,
                 is_setup=True,
