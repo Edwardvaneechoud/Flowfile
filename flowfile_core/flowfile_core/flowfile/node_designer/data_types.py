@@ -93,7 +93,7 @@ class Types:
     # Type groups (most common use case)
     Numeric = TypeGroup.Numeric
     String = TypeGroup.String
-    Date = TypeGroup.Date
+    AnyDate = TypeGroup.Date
     Boolean = TypeGroup.Boolean
     Binary = TypeGroup.Binary
     Complex = TypeGroup.Complex

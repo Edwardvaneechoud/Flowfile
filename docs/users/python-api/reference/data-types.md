@@ -50,16 +50,5 @@ print(df.schema[0].dtype)
 # Int64
 ```
 
-## Null Handling
-
-```python
-# Fill nulls with default values
-df = df.fill_null(0)  # Fill with zero
-df = df.fill_null(strategy="forward")  # Forward fill
-
-# Drop rows with nulls
-df = df.drop_nulls()
-```
-
 ---
 [← Previous: Writing data](writing-data.md) | [Next: FlowFile Operations →](flowframe-operations.md)

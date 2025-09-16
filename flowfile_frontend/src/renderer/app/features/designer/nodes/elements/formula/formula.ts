@@ -3,8 +3,8 @@ import { NodeFormula, FormulaInput, FieldInput } from '../../../baseNode/nodeInp
 import axios from 'axios'
 
 export const createFormulaInput = (
-  field_name = '', 
-  data_type = 'String', 
+  field_name = '',
+  data_type = 'Auto',
   function_def = ''
 ): FormulaInput => {
   const fieldInput: FieldInput = {
@@ -26,7 +26,7 @@ export const createFormulaNode = (
   pos_x = 0,
   pos_y = 0,
   field_name = 'output_field',
-  data_type = 'String',
+  data_type = 'Auto',
   function_def = '',
 ): NodeFormula => {
   const func_info = createFormulaInput(field_name, data_type, function_def)

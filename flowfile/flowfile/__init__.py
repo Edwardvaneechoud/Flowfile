@@ -7,7 +7,7 @@ This package ties together the FlowFile ecosystem components:
 - flowfile_worker: Computation engine
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 import os
 import logging
