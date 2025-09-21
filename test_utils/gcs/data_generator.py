@@ -10,7 +10,6 @@ import pyarrow as pa
 from deltalake import write_deltalake
 from pyiceberg.catalog import load_catalog
 import mimetypes
-from typing import Dict
 from google.auth.credentials import AnonymousCredentials
 import requests
 import google.auth.transport.requests
@@ -118,7 +117,7 @@ def _create_delta_lake_table(gcs_client, arrow_table: pa.Table, bucket_name: str
     logger.info("Writing Delta Lake table...")
     bucket = gcs_client.bucket(bucket_name)
     blob = bucket.blob(f"delta-lake-table")
-    for root, _, files in os.walk(f"http://{bucket_name}/delta-lake-table"):
+    for root, _, files in os.walk(f"https://{bucket_name}/delta-lake-table"):
         for f in files:
             local_path = os.path.join(root, f)
             rel_path = os.path.relpath(local_path, arrow_table)
@@ -128,15 +127,13 @@ def _create_delta_lake_table(gcs_client, arrow_table: pa.Table, bucket_name: str
 
 
 
-def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str, app_credentials: Dict,
-                          gcs_client):
+def _create_iceberg_table(df: pl.DataFrame, bucket_name: str, endpoint_url: str, gcs_client):
     """Creates an Apache Iceberg table and FORCES sane metadata pointers."""
     logger.info("Writing Apache Iceberg table with SANE metadata access...")
     # Configure the catalog properties for S3 access
     catalog_props = {
         "py-io-impl": "pyiceberg.io.pyarrow.PyArrowFileIO",
-        "gcs.endpoint": endpoint_url,
-        "gcs.app-credentials": app_credentials
+        "gcs.endpoint": endpoint_url
     }
 
     # Creating a bucket instance to upload files

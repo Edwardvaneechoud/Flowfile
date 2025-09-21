@@ -30,25 +30,19 @@ def _create_sales_data(gcs_client, df: pl.DataFrame, bucket_name: str):
     gcs://data-lake/sales/year=YYYY/month=MM/
     """
     logger.info("Writing partitioned sales data...")
-    # Use Polars' built-in partitioning
-    # A temporary local directory is needed to stage the partitioned files before uploading
     with tempfile.TemporaryDirectory() as temp_dir:
-        df.write_parquet(
-            temp_dir,
-            use_pyarrow=True,
-            pyarrow_options={"partition_cols": ["year", "month"]}
-        )
-        # Walk through the local directory and upload files to gcs
         for root, _, files in os.walk(temp_dir):
             for file in files:
+                for (year, month), subset in df.group_by(["year", "month"]):
+                        data = subset.write_parquet()
+                        buf = io.BytesIO(data)
                 if file.endswith(".parquet"):
-                    local_path = os.path.join(root, file)
-                    # Construct the gcs key to match the desired structure
-                    relative_path = os.path.relpath(local_path, temp_dir)
-                    gcs_key = f"data-lake/sales/{relative_path.replace(os.path.sep, '/')}"
+                    gcs_key = f"data-lake/sales/year={year}/month={month}/{file}"
                     bucket = gcs_client.bucket(bucket_name)
-                    blob = bucket.blob(f'{gcs_key}')
-                    blob.upload_from_file(local_path, content_type='application/parquet')
+                    blob = bucket.blob(gcs_key)
+                    # Upload
+                    blob.upload_from_file(buf)
+
     logger.info(f"Finished writing sales data to gcs://{bucket_name}/data-lake/sales/")
 
 def _create_customers_data(gcs_client, df: pl.DataFrame, bucket_name: str):
@@ -62,7 +56,8 @@ def _create_customers_data(gcs_client, df: pl.DataFrame, bucket_name: str):
     parquet_buffer.seek(0)
     bucket = gcs_client.bucket(bucket_name)
     blob = bucket.blob('data-lake/customers/customers.parquet')
-    blob.upload_from_file(parquet_buffer.getvalue(), content_type='application/parquet')
+    buf = io.BytesIO(parquet_buffer.getvalue())
+    blob.upload_from_file(buf, content_type='application/parquet')
     logger.info(f"Finished writing customers data to gcs://{bucket_name}/data-lake/customers/")
 
 
@@ -78,7 +73,8 @@ def _create_orders_data(gcs_client, df: pl.DataFrame, bucket_name: str):
     csv_buffer.seek(0)
     bucket = gcs_client.bucket(bucket_name)
     blob = bucket.blob('raw-data/orders/orders.csv')
-    blob.upload_from_file(csv_buffer.getvalue(), content_type='text/csv')
+    buf = io.BytesIO(csv_buffer.getvalue())
+    blob.upload_from_file(buf, content_type='text/csv')
     logger.info(f"Finished writing orders data to gcs://{bucket_name}/raw-data/orders/")
 
 def _create_products_data(df: pl.DataFrame):
