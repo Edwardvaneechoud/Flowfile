@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.3.9"
+version = "0.4.1"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -9,6 +9,7 @@ packages = [
     { include = "flowfile_worker", from = "flowfile_worker" },
     { include = "build_backends", from = "build_backends" },
     { include = "flowfile_frame", from = "flowfile_frame" },
+    { include = "shared" },
     { include = "test_utils" },
     { include = "flowfile", from = "flowfile"},
 ]

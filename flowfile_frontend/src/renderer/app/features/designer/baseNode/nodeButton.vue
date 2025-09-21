@@ -1,8 +1,10 @@
+<!-- nodeButton.vue - add this right after your button -->
 <template>
   <div class="component-wrapper">
     <div class="status-indicator" :class="nodeResult?.statusIndicator">
       <span class="tooltip-text">{{ tooltipContent }}</span>
     </div>
+
     <button :class="['node-button', { selected: isSelected }]" @click="onClick">
       <img :src="getImageUrl(props.imageSrc)" :alt="props.title" width="50" />
     </button>
@@ -11,17 +13,23 @@
 
 <script setup lang="ts">
 import { defineProps, defineEmits, computed, onMounted, ref, nextTick, watch } from "vue";
+import type { Component } from "vue"; // <-- Import as a TYPE, not a value
 import { getImageUrl } from "../utils";
 import { useNodeStore } from "../../../stores/column-store";
+import { NodeTitleInfo } from "./nodeInterfaces";
 const description = ref<string>("");
 const mouseX = ref(0);
 const mouseY = ref(0);
 const nodeStore = useNodeStore();
-const props = defineProps({
-  nodeId: { type: Number, required: true },
-  imageSrc: { type: String, required: true },
-  title: { type: String, required: true },
-});
+
+const props = defineProps<{
+  nodeId: number;
+  imageSrc: string;
+  title: string;
+  drawerComponent?: Component | null;
+  drawerProps?: Record<string, any>;
+  nodeTitleInfo: NodeTitleInfo;
+}>();
 
 const isSelected = computed(() => {
   return nodeStore.node_id == props.nodeId;
@@ -61,6 +69,7 @@ interface ResultOutput {
   error?: string;
   hasRun: boolean;
 }
+
 const nodeResult = computed<ResultOutput | undefined>(() => {
   const nodeResult = nodeStore.getNodeResult(props.nodeId);
   const nodeValidation = nodeStore.getNodeValidation(props.nodeId);
@@ -177,9 +186,15 @@ const getNodeDescription = async () => {
 
 const emits = defineEmits(["click"]);
 
-const onClick = () => {
-  emits("click");
-};
+watch(
+  () => nodeStore.node_id,
+  (newNodeId, oldNodeId) => {
+    if (String(newNodeId) === String(props.nodeId) && props.drawerComponent) {
+      nodeStore.openDrawer(props.drawerComponent, props.nodeTitleInfo);
+    }
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   watch(
@@ -307,7 +322,7 @@ onMounted(() => {
 .node-button {
   background-color: #ffffff;
   border-radius: 10px;
-  border-width: 0.5px;
+  border-width: 0.0px;
 }
 
 .node-button:hover {

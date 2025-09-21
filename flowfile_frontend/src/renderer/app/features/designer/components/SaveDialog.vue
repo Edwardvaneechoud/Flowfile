@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue";
+import { ref, watch } from "vue";
 import FileBrowser from "./fileBrowser/fileBrowser.vue";
 import { FileInfo } from "./fileBrowser/types";
 import { saveFlow } from "./HeaderButtons/utils";

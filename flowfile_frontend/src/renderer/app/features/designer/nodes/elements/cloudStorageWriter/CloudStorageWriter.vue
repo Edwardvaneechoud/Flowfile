@@ -264,7 +264,6 @@ const setConnectionOnConnectionName = async (connectionName: string | null) => {
     connectionInterfaces.value.find((ci) => ci.connectionName === connectionName) || null;
 };
 
-// --- Data Fetching and Persistence (No changes here) ---
 const loadNodeData = async (nodeId: number) => {
   try {
     const [nodeData] = await Promise.all([

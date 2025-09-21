@@ -17,13 +17,21 @@ from flowfile_worker.external_sources.sql_source.main import read_sql_source, wr
 router = APIRouter()
 
 
+def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
+    default_cache_dir = CACHE_DIR / str(flowfile_flow_id)
+    default_cache_dir.mkdir(parents=True, exist_ok=True)
+    return str(default_cache_dir)
+
+
 @router.post("/submit_query/")
 def submit_query(polars_script: models.PolarsScript, background_tasks: BackgroundTasks) -> models.Status:
     logger.info(f"Processing query with operation: {polars_script.operation_type}")
 
     try:
         polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
-        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else CACHE_DIR.name
+        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
+
+        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else default_cache_dir
         polars_serializable_object = polars_script.polars_serializable_object()
         file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
         result_type = "polars" if polars_script.operation_type == "store" else "other"
@@ -49,8 +57,9 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
     logger.info(f"Processing sample storage with size: {polars_script.sample_size}")
 
     try:
+        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
         polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
-        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else CACHE_DIR.name
+        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else default_cache_dir
         polars_serializable_object = polars_script.polars_serializable_object()
 
         file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
@@ -210,7 +219,8 @@ def store_sql_db_result(database_read_settings: DatabaseReadSettings, background
 
     try:
         task_id = str(uuid.uuid4())
-        file_path = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
+        file_path = os.path.join(create_and_get_default_cache_dir(database_read_settings.flowfile_flow_id),
+                                 f"{task_id}.arrow")
         status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
                                result_type="polars")
         status_dict[task_id] = status
@@ -246,7 +256,7 @@ def create_table(file_type: FileType, received_table: Dict, background_tasks: Ba
 
     try:
         task_id = str(uuid.uuid4())
-        file_ref = os.path.join(CACHE_DIR.name, f"{task_id}.arrow")
+        file_ref = os.path.join(create_and_get_default_cache_dir(flowfile_flow_id), f"{task_id}.arrow")
 
         status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_ref,
                                result_type="polars")
@@ -382,8 +392,9 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
     """
     logger.info("Starting fuzzy join operation")
     try:
+        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
         polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
-        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else CACHE_DIR.name
+        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else default_cache_dir
         left_serializable_object = polars_script.left_df_operation.polars_serializable_object()
         right_serializable_object = polars_script.right_df_operation.polars_serializable_object()
 
@@ -403,6 +414,37 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
     except Exception as e:
         logger.error(f"Error in fuzzy join: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/clear_task/{task_id}")
+def clear_task(task_id: str):
+    """
+    Clear task data and status by ID.
+
+    Args:
+        task_id: Unique identifier of the task to clear
+    Returns:
+        dict: Success message
+    Raises:
+        HTTPException: If task not found
+    """
+
+    logger.info(f"Clearing task: {task_id}")
+    status = status_dict.get(task_id)
+    if not status:
+        logger.warning(f"Task not found for clearing: {task_id}")
+        raise HTTPException(status_code=404, detail="Task not found")
+    try:
+        if os.path.exists(status.file_ref):
+            os.remove(status.file_ref)
+            logger.debug(f"Removed file: {status.file_ref}")
+    except Exception as e:
+        logger.error(f"Error removing file {status.file_ref}: {str(e)}", exc_info=True)
+    with status_dict_lock:
+        status_dict.pop(task_id, None)
+        PROCESS_MEMORY_USAGE.pop(task_id, None)
+        logger.info(f"Successfully cleared task: {task_id}")
+    return {"message": f"Task {task_id} has been cleared."}
 
 
 @router.post("/cancel_task/{task_id}")

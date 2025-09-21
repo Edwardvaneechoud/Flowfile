@@ -1,7 +1,13 @@
 <template>
   <div
+    :id="props.id"
     class="overlay"
-    :class="{ 'no-transition': isResizing, minimized: isMinimized }"
+    :class="{
+      'no-transition': isResizing,
+      minimized: isMinimized,
+      'in-group': itemState.group,
+      synced: itemState.syncDimensions,
+    }"
     :style="{
       width: isMinimized ? 'auto' : itemState.width + 'px',
       height: isMinimized ? 'auto' : itemState.height + 'px',
@@ -14,14 +20,17 @@
       <button
         v-if="allowMinimizing"
         class="minimal-button"
+        data-tooltip="true"
         :title="isMinimized ? 'Maximize' : 'Minimize'"
         @click="toggleMinimize"
       >
         <span class="icon">{{ isMinimized ? "+" : "−" }}</span>
       </button>
+
       <button
         v-if="showRight && itemState.stickynessPosition !== 'right'"
         class="minimal-button"
+        data-tooltip="true"
         title="Move to Right"
         @click="moveToRight"
       >
@@ -30,6 +39,7 @@
       <button
         v-if="showBottom && itemState.stickynessPosition !== 'bottom'"
         class="minimal-button"
+        data-tooltip="true"
         title="Move to Bottom"
         @click="moveToBottom"
       >
@@ -38,6 +48,7 @@
       <button
         v-if="showLeft && itemState.stickynessPosition !== 'left'"
         class="minimal-button"
+        data-tooltip="true"
         title="Move to Left"
         @click="moveToLeft"
       >
@@ -46,6 +57,7 @@
       <button
         v-if="showTop && itemState.stickynessPosition !== 'top'"
         class="minimal-button"
+        data-tooltip="true"
         title="Move to Top"
         @click="moveToTop"
       >
@@ -54,7 +66,8 @@
       <button
         v-if="allowFullScreen && !itemState.fullScreen"
         class="minimal-button"
-        title="Toggle Full Screen"
+        data-tooltip="true"
+        data-tooltip-text="Toggle Full Screen"
         @click="toggleFullScreen"
       >
         <span class="icon">⬜</span>
@@ -62,16 +75,21 @@
       <button
         v-if="allowFullScreen && itemState.fullScreen"
         class="minimal-button"
-        title="To Small Screen"
+        data-tooltip="true"
+        data-tooltip-text="Exit Full Screen"
         @click="toggleFullScreen"
       >
         <span class="icon">❐</span>
       </button>
-      {{ title }}
+      <span class="group-badge" @mousedown="startMove">
+        {{ title }}
+      </span>
     </div>
+
     <div class="content" @click="registerClick">
       <slot v-if="!isMinimized"></slot>
     </div>
+
     <div
       class="draggable-line right-vertical"
       @mousedown.stop="startResizeRight"
@@ -96,31 +114,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, defineProps, getCurrentInstance, nextTick } from "vue";
+import {
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  defineExpose,
+  defineProps,
+  getCurrentInstance,
+  nextTick,
+  watch,
+} from "vue";
 import { useItemStore } from "./stateStore";
-
-const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
-const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
-  if (resizeDelay.value) clearTimeout(resizeDelay.value);
-  resizeDelay.value = setTimeout(() => {
-    if (itemStore.inResizing && !isResizing.value) {
-      switch (position) {
-        case "right":
-          startResizeRight(e);
-          break;
-        case "bottom":
-          startResizeBottom(e);
-          break;
-        case "top":
-          startResizeTop(e);
-          break;
-        case "left":
-          startResizeLeft(e);
-          break;
-      }
-    }
-  }, 200);
-};
+import type { ItemLayout } from "./stateStore";
 
 const props = defineProps({
   id: {
@@ -143,6 +148,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  showPresets: {
+    type: Boolean,
+    default: false,
+  },
   initialPosition: {
     type: String as () => "top" | "bottom" | "left" | "right" | "free",
     default: "free",
@@ -155,7 +164,8 @@ const props = defineProps({
     type: Number,
     default: null,
   },
-  initalLeft: {
+
+  initialLeft: {
     type: Number,
     default: null,
   },
@@ -183,15 +193,30 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  group: {
+    type: String,
+    default: null,
+  },
+  syncDimensions: {
+    type: Boolean,
+    default: false,
+  },
+  preventOverlap: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const itemStore = useItemStore();
 const itemState = ref(
   itemStore.items[props.id] || {
-    width: props.initialWidth,
-    height: props.initialHeight,
-    left: 100,
-    top: 100,
+    width: props.initialWidth || 400,
+    height: props.initialHeight || 300,
+    left: props.initialLeft || 100, // Used corrected prop
+    top: props.initialTop || 100,
+    group: props.group,
+    syncDimensions: props.syncDimensions,
+    zIndex: 100,
   },
 );
 
@@ -208,9 +233,83 @@ const instance = getCurrentInstance();
 const activeLine = ref<HTMLElement | null>(null);
 let resizeTimeout: ReturnType<typeof setTimeout>;
 
+const resizeDirection = ref<"top" | "bottom" | "left" | "right" | null>(null);
+const initialGroupStates = ref<
+  Record<string, { top: number; left: number; width: number; height: number }>
+>({});
+
+const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
+const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
+  if (resizeDelay.value) clearTimeout(resizeDelay.value);
+  resizeDelay.value = setTimeout(() => {
+    if (itemStore.inResizing && !isResizing.value) {
+      switch (position) {
+        case "right":
+          startResizeRight(e);
+          break;
+        case "bottom":
+          startResizeBottom(e);
+          break;
+        case "top":
+          startResizeTop(e);
+          break;
+        case "left":
+          startResizeLeft(e);
+          break;
+      }
+    }
+  }, 200);
+};
+
 const savePositionAndSize = () => {
-  itemStore.setItemState(props.id, itemState.value);
+  itemStore.setItemState(props.id, {
+    width: itemState.value.width,
+    height: itemState.value.height,
+    left: itemState.value.left,
+    top: itemState.value.top,
+    stickynessPosition: itemState.value.stickynessPosition,
+    fullWidth: itemState.value.fullWidth,
+    fullHeight: itemState.value.fullHeight,
+    zIndex: itemState.value.zIndex,
+    fullScreen: itemState.value.fullScreen,
+    group: itemState.value.group,
+    syncDimensions: itemState.value.syncDimensions,
+  });
+
   itemStore.saveItemState(props.id);
+
+  if (itemState.value.group && itemState.value.syncDimensions && isResizing.value) {
+    const groupItems = itemStore.groups[itemState.value.group];
+    if (groupItems) {
+      const initialActiveState = initialGroupStates.value[props.id];
+      if (!initialActiveState) return;
+
+      const deltaX = itemState.value.left - initialActiveState.left;
+      const deltaY = itemState.value.top - initialActiveState.top;
+
+      groupItems.forEach((itemId) => {
+        if (itemId === props.id) return;
+
+        const initialItemState = initialGroupStates.value[itemId];
+        if (itemStore.items[itemId]?.syncDimensions && initialItemState) {
+          const updates: Partial<ItemLayout> = {
+            width: itemState.value.width,
+            height: itemState.value.height,
+          };
+
+          if (resizeDirection.value === "top") {
+            updates.top = initialItemState.top + deltaY;
+          }
+          if (resizeDirection.value === "left") {
+            updates.left = initialItemState.left + deltaX;
+          }
+
+          itemStore.setItemState(itemId, updates);
+          itemStore.saveItemState(itemId);
+        }
+      });
+    }
+  }
 };
 
 const loadPositionAndSize = () => {
@@ -235,33 +334,35 @@ const handleReziging = (e: MouseEvent) => {
 };
 
 const toggleFullScreen = () => {
-  if (itemState.value.fullScreen) {
-    itemState.value.fullScreen = false;
-    itemState.value.width = itemState.value.prevWidth || 300;
-    itemState.value.height = itemState.value.prevHeight || 300;
-    itemState.value.left = itemState.value.prevLeft || 100;
-    itemState.value.top = itemState.value.prevTop || 100;
-  } else {
-    itemState.value.fullScreen = true;
-    itemState.value.prevWidth = itemState.value.width;
-    itemState.value.prevHeight = itemState.value.height;
-    itemState.value.prevLeft = itemState.value.left;
-    itemState.value.prevTop = itemState.value.top;
+  itemStore.toggleFullScreen(props.id);
+  loadPositionAndSize();
+};
 
-    // Use full window dimensions with no margins
-    itemState.value.width = window.innerWidth;
-    itemState.value.height = window.innerHeight;
-    itemState.value.left = 0;
-    itemState.value.top = 0;
+const captureGroupInitialStates = () => {
+  if (itemState.value.group && itemState.value.syncDimensions) {
+    initialGroupStates.value = {};
+    const groupItems = itemStore.groups[itemState.value.group];
+    if (groupItems) {
+      groupItems.forEach((id) => {
+        const item = itemStore.items[id];
+        if (item) {
+          initialGroupStates.value[id] = {
+            top: item.top,
+            left: item.left,
+            width: item.width,
+            height: item.height,
+          };
+        }
+      });
+    }
   }
-
-  // Make sure to save position and size
-  savePositionAndSize();
 };
 
 const startResizeRight = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
+  resizeDirection.value = "right";
+  captureGroupInitialStates();
   startX.value = e.clientX;
   startWidth.value = itemState.value.width;
   document.addEventListener("mousemove", onResizeWidth);
@@ -272,7 +373,7 @@ const onResizeWidth = (e: MouseEvent) => {
   if (isResizing.value) {
     const deltaX = e.clientX - startX.value;
     const newWidth = startWidth.value + deltaX;
-    if (newWidth > 100 && newWidth < window.innerWidth - 0) {
+    if (newWidth > 100 && newWidth < window.innerWidth) {
       itemState.value.width = newWidth;
       savePositionAndSize();
     }
@@ -282,6 +383,8 @@ const onResizeWidth = (e: MouseEvent) => {
 const startResizeBottom = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
+  resizeDirection.value = "bottom";
+  captureGroupInitialStates();
   startY.value = e.clientY;
   startHeight.value = itemState.value.height;
   document.addEventListener("mousemove", onResizeHeight);
@@ -302,6 +405,8 @@ const onResizeHeight = (e: MouseEvent) => {
 const startResizeTop = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
+  resizeDirection.value = "top";
+  captureGroupInitialStates();
   startY.value = e.clientY;
   startTop.value = itemState.value.top;
   startHeight.value = itemState.value.height;
@@ -314,7 +419,7 @@ const onResizeTop = (e: MouseEvent) => {
     const deltaY = e.clientY - startY.value;
     const newTop = startTop.value + deltaY;
     const newHeight = startHeight.value - deltaY;
-    if (newHeight > 100 && newHeight < window.innerHeight - 100) {
+    if (newHeight > 100 && newHeight < window.innerHeight - 100 && newTop >= 0) {
       itemState.value.top = newTop;
       itemState.value.height = newHeight;
       savePositionAndSize();
@@ -325,6 +430,8 @@ const onResizeTop = (e: MouseEvent) => {
 const startResizeLeft = (e: MouseEvent) => {
   e.preventDefault();
   handleReziging(e);
+  resizeDirection.value = "left";
+  captureGroupInitialStates();
   startX.value = e.clientX;
   startLeft.value = itemState.value.left;
   startWidth.value = itemState.value.width;
@@ -346,15 +453,19 @@ const onResizeLeft = (e: MouseEvent) => {
 };
 
 const stopResize = () => {
-  isResizing.value = false;
-  if (activeLine.value) {
-    activeLine.value.classList.remove("resizing-highlight-line");
+  if (isResizing.value) {
+    isResizing.value = false;
+    resizeDirection.value = null;
+    initialGroupStates.value = {};
+    if (activeLine.value) {
+      activeLine.value.classList.remove("resizing-highlight-line");
+    }
+    itemStore.inResizing = false;
+    document.removeEventListener("mousemove", onResizeWidth);
+    document.removeEventListener("mousemove", onResizeHeight);
+    document.removeEventListener("mousemove", onResizeTop);
+    document.removeEventListener("mousemove", onResizeLeft);
   }
-  itemStore.inResizing = false;
-  document.removeEventListener("mousemove", onResizeWidth);
-  document.removeEventListener("mousemove", onResizeHeight);
-  document.removeEventListener("mousemove", onResizeTop);
-  document.removeEventListener("mousemove", onResizeLeft);
 };
 
 const startMove = (e: MouseEvent) => {
@@ -366,6 +477,7 @@ const startMove = (e: MouseEvent) => {
     (e.target as HTMLElement).classList.contains("minimal-button")
   )
     return;
+
   isDragging.value = true;
   startX.value = e.clientX;
   startY.value = e.clientY;
@@ -382,14 +494,22 @@ const onMove = (e: MouseEvent) => {
     const deltaY = e.clientY - startY.value;
     itemState.value.left = startLeft.value + deltaX;
     itemState.value.top = startTop.value + deltaY;
-    savePositionAndSize();
   }
 };
 
 const stopMove = () => {
-  isDragging.value = false;
-  document.removeEventListener("mousemove", onMove);
-  document.removeEventListener("mouseup", stopMove);
+  if (isDragging.value) {
+    isDragging.value = false;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", stopMove);
+
+    savePositionAndSize();
+
+    if (props.preventOverlap) {
+      itemStore.preventOverlap(props.id);
+      loadPositionAndSize();
+    }
+  }
 };
 
 const moveToRight = () => {
@@ -410,11 +530,11 @@ const moveToBottom = () => {
   const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
   if (parentElement) {
     const parentBottom = parentElement.offsetTop + parentElement.offsetHeight;
-    itemState.value.left = parentElement.offsetLeft;
-    itemState.value.top = parentBottom - itemState.value.height;
+    itemState.value.left = parentElement.offsetLeft + props.initialLeft;
+    itemState.value.top = parentBottom - (itemState.value.height + props.initialTop);
     itemState.value.stickynessPosition = "bottom";
     if (itemState.value.fullWidth) {
-      itemState.value.width = parentElement.offsetWidth;
+      itemState.value.width = parentElement.offsetWidth - props.initialLeft;
     }
     savePositionAndSize();
   }
@@ -447,31 +567,65 @@ const moveToTop = () => {
 };
 
 const applyStickyPosition = () => {
+  const parentElement = instance?.parent?.vnode.el as HTMLElement | null;
+  if (!parentElement) {
+    console.warn(`No parent element found for ${props.id}`);
+    return;
+  }
+
   switch (itemState.value.stickynessPosition) {
     case "top":
-      moveToTop();
+      itemState.value.left = parentElement.offsetLeft;
+      itemState.value.top = parentElement.offsetTop;
+      if (itemState.value.fullWidth) {
+        itemState.value.width = parentElement.offsetWidth;
+      }
       break;
+
     case "bottom":
-      moveToBottom();
+      itemState.value.left = parentElement.offsetLeft + (props.initialLeft || 0);
+      itemState.value.top =
+        parentElement.offsetTop +
+        parentElement.offsetHeight -
+        itemState.value.height -
+        (props.initialTop || 0);
+      if (itemState.value.fullWidth) {
+        itemState.value.width = parentElement.offsetWidth - (props.initialLeft || 0);
+      }
       break;
+
     case "left":
-      moveToLeft();
+      itemState.value.left = parentElement.offsetLeft;
+      itemState.value.top = parentElement.offsetTop + (props.initialTop || 0);
+      if (itemState.value.fullHeight) {
+        itemState.value.height = parentElement.offsetHeight - (props.initialTop || 0);
+      }
       break;
+
     case "right":
-      moveToRight();
+      itemState.value.left =
+        parentElement.offsetLeft + parentElement.offsetWidth - itemState.value.width;
+      itemState.value.top = parentElement.offsetTop + (props.initialTop || 0);
+      if (itemState.value.fullHeight) {
+        itemState.value.height = parentElement.offsetHeight - (props.initialTop || 0);
+      }
       break;
+
     case "free":
     default:
-      // Leave default free position
+      // Keep current position
       break;
   }
+
+  // Save the new position
+  savePositionAndSize();
 };
 
 const calculateWidth = () => {
   if (props.initialWidth) {
     return props.initialWidth;
   } else if (props.initialPosition === "top" || props.initialPosition === "bottom") {
-    return instance?.parent?.vnode.el?.offsetWidth || 300;
+    return instance?.parent?.vnode.el?.offsetWidth - props.initialLeft || 300;
   } else return 300;
 };
 
@@ -479,13 +633,13 @@ const calculateHeight = () => {
   if (props.initialHeight) {
     return props.initialHeight;
   } else if (props.initialPosition === "left" || props.initialPosition === "right") {
-    return instance?.parent?.vnode.el?.offsetHeight || 300;
+    return instance?.parent?.vnode.el?.offsetHeight - props.initialHeight || 300;
   } else return 300;
 };
 
 const handleResize = () => {
   clearTimeout(resizeTimeout);
-  resizeTimeout = setTimeout(applyStickyPosition, 1); // Adjust the delay as needed
+  resizeTimeout = setTimeout(applyStickyPosition, 1);
 };
 
 const parentResizeObserver = new ResizeObserver(() => {
@@ -504,78 +658,139 @@ const registerClick = () => {
 };
 
 const setFullScreen = (makeFull: boolean) => {
-  // Only toggle if the state needs changing
-  if (itemState.value.fullScreen !== makeFull) {
-    toggleFullScreen();
-  }
+  itemStore.setFullScreen(props.id, makeFull);
+  loadPositionAndSize();
 };
 
-onMounted(() => {
-  if (!itemStore.items[props.id]) {
-    itemStore.setItemState(props.id, {
-      width: calculateWidth(),
-      height: calculateHeight(),
-      left: props.initalLeft || 100,
-      top: props.initialTop || 100,
-      fullHeight: !props.initialHeight,
-      fullWidth: !props.initialWidth,
-    });
-    itemState.value = itemStore.items[props.id];
-    itemState.value.stickynessPosition = props.initialPosition;
-    if (itemState.value.stickynessPosition !== "free") {
-      applyStickyPosition();
+watch(
+  () => itemStore.items[props.id],
+  (newState) => {
+    if (newState) {
+      if (isDragging.value || isResizing.value) {
+        itemState.value.zIndex = newState.zIndex;
+      } else {
+        itemState.value = { ...newState };
+      }
     }
-  } else {
-    loadPositionAndSize();
-  }
-  document.addEventListener("mouseup", stopResize);
-  document.addEventListener("mouseup", stopMove);
-});
+  },
+  { deep: true },
+);
+
+watch(
+  () => ({ group: props.group, syncDimensions: props.syncDimensions }),
+  ({ group, syncDimensions }) => {
+    itemStore.setItemState(props.id, {
+      group,
+      syncDimensions,
+    });
+    itemState.value.group = group;
+    itemState.value.syncDimensions = syncDimensions;
+  },
+);
+
 nextTick().then(() => {
   observeParentResize();
 });
 
-onBeforeUnmount(() => {
-  document.removeEventListener("mouseup", stopResize);
-  document.removeEventListener("mouseup", stopMove);
+onMounted(() => {
+  // Calculate initial values based on props
+  const initialWidth = calculateWidth();
+  const initialHeight = calculateHeight();
+  const initialLeft = props.initialLeft || 100;
+  const initialTop = props.initialTop || 100;
+
+  // IMPORTANT: Register the true initial state FIRST
+  itemStore.registerInitialState(props.id, {
+    width: initialWidth,
+    height: initialHeight,
+    left: initialLeft,
+    top: initialTop,
+    stickynessPosition: props.initialPosition,
+    fullWidth: !props.initialWidth,
+    fullHeight: !props.initialHeight,
+    group: props.group,
+    syncDimensions: props.syncDimensions,
+  });
+
+  // Check if there's a saved state
+  const hasSavedState = localStorage.getItem(`overlayPositionAndSize_${props.id}`) !== null;
+
+  if (!hasSavedState) {
+    // No saved state, use initial values
+    itemStore.setItemState(props.id, {
+      width: initialWidth,
+      height: initialHeight,
+      left: initialLeft,
+      top: initialTop,
+      fullHeight: !props.initialHeight,
+      fullWidth: !props.initialWidth,
+      stickynessPosition: props.initialPosition,
+      group: props.group,
+      syncDimensions: props.syncDimensions,
+    });
+    itemState.value = itemStore.items[props.id];
+
+    // Apply sticky position after DOM is ready
+    if (props.initialPosition !== "free") {
+      nextTick(() => {
+        applyStickyPosition();
+      });
+    }
+  } else {
+    // Load saved state
+    loadPositionAndSize();
+
+    // If the saved state has a sticky position, re-apply it
+    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
+      nextTick(() => {
+        applyStickyPosition();
+      });
+    }
+  }
+
+  // Listen for layout reset events
+  const handleLayoutReset = (event: Event) => {
+    // Get the updated state from the store
+    itemState.value = { ...itemStore.items[props.id] };
+
+    // Re-apply sticky position if not "free"
+    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
+      nextTick(() => {
+        applyStickyPosition();
+      });
+    }
+  };
+
+  window.addEventListener("layout-reset", handleLayoutReset);
+  document.addEventListener("mouseup", stopResize);
+
+  // Store the event handler for cleanup
+  (window as any)[`resetHandler_${props.id}`] = handleLayoutReset;
 });
 
 defineExpose({
-  width: itemState.value.width,
-  height: itemState.value.height,
-  isDragging,
-  isResizing,
-  startX,
-  startY,
-  startWidth,
-  startHeight,
-  startLeft,
-  startTop,
-  left: itemState.value.left,
-  top: itemState.value.top,
-  startResizeRight,
-  onResizeWidth,
-  startResizeBottom,
-  onResizeHeight,
-  startResizeTop,
-  onResizeTop,
-  startResizeLeft,
-  onResizeLeft,
-  stopResize,
-  startMove,
-  onMove,
-  stopMove,
-  moveToRight,
-  moveToBottom,
-  moveToLeft,
-  moveToTop,
-  setHeight: (value: number) => (itemState.value.height = value),
-  setWitdh: (value: number) => (itemState.value.width = value),
   setFullScreen,
+});
+
+// Update the onBeforeUnmount to clean up the event listener
+onBeforeUnmount(() => {
+  const handler = (window as any)[`resetHandler_${props.id}`];
+  if (handler) {
+    window.removeEventListener("layout-reset", handler);
+    delete (window as any)[`resetHandler_${props.id}`];
+  }
+  document.removeEventListener("mouseup", stopResize);
+  document.removeEventListener("mousemove", onMove);
+  document.removeEventListener("mouseup", stopMove);
+  document.removeEventListener("mousemove", onResizeWidth);
+  document.removeEventListener("mousemove", onResizeHeight);
+  document.removeEventListener("mousemove", onResizeTop);
+  document.removeEventListener("mousemove", onResizeLeft);
 });
 </script>
 
 <style scoped>
+/* (Styles are unchanged) */
 .minimal-button {
   background: none;
   border: none;
@@ -590,19 +805,10 @@ defineExpose({
   width: 25px;
   height: 25px;
 }
-
-.minimal-button .icon {
-  font-size: 16px;
-}
-
-.minimal-button:hover {
-  color: #000;
-}
-
-.minimal-button::after {
-  content: attr(title);
+.minimal-button[data-tooltip="true"]::after {
+  content: attr(data-tooltip-text);
   position: absolute;
-  bottom: 100%;
+  top: calc(100% + 5px);
   left: 50%;
   transform: translateX(-50%);
   background-color: #333;
@@ -617,12 +823,12 @@ defineExpose({
     opacity 0.2s,
     visibility 0.2s;
   pointer-events: none;
+  z-index: 100000;
 }
-
-.minimal-button::before {
+.minimal-button[data-tooltip="true"]::before {
   content: "";
   position: absolute;
-  bottom: calc(100% - 4px);
+  top: 100%;
   left: 50%;
   transform: translateX(-50%);
   border-width: 4px;
@@ -634,36 +840,42 @@ defineExpose({
     opacity 0.2s,
     visibility 0.2s;
   pointer-events: none;
+  z-index: 100000;
 }
-
-.minimal-button:hover::after,
-.minimal-button:hover::before {
+.minimal-button[data-tooltip="true"]:hover::after,
+.minimal-button[data-tooltip="true"]:hover::before {
   opacity: 1;
   visibility: visible;
 }
-
-.move-handle {
-  cursor: grab;
+.minimal-button .icon {
+  font-size: 16px;
 }
-
-.minimized-title {
+.minimal-button:hover {
+  color: #000;
+  background-color: #9facff;
+}
+.group-badge {
+  background-color: #074273;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  margin-right: 4px;
   cursor: pointer;
-  background-color: #f0f0f0;
-  color: #333;
-  padding: 4px 10px;
-  border-radius: 4px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 14px;
+  transition: background-color 0.2s;
+  user-select: none;
 }
-
+.title-text {
+  flex-grow: 1;
+  padding: 0 8px;
+  font-size: 14px;
+  color: #333;
+}
 .overlay.minimized {
-  width: 150px;
-  height: 30px;
+  width: auto !important;
+  height: 35px !important;
   cursor: default;
 }
-
 .overlay {
   position: absolute;
   width: auto;
@@ -677,23 +889,25 @@ defineExpose({
   display: flex;
   flex-direction: column;
   cursor: move;
+  transition: border-color 0.2s;
+  overflow: hidden;
 }
-
 .no-transition {
   transition: none !important;
 }
-
 .header {
   display: flex;
   justify-content: flex-start;
   align-items: center;
   width: 100%;
   padding: 4px;
-  border-top-left-radius: 4px;
-  border-top-right-radius: 4px;
-  background-color: #fff;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  background: linear-gradient(135deg, #2189791d 0%, #15a2da25 100%);
+  min-height: 35px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
-
 .content {
   flex-grow: 1;
   overflow: auto;
@@ -701,12 +915,10 @@ defineExpose({
   max-height: calc(100% - 50px);
   box-sizing: border-box;
 }
-
 .draggable-line {
   position: absolute;
   opacity: 1;
 }
-
 .draggable-line.right-vertical {
   top: 0;
   right: 0;
@@ -714,7 +926,6 @@ defineExpose({
   height: 100%;
   cursor: ew-resize;
 }
-
 .draggable-line.left-vertical {
   top: 0;
   left: 0;
@@ -722,7 +933,6 @@ defineExpose({
   height: 100%;
   cursor: ew-resize;
 }
-
 .draggable-line.bottom-horizontal {
   bottom: 0;
   left: 0;
@@ -730,7 +940,6 @@ defineExpose({
   height: 5px;
   cursor: ns-resize;
 }
-
 .draggable-line.top-horizontal {
   top: 0;
   left: 0;
@@ -738,8 +947,10 @@ defineExpose({
   height: 5px;
   cursor: ns-resize;
 }
-
 .resizing-highlight-line {
   background-color: #080b0e43;
+}
+.draggable-line:hover {
+  background-color: #2196f330;
 }
 </style>

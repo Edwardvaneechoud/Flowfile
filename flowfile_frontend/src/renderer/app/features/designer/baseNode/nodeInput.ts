@@ -116,6 +116,7 @@ export interface NodeBase {
   pos_y: number
   is_setup?: boolean
   description?: string
+  is_user_defined?: boolean
 }
 
 interface ExternalSource {
@@ -346,6 +347,10 @@ export interface NodeUnique extends NodeSingleInput {
 
 export interface NodeGraphSolver extends NodeSingleInput {
   graph_solver_input: GraphSolverInput
+}
+
+export interface NodeUserDefined extends NodeMultiInput {
+  settings: any
 }
 
 export interface NodeFormula extends NodeSingleInput {

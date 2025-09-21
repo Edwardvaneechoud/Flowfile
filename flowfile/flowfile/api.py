@@ -440,7 +440,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
     temp_dir_obj: Optional[TemporaryDirectory] = None
     try:
         original_execution_settings = flow_graph.flow_settings.model_copy()
-        flow_graph.flow_settings.execution_location = "auto"
+        flow_graph.flow_settings.execution_location = "local"  # when running in the process. Go for speed first
         flow_graph.flow_settings.execution_mode = "Development"
         flow_file_path, temp_dir_obj = _save_flow_to_location(flow_graph, storage_location)
         if not flow_file_path:
@@ -455,7 +455,6 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
             return False
 
         flow_id = import_flow_to_editor(flow_file_path, auth_token)
-        print(flow_id, "flow_id", flow_in_single_mode, automatically_open_browser)
         if flow_id is not None:
             if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)

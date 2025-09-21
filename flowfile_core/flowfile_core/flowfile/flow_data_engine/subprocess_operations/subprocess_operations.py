@@ -39,7 +39,7 @@ def trigger_df_operation(flow_id: int, node_id: int | str, lf: pl.LazyFrame, fil
              'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id}
     v = requests.post(url=f'{WORKER_URL}/submit_query/', json=_json)
     if not v.ok:
-        raise Exception(f'Could not cache the data, {v.text}')
+        raise Exception(f'trigger_df_operation: Could not cache the data, {v.text}')
     return Status(**v.json())
 
 
@@ -49,7 +49,7 @@ def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, flow_id: int, node
              'sample_size': sample_size, 'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id}
     v = requests.post(url=f'{WORKER_URL}/store_sample/', json=_json)
     if not v.ok:
-        raise Exception(f'Could not cache the data, {v.text}')
+        raise Exception(f'trigger_sample_operation: Could not cache the data, {v.text}')
     return Status(**v.json())
 
 
@@ -67,9 +67,10 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
                                       flowfile_flow_id=flow_id,
                                       flowfile_node_id=node_id
                                       )
+    print("fuzzy join input", fuzzy_join_input)
     v = requests.post(f'{WORKER_URL}/add_fuzzy_join', data=fuzzy_join_input.model_dump_json())
     if not v.ok:
-        raise Exception(f'Could not cache the data, {v.text}')
+        raise Exception(f'trigger_fuzzy_match_operation: Could not cache the data, {v.text}')
     return Status(**v.json())
 
 
@@ -78,7 +79,7 @@ def trigger_create_operation(flow_id: int, node_id: int | str, received_table: R
     f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.model_dump_json(),
                       params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
     if not f.ok:
-        raise Exception(f'Could not cache the data, {f.text}')
+        raise Exception(f'trigger_create_operation: Could not cache the data, {f.text}')
     return Status(**f.json())
 
 
@@ -86,7 +87,7 @@ def trigger_database_read_collector(database_external_read_settings: DatabaseExt
     f = requests.post(url=f'{WORKER_URL}/store_database_read_result',
                       data=database_external_read_settings.model_dump_json())
     if not f.ok:
-        raise Exception(f'Could not cache the data, {f.text}')
+        raise Exception(f'trigger_database_read_collector: Could not cache the data, {f.text}')
     return Status(**f.json())
 
 
@@ -94,7 +95,7 @@ def trigger_database_write(database_external_write_settings: DatabaseExternalWri
     f = requests.post(url=f'{WORKER_URL}/store_database_write_result',
                       data=database_external_write_settings.model_dump_json())
     if not f.ok:
-        raise Exception(f'Could not cache the data, {f.text}')
+        raise Exception(f'trigger_database_write: Could not cache the data, {f.text}')
     return Status(**f.json())
 
 
@@ -102,7 +103,7 @@ def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWr
     f = requests.post(url=f'{WORKER_URL}/write_data_to_cloud',
                       data=database_external_write_settings.model_dump_json())
     if not f.ok:
-        raise Exception(f'Could not cache the data, {f.text}')
+        raise Exception(f'trigger_cloud_storage_write: Could not cache the data, {f.text}')
     return Status(**f.json())
 
 
@@ -111,7 +112,7 @@ def get_results(file_ref: str) -> Status | None:
     if f.status_code == 200:
         return Status(**f.json())
     else:
-        raise Exception(f'Could not fetch the data, {f.text}')
+        raise Exception(f'get_results: Could not fetch the data, {f.text}')
 
 
 def results_exists(file_ref: str):
@@ -125,6 +126,25 @@ def results_exists(file_ref: str):
         logger.error(f"Failed to check results existence: {str(e)}")
         if "Connection refused" in str(e):
             logger.info("")
+        return False
+
+
+def clear_task_from_worker(file_ref: str) -> bool:
+    """
+    Clears a task from the worker service by making a DELETE request. It also removes associated cached files.
+    Args:
+        file_ref (str): The unique identifier of the task to clear.
+
+    Returns:
+        bool: True if the task was successfully cleared, False otherwise.
+    """
+    try:
+        f = requests.delete(f'{WORKER_URL}/clear_task/{file_ref}')
+        if f.status_code == 200:
+            return True
+        return False
+    except requests.RequestException as e:
+        logger.error(f"Failed to remove results: {str(e)}")
         return False
 
 

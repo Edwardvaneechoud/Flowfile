@@ -42,7 +42,7 @@ import { NodeTemplate } from "../../types";
 
 const { nodes } = useNodes();
 
-type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "output";
+type CategoryKey = "input" | "transform" | "combine" | "aggregate" | "output" | "custom";
 
 interface CategoryInfo {
   name: string;
@@ -59,6 +59,7 @@ const categories: Categories = {
   combine: { name: "Combine Operations", isOpen: true },
   aggregate: { name: "Aggregations", isOpen: true },
   output: { name: "Output Operations", isOpen: true },
+  custom: { name: "User Defined Operations", isOpen: true },
 };
 
 const openCategories = ref<{ [K in CategoryKey]: boolean }>(

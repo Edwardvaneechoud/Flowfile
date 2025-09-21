@@ -88,16 +88,27 @@ export function getResourceServicePath(resourceName: string): string {
   return "";
 }
 
+// Update the getProcessEnv function
 function getProcessEnv(): NodeJS.ProcessEnv {
   const isWindows = platform() === "win32";
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
-  const flowfileDir = join(homeDir, ".flowfile");
-  const cacheDirRoot = join(flowfileDir, ".tmp");
 
-  const dirsToCreate = [flowfileDir, cacheDirRoot];
+  // Create standardized Flowfile storage directory
+  const flowfileStorageDir = join(homeDir, ".flowfile");
 
-  for (const dir of dirsToCreate) {
+  // Ensure the base directory and subdirectories exist
+  const requiredDirs = [
+    flowfileStorageDir,
+    join(flowfileStorageDir, "cache"),
+    join(flowfileStorageDir, "temp"),
+    join(flowfileStorageDir, "logs"), // Flowfile application logs
+    join(flowfileStorageDir, "system_logs"), // System/Electron logs
+    join(flowfileStorageDir, "flows"),
+    join(flowfileStorageDir, "database"),
+  ];
+
+  for (const dir of requiredDirs) {
     try {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
@@ -112,6 +123,8 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     HOME: homeDir,
     DOCKER_CONFIG: join(homeDir, ".docker"),
     TMPDIR: tempDir,
+    // Set the standardized storage directory
+    FLOWFILE_STORAGE_DIR: flowfileStorageDir,
   };
 
   if (isWindows) {
@@ -127,6 +140,8 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     DOCKER_HOST: "unix:///var/run/docker.sock",
   };
 }
+
+// Remove the old flowfileDir and cacheDirRoot logic since it's now centralized
 
 function withProductionError<T>(
   fn: (...args: any[]) => Promise<T | null>,

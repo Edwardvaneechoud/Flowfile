@@ -1,3 +1,4 @@
+<!-- CustomNode.vue -->
 <template>
   <div v-bind="$attrs">
     <div class="custom-node-header" data="description_display" @contextmenu="onTitleClick">
@@ -41,7 +42,15 @@
       </div>
     </div>
     <div ref="nodeEl" class="custom-node" @contextmenu.prevent="showContextMenu">
-      <component :is="data.component" :node-id="data.id" />
+      <!-- Use GenericNode if nodeTemplate exists, otherwise use the component directly -->
+      <generic-node
+        v-if="data.nodeTemplate"
+        :node-id="data.id"
+        :node-data="{ ...data.nodeTemplate, id: data.id, label: data.label }"
+      />
+      <component :is="data.component" v-else-if="data.component" :node-id="data.id" />
+
+      <!-- Handles are always rendered -->
       <div
         v-for="(input, index) in data.inputs"
         :key="input.id"
@@ -109,6 +118,8 @@ import { useNodeStore } from "../../../../stores/column-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "./types";
 import { toSnakeCase } from "./utils";
+import GenericNode from "../../nodes/GenericNode.vue";
+import type { NodeTemplate } from "../../types";
 
 const nodeStore = useNodeStore();
 const nodeEl = ref<HTMLElement | null>(null);
@@ -123,6 +134,30 @@ const contextMenuY = ref<number>(0);
 
 const CHAR_LIMIT = 100;
 
+// Define the data structure
+interface NodeData {
+  id: number;
+  label: string;
+  component?: any; // Made optional since we might use nodeTemplate instead
+  inputs: Array<{
+    id: string;
+    position: any;
+  }>;
+  outputs: Array<{
+    id: string;
+    position: any;
+  }>;
+  nodeTemplate?: NodeTemplate; // Optional NodeTemplate data
+  nodeItem?: string; // Optional node item name for backward compatibility
+}
+
+const props = defineProps({
+  data: {
+    type: Object as () => NodeData,
+    required: true,
+  },
+});
+
 const onTitleClick = (event: MouseEvent) => {
   toggleEditMode(true);
   mouseX.value = event.clientX;
@@ -133,24 +168,18 @@ const showContextMenu = (event: MouseEvent) => {
   event.preventDefault();
   event.stopPropagation();
 
-  // Close any existing edit mode
   if (editMode.value) {
     toggleEditMode(false);
   }
 
-  // Store the click position
   contextMenuX.value = event.clientX;
   contextMenuY.value = event.clientY;
-
-  // Show the menu
   showMenu.value = true;
 
-  // Setup click outside handler after a brief delay
   setTimeout(() => {
     window.addEventListener("click", handleClickOutsideMenu);
   }, 0);
 
-  // Update position after the menu is rendered
   nextTick(() => {
     updateMenuPosition();
   });
@@ -166,7 +195,6 @@ const updateMenuPosition = () => {
   let left = contextMenuX.value;
   let top = contextMenuY.value;
 
-  // Adjust if menu would go off-screen
   if (left + menuRect.width > viewportWidth - 10) {
     left = viewportWidth - menuRect.width - 10;
   }
@@ -175,13 +203,11 @@ const updateMenuPosition = () => {
     top = viewportHeight - menuRect.height - 10;
   }
 
-  // Update position
   contextMenuX.value = left;
   contextMenuY.value = top;
 };
 
 const handleClickOutsideMenu = (event: MouseEvent) => {
-  // Close the menu if click is outside
   if (menuEl.value && !menuEl.value.contains(event.target as Node)) {
     closeContextMenu();
   }
@@ -193,16 +219,18 @@ const closeContextMenu = () => {
 };
 
 const copyNode = () => {
-  // Store the node data in localStorage
   const nodeCopyValue: NodeCopyValue = {
     nodeIdToCopyFrom: props.data.id,
-    type: props.data.component.__name || "unknown",
+    type: props.data.nodeTemplate?.item || props.data.component?.__name || "unknown",
     label: props.data.label,
     description: description.value,
     numberOfInputs: props.data.inputs.length,
     numberOfOutputs: props.data.outputs.length,
-    typeSnakeCase: toSnakeCase(props.data.component.__name || "unknown"),
+    typeSnakeCase:
+      props.data.nodeTemplate?.item || toSnakeCase(props.data.component?.__name || "unknown"),
     flowIdToCopyFrom: nodeStore.flow_id,
+    multi: props.data.nodeTemplate?.multi,
+    nodeTemplate: props.data.nodeTemplate,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
 
@@ -211,8 +239,7 @@ const copyNode = () => {
 };
 
 const deleteNode = () => {
-  // Implementation will be added in the next iteration
-  console.log("Paste node functionality will be implemented in the next step");
+  console.log("Deleting node");
   if (nodeStore.vueFlowInstance) {
     let vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
     vueFlow.removeNodes(props.data.id.toLocaleString(), true);
@@ -238,7 +265,7 @@ const contextMenuStyle = computed(() => {
 
 const descriptionTextStyle = computed(() => {
   const textLength = description.value.length;
-  let minWidth = "200px"; // default
+  let minWidth = "200px";
 
   if (textLength < 20) {
     minWidth = "100px";
@@ -322,7 +349,6 @@ const isTruncated = computed(() => {
   try {
     return description.value.length > CHAR_LIMIT;
   } catch (error) {
-    // Return false if description is null or accessing its properties causes an error
     return false;
   }
 });
@@ -339,13 +365,6 @@ const descriptionSummary = computed(() => {
   }
 
   return description.value;
-});
-
-const props = defineProps({
-  data: {
-    type: Object,
-    required: true,
-  },
 });
 
 function getHandleStyle(index: number, total: number) {
@@ -368,7 +387,6 @@ onMounted(async () => {
   await nextTick();
   await getNodeDescription();
 
-  // Listen for window resize to update context menu position if it's open
   window.addEventListener("resize", () => {
     if (showMenu.value) {
       updateMenuPosition();
@@ -379,10 +397,8 @@ onMounted(async () => {
 
   watch(
     () => {
-      const flowId = nodeStore.flow_id; // Get the current flow ID
-      const nodeId = props.data.id; // Get the node ID
-
-      // Access the nested description
+      const flowId = nodeStore.flow_id;
+      const nodeId = props.data.id;
       return nodeStore.nodeDescriptions[flowId]?.[nodeId];
     },
     (newDescription) => {
@@ -422,9 +438,9 @@ onMounted(async () => {
 .description-display {
   position: relative;
   white-space: normal;
-  min-width: 100px; /* Default minimum width */
+  min-width: 100px;
   max-width: 300px;
-  width: auto; /* Allow dynamic width */
+  width: auto;
   padding: 2px 4px;
   cursor: pointer;
   background-color: rgba(185, 185, 185, 0.117);
@@ -490,7 +506,6 @@ onMounted(async () => {
   right: -8px;
 }
 
-/* Context Menu Styles */
 .context-menu {
   position: fixed;
   z-index: 10000;

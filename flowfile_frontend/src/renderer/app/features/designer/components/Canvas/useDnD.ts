@@ -1,11 +1,11 @@
 //useDnD.ts
-import { useVueFlow, Node, Position, } from "@vue-flow/core";
+import { useVueFlow, Node, Position } from "@vue-flow/core";
 import { ref, watch, markRaw, nextTick } from "vue";
-import { NodeTemplate, NodeInput, VueFlowInput} from "../../types";
+import { NodeTemplate, NodeInput, VueFlowInput } from "../../types";
 import { NodeCopyInput, NodePromise } from "./types";
 import { getComponent, getComponentRaw } from "./componentLoader";
+import { getNodeTemplateByItem } from './useNodes';
 import { insertNode, copyNode } from './backendInterface'
-
 
 let id = 0;
 
@@ -71,7 +71,7 @@ export default function useDragAndDrop() {
       let nodeId: number = getId()
       const newNode: Node = {
         id: String(nodeId),
-        type:  "custom-node",
+        type: "custom-node",
         position: {
           x: node.posX,
           y: node.posY,
@@ -87,7 +87,9 @@ export default function useDragAndDrop() {
           outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
             id: `output-${i}`,
             position: Position.Right,
-          }))
+          })),
+          // Include nodeTemplate if available
+          nodeTemplate: node.nodeTemplate
         },
       };
       const nodePromise: NodePromise = {
@@ -101,21 +103,24 @@ export default function useDragAndDrop() {
       copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise)
 
       addNodes(newNode);
-    }
-  );
+    });
   }
 
   const getMaxDataId = (nodes: NodeInput[]): number => {
     return nodes.reduce((maxId, node) => {
       return node.id > maxId ? node.id : maxId;
-    }, 0); // Initial value should be -Infinity to ensure it works with any positive number
+    }, 0);
   };
-
 
   async function getNodeToAdd(node: NodeInput): Promise<Node> {
     const numberOfInputs: number = (node.multi) ? 1 : node.input;
 
-    const component = await getComponent(node.item);
+    // Fetch the NodeTemplate for this node
+    const nodeTemplate = await getNodeTemplateByItem(node.item);
+    
+    // Get the component (which will be GenericNode)
+    const component = await getComponent(nodeTemplate || node.item);
+    
     const newNode: Node = {
       id: String(node.id),
       type: "custom-node",
@@ -135,6 +140,8 @@ export default function useDragAndDrop() {
           id: `output-${i}`,
           position: Position.Right,
         })),
+        // IMPORTANT: Include the complete NodeTemplate
+        nodeTemplate: nodeTemplate
       },
     };
     return newNode;
@@ -163,24 +170,26 @@ export default function useDragAndDrop() {
       y: event.clientY,
     });
     if (!event.dataTransfer) return;
+    
+    // Parse the NodeTemplate from the drag data
     const nodeData: NodeTemplate = JSON.parse(
       event.dataTransfer.getData("application/vueflow"),
     );
-    console.log('nodeData:', nodeData)
     const nodeId = getId();
 
-    getComponent(nodeData.item)
+    // Get component (will be GenericNode)
+    getComponent(nodeData)
       .then((component) => {
         const numberOfInputs: number = (nodeData.multi) ? 1 : nodeData.input;
-        console.log('logging' , numberOfInputs)
+        
         const newNode: Node = {
           id: String(nodeId),
           type: "custom-node",
           position,
           data: {
-            id: nodeId, // Pass nodeId here
+            id: nodeId,
             label: nodeData.name,
-            component: markRaw(component), // Pass component directly
+            component: markRaw(component),
             inputs: Array.from({ length: numberOfInputs }, (_, i) => ({
               id: `input-${i}`,
               position: Position.Left,
@@ -189,9 +198,12 @@ export default function useDragAndDrop() {
               id: `output-${i}`,
               position: Position.Right,
             })),
-            nodeItem: nodeData.item
+            // IMPORTANT: Pass the complete NodeTemplate data
+            nodeTemplate: nodeData
           },
         };
+        
+        
         const { off } = onNodesInitialized(() => {
           updateNode(String(nodeId), (node) => ({
             position: {
@@ -202,9 +214,8 @@ export default function useDragAndDrop() {
 
           off();
         });
-        console.log("nodeData", nodeData)
+        
         insertNode(flowId, nodeId, nodeData.item)
-        console.log(newNode)
         addNodes(newNode);
       })
       .catch((error) => {

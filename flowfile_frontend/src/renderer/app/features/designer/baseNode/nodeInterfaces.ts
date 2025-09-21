@@ -1,5 +1,8 @@
 import { ref } from 'vue'
 
+
+type DataTypeGroup = "String" | "Date" | "Numeric"
+
 export interface FileColumn {
   name: string
   data_type: string
@@ -10,6 +13,7 @@ export interface FileColumn {
   number_of_filled_values: number
   number_of_unique_values: number
   size: number
+  data_type_group: DataTypeGroup
 }
 
 export interface TableExample {
@@ -20,6 +24,8 @@ export interface TableExample {
   table_schema: FileColumn[]
   columns: string[]
   data: Record<string, any>[]
+  has_example_data: boolean
+  has_run_with_current_setup: boolean
 }
 
 export interface NodeData {
@@ -90,4 +96,9 @@ export interface ExpressionRef {
 export interface ExpressionsOverview {
   expression_type: string
   expressions: ExpressionRef[]
+}
+
+export interface NodeTitleInfo {
+  title: string
+  intro: string
 }

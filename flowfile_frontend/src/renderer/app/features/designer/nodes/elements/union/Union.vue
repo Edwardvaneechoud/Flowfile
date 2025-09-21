@@ -34,7 +34,6 @@ const loadNodeData = async (nodeId: number) => {
     }
   }
   dataLoaded.value = true;
-  nodeStore.isDrawerOpen = true;
   console.log("loadNodeData from groupby");
 };
 
@@ -48,7 +47,6 @@ const pushNodeData = async () => {
   if (unionInput.value) {
     nodeStore.updateSettings(nodeUnion);
   }
-  nodeStore.isDrawerOpen = false;
 };
 
 defineExpose({

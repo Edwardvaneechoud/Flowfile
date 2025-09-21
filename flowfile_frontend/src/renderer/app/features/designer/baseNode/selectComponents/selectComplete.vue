@@ -68,13 +68,10 @@ const loadNodeData = async () => {
   if (result) {
     dataLoaded.value = true;
     nodeSelect.value = createNodeSelect(nodeStore.flow_id, nodeStore.node_id).value;
-    console.log("logging node select");
-    console.log(nodeSelect.value);
     const main_input = result.main_input;
     try {
       // Try to parse the result.value.setting_input
       if (result?.setting_input && main_input && result?.setting_input.is_setup) {
-        console.log("parsing main result");
         nodeSelect.value = result.setting_input;
         keepMissing.value = nodeSelect.value.keep_missing;
         updateNodeSelect(main_input, nodeSelect);
@@ -84,13 +81,10 @@ const loadNodeData = async () => {
     } catch (error) {
       // If there's an error, fall back to this logic
       if (main_input && nodeSelect.value) {
-        console.log("doing this");
         nodeSelect.value.depending_on_id = main_input.node_id;
         nodeSelect.value.flow_id = nodeStore.flow_id;
         nodeSelect.value.node_id = nodeStore.node_id;
         nodeSelect.value.keep_missing = keepMissing.value;
-        console.log("logging node select");
-        console.log(nodeSelect.value);
         updateNodeSelect(main_input, nodeSelect);
       }
     }

@@ -1,17 +1,21 @@
 <template>
   <div v-if="!isLoading" class="header">
-    <div class="left-section">
-      <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+    <div class="header-top">
+      <div class="left-section">
+        <header-buttons ref="headerButtons" @open-flow="openFlow" @refresh-flow="refreshFlow" />
+      </div>
     </div>
-    <div class="middle-section">
-      <flow-selector
-        ref="flowSelector"
-        @flow-changed="handleFlowChange"
-        @close-tab="handleCloseFlow"
-      />
-    </div>
-    <div class="right-section">
-      <Status />
+    <div class="header-bottom">
+      <div class="middle-section">
+        <flow-selector
+          ref="flowSelector"
+          @flow-changed="handleFlowChange"
+          @close-tab="handleCloseFlow"
+        />
+      </div>
+      <div class="right-section">
+        <Status />
+      </div>
     </div>
   </div>
   <!-- Show loading state while fetching flows -->
@@ -34,6 +38,10 @@
         <span class="material-icons">folder_open</span>
         Open existing flow
       </el-button>
+      <el-button type="primary" class="action-button" @click="openQuickCreateDialog">
+        <span class="material-icons">folder_open</span>
+        Quick create
+      </el-button>
     </div>
   </div>
   <canvas-flow
@@ -46,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from "vue";
+import { ref, onMounted } from "vue";
 import HeaderButtons from "../features/designer/components/HeaderButtons/HeaderButtons.vue";
 import Status from "../features/designer/editor/status.vue";
 import CanvasFlow from "../features/designer/components/Canvas/CanvasFlow.vue";
@@ -195,6 +203,13 @@ const openFlowDialog = () => {
   }
 };
 
+const openQuickCreateDialog = () => {
+  if (headerButtons.value) {
+    console.log("Opening quick create dialog");
+    headerButtons.value.handleQuickCreateAction();
+  }
+};
+
 const initialSetup = async () => {
   if (initialLoadComplete.value) {
     console.log("Initial setup already completed");
@@ -246,38 +261,120 @@ onMounted(async () => {
 
 <style scoped>
 .canvas {
-  height: calc(100vh - 50px);
+  height: calc(100vh - 100px); /* Adjusted for potentially taller header */
 }
 
 .header {
-  display: flex;
-  justify-content: space-between;
-  align-items: stretch;
-  height: 50px;
   background-color: #f5f5f5;
   border-bottom: 1px solid #ececec;
 }
 
-.left-section {
-  min-width: 250px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
+/* Desktop layout - single row */
+@media (min-width: 1025px) {
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: stretch;
+    height: 50px;
+  }
+
+  .header-top {
+    display: contents; /* Makes children behave as direct children of .header */
+  }
+
+  .header-bottom {
+    display: contents;
+  }
+
+  .left-section {
+    min-width: 250px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+  }
+
+  .middle-section {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  .right-section {
+    min-width: 150px;
+    padding: 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .canvas {
+    height: calc(100vh - 50px);
+  }
 }
 
-.middle-section {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
+/* Mobile/tablet layout - stacked */
+@media (max-width: 1024px) {
+  .header {
+    height: auto;
+    min-height: 80px;
+  }
+
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 50px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .header-bottom {
+    display: flex;
+    height: 40px;
+    padding: 0 8px;
+  }
+
+  .left-section {
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+  }
+
+  .middle-section {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    padding: 0 8px;
+  }
+
+  .right-section {
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .canvas {
+    height: calc(100vh - 90px);
+  }
 }
 
-.right-section {
-  min-width: 150px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+/* Very narrow screens */
+@media (max-width: 480px) {
+  .left-section {
+    padding: 0 8px;
+    min-width: auto;
+  }
+
+  .right-section {
+    padding: 0 8px;
+    min-width: auto;
+  }
+
+  .middle-section {
+    padding: 0 4px;
+  }
 }
 
 /* Loading state styles */

@@ -51,3 +51,4 @@ saved_flows/
 /flowfile/flowfile/web/static/
 flowfile.db
 local_data
+/custom_nodes/

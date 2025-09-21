@@ -26,19 +26,17 @@ COPY pyproject.toml poetry.lock* /app/
 # Install dependencies
 RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
 
+# Copy the shared package
+COPY shared /app/shared
+
 # Copy the flowfile_core package contents into the container
 COPY flowfile_core/flowfile_core /app/flowfile_core
-
-# Create directories for saved flows and shared files
-RUN mkdir -p /app/flowfile_core/saved_flows \
-    && mkdir -p /app/shared
 
 # Expose the port the app runs on
 EXPOSE 63578
 
-# Set Python path to recognize the package
+# Set Python path to recognize the packages
 ENV PYTHONPATH=/app
-
 ENV RUNNING_IN_DOCKER=true
 
 # Change working directory to where the module is located

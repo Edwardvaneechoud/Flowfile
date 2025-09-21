@@ -30,6 +30,7 @@ df = ff.read_csv(
 ```
 
 **Key Parameters (same as Polars):**
+
 - `separator`: Field delimiter (default: `,`)
 - `has_header`: First row contains column names (default: `True`)
 - `skip_rows`: Skip rows at start of file
@@ -222,18 +223,5 @@ delta_data = ff.scan_delta(
 )
 ```
 
-## Error Handling
-
-```python
-# Handle missing files gracefully
-try:
-    df = ff.read_csv("might_not_exist.csv")
-except FileNotFoundError:
-    # Create empty DataFrame with expected schema
-    df = ff.FlowFrame({"id": [], "name": []})
-
-# For cloud storage, connection errors are handled automatically
-# Invalid connections will raise clear error messages
-```
 
 [← Previous: Introduction](index.md) | [Next: Writing Data →](writing-data.md)

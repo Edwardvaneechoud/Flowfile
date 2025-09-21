@@ -1,11 +1,11 @@
 import logging
 from pathlib import Path
 from datetime import datetime
-from flowfile_core.configs.settings import get_temp_dir
 import os
 import logging.handlers
 import queue
 import threading
+from shared.storage_config import storage
 
 _process_safe_queue = queue.Queue(-1)
 main_logger = logging.getLogger('PipelineHandler')
@@ -351,22 +351,14 @@ class FlowLogger:
             pass  # Ignore errors during deletion
 
 
-def get_logs_dir() -> Path:
-    """Get the directory for flow logs"""
-    base_dir = Path(get_temp_dir())
-    logs_dir = base_dir / "flowfile_logs"
-    logs_dir.mkdir(exist_ok=True, parents=True)
-    return logs_dir
-
-
 def get_flow_log_file(flow_id: int) -> Path:
     """Get the path to the log file for a specific flow"""
-    return get_logs_dir() / f"flow_{flow_id}.log"
+    return storage.logs_directory / f"flow_{flow_id}.log"
 
 
 def cleanup_old_logs(max_age_days: int = 7):
     """Delete log files older than specified days"""
-    logs_dir = get_logs_dir()
+    logs_dir = storage.logs_directory
     now = datetime.now().timestamp()
     deleted_count = 0
 
@@ -384,7 +376,7 @@ def cleanup_old_logs(max_age_days: int = 7):
 
 def clear_all_flow_logs():
     """Delete all flow log files"""
-    logs_dir = get_logs_dir()
+    logs_dir = storage.logs_directory
     deleted_count = 0
 
     try:
