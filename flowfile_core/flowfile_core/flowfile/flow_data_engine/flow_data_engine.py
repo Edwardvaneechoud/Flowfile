@@ -67,7 +67,7 @@ from flowfile_core.flowfile.sources.external_sources.base_class import ExternalD
 T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
 
 
-def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform_schemas.JoinInput) -> Tuple[T, T, Dict[str, str]]:
+def _handle_duplication_join_keys(left_df: T, right_df: T, join_input_manager: transform_schemas.JoinInputManager) -> Tuple[T, T, Dict[str, str]]:
     """Temporarily renames join keys to avoid conflicts during a join.
 
     This helper function checks the join type and renames the join key columns
@@ -86,18 +86,17 @@ def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform
         - The (potentially modified) right DataFrame.
         - A dictionary mapping the temporary names back to their desired final names.
     """
-    join_input_manager = transform_schemas.JoinInputManager(join_input)
 
     def _construct_temp_name(column_name: str) -> str:
         return "__FL_TEMP__"+column_name
 
-    if join_input.how == 'right':
+    if join_input_manager.how == 'right':
         left_df = left_df.with_columns(pl.col(jk.new_name).alias(_construct_temp_name(jk.new_name))
                                        for jk in join_input_manager.left_select.join_key_selects)
         reverse_actions = {
             _construct_temp_name(jk.new_name): transform_schemas.construct_join_key_name("left", jk.new_name)
             for jk in join_input_manager.left_select.join_key_selects}
-    elif join_input.how in ('left', 'inner'):
+    elif join_input_manager.how in ('left', 'inner'):
         right_df = right_df.with_columns(pl.col(jk.new_name).alias(_construct_temp_name(jk.new_name))
                                        for jk in join_input_manager.right_select.join_key_selects)
         reverse_actions = {
@@ -1772,12 +1771,12 @@ class FlowDataEngine:
         right = (other.data_frame.select(get_select_columns(join_input.right_select.renames))
                  .rename(join_input_manager.right_manager.get_rename_table()))
         n_records = -1
-        left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input)
+        left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input_manager)
         left, right = rename_df_table_for_join(left, right, join_input_manager.get_join_key_renames())
         if join_input.how == 'right':
             joined_df = right.join(
                 other=left,
-                left_on=join_input_manager.right_join_keys,
+                left_on=join_input_manager.get_right_join_keys(),
                 right_on=join_input_manager.left_join_keys,
                 how="left",
                 suffix="").rename(reverse_join_key_mapping)

@@ -751,14 +751,11 @@ class JoinInputManager(JoinSelectManagerMixin):
                right_select: Union[List[SelectInput], List[str]],
                how: JoinStrategy = 'inner') -> "JoinInputManager":
         """Factory method to create JoinInput from various input formats."""
-        parsed_mapping = cls.parse_join_mapping(join_mapping)
-        left_inputs = cls.parse_select(left_select)
-        right_inputs = cls.parse_select(right_select)
-
+        # Use JoinInput's own create method for parsing
         join_input = JoinInput(
-            join_mapping=parsed_mapping,
-            left_select=left_inputs,
-            right_select=right_inputs,
+            join_mapping=join_mapping,
+            left_select=left_select,
+            right_select=right_select,
             how=how
         )
 
@@ -766,36 +763,10 @@ class JoinInputManager(JoinSelectManagerMixin):
         manager.set_join_keys()
         return manager
 
-    @staticmethod
-    def parse_join_mapping(join_mapping: Union[List[JoinMap], Tuple[str, str], str,
-                                               List[Dict]]) -> List[JoinMap]:
-        """Parses various input formats for join keys into a standardized list of `JoinMap` objects."""
-        if isinstance(join_mapping, (tuple, list)):
-            if len(join_mapping) == 0:
-                raise ValueError("Join mapping cannot be empty")
-
-            if all(isinstance(jm, dict) for jm in join_mapping):
-                return [JoinMap(**jm) for jm in join_mapping]
-
-            if all(isinstance(jm, JoinMap) for jm in join_mapping):
-                return join_mapping
-
-            if len(join_mapping) <= 2:
-                if len(join_mapping) == 2:
-                    if isinstance(join_mapping[0], str) and isinstance(join_mapping[1], str):
-                        return [JoinMap(left_col=join_mapping[0], right_col=join_mapping[1])]
-                elif len(join_mapping) == 1 and isinstance(join_mapping[0], str):
-                    return [JoinMap(left_col=join_mapping[0], right_col=join_mapping[0])]
-
-        elif isinstance(join_mapping, str):
-            return [JoinMap(left_col=join_mapping, right_col=join_mapping)]
-
-        raise ValueError(f'No valid join mapping as input: {type(join_mapping)}')
-
     def set_join_keys(self) -> None:
         """Marks the `SelectInput` objects corresponding to join keys."""
-        left_join_keys = self.get_left_join_keys()
-        right_join_keys = self.get_right_join_keys()
+        left_join_keys = self._get_left_join_keys_set()
+        right_join_keys = self._get_right_join_keys_set()
 
         for select_input in self.input.left_select.renames:
             select_input.join_key = select_input.old_name in left_join_keys
@@ -803,23 +774,29 @@ class JoinInputManager(JoinSelectManagerMixin):
         for select_input in self.input.right_select.renames:
             select_input.join_key = select_input.old_name in right_join_keys
 
+    def _get_left_join_keys_set(self) -> Set[str]:
+        """Internal: Returns a set of the left-side join key column names."""
+        return {jm.left_col for jm in self.input.join_mapping}
+
+    def _get_right_join_keys_set(self) -> Set[str]:
+        """Internal: Returns a set of the right-side join key column names."""
+        return {jm.right_col for jm in self.input.join_mapping}
+
     def get_left_join_keys(self) -> Set[str]:
         """Returns a set of the left-side join key column names."""
-        return {jm.left_col for jm in self.input.join_mapping}
+        return self._get_left_join_keys_set()
 
     def get_right_join_keys(self) -> Set[str]:
         """Returns a set of the right-side join key column names."""
-        return {jm.right_col for jm in self.input.join_mapping}
+        return self._get_right_join_keys_set()
 
     def get_left_join_keys_list(self) -> List[str]:
         """Returns an ordered list of the left-side join key column names."""
-        used_mapping = self.get_used_join_mapping()
-        return [jm.left_col for jm in used_mapping]
+        return [jm.left_col for jm in self.used_join_mapping]
 
     def get_right_join_keys_list(self) -> List[str]:
         """Returns an ordered list of the right-side join key column names."""
-        used_mapping = self.get_used_join_mapping()
-        return [jm.right_col for jm in used_mapping]
+        return [jm.right_col for jm in self.used_join_mapping]
 
     def get_overlapping_records(self) -> Set[str]:
         """Finds column names that would conflict after the join."""
@@ -862,13 +839,13 @@ class JoinInputManager(JoinSelectManagerMixin):
         right_rename_table = self.right_manager.get_rename_table()
         left_join_rename_mapping = self.left_manager.get_join_key_rename_mapping("left")
         right_join_rename_mapping = self.right_manager.get_join_key_rename_mapping("right")
-
+        breakpoint()
         for join_map in self.input.join_mapping:
-            left_col = left_rename_table.get(join_map.left_col, join_map.left_col)
-            right_col = right_rename_table.get(join_map.right_col, join_map.right_col)
+            left_col = left_rename_table.get(join_map.left_col, None)
+            right_col = right_rename_table.get(join_map.right_col, None)
 
-            final_left = left_join_rename_mapping.get(left_col, left_col)
-            final_right = right_join_rename_mapping.get(right_col, right_col)
+            final_left = left_join_rename_mapping.get(left_col, None)
+            final_right = right_join_rename_mapping.get(right_col, None)
 
             new_mappings.append(JoinMap(left_col=final_left, right_col=final_right))
 
@@ -878,12 +855,20 @@ class JoinInputManager(JoinSelectManagerMixin):
 
     @property
     def left_select(self) -> JoinInputsManager:
-        """Backward compatibility: Access left_manager as left_select."""
+        """Backward compatibility: Access left_manager as left_select.
+
+        This returns the MANAGER, not the data model.
+        Usage: manager.left_select.join_key_selects
+        """
         return self.left_manager
 
     @property
     def right_select(self) -> JoinInputsManager:
-        """Backward compatibility: Access right_manager as right_select."""
+        """Backward compatibility: Access right_manager as right_select.
+
+        This returns the MANAGER, not the data model.
+        Usage: manager.right_select.join_key_selects
+        """
         return self.right_manager
 
     @property
@@ -902,19 +887,38 @@ class JoinInputManager(JoinSelectManagerMixin):
         return self.get_overlapping_records()
 
     @property
+    def used_join_mapping(self) -> List[JoinMap]:
+        """Backward compatibility: Returns used join mapping.
+
+        This property is critical - it's used by left_join_keys and right_join_keys.
+        """
+        return self.get_used_join_mapping()
+
+    @property
     def left_join_keys(self) -> List[str]:
-        """Backward compatibility: Returns left join keys list."""
-        return self.get_left_join_keys_list()
+        """Backward compatibility: Returns left join keys list.
+
+        IMPORTANT: Uses the used_join_mapping PROPERTY (not method).
+        """
+        return [jm.left_col for jm in self.used_join_mapping]
 
     @property
     def right_join_keys(self) -> List[str]:
-        """Backward compatibility: Returns right join keys list."""
-        return self.get_right_join_keys_list()
+        """Backward compatibility: Returns right join keys list.
+
+        IMPORTANT: Uses the used_join_mapping PROPERTY (not method).
+        """
+        return [jm.right_col for jm in self.used_join_mapping]
 
     @property
-    def used_join_mapping(self) -> List[JoinMap]:
-        """Backward compatibility: Returns used join mapping."""
-        return self.get_used_join_mapping()
+    def _left_join_keys(self) -> Set[str]:
+        """Backward compatibility: Private property for left join key set."""
+        return self._get_left_join_keys_set()
+
+    @property
+    def _right_join_keys(self) -> Set[str]:
+        """Backward compatibility: Private property for right join key set."""
+        return self._get_right_join_keys_set()
 
 
 class FuzzyMatchInputManager(JoinInputManager):
