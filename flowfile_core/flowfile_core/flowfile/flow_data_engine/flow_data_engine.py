@@ -86,20 +86,23 @@ def _handle_duplication_join_keys(left_df: T, right_df: T, join_input: transform
         - The (potentially modified) right DataFrame.
         - A dictionary mapping the temporary names back to their desired final names.
     """
+    join_input_manager = transform_schemas.JoinInputManager(join_input)
+
     def _construct_temp_name(column_name: str) -> str:
         return "__FL_TEMP__"+column_name
+
     if join_input.how == 'right':
         left_df = left_df.with_columns(pl.col(jk.new_name).alias(_construct_temp_name(jk.new_name))
-                                       for jk in join_input.left_select.join_key_selects)
+                                       for jk in join_input_manager.left_select.join_key_selects)
         reverse_actions = {
             _construct_temp_name(jk.new_name): transform_schemas.construct_join_key_name("left", jk.new_name)
-            for jk in join_input.left_select.join_key_selects}
+            for jk in join_input_manager.left_select.join_key_selects}
     elif join_input.how in ('left', 'inner'):
         right_df = right_df.with_columns(pl.col(jk.new_name).alias(_construct_temp_name(jk.new_name))
-                                       for jk in join_input.right_select.join_key_selects)
+                                       for jk in join_input_manager.right_select.join_key_selects)
         reverse_actions = {
             _construct_temp_name(jk.new_name): transform_schemas.construct_join_key_name("right", jk.new_name)
-            for jk in join_input.right_select.join_key_selects}
+            for jk in join_input_manager.right_select.join_key_selects}
     else:
         reverse_actions = {}
     return left_df, right_df, reverse_actions
@@ -1756,35 +1759,33 @@ class FlowDataEngine:
             Exception: If the join configuration is invalid or if `verify_integrity`
                 is True and the join is predicted to be too large.
         """
+        breakpoint()
         ensure_right_unselect_for_semi_and_anti_joins(join_input)
+        join_input_manager = transform_schemas.JoinInputManager(join_input)
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
         if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')
         if auto_generate_selection:
-            join_input.auto_rename()
-        left = self.data_frame.select(get_select_columns(join_input.left_select.renames)).rename(join_input.left_select.rename_table)
-        right = other.data_frame.select(get_select_columns(join_input.right_select.renames)).rename(join_input.right_select.rename_table)
-        if verify_integrity and join_input.how != 'right':
-            n_records = get_join_count(left, right, left_on_keys=join_input.left_join_keys,
-                                       right_on_keys=join_input.right_join_keys, how=join_input.how)
-            if n_records > 1_000_000_000:
-                raise Exception("Join will result in too many records, ending process")
-        else:
-            n_records = -1
+            join_input_manager.auto_rename()
+        left = (self.data_frame.select(get_select_columns(join_input_manager.left_select.renames))
+                .rename(join_input_manager.left_manager.get_rename_table()))
+        right = (other.data_frame.select(get_select_columns(join_input.right_select.renames))
+                 .rename(join_input_manager.right_manager.get_rename_table()))
+        n_records = -1
         left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input)
-        left, right = rename_df_table_for_join(left, right, join_input.get_join_key_renames())
+        left, right = rename_df_table_for_join(left, right, join_input_manager.get_join_key_renames())
         if join_input.how == 'right':
             joined_df = right.join(
                 other=left,
-                left_on=join_input.right_join_keys,
-                right_on=join_input.left_join_keys,
+                left_on=join_input_manager.right_join_keys,
+                right_on=join_input_manager.left_join_keys,
                 how="left",
                 suffix="").rename(reverse_join_key_mapping)
         else:
             joined_df = left.join(
                 other=right,
-                left_on=join_input.left_join_keys,
-                right_on=join_input.right_join_keys,
+                left_on=join_input_manager.left_join_keys,
+                right_on=join_input_manager.right_join_keys,
                 how=join_input.how,
                 suffix="").rename(reverse_join_key_mapping)
         left_cols_to_delete_after = [get_col_name_to_delete(col, 'left') for col in join_input.left_select.renames
@@ -1798,9 +1799,8 @@ class FlowDataEngine:
                                       ]
         if len(right_cols_to_delete_after + left_cols_to_delete_after) > 0:
             joined_df = joined_df.drop(left_cols_to_delete_after + right_cols_to_delete_after)
-        undo_join_key_remapping = get_undo_rename_mapping_join(join_input)
+        undo_join_key_remapping = get_undo_rename_mapping_join(join_input_manager)
         joined_df = joined_df.rename(undo_join_key_remapping)
-
         if verify_integrity:
             return FlowDataEngine(joined_df, calculate_schema_stats=True,
                                   number_of_records=n_records, streamable=False)

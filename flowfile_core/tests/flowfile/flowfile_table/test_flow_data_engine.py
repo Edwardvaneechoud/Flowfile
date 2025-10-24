@@ -326,12 +326,12 @@ def test_join_left():
 
 def test_join_right():
     join_input = transform_schema.JoinInput(**get_join_settings('right'))
-    self = FlowDataEngine([{"name": "eduward"},
+    flow_data_engine = FlowDataEngine([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
     other = FlowDataEngine([{"name": "edward"}])
-    result_df = self.join(join_input=join_input, other=other, verify_integrity=False,
-                             auto_generate_selection=True)
+    result_df = flow_data_engine.join(join_input=join_input, other=other, verify_integrity=False,
+                                      auto_generate_selection=True)
     expected_df = FlowDataEngine([{"right_name": "edward", "name" :"edward"}])
     result_df.assert_equal(expected_df)
 
@@ -365,9 +365,9 @@ def test_join_semi():
 
 def test_join_anti():
     join_input = transform_schema.JoinInput(
-        join_mapping='name',
-        left_select=[transform_schema.SelectInput(old_name='name', keep=True), transform_schema.SelectInput('other')],
-        right_select=[transform_schema.SelectInput(old_name='name', keep=False)],
+        join_mapping=[transform_schema.JoinMap('name')],
+        left_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=True), transform_schema.SelectInput(old_name='other')]),
+        right_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False)]),
         how='anti'
     )
     left_df = FlowDataEngine([{"name": "eduward", "other": 1},
@@ -383,9 +383,9 @@ def test_join_anti():
 
 def test_join_anti_not_selecting_join_key():
     join_input = transform_schema.JoinInput(
-        join_mapping='name',
-        left_select=[transform_schema.SelectInput(old_name='name', keep=False), transform_schema.SelectInput('other')],
-        right_select=[transform_schema.SelectInput(old_name='name', keep=False)],
+        join_mapping=[transform_schema.JoinMap('name')],
+        left_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False), transform_schema.SelectInput(old_name='other')]),
+        right_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False)]),
         how='anti'
     )
     left_df = FlowDataEngine([{"name": "eduward", "other": 1},
@@ -450,6 +450,7 @@ def test_join_input_overlapping_columns():
 
 
 def test_join_no_selection(join_df: FlowDataEngine):
+    breakpoint()
     join_input = transform_schema.JoinInput(
         join_mapping='id',
         left_select=[],

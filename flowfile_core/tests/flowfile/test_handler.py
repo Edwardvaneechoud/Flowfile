@@ -104,8 +104,10 @@ def test_get_flow():
 
 def test_add_flow():
     handler = create_flowfile_handler()
+    breakpoint()
     first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/new_flow.flowfile')
     sleep(1)
+    handler.get_flow(flow_id=first_id).save_flow()
     second_id = handler.add_flow('second_flow', 'flowfile_core/tests/support_files/flows/second_flow.flowfile')
     assert len(handler.flowfile_flows) == 2, "Two flows should be added"
     assert handler.flowfile_flows[0].flow_settings.name == 'new_flow', "First flow should be named new_flow"

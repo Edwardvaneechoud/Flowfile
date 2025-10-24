@@ -269,8 +269,6 @@ class VueFlowInput(BaseModel):
     node_inputs: List[NodeInput]
 
 
-
-
 class NodeDefault(BaseModel):
     """
     Defines default properties for a node type.
