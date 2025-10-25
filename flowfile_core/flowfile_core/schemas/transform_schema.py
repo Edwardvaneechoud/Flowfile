@@ -159,7 +159,7 @@ class JoinInputs(SelectInputs):
 
 class JoinMap(BaseModel):
     """Defines a single mapping between a left and right column for a join key."""
-    left_col: str
+    left_col: Optional[str] = None
     right_col: Optional[str] = None
 
     def __init__(self, left_col: str = None, right_col: str = None, **data):
@@ -839,10 +839,9 @@ class JoinInputManager(JoinSelectManagerMixin):
         right_rename_table = self.right_manager.get_rename_table()
         left_join_rename_mapping = self.left_manager.get_join_key_rename_mapping("left")
         right_join_rename_mapping = self.right_manager.get_join_key_rename_mapping("right")
-        breakpoint()
         for join_map in self.input.join_mapping:
-            left_col = left_rename_table.get(join_map.left_col, None)
-            right_col = right_rename_table.get(join_map.right_col, None)
+            left_col = left_rename_table.get(join_map.left_col, join_map.left_col)
+            right_col = right_rename_table.get(join_map.right_col, join_map.left_col)
 
             final_left = left_join_rename_mapping.get(left_col, None)
             final_right = right_join_rename_mapping.get(right_col, None)

@@ -1758,7 +1758,6 @@ class FlowDataEngine:
             Exception: If the join configuration is invalid or if `verify_integrity`
                 is True and the join is predicted to be too large.
         """
-        breakpoint()
         ensure_right_unselect_for_semi_and_anti_joins(join_input)
         join_input_manager = transform_schemas.JoinInputManager(join_input)
         verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
@@ -1776,7 +1775,7 @@ class FlowDataEngine:
         if join_input.how == 'right':
             joined_df = right.join(
                 other=left,
-                left_on=join_input_manager.get_right_join_keys(),
+                left_on=join_input_manager.right_join_keys,
                 right_on=join_input_manager.left_join_keys,
                 how="left",
                 suffix="").rename(reverse_join_key_mapping)
