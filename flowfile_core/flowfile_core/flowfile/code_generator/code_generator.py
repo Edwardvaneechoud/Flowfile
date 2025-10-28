@@ -1091,7 +1091,7 @@ class FlowGraphToPolarsConverter:
             return f"pl.col('{col}').is_in({values})"
         return col
 
-    @lru_cache(maxsize=128)
+    @lru_cache(maxsize=1024)
     def _get_polars_dtype(self, dtype_str: str) -> str:
         """Convert Flowfile dtype string to Polars dtype."""
         dtype_map = {
@@ -1109,7 +1109,7 @@ class FlowGraphToPolarsConverter:
         }
         return dtype_map.get(dtype_str, 'pl.Utf8')
 
-    @lru_cache(maxsize=128)
+    @lru_cache(maxsize=1024)
     def _get_agg_function(self, agg: str) -> str:
         """Get Polars aggregation function name."""
         agg_map = {
