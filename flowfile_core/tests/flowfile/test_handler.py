@@ -104,7 +104,6 @@ def test_get_flow():
 
 def test_add_flow():
     handler = create_flowfile_handler()
-    breakpoint()
     first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/new_flow.flowfile')
     sleep(1)
     handler.get_flow(flow_id=first_id).save_flow()

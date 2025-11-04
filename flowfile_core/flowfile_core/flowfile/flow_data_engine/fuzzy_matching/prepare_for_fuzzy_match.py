@@ -1,4 +1,4 @@
-from flowfile_core.schemas.transform_schema import FuzzyMatchInput, SelectInput, JoinInputs
+from flowfile_core.schemas.transform_schema import FuzzyMatchInput, SelectInput, JoinInputs, FuzzyMatchInputManager
 from flowfile_core.flowfile.flow_data_engine.join import verify_join_select_integrity, verify_join_map_integrity
 import polars as pl
 from typing import TYPE_CHECKING, Tuple, List
@@ -15,6 +15,7 @@ def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: Joi
     Returns:
         None
     """
+    breakpoint()
     select_map = {select.new_name: select for select in join_inputs.renames}
     ordered_renames = [select_map[col] for col in col_order if col in select_map]
     join_inputs.renames = ordered_renames
@@ -22,30 +23,31 @@ def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: Joi
 
 def _ensure_all_columns_have_select(left: "FlowDataEngine",
                                     right: "FlowDataEngine",
-                                    fuzzy_match_input: FuzzyMatchInput):
+                                    fuzzy_match_input_manager: FuzzyMatchInputManager):
     """
     Ensure that all columns in the left and right FlowDataEngines are included in the fuzzy match input's select
      statements.
     Args:
-        left (FlowDataEngine):
-        right (FlowDataEngine):
-        fuzzy_match_input ():
+        left (FlowDataEngine): Left FlowDataEngine
+        right (FlowDataEngine): Right FlowDataEngine
+        fuzzy_match_input_manager (FuzzyMatchInputManager): Fuzzy match input manager
 
     Returns:
         None
     """
-    right_cols_in_select = {c.old_name for c in fuzzy_match_input.right_select.renames}
-    left_cols_in_select = {c.old_name for c in fuzzy_match_input.left_select.renames}
+    breakpoint()
+    right_cols_in_select = {c.old_name for c in fuzzy_match_input_manager.right_select.renames}
+    left_cols_in_select = {c.old_name for c in fuzzy_match_input_manager.left_select.renames}
 
-    fuzzy_match_input.left_select.renames.extend(
+    fuzzy_match_input_manager.left_select.renames.extend(
         [SelectInput(col) for col in left.columns if col not in left_cols_in_select])
-    fuzzy_match_input.right_select.renames.extend(
+    fuzzy_match_input_manager.right_select.renames.extend(
         [SelectInput(col) for col in right.columns if col not in right_cols_in_select]
     )
 
 
 def prepare_for_fuzzy_match(left: "FlowDataEngine", right: "FlowDataEngine",
-                            fuzzy_match_input: FuzzyMatchInput) -> Tuple[pl.LazyFrame, pl.LazyFrame]:
+                            fuzzy_match_input_manager: FuzzyMatchInputManager) -> Tuple[pl.LazyFrame, pl.LazyFrame]:
     """
     Prepare two FlowDataEngines for fuzzy matching.
 
@@ -58,22 +60,27 @@ def prepare_for_fuzzy_match(left: "FlowDataEngine", right: "FlowDataEngine",
     """
     left.lazy = True
     right.lazy = True
-    _ensure_all_columns_have_select(left, right, fuzzy_match_input)
-    _order_join_inputs_based_on_col_order(left.columns, fuzzy_match_input.left_select)
-    _order_join_inputs_based_on_col_order(right.columns, fuzzy_match_input.right_select)
-
-    verify_join_select_integrity(fuzzy_match_input, left_columns=left.columns, right_columns=right.columns)
-    if not verify_join_map_integrity(fuzzy_match_input, left_columns=left.schema, right_columns=right.schema):
+    breakpoint()
+    _ensure_all_columns_have_select(left, right, fuzzy_match_input_manager)
+    print(fuzzy_match_input_manager.right_select.renames)
+    breakpoint()
+    _order_join_inputs_based_on_col_order(left.columns, fuzzy_match_input_manager.left_select.join_inputs)
+    print(fuzzy_match_input_manager.right_select.renames)
+    _order_join_inputs_based_on_col_order(right.columns, fuzzy_match_input_manager.right_select.join_inputs)
+    print(fuzzy_match_input_manager.right_select.renames)
+    verify_join_select_integrity(fuzzy_match_input_manager.fuzzy_input, left_columns=left.columns, right_columns=right.columns)
+    if not verify_join_map_integrity(fuzzy_match_input_manager.fuzzy_input, left_columns=left.schema,
+                                     right_columns=right.schema):
         raise Exception('Join is not valid by the data fields')
-    fuzzy_match_input = fuzzy_match_input
-    fuzzy_match_input.auto_rename()
 
-    right_select = [v.old_name for v in fuzzy_match_input.right_select.renames if
+    fuzzy_match_input_manager.auto_rename()
+
+    right_select = [v.old_name for v in fuzzy_match_input_manager.right_select.renames if
                     (v.keep or v.join_key) and v.is_available]
-    left_select = [v.old_name for v in fuzzy_match_input.left_select.renames if
+    left_select = [v.old_name for v in fuzzy_match_input_manager.left_select.renames if
                    (v.keep or v.join_key) and v.is_available]
     left_df: pl.LazyFrame | pl.DataFrame = left.data_frame.select(left_select).rename(
-        fuzzy_match_input.left_select.rename_table)
+        fuzzy_match_input_manager.left_select.rename_table)
     right_df: pl.LazyFrame | pl.DataFrame = right.data_frame.select(right_select).rename(
-        fuzzy_match_input.right_select.rename_table)
+        fuzzy_match_input_manager.right_select.rename_table)
     return left_df, right_df

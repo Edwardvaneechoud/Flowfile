@@ -22,6 +22,7 @@ def test_fuzzy_match_internal():
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[FuzzyMapping(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
+    breakpoint()
     fuzzy_match_result = left_flowfile_table.fuzzy_join(fuzzy_match_input, right_flowfile_table)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
@@ -31,6 +32,8 @@ def test_fuzzy_match_internal():
      {'name': 'eduward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'edward'},
      {'name': 'edward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
+    fuzzy_match_result = left_flowfile_table.fuzzy_join(fuzzy_match_input, right_flowfile_table)
+
 
 
 @pytest.fixture

@@ -141,6 +141,13 @@ class SelectInputs(BaseModel):
     """A container for a list of `SelectInput` objects (pure data, no logic)."""
     renames: List[SelectInput] = Field(default_factory=list)
 
+    def __init__(self, renames: List[SelectInput] = None, **kwargs):
+        if renames is not None:
+            kwargs['renames'] = renames
+        else:
+            kwargs['renames'] = []
+        super().__init__(**kwargs)
+
     @classmethod
     def create_from_list(cls, col_list: List[str]) -> "SelectInputs":
         """Creates a SelectInputs object from a simple list of column names."""
@@ -154,7 +161,13 @@ class SelectInputs(BaseModel):
 
 class JoinInputs(SelectInputs):
     """Data model for join-specific select inputs (extends SelectInputs)."""
-    pass
+
+    def __init__(self, renames: List[SelectInput] = None, **kwargs):
+        if renames is not None:
+            kwargs['renames'] = renames
+        else:
+            kwargs['renames'] = []
+        super().__init__(**kwargs)
 
 
 class JoinMap(BaseModel):
@@ -265,7 +278,6 @@ class JoinInput(BaseModel):
 
         raise ValueError(f"Invalid select format: {type(select)}")
 
-    # Optional: Keep custom __init__ for even more backward compatibility
     def __init__(self,
                  join_mapping: Union[List[JoinMap], JoinMap, Tuple[str, str], str, List[Tuple], List[str]] = None,
                  left_select: Union[JoinInputs, List[SelectInput], List[str]] = None,
@@ -292,6 +304,56 @@ class FuzzyMatchInput(BaseModel):
     right_select: JoinInputs
     how: JoinStrategy = 'inner'
     aggregate_output: bool = False
+
+    def __init__(self,
+                 left_select: Union[JoinInputs, List[SelectInput], List[str]] = None,
+                 right_select: Union[JoinInputs, List[SelectInput], List[str]] = None,
+                 **data):
+        """Custom init for backward compatibility with positional arguments."""
+        if left_select is not None:
+            data['left_select'] = left_select
+        if right_select is not None:
+            data['right_select'] = right_select
+
+        super().__init__(**data)
+
+    @staticmethod
+    def _parse_select(select: Any) -> JoinInputs:
+        """Parse various select input formats."""
+        # Already JoinInputs
+        if isinstance(select, JoinInputs):
+            return select
+
+        # List of SelectInput objects
+        if isinstance(select, list):
+            if all(isinstance(s, SelectInput) for s in select):
+                return JoinInputs(renames=select)
+            elif all(isinstance(s, str) for s in select):
+                return JoinInputs(renames=[SelectInput(old_name=s) for s in select])
+            elif all(isinstance(s, dict) for s in select):
+                return JoinInputs(renames=[SelectInput(**s) for s in select])
+
+        # Dict with 'renames' key
+        if isinstance(select, dict):
+            if 'renames' in select:
+                return JoinInputs(**select)
+
+        raise ValueError(f"Invalid select format: {type(select)}")
+
+    @model_validator(mode='before')
+    @classmethod
+    def parse_inputs(cls, data: Any) -> Any:
+        """Parse flexible input formats before validation."""
+        if isinstance(data, dict):
+            # Parse left_select
+            if 'left_select' in data:
+                data['left_select'] = cls._parse_select(data['left_select'])
+
+            # Parse right_select
+            if 'right_select' in data:
+                data['right_select'] = cls._parse_select(data['right_select'])
+
+        return data
 
 
 class AggColl(BaseModel):
@@ -478,9 +540,6 @@ class GraphSolverInput(BaseModel):
 class PolarsCodeInput(BaseModel):
     """A simple container for a string of user-provided Polars code to be executed."""
     polars_code: str
-
-
-
 
 
 class SelectInputsManager:

@@ -1689,8 +1689,11 @@ class FlowDataEngine:
     def fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
                    other: "FlowDataEngine",
                    node_logger: NodeLogger = None) -> "FlowDataEngine":
-        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other, fuzzy_match_input=fuzzy_match_input)
-        fuzzy_mappings = [FuzzyMapping(**fm.__dict__) for fm in fuzzy_match_input.fuzzy_maps]
+        breakpoint()
+        fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
+                                                    fuzzy_match_input_manager=fuzzy_match_input_manager)
+        fuzzy_mappings = [FuzzyMapping(**fm.__dict__) for fm in fuzzy_match_input_manager.fuzzy_maps]
         return FlowDataEngine(fuzzy_match_dfs(left_df, right_df, fuzzy_maps=fuzzy_mappings,
                                               logger=node_logger.logger if node_logger else logger)
                               .lazy())
@@ -2237,6 +2240,7 @@ class FlowDataEngine:
     def _calculate_schema(self) -> List[Dict]:
         """Calculates schema statistics."""
         if self.external_source is not None:
+
             self.collect_external()
         v = utils.calculate_schema(self.data_frame)
         return v

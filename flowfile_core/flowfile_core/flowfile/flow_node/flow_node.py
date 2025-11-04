@@ -498,6 +498,7 @@ class FlowNode:
         Returns:
             A list of FlowfileColumn objects representing the predicted schema.
         """
+
         if self.node_schema.predicted_schema and not force:
             return self.node_schema.predicted_schema
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
@@ -514,6 +515,7 @@ class FlowNode:
         if predicted_data is not None and predicted_data.schema is not None:
             self.print('Calculating the schema based on the predicted resulting data')
             self.node_schema.predicted_schema = self._predicted_data_getter().schema
+
         return self.node_schema.predicted_schema
 
     @property
