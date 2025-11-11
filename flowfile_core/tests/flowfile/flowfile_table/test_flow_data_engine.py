@@ -22,7 +22,6 @@ def test_fuzzy_match_internal():
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[FuzzyMapping(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
-    breakpoint()
     fuzzy_match_result = left_flowfile_table.fuzzy_join(fuzzy_match_input, right_flowfile_table)
     assert fuzzy_match_result is not None, 'Fuzzy match failed'
     assert fuzzy_match_result.count() > 0, 'No fuzzy matches found'
@@ -32,7 +31,6 @@ def test_fuzzy_match_internal():
      {'name': 'eduward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'edward'},
      {'name': 'edward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
-    fuzzy_match_result = left_flowfile_table.fuzzy_join(fuzzy_match_input, right_flowfile_table)
 
 
 
@@ -79,6 +77,7 @@ def fuzzy_test_data_right() -> FlowDataEngine:
 
 
 def test_fuzzy_match_auto_select_columns_not_provided(fuzzy_test_data_left, fuzzy_test_data_right):
+
     left_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_left.columns[:-1]]
     right_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_right.columns[:-1]]
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[
@@ -118,7 +117,6 @@ def test_fuzzy_match_external():
      {'name': 'eduward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'edward'},
      {'name': 'edward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
-
 
 
 def test_cross_join():
@@ -453,7 +451,6 @@ def test_join_input_overlapping_columns():
 
 
 def test_join_no_selection(join_df: FlowDataEngine):
-    breakpoint()
     join_input = transform_schema.JoinInput(
         join_mapping='id',
         left_select=[],
@@ -756,3 +753,7 @@ def test_remove_comments_and_docstrings():
         except Exception as e:
             print(f"Test failed for:\n{input_code}")
             raise e
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

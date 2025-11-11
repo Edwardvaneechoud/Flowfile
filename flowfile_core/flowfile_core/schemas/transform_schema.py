@@ -196,6 +196,93 @@ class CrossJoinInput(BaseModel):
     right_select: JoinInputs
 
 
+    @model_validator(mode='before')
+    @classmethod
+    def parse_inputs(cls, data: Any) -> Any:
+        """Parse flexible input formats before validation."""
+        if isinstance(data, dict):
+            # Parse join_mapping
+            if 'join_mapping' in data:
+                data['join_mapping'] = cls._parse_join_mapping(data['join_mapping'])
+
+            # Parse left_select
+            if 'left_select' in data:
+                data['left_select'] = cls._parse_select(data['left_select'])
+
+            # Parse right_select
+            if 'right_select' in data:
+                data['right_select'] = cls._parse_select(data['right_select'])
+
+        return data
+
+    @staticmethod
+    def _parse_join_mapping(join_mapping: Any) -> List[JoinMap]:
+        """Parse various join_mapping formats."""
+        # Already a list of JoinMaps
+        if isinstance(join_mapping, list):
+            result = []
+            for jm in join_mapping:
+                if isinstance(jm, JoinMap):
+                    result.append(jm)
+                elif isinstance(jm, dict):
+                    result.append(JoinMap(**jm))
+                elif isinstance(jm, (tuple, list)) and len(jm) == 2:
+                    result.append(JoinMap(left_col=jm[0], right_col=jm[1]))
+                elif isinstance(jm, str):
+                    result.append(JoinMap(left_col=jm, right_col=jm))
+                else:
+                    raise ValueError(f"Invalid join mapping item: {jm}")
+            return result
+
+        # Single JoinMap
+        if isinstance(join_mapping, JoinMap):
+            return [join_mapping]
+
+        # String: same column on both sides
+        if isinstance(join_mapping, str):
+            return [JoinMap(left_col=join_mapping, right_col=join_mapping)]
+
+        # Tuple: (left, right)
+        if isinstance(join_mapping, tuple) and len(join_mapping) == 2:
+            return [JoinMap(left_col=join_mapping[0], right_col=join_mapping[1])]
+
+        raise ValueError(f"Invalid join_mapping format: {type(join_mapping)}")
+
+    @staticmethod
+    def _parse_select(select: Any) -> JoinInputs:
+        """Parse various select input formats."""
+        # Already JoinInputs
+        if isinstance(select, JoinInputs):
+            return select
+
+        # List of SelectInput objects
+        if isinstance(select, list):
+            if all(isinstance(s, SelectInput) for s in select):
+                return JoinInputs(renames=select)
+            elif all(isinstance(s, str) for s in select):
+                return JoinInputs(renames=[SelectInput(old_name=s) for s in select])
+            elif all(isinstance(s, dict) for s in select):
+                return JoinInputs(renames=[SelectInput(**s) for s in select])
+
+        # Dict with 'renames' key
+        if isinstance(select, dict):
+            if 'renames' in select:
+                return JoinInputs(**select)
+
+        raise ValueError(f"Invalid select format: {type(select)}")
+
+    def __init__(self,
+                 left_select: Union[JoinInputs, List[SelectInput], List[str]] = None,
+                 right_select: Union[JoinInputs, List[SelectInput], List[str]] = None,
+                 **data):
+        """Custom init for backward compatibility with positional arguments."""
+        if left_select is not None:
+            data['left_select'] = left_select
+        if right_select is not None:
+            data['right_select'] = right_select
+        super().__init__(**data)
+
+
 class JoinInput(BaseModel):
     """Data model for standard SQL-style join operations."""
     join_mapping: List[JoinMap]
@@ -389,6 +476,15 @@ class AggColl(BaseModel):
     agg: str
     new_name: Optional[str] = None
     output_type: Optional[str] = None
+
+    def __init__(self, old_name: str, agg: str, new_name: Optional[str] = None, output_type: Optional[str] = None):
+
+        data = {'old_name': old_name, 'agg': agg}
+        if new_name is not None:
+            data['new_name'] = new_name
+        if output_type is not None:
+            data['output_type'] = output_type
+        super().__init__(**data)
 
     @model_validator(mode='after')
     def set_defaults(self):
@@ -747,9 +843,9 @@ class CrossJoinInputManager(JoinSelectManagerMixin):
     """Manager for cross join operations."""
 
     def __init__(self, cross_join_input: CrossJoinInput):
-        self.input = cross_join_input
-        self.left_manager = JoinInputsManager(cross_join_input.left_select)
-        self.right_manager = JoinInputsManager(cross_join_input.right_select)
+        self.input = deepcopy(cross_join_input)
+        self.left_manager = JoinInputsManager(self.input.left_select)
+        self.right_manager = JoinInputsManager(self.input.right_select)
 
     @classmethod
     def create(cls, left_select: Union[List[SelectInput], List[str]],
@@ -768,14 +864,19 @@ class CrossJoinInputManager(JoinSelectManagerMixin):
         """Finds column names that would conflict after the join."""
         return self.get_overlapping_columns()
 
-    def auto_rename(self) -> None:
+    def auto_rename(self, rename_mode: Literal["suffix", "prefix"] = "prefix") -> None:
         """Automatically renames columns on the right side to prevent naming conflicts."""
         overlapping_records = self.get_overlapping_records()
 
         while len(overlapping_records) > 0:
             for right_col in self.input.right_select.renames:
                 if right_col.new_name in overlapping_records:
-                    right_col.new_name = 'right_' + right_col.new_name
+                    if rename_mode == "prefix":
+                        right_col.new_name = 'right_' + right_col.new_name
+                    elif rename_mode == "suffix":
+                        right_col.new_name = right_col.new_name + '_right'
+                    else:
+                        raise ValueError(f'Unknown rename_mode: {rename_mode}')
             overlapping_records = self.get_overlapping_records()
 
     # === Backward Compatibility Properties ===
@@ -983,13 +1084,13 @@ class FuzzyMatchInputManager(JoinInputManager):
     """Manager for fuzzy matching join operations."""
 
     def __init__(self, fuzzy_input: FuzzyMatchInput):
-        self.fuzzy_input = fuzzy_input
+        self.fuzzy_input = deepcopy(fuzzy_input)
         super().__init__(JoinInput(
             join_mapping=[JoinMap(left_col=fm.left_col, right_col=fm.right_col)
-                          for fm in fuzzy_input.join_mapping],
-            left_select=fuzzy_input.left_select,
-            right_select=fuzzy_input.right_select,
-            how=fuzzy_input.how
+                          for fm in self.fuzzy_input.join_mapping],
+            left_select=self.fuzzy_input.left_select,
+            right_select=self.fuzzy_input.right_select,
+            how=self.fuzzy_input.how
         ))
 
     @classmethod

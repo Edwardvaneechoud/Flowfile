@@ -1659,9 +1659,11 @@ class FlowDataEngine:
             An `ExternalFuzzyMatchFetcher` object that can be used to track the
             progress and retrieve the result of the fuzzy join.
         """
-        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other, fuzzy_match_input=fuzzy_match_input)
+        fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
+                                                    fuzzy_match_input_manager=fuzzy_match_input_manager)
         return ExternalFuzzyMatchFetcher(left_df, right_df,
-                                         fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+                                         fuzzy_maps=fuzzy_match_input_manager.fuzzy_maps,
                                          file_ref=file_ref + '_fm',
                                          wait_on_completion=False,
                                          flow_id=flow_id,
@@ -1676,10 +1678,12 @@ class FlowDataEngine:
                             ):
         if file_ref is None:
             file_ref = str(id(self)) + '_' + str(id(other))
+        fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
 
-        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other, fuzzy_match_input=fuzzy_match_input)
+        left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
+                                                    fuzzy_match_input_manager=fuzzy_match_input_manager)
         external_tracker = ExternalFuzzyMatchFetcher(left_df, right_df,
-                                                     fuzzy_maps=fuzzy_match_input.fuzzy_maps,
+                                                     fuzzy_maps=fuzzy_match_input_manager.fuzzy_maps,
                                                      file_ref=file_ref + '_fm',
                                                      wait_on_completion=False,
                                                      flow_id=flow_id,
@@ -1689,7 +1693,6 @@ class FlowDataEngine:
     def fuzzy_join(self, fuzzy_match_input: transform_schemas.FuzzyMatchInput,
                    other: "FlowDataEngine",
                    node_logger: NodeLogger = None) -> "FlowDataEngine":
-        breakpoint()
         fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input_manager=fuzzy_match_input_manager)
@@ -1720,22 +1723,21 @@ class FlowDataEngine:
         """
 
         self.lazy = True
-
         other.lazy = True
-
-        verify_join_select_integrity(cross_join_input, left_columns=self.columns, right_columns=other.columns)
-        right_select = [v.old_name for v in cross_join_input.right_select.renames
+        cross_join_input_manager = transform_schemas.CrossJoinInputManager(cross_join_input)
+        verify_join_select_integrity(cross_join_input_manager.input, left_columns=self.columns, right_columns=other.columns)
+        right_select = [v.old_name for v in cross_join_input_manager.right_select.renames
                         if (v.keep or v.join_key) and v.is_available]
-        left_select = [v.old_name for v in cross_join_input.left_select.renames
+        left_select = [v.old_name for v in cross_join_input_manager.left_select.renames
                        if (v.keep or v.join_key) and v.is_available]
-
-        left = self.data_frame.select(left_select).rename(cross_join_input.left_select.rename_table)
-        right = other.data_frame.select(right_select).rename(cross_join_input.right_select.rename_table)
+        cross_join_input_manager.auto_rename(rename_mode="suffix")
+        left = self.data_frame.select(left_select).rename(cross_join_input_manager.left_select.rename_table)
+        right = other.data_frame.select(right_select).rename(cross_join_input_manager.right_select.rename_table)
 
         joined_df = left.join(right, how='cross')
 
         cols_to_delete_after = [col.new_name for col in
-                                cross_join_input.left_select.renames + cross_join_input.left_select.renames
+                                cross_join_input_manager.left_select.renames + cross_join_input_manager.left_select.renames
                                 if col.join_key and not col.keep and col.is_available]
 
         fl = FlowDataEngine(joined_df.drop(cols_to_delete_after), calculate_schema_stats=False, streamable=False)
