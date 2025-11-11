@@ -478,12 +478,12 @@ class AggColl(BaseModel):
     output_type: Optional[str] = None
 
     def __init__(self, old_name: str, agg: str, new_name: Optional[str] = None, output_type: Optional[str] = None):
-
         data = {'old_name': old_name, 'agg': agg}
         if new_name is not None:
             data['new_name'] = new_name
         if output_type is not None:
             data['output_type'] = output_type
+
         super().__init__(**data)
 
     @model_validator(mode='after')
@@ -535,6 +535,10 @@ class GroupByInput(BaseModel):
     )
     """
     agg_cols: List[AggColl]
+
+    def __init__(self, agg_cols: List[AggColl]):
+        """Backwards compatibility implementation"""
+        super().__init__(agg_cols=agg_cols)
 
 
 class PivotInput(BaseModel):
