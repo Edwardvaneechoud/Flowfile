@@ -15,7 +15,7 @@ def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: Joi
     Returns:
         None
     """
-    select_map = {select.new_name: select for select in join_inputs.renames}
+    select_map = {select.old_name: select for select in join_inputs.renames}
     ordered_renames = [select_map[col] for col in col_order if col in select_map]
     join_inputs.renames = ordered_renames
 
@@ -59,11 +59,8 @@ def prepare_for_fuzzy_match(left: "FlowDataEngine", right: "FlowDataEngine",
     left.lazy = True
     right.lazy = True
     _ensure_all_columns_have_select(left, right, fuzzy_match_input_manager)
-    print(fuzzy_match_input_manager.right_select.renames)
     _order_join_inputs_based_on_col_order(left.columns, fuzzy_match_input_manager.left_select.join_inputs)
-    print(fuzzy_match_input_manager.right_select.renames)
     _order_join_inputs_based_on_col_order(right.columns, fuzzy_match_input_manager.right_select.join_inputs)
-    print(fuzzy_match_input_manager.right_select.renames)
     verify_join_select_integrity(fuzzy_match_input_manager.fuzzy_input, left_columns=left.columns, right_columns=right.columns)
     if not verify_join_map_integrity(fuzzy_match_input_manager.fuzzy_input, left_columns=left.schema,
                                      right_columns=right.schema):

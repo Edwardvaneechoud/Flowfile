@@ -363,13 +363,11 @@ class FlowGraphToPolarsConverter:
         left_on, right_on = self._get_join_keys(join_input_manager)
 
         # Apply pre-join transformations
-        left_df, right_df = self._apply_pre_join_transformations(settings, left_df, right_df)
-
+        left_df, right_df = self._apply_pre_join_transformations(join_input_manager, left_df, right_df)
         # Handle join-specific key transformations
         left_on, right_on, reverse_action, after_join_drop_cols = self._handle_join_key_transformations(
             join_input_manager, left_df, right_df, left_on, right_on
         )
-
         # Execute the join
         self._execute_join_with_post_processing(
             settings, var_name, left_df, right_df, left_on, right_on,
@@ -399,7 +397,7 @@ class FlowGraphToPolarsConverter:
 
         return left_on, right_on
 
-    def _apply_pre_join_transformations(self, settings: input_schema.NodeJoin, left_df: str, right_df: str) -> Tuple[
+    def _apply_pre_join_transformations(self, settings: transform_schema.JoinInputManager, left_df: str, right_df: str) -> Tuple[
         str, str]:
         """Apply column renames and drops before the join operation.
 
@@ -420,24 +418,24 @@ class FlowGraphToPolarsConverter:
         # Calculate renames and drops
         right_renames = {
             column.old_name: column.new_name
-            for column in settings.join_input.right_select.renames
+            for column in settings.right_select.renames
             if
-            column.old_name != column.new_name and not column.join_key or settings.join_input.how in ("outer", "right")
+            column.old_name != column.new_name and not column.join_key or settings.how in ("outer", "right")
         }
 
         left_renames = {
             column.old_name: column.new_name
-            for column in settings.join_input.left_select.renames
+            for column in settings.left_select.renames
             if column.old_name != column.new_name
         }
 
         left_drop_columns = [
-            column.old_name for column in settings.join_input.left_select.renames
+            column.old_name for column in settings.left_select.renames
             if not column.keep and not column.join_key
         ]
 
         right_drop_columns = [
-            column.old_name for column in settings.join_input.right_select.renames
+            column.old_name for column in settings.right_select.renames
             if not column.keep and not column.join_key
         ]
 
@@ -574,7 +572,6 @@ class FlowGraphToPolarsConverter:
             for jk in settings.right_select.join_key_selects if not jk.keep
         ]
         after_join_drop_cols = list(set(after_join_drop_cols_right))
-
         return left_on, right_on, None, after_join_drop_cols
 
     def _handle_outer_join_keys(self, settings: transform_schema.JoinInputManager, right_df: str,

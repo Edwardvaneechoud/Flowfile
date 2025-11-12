@@ -5,7 +5,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 
 
 def verify_join_select_integrity(
-        join_input: transform_schema.JoinInput | transform_schema.CrossJoinInput | transform_schema.FuzzyMatchInput,
+        join_input:
+        transform_schema.JoinInput |
+        transform_schema.CrossJoinInput |
+        transform_schema.FuzzyMatchInput |
+        transform_schema.JoinInputsManager,
         left_columns: List[str],
         right_columns: List[str]):
     """
@@ -28,7 +32,7 @@ def verify_join_select_integrity(
             c.is_available = True
 
 
-def verify_join_map_integrity(join_input: transform_schema.JoinInput | transform_schema.FuzzyMatchInput,
+def verify_join_map_integrity(join_input: transform_schema.JoinInput | transform_schema.FuzzyMatchInput | transform_schema.JoinInputManager,
                               left_columns: List[FlowfileColumn],
                               right_columns: List[FlowfileColumn]
                               ):

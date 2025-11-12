@@ -782,8 +782,6 @@ class JoinInputsManager(SelectInputsManager):
         join_key_response = self.get_join_key_renames(side)
         return {jkr.original_name: jkr.temp_name for jkr in join_key_response.join_key_renames}
 
-    # === Backward Compatibility Properties ===
-
     @property
     def join_key_selects(self) -> List[SelectInput]:
         """Backward compatibility: Returns join key SelectInputs."""
@@ -905,9 +903,9 @@ class JoinInputManager(JoinSelectManagerMixin):
     """Manager for standard SQL-style join operations."""
 
     def __init__(self, join_input: JoinInput):
-        self.input = join_input
-        self.left_manager = JoinInputsManager(join_input.left_select)
-        self.right_manager = JoinInputsManager(join_input.right_select)
+        self.input = deepcopy(join_input)
+        self.left_manager = JoinInputsManager(self.input.left_select)
+        self.right_manager = JoinInputsManager(self.input.right_select)
 
     @classmethod
     def create(cls, join_mapping: Union[List[JoinMap], Tuple[str, str], str],
@@ -1188,6 +1186,11 @@ class FuzzyMatchInputManager(JoinInputManager):
     @property
     def fuzzy_maps(self) -> List[FuzzyMapping]:
         """Backward compatibility: Returns fuzzy mappings."""
+        return self.get_fuzzy_maps()
+
+    @property
+    def join_mapping(self) -> List[FuzzyMapping]:
+        """Backward compatibility: Access fuzzy join mapping."""
         return self.get_fuzzy_maps()
 
     @property

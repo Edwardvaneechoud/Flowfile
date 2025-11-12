@@ -271,7 +271,6 @@ def join_input_large_dataset() -> tuple[input_schema.NodeManualInput, input_sche
         node_id=1,
         raw_data_format=data_engine.select_columns(['ID', "Name", "Address", "Zipcode"]).to_raw_data()
     )
-
     right_data = input_schema.NodeManualInput(
         flow_id=1,
         node_id=2,

@@ -195,7 +195,6 @@ class FlowDataEngine:
     _number_of_records_callback: Callable = None
     _data_callback: Callable = None
 
-
     def __init__(self,
                  raw_data: Union[List[Dict], List[Any], Dict[str, Any], 'ParquetFile', pl.DataFrame, pl.LazyFrame, input_schema.RawData] = None,
                  path_ref: str = None,
@@ -1581,7 +1580,6 @@ class FlowDataEngine:
             A new `FlowDataEngine` instance containing the sampled data.
         """
         logging.info(f'Getting sample of {n_rows} rows')
-
         if random:
             if self.lazy and self.external_source is not None:
                 self.collect_external()
@@ -1662,6 +1660,7 @@ class FlowDataEngine:
         fuzzy_match_input_manager = transform_schemas.FuzzyMatchInputManager(fuzzy_match_input)
         left_df, right_df = prepare_for_fuzzy_match(left=self, right=other,
                                                     fuzzy_match_input_manager=fuzzy_match_input_manager)
+
         return ExternalFuzzyMatchFetcher(left_df, right_df,
                                          fuzzy_maps=fuzzy_match_input_manager.fuzzy_maps,
                                          file_ref=file_ref + '_fm',
@@ -1765,19 +1764,25 @@ class FlowDataEngine:
         """
         ensure_right_unselect_for_semi_and_anti_joins(join_input)
         join_input_manager = transform_schemas.JoinInputManager(join_input)
-        verify_join_select_integrity(join_input, left_columns=self.columns, right_columns=other.columns)
-        if not verify_join_map_integrity(join_input, left_columns=self.schema, right_columns=other.schema):
+        for jk in join_input_manager.join_mapping:
+            if jk.left_col not in join_input_manager.left_select.get_old_cols():
+                join_input_manager.left_select.append(transform_schemas.SelectInput(jk.left_col, keep=False))
+            if jk.right_col not in join_input_manager.right_select.get_old_cols():
+                join_input_manager.right_select.append(transform_schemas.SelectInput(jk.right_col, keep=False))
+        verify_join_select_integrity(join_input_manager, left_columns=self.columns, right_columns=other.columns)
+
+        if not verify_join_map_integrity(join_input_manager, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')
         if auto_generate_selection:
             join_input_manager.auto_rename()
         left = (self.data_frame.select(get_select_columns(join_input_manager.left_select.renames))
                 .rename(join_input_manager.left_manager.get_rename_table()))
-        right = (other.data_frame.select(get_select_columns(join_input.right_select.renames))
+        right = (other.data_frame.select(get_select_columns(join_input_manager.right_select.renames))
                  .rename(join_input_manager.right_manager.get_rename_table()))
         n_records = -1
         left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_input_manager)
         left, right = rename_df_table_for_join(left, right, join_input_manager.get_join_key_renames())
-        if join_input.how == 'right':
+        if join_input_manager.how == 'right':
             joined_df = right.join(
                 other=left,
                 left_on=join_input_manager.right_join_keys,
@@ -1789,16 +1794,16 @@ class FlowDataEngine:
                 other=right,
                 left_on=join_input_manager.left_join_keys,
                 right_on=join_input_manager.right_join_keys,
-                how=join_input.how,
+                how=join_input_manager.how,
                 suffix="").rename(reverse_join_key_mapping)
-        left_cols_to_delete_after = [get_col_name_to_delete(col, 'left') for col in join_input.left_select.renames
+        left_cols_to_delete_after = [get_col_name_to_delete(col, 'left') for col in join_input_manager.left_select.renames
                                      if not col.keep
                                      and col.is_available and col.join_key
                                      ]
-        right_cols_to_delete_after = [get_col_name_to_delete(col, 'right') for col in join_input.right_select.renames
+        right_cols_to_delete_after = [get_col_name_to_delete(col, 'right') for col in join_input_manager.right_select.renames
                                       if not col.keep
                                       and col.is_available and col.join_key
-                                      and join_input.how in ("left", "right", "inner", "cross", "outer")
+                                      and join_input_manager.how in ("left", "right", "inner", "cross", "outer")
                                       ]
         if len(right_cols_to_delete_after + left_cols_to_delete_after) > 0:
             joined_df = joined_df.drop(left_cols_to_delete_after + right_cols_to_delete_after)

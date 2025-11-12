@@ -223,6 +223,28 @@ class FlowInformation(BaseModel):
         return str(v) if v is not None else ''
 
 
+class NodeConnection(BaseModel):
+    """
+    Represents a connection between two nodes in the flow.
+
+    Attributes:
+        from_node_id (int): The ID of the source node.
+        to_node_id (int): The ID of the target node.
+    """
+    from_node_id: int
+    to_node_id: int
+
+
+class FlowFileData(BaseModel):
+    flowfile_version: str
+    flowfile_id: int
+    flowfile_name: str
+    flowfile_settings: FlowSettings
+    nodes: List[NodeInformation]
+    node_connections: List[NodeConnection]
+    _node_starts: List[int] = None
+
+
 class NodeInput(NodeTemplate):
     """
     Represents a node as it is received from the frontend, including position.
