@@ -824,6 +824,7 @@ class FlowGraphToPolarsConverter:
 
     @staticmethod
     def _transform_fuzzy_mappings_to_string(fuzzy_mappings: List[FuzzyMapping]) -> str:
+
         output_str = "["
         for i, fuzzy_mapping in enumerate(fuzzy_mappings):
 
@@ -839,18 +840,20 @@ class FlowGraphToPolarsConverter:
     def _handle_fuzzy_match(self, settings: input_schema.NodeFuzzyMatch, var_name: str, input_vars: Dict[str, str]) -> None:
         """Handle fuzzy match nodes."""
         self.imports.add("from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs")
+        fuzzy_match_handler = transform_schema.FuzzyMatchInputManager(settings.join_input)
         left_df = input_vars.get('main', input_vars.get('main_0', 'df_left'))
         right_df = input_vars.get('right', input_vars.get('main_1', 'df_right'))
+
         if left_df == right_df:
             right_df = "df_right"
             self._add_code(f"{right_df} = {left_df}")
 
-        if settings.join_input.left_select.has_drop_cols():
-            self._add_code(f"{left_df} = {left_df}.drop({[c.old_name for c in settings.join_input.left_select.non_jk_drop_columns]})")
-        if settings.join_input.right_select.has_drop_cols():
-            self._add_code(f"{right_df} = {right_df}.drop({[c.old_name for c in settings.join_input.right_select.non_jk_drop_columns]})")
+        if fuzzy_match_handler.left_select.has_drop_cols():
+            self._add_code(f"{left_df} = {left_df}.drop({[c.old_name for c in fuzzy_match_handler.left_select.non_jk_drop_columns]})")
+        if fuzzy_match_handler.right_select.has_drop_cols():
+            self._add_code(f"{right_df} = {right_df}.drop({[c.old_name for c in fuzzy_match_handler.right_select.non_jk_drop_columns]})")
 
-        fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(settings.join_input.join_mapping)
+        fuzzy_join_mapping_settings = self._transform_fuzzy_mappings_to_string(fuzzy_match_handler.join_mapping)
         self._add_code(f"{var_name} = fuzzy_match_dfs(\n"
                        f"       left_df={left_df}, right_df={right_df},\n"
                        f"       fuzzy_maps={fuzzy_join_mapping_settings}\n"

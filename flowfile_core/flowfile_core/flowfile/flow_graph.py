@@ -807,7 +807,6 @@ class FlowGraph:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in join_settings.join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
-
             return main.join(join_input=join_settings.join_input,
                              auto_generate_selection=join_settings.auto_generate_selection,
                              verify_integrity=False,

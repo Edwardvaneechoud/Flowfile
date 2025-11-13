@@ -898,6 +898,20 @@ class CrossJoinInputManager(JoinSelectManagerMixin):
         """Backward compatibility: Returns overlapping column names."""
         return self.get_overlapping_records()
 
+    def to_cross_join_input(self) -> CrossJoinInput:
+        """Creates a new CrossJoinInput instance based on the current manager settings.
+
+        This is useful when you've modified the manager (e.g., via auto_rename) and
+        want to get a fresh CrossJoinInput with all the current settings applied.
+
+        Returns:
+            A new CrossJoinInput instance with current settings
+        """
+        return CrossJoinInput(
+            left_select=JoinInputs(renames=self.input.left_select.renames.copy()),
+            right_select=JoinInputs(renames=self.input.right_select.renames.copy())
+        )
+
 
 class JoinInputManager(JoinSelectManagerMixin):
     """Manager for standard SQL-style join operations."""
@@ -906,6 +920,7 @@ class JoinInputManager(JoinSelectManagerMixin):
         self.input = deepcopy(join_input)
         self.left_manager = JoinInputsManager(self.input.left_select)
         self.right_manager = JoinInputsManager(self.input.right_select)
+        self.set_join_keys()
 
     @classmethod
     def create(cls, join_mapping: Union[List[JoinMap], Tuple[str, str], str],
@@ -1012,7 +1027,21 @@ class JoinInputManager(JoinSelectManagerMixin):
 
         return new_mappings
 
-    # === Backward Compatibility Properties ===
+    def to_join_input(self) -> JoinInput:
+        """Creates a new JoinInput instance based on the current manager settings.
+
+        This is useful when you've modified the manager (e.g., via auto_rename) and
+        want to get a fresh JoinInput with all the current settings applied.
+
+        Returns:
+            A new JoinInput instance with current settings
+        """
+        return JoinInput(
+            join_mapping=self.input.join_mapping,
+            left_select=JoinInputs(renames=self.input.left_select.renames.copy()),
+            right_select=JoinInputs(renames=self.input.right_select.renames.copy()),
+            how=self.input.how
+        )
 
     @property
     def left_select(self) -> JoinInputsManager:
@@ -1197,3 +1226,20 @@ class FuzzyMatchInputManager(JoinInputManager):
     def aggregate_output(self) -> bool:
         """Backward compatibility: Access aggregate_output setting."""
         return self.fuzzy_input.aggregate_output
+
+    def to_fuzzy_match_input(self) -> FuzzyMatchInput:
+        """Creates a new FuzzyMatchInput instance based on the current manager settings.
+
+        This is useful when you've modified the manager (e.g., via auto_rename) and
+        want to get a fresh FuzzyMatchInput with all the current settings applied.
+
+        Returns:
+            A new FuzzyMatchInput instance with current settings
+        """
+        return FuzzyMatchInput(
+            join_mapping=self.fuzzy_input.join_mapping,
+            left_select=JoinInputs(renames=self.input.left_select.renames.copy()),
+            right_select=JoinInputs(renames=self.input.right_select.renames.copy()),
+            how=self.fuzzy_input.how,
+            aggregate_output=self.fuzzy_input.aggregate_output
+        )

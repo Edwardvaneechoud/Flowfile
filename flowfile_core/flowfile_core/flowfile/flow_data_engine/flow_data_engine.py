@@ -1762,7 +1762,6 @@ class FlowDataEngine:
 
         left, right, reverse_join_key_mapping = _handle_duplication_join_keys(left, right, join_manager)
         left, right = rename_df_table_for_join(left, right, join_manager.get_join_key_renames())
-
         if join_manager.how == 'right':
             joined_df = right.join(
                 other=left,
