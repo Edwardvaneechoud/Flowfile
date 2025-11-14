@@ -106,7 +106,7 @@ def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flo
 
 def get_group_by_flow():
     graph = create_graph()
-    breakpoint()
+    # breakpoint()
     input_data = (FlowDataEngine.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'sales_data']))
     add_manual_input(graph, data=input_data.to_pylist())
@@ -115,19 +115,18 @@ def get_group_by_flow():
     add_connection(graph, connection)
     group_by_input = transform_schema.GroupByInput([transform_schema.AggColl('groups', 'groupby'),
                                                     transform_schema.AggColl('sales_data', 'sum', 'sales_data_output')])
-    breakpoint()
+    # breakpoint()
     node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
     graph.add_group_by(node_group_by)
     return graph
 
 @pytest.fixture
 def complex_graph():
-    breakpoint()
     group_by_flow = get_group_by_flow()
 
 
 def test_save_flow(complex_graph):
-    breakpoint()
+    ...
 
 
 def test_create_flowfile_handler():

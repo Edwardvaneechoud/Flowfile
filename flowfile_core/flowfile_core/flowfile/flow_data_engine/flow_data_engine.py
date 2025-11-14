@@ -1720,7 +1720,6 @@ class FlowDataEngine:
             Exception: If `verify_integrity` is True and the join would result in
                 an excessively large number of records.
         """
-
         self.lazy = True
         other.lazy = True
         cross_join_input_manager = transform_schemas.CrossJoinInputManager(cross_join_input)
@@ -1745,10 +1744,14 @@ class FlowDataEngine:
     def join(self, join_input: transform_schemas.JoinInput, auto_generate_selection: bool,
              verify_integrity: bool, other: "FlowDataEngine") -> "FlowDataEngine":
         """Performs a standard SQL-style join with another DataFrame."""
-
         # Create manager from input
         join_manager = transform_schemas.JoinInputManager(join_input)
         ensure_right_unselect_for_semi_and_anti_joins(join_manager.input)
+        for jk in join_manager.join_mapping:
+            if jk.left_col not in {c.old_name for c in join_manager.left_select.renames}:
+                join_manager.left_select.append(transform_schemas.SelectInput(jk.left_col, keep=False))
+            if jk.right_col not in {c.old_name for c in join_manager.right_select.renames}:
+                join_manager.right_select.append(transform_schemas.SelectInput(jk.right_col, keep=False))
         verify_join_select_integrity(join_manager.input, left_columns=self.columns, right_columns=other.columns)
         if not verify_join_map_integrity(join_manager.input, left_columns=self.schema, right_columns=other.schema):
             raise Exception('Join is not valid by the data fields')

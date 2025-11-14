@@ -122,6 +122,13 @@ class FunctionInput(BaseModel):
     field: FieldInput
     function: str
 
+    def __init__(self, field: FieldInput = None, function: str = None, **data):
+        if field is not None:
+            data['field'] = field
+        if function is not None:
+            data['function'] = function
+        super().__init__(**data)
+
 
 class BasicFilter(BaseModel):
     """Defines a simple, single-condition filter (e.g., 'column' 'equals' 'value')."""
@@ -129,12 +136,31 @@ class BasicFilter(BaseModel):
     filter_type: Optional[str] = ''
     filter_value: Optional[str] = ''
 
+    def __init__(self, field: str = None, filter_type: str = None, filter_value: str = None, **data):
+        if field is not None:
+            data['field'] = field
+        if filter_type is not None:
+            data['filter_type'] = filter_type
+        if filter_value is not None:
+            data['filter_value'] = filter_value
+        super().__init__(**data)
+
 
 class FilterInput(BaseModel):
     """Defines the settings for a filter operation, supporting basic or advanced (expression-based) modes."""
     advanced_filter: Optional[str] = ''
     basic_filter: Optional[BasicFilter] = None
     filter_type: Optional[str] = 'basic'
+
+    def __init__(self, advanced_filter: str = None, basic_filter: BasicFilter = None,
+                 filter_type: str = None, **data):
+        if advanced_filter is not None:
+            data['advanced_filter'] = advanced_filter
+        if basic_filter is not None:
+            data['basic_filter'] = basic_filter
+        if filter_type is not None:
+            data['filter_type'] = filter_type
+        super().__init__(**data)
 
 
 class SelectInputs(BaseModel):

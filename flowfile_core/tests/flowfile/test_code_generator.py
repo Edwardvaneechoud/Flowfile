@@ -582,7 +582,6 @@ def test_join_operation_left(join_input_dataset):
     """Test join operation between two datasets"""
     flow = create_basic_flow()
     left_data, right_data = join_input_dataset
-
     flow.add_manual_input(left_data)
     flow.add_manual_input(right_data)
 
@@ -606,7 +605,6 @@ def test_join_operation_left(join_input_dataset):
 
     # Convert to Polars code
     code = export_flow_to_polars(flow)
-
     # Verify join code
     verify_code_contains(code,
                          "df_1.join(",

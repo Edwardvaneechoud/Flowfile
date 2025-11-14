@@ -38,7 +38,6 @@ def complex_elaborate_flow() -> FlowGraph:
         execution_mode='Development'
     ))
     graph = handler.get_flow(1)
-
     # ============================================================
     # SECTION 1: DATA SOURCES (Nodes 1-10)
     # ============================================================
@@ -303,7 +302,6 @@ output_df = input_df.with_columns([
     # ============================================================
     # SECTION 4: JOINS (Nodes 41-50)
     # ============================================================
-
     # Node 41: Regular Join - Join customers with sales
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=41, node_type='join'))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(15, 41))
@@ -414,7 +412,6 @@ output_df = input_df.with_columns([
     # ============================================================
     # SECTION 7: OUTPUTS (Nodes 71-80)
     # ============================================================
-
     # Node 71: Output - Final customer analysis
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=71, node_type='output'))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(41, 71))
@@ -590,7 +587,6 @@ def test_execution_complex_flow_local_performance(complex_elaborate_flow: FlowGr
 
 def test_execution_complex_flow_local_development(complex_elaborate_flow: FlowGraph):
     """Test executing the complex flow to ensure all nodes run without error."""
-    breakpoint()
     complex_elaborate_flow.flow_settings.execution_mode = "Development"
     complex_elaborate_flow.flow_settings.execution_location = "local"
     # Execute the entire flow
