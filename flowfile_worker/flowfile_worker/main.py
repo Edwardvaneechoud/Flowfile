@@ -1,6 +1,7 @@
 import asyncio
 import uvicorn
 import signal
+from typing import Optional
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -43,6 +44,9 @@ async def shutdown_handler(app: FastAPI):
 app = FastAPI(lifespan=shutdown_handler)
 app.include_router(router)
 
+# Include monitoring router
+from flowfile_worker.monitoring.router import router as monitoring_router
+app.include_router(monitoring_router)
 
 @app.post("/shutdown")
 async def shutdown():
@@ -67,7 +71,7 @@ def signal_handler(signum, frame):
         server_instance.should_exit = True
 
 
-def run(host: str = None, port: int = None):
+def run(host: Optional[str] = None, port: Optional[int] = None):
     """Run the FastAPI app with graceful shutdown"""
     global server_instance
 
@@ -107,5 +111,17 @@ def run(host: str = None, port: int = None):
 
 if __name__ == "__main__":
     import multiprocessing
+    import platform
+
     multiprocessing.freeze_support()
+    
+    try:
+        multiprocessing.set_start_method('spawn', force=False)
+        logger.info(f"Multiprocessing start method set to 'spawn' on {platform.system()}")
+    except RuntimeError as e:
+        logger.debug(f"Multiprocessing start method already set: {e}")
+    
+    logger.info(f"Starting on platform: {platform.system()}")
+    logger.info(f"CPU count: {multiprocessing.cpu_count()}")
+    
     run()

@@ -46,6 +46,11 @@ const routes: Array<RouteRecordRaw> = [
         path: "secretManager",
         component: () => import("../pages/SecretManager.vue"),
       },
+      {
+        name: "monitoring",
+        path: "monitoring",
+        component: () => import("../pages/MonitoringDashboard.vue"),
+      },
     ],
   },
   {

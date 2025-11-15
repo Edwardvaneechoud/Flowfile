@@ -47,5 +47,12 @@ export default {
         icon: "fa-solid fa-key",
       },
     },
+    {
+      name: "monitoring",
+      displayName: "menu.monitoring",
+      meta: {
+        icon: "fa-solid fa-chart-line",
+      },
+    },
   ] as INavigationRoute[],
 };

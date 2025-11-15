@@ -1,26 +1,35 @@
-from typing import Dict
+"""
+Flowfile Worker initialization module.
+
+This module sets up:
+- Multiprocessing context for process spawning
+- Centralized worker state management
+- Process limiting with semaphore
+- Cache configuration
+"""
 import threading
-import multiprocessing
+from multiprocessing import get_context
+from flowfile_worker.configs import config, logger
+from flowfile_worker.state import WorkerState
 from shared.storage_config import storage
 
-multiprocessing.set_start_method('spawn', force=True)
-
-from multiprocessing import get_context
-from flowfile_worker.models import Status
-
+# Initialize multiprocessing context with spawn method
 mp_context = get_context("spawn")
 
-status_dict: Dict[str, Status] = dict()
-process_dict = dict()
+# Initialize centralized worker state
+worker_state = WorkerState()
 
-status_dict_lock = threading.Lock()
-process_dict_lock = threading.Lock()
+# Process limiting configuration
+MAX_CONCURRENT_PROCESSES = config.calculated_max_workers
 
+# Semaphore to enforce the process limit
+process_semaphore = threading.Semaphore(MAX_CONCURRENT_PROCESSES)
 
-CACHE_EXPIRATION_TIME = 24 * 60 * 60
+logger.info(f"Maximum concurrent processes: {MAX_CONCURRENT_PROCESSES}")
 
-
+# Cache configuration
+CACHE_EXPIRATION_TIME = config.cache_expiration_seconds
 CACHE_DIR = storage.cache_directory
 
-
-PROCESS_MEMORY_USAGE: Dict[str, float] = dict()
+logger.info(f"Cache directory: {CACHE_DIR}")
+logger.info(f"Cache expiration: {config.cache_expiration_hours} hours ({CACHE_EXPIRATION_TIME} seconds)")
