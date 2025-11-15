@@ -78,3 +78,7 @@ def test_scan_delta():
 def test_scan_json_from_cloud_storage():
     flow_frame = ff.scan_json_from_cloud_storage("s3://test-bucket/multi-file-json/", connection_name="minio-flowframe-test")
     flow_frame.count().collect()
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

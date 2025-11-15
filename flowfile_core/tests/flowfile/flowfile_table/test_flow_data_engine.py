@@ -33,6 +33,7 @@ def test_fuzzy_match_internal():
     fuzzy_match_result.assert_equal(expected_data)
 
 
+
 @pytest.fixture
 def fuzzy_test_data_left() -> FlowDataEngine:
     """
@@ -76,6 +77,7 @@ def fuzzy_test_data_right() -> FlowDataEngine:
 
 
 def test_fuzzy_match_auto_select_columns_not_provided(fuzzy_test_data_left, fuzzy_test_data_right):
+
     left_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_left.columns[:-1]]
     right_select = [transform_schema.SelectInput(c) for c in fuzzy_test_data_right.columns[:-1]]
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[
@@ -115,7 +117,6 @@ def test_fuzzy_match_external():
      {'name': 'eduward', 'name_vs_name_right_levenshtein': 0.8571428571428572, 'name_right': 'edward'},
      {'name': 'edward', 'name_vs_name_right_levenshtein': 1.0, 'name_right': 'edward'}])
     fuzzy_match_result.assert_equal(expected_data)
-
 
 
 def test_cross_join():
@@ -326,12 +327,12 @@ def test_join_left():
 
 def test_join_right():
     join_input = transform_schema.JoinInput(**get_join_settings('right'))
-    self = FlowDataEngine([{"name": "eduward"},
+    flow_data_engine = FlowDataEngine([{"name": "eduward"},
                              {"name": "edward"},
                              {"name": "courtney"}])
     other = FlowDataEngine([{"name": "edward"}])
-    result_df = self.join(join_input=join_input, other=other, verify_integrity=False,
-                             auto_generate_selection=True)
+    result_df = flow_data_engine.join(join_input=join_input, other=other, verify_integrity=False,
+                                      auto_generate_selection=True)
     expected_df = FlowDataEngine([{"right_name": "edward", "name" :"edward"}])
     result_df.assert_equal(expected_df)
 
@@ -365,9 +366,9 @@ def test_join_semi():
 
 def test_join_anti():
     join_input = transform_schema.JoinInput(
-        join_mapping='name',
-        left_select=[transform_schema.SelectInput(old_name='name', keep=True), transform_schema.SelectInput('other')],
-        right_select=[transform_schema.SelectInput(old_name='name', keep=False)],
+        join_mapping=[transform_schema.JoinMap('name')],
+        left_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=True), transform_schema.SelectInput(old_name='other')]),
+        right_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False)]),
         how='anti'
     )
     left_df = FlowDataEngine([{"name": "eduward", "other": 1},
@@ -383,9 +384,9 @@ def test_join_anti():
 
 def test_join_anti_not_selecting_join_key():
     join_input = transform_schema.JoinInput(
-        join_mapping='name',
-        left_select=[transform_schema.SelectInput(old_name='name', keep=False), transform_schema.SelectInput('other')],
-        right_select=[transform_schema.SelectInput(old_name='name', keep=False)],
+        join_mapping=[transform_schema.JoinMap('name')],
+        left_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False), transform_schema.SelectInput(old_name='other')]),
+        right_select=transform_schema.JoinInputs(renames=[transform_schema.SelectInput(old_name='name', keep=False)]),
         how='anti'
     )
     left_df = FlowDataEngine([{"name": "eduward", "other": 1},
@@ -752,3 +753,7 @@ def test_remove_comments_and_docstrings():
         except Exception as e:
             print(f"Test failed for:\n{input_code}")
             raise e
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

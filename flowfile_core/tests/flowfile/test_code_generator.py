@@ -271,7 +271,6 @@ def join_input_large_dataset() -> tuple[input_schema.NodeManualInput, input_sche
         node_id=1,
         raw_data_format=data_engine.select_columns(['ID', "Name", "Address", "Zipcode"]).to_raw_data()
     )
-
     right_data = input_schema.NodeManualInput(
         flow_id=1,
         node_id=2,
@@ -583,7 +582,6 @@ def test_join_operation_left(join_input_dataset):
     """Test join operation between two datasets"""
     flow = create_basic_flow()
     left_data, right_data = join_input_dataset
-
     flow.add_manual_input(left_data)
     flow.add_manual_input(right_data)
 
@@ -607,7 +605,6 @@ def test_join_operation_left(join_input_dataset):
 
     # Convert to Polars code
     code = export_flow_to_polars(flow)
-
     # Verify join code
     verify_code_contains(code,
                          "df_1.join(",
@@ -2677,3 +2674,7 @@ def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data):
     result = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

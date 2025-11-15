@@ -39,11 +39,14 @@ def join(node_data: "NodeData") -> NodeData:
             join_key = overlapping_cols[0]
         else:
             join_key = ''
-        ji = transform_schema.JoinInput(join_mapping=join_key,
-                                        left_select=node_data.main_input.columns,
-                                        right_select=node_data.right_input.columns
-                                        )
-        ji.auto_rename()
+        join_input_manager = transform_schema.JoinInputManager(
+            transform_schema.JoinInput(join_mapping=join_key,
+                                       left_select=node_data.main_input.columns,
+                                       right_select=node_data.right_input.columns
+                                       )
+        )
+        join_input_manager.auto_rename()
+        ji = join_input_manager.to_join_input()
         node_data.setting_input = input_schema.NodeJoin(flow_id=node_data.flow_id,
                                                         node_id=node_data.node_id,
                                                         join_input=ji)
@@ -53,12 +56,15 @@ def join(node_data: "NodeData") -> NodeData:
 @setting_generator_method
 def cross_join(node_data: "NodeData") -> NodeData:
     if node_data.right_input and node_data.main_input:
-        ji = transform_schema.CrossJoinInput(left_select=node_data.main_input.columns,
-                                             right_select=node_data.right_input.columns)
-        ji.auto_rename()
+        cj_input_manager = transform_schema.CrossJoinInputManager(
+            transform_schema.CrossJoinInput(left_select=node_data.main_input.columns,
+                                            right_select=node_data.right_input.columns)
+        )
+        cj_input_manager.auto_rename()
+        cj = cj_input_manager.to_cross_join_input()
         node_data.setting_input = input_schema.NodeCrossJoin(flow_id=node_data.flow_id,
                                                              node_id=node_data.node_id,
-                                                             cross_join_input=ji)
+                                                             cross_join_input=cj)
     return node_data
 
 

@@ -369,3 +369,7 @@ class TestJoins:
         assert len(result) < len(orders.filter(col("customer_id").is_not_null()).collect())
         assert set(result["region"].unique().to_list()) == {"North"}
         assert all(oid <= 104 for oid in result["order_id"].to_list())
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
