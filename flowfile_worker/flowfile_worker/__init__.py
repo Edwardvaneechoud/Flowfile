@@ -1,58 +1,55 @@
-from typing import Dict
+"""
+Flowfile Worker initialization module.
+
+This module sets up:
+- Multiprocessing context for process spawning
+- Global state dictionaries and locks
+- Process limiting with semaphore
+- Cache configuration
+
+All global state will be migrated to WorkerState in Phase 2.
+"""
+from typing import Dict, Any
 import threading
+import os
 import multiprocessing
-from shared.storage_config import storage
 
 # DO NOT call set_start_method here - it runs on import!
-
 from multiprocessing import get_context
 from flowfile_worker.models import Status
+from flowfile_worker.configs import config, logger
+from flowfile_worker.state import WorkerState
+from shared.storage_config import storage
 
+# Initialize multiprocessing context with spawn method
 mp_context = get_context("spawn")
 
-status_dict: Dict[str, Status] = dict()
-process_dict = dict()
+# Initialize centralized worker state
+worker_state = WorkerState()
 
+# Legacy global dictionaries for backward compatibility (deprecated - use worker_state instead)
+# These will be gradually phased out as routes and spawner are updated
+status_dict: Dict[str, Status] = dict()
+process_dict: Dict[str, 'multiprocessing.Process'] = dict()
+
+# Locks for thread-safe access to legacy global state
 status_dict_lock = threading.Lock()
 process_dict_lock = threading.Lock()
 
-# NEW: Add process limiting
-import platform
-import os
-from flowfile_worker.configs import logger
+# Process limiting configuration
+MAX_CONCURRENT_PROCESSES = config.calculated_max_workers
 
-def _calculate_max_workers() -> int:
-    """
-    Calculate platform-appropriate max concurrent processes.
-    
-    Platform limits:
-    - Windows: Lower limit due to handle restrictions (max 32)
-    - Unix: Higher limit but respect system resources (max 61)
-    
-    Returns:
-        Maximum number of concurrent worker processes
-    """
-    cpu_count = os.cpu_count() or 4
-    
-    if platform.system() == 'Windows':
-        # Windows has lower handle limits
-        default_max = min(32, cpu_count + 4)
-    else:
-        # Unix systems (Linux, macOS) can handle more
-        default_max = min(61, cpu_count * 2)
-    
-    return default_max
-
-# Allow override via environment variable
-MAX_CONCURRENT_PROCESSES = int(os.environ.get('FLOWFILE_MAX_WORKERS', _calculate_max_workers()))
-
-# Semaphore to enforce the limit
+# Semaphore to enforce the process limit
 process_semaphore = threading.Semaphore(MAX_CONCURRENT_PROCESSES)
 
 logger.info(f"Maximum concurrent processes: {MAX_CONCURRENT_PROCESSES}")
 
-CACHE_EXPIRATION_TIME = 24 * 60 * 60
-
+# Cache configuration
+CACHE_EXPIRATION_TIME = config.cache_expiration_seconds
 CACHE_DIR = storage.cache_directory
 
+logger.info(f"Cache directory: {CACHE_DIR}")
+logger.info(f"Cache expiration: {config.cache_expiration_hours} hours ({CACHE_EXPIRATION_TIME} seconds)")
+
+# Process memory usage tracking
 PROCESS_MEMORY_USAGE: Dict[str, float] = dict()
