@@ -58,30 +58,33 @@ class ProcessInfoProvider(IProcessInfoProvider):
         self._worker_state = worker_state
     
     def get_all_processes(self) -> List[ProcessInfo]:
-        """Get information about all tracked processes."""
+        """Get information about all tracked processes (including completed ones)."""
         processes = []
         
-        # Get all process references from worker state
-        all_processes = self._worker_state.get_all_processes()
+        # Get all tasks from status dict (includes completed tasks)
+        all_task_ids = self._worker_state.get_all_task_ids()
+        all_process_refs = self._worker_state.get_all_processes()
         
-        for task_id, process in all_processes.items():
+        for task_id in all_task_ids:
+            process = all_process_refs.get(task_id)
             process_info = ProcessInfo(
                 task_id=task_id,
-                pid=process.pid if hasattr(process, 'pid') else None,
+                pid=process.pid if process and hasattr(process, 'pid') else None,
                 status=self._get_process_status(task_id),
-                start_time=getattr(process, 'start_time', None)
+                start_time=getattr(process, 'start_time', None) if process else None
             )
             processes.append(process_info)
         
         return processes
     
     def get_process_count_by_status(self, status: str) -> int:
-        """Get count of processes with specific status."""
+        """Get count of processes with specific status (case-insensitive)."""
         count = 0
-        all_processes = self._worker_state.get_all_processes()
-        
-        for task_id in all_processes.keys():
-            if self._get_process_status(task_id) == status:
+        all_task_ids = self._worker_state.get_all_task_ids()
+        status_lower = status.lower()
+       
+        for task_id in all_task_ids:
+            if self._get_process_status(task_id).lower() == status_lower:
                 count += 1
         
         return count
@@ -118,12 +121,12 @@ class MonitoringService(IMonitoringService):
         cpu_count = self._system_metrics_provider.get_cpu_count()
         
         # Simple health determination logic
-        # "degraded" means the system is under moderate load (75-90% memory)
+        # "degraded" means the system is under moderate load (80-90% memory)
         # "unhealthy" means the system is under heavy load (>90% memory)
         health_status = "healthy"
         if memory_info['percent'] > 90:
             health_status = "unhealthy"
-        elif memory_info['percent'] > 80:
+        elif memory_info['percent'] >= 80:
             health_status = "degraded"
         
         return HealthStatus(
@@ -161,11 +164,12 @@ class MonitoringService(IMonitoringService):
         failed_count = 0
         
         for process in all_processes:
-            if process.status.lower() in ['starting', 'processing']:
+            status_lower = process.status.lower()
+            if status_lower in ['starting', 'processing']:
                 running_count += 1
-            elif process.status.lower() == 'completed':
+            elif status_lower == 'completed':
                 completed_count += 1
-            elif process.status.lower() == 'error':
+            elif status_lower in ['error', 'unknown error']:
                 failed_count += 1
         
         return ProcessMetrics(

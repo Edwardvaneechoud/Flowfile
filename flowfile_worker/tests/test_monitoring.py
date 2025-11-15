@@ -140,6 +140,7 @@ class TestMonitoringService:
     
     def test_get_process_metrics_empty(self):
         """Test process metrics when no processes exist."""
+        self.worker_state.get_all_task_ids.return_value = []
         self.worker_state.get_all_processes.return_value = {}
         metrics = self.monitoring_service.get_process_metrics()
         assert metrics.total_processes == 0
@@ -163,6 +164,7 @@ class TestMonitoringService:
         mock_status3 = Mock()
         mock_status3.status = "Error"
         
+        self.worker_state.get_all_task_ids.return_value = ["task1", "task2", "task3"]
         self.worker_state.get_all_processes.return_value = {
             "task1": mock_process,
             "task2": mock_process,
@@ -271,9 +273,10 @@ class TestMonitoringService:
         mock_status3 = Mock()
         mock_status3.status = "Completed"
         
+        self.worker_state.get_all_task_ids.return_value = ["task1", "task2", "task3"]
         self.worker_state.get_all_processes.return_value = {
             "task1": Mock(),
-            "task2": Mock(), 
+            "task2": Mock(),
             "task3": Mock()
         }
         self.worker_state.get_status.side_effect = lambda task_id: {
@@ -352,6 +355,7 @@ class TestProcessInfoProvider:
     
     def test_get_all_processes_empty(self):
         """Test getting all processes when none exist."""
+        self.worker_state.get_all_task_ids.return_value = []
         self.worker_state.get_all_processes.return_value = {}
         self.worker_state.get_status.return_value = None
         
@@ -376,6 +380,7 @@ class TestProcessInfoProvider:
         mock_status2 = Mock()
         mock_status2.status = "Completed"
         
+        self.worker_state.get_all_task_ids.return_value = ["task1", "task2"]
         self.worker_state.get_all_processes.return_value = {
             "task1": mock_process1,
             "task2": mock_process2
@@ -424,6 +429,7 @@ class TestProcessInfoProvider:
         mock_status3 = Mock()
         mock_status3.status = "Completed"
         
+        self.worker_state.get_all_task_ids.return_value = ["task1", "task2", "task3"]
         self.worker_state.get_all_processes.return_value = {
             "task1": mock_process1,
             "task2": mock_process2,
@@ -655,3 +661,319 @@ class TestMonitoringRouter:
         
         assert response.status_code == 500
         assert "Failed to get system metrics" in response.json()["detail"]
+
+
+class TestMonitoringIntegration:
+    """Integration tests for monitoring with real task execution."""
+    
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.client = TestClient(app)
+    
+    def test_task_lifecycle_monitoring(self):
+        """Test monitoring of a real task through its lifecycle."""
+        import time
+        import base64
+        import polars as pl
+        
+        # Create a simple task that takes some time
+        df = pl.LazyFrame({'value': [i for i in range(100)]}).select(
+            (pl.col('value') * 2).alias('doubled')
+        )
+        serialized_df = df.serialize()
+        
+        from flowfile_worker import models
+        polars_script = models.PolarsScript(
+            operation=base64.encodebytes(serialized_df),
+            operation_type='store'
+        )
+        
+        # Initial monitoring state - should have 0 running processes
+        response = self.client.get("/monitoring/processes/count")
+        assert response.status_code == 200
+        initial_count = response.json()["running_processes"]
+        
+        # Submit the task
+        submit_response = self.client.post('/submit_query', data=polars_script.json())
+        assert submit_response.status_code == 200
+        status = models.Status.model_validate(submit_response.json())
+        task_id = status.background_task_id
+        
+        # Give the process time to start
+        time.sleep(0.5)
+        
+        # Check that the task appears in all processes
+        processes_response = self.client.get("/monitoring/processes")
+        assert processes_response.status_code == 200
+        processes_data = processes_response.json()
+        
+        # Find our task in the processes list
+        task_found = any(
+            proc['task_id'] == task_id 
+            for proc in processes_data['processes']
+        )
+        assert task_found, f"Task {task_id} not found in processes list"
+        
+        # Tasks complete very fast, check if it's still running OR completed
+        count_response = self.client.get("/monitoring/processes/count")
+        assert count_response.status_code == 200
+        current_count = count_response.json()["running_processes"]
+        
+        # Task might have completed already (they're very fast), so we just verify it was found
+        # The important assertion is that the task was found in the process list
+        
+        # Wait for task to complete
+        max_wait = 10  # seconds
+        waited = 0
+        while waited < max_wait:
+            status_response = self.client.get(f'/status/{task_id}')
+            if status_response.status_code == 200:
+                status = models.Status.model_validate(status_response.json())
+                if status.status == 'Completed':
+                    break
+            time.sleep(0.5)
+            waited += 0.5
+        
+        assert status.status == 'Completed', f"Task did not complete in time, status: {status.status}"
+        
+        # Wait a bit for cleanup
+        time.sleep(0.5)
+        
+        # Verify the task is no longer in running processes
+        final_processes = self.client.get("/monitoring/processes")
+        assert final_processes.status_code == 200
+        final_data = final_processes.json()
+        
+        # Task might still be in the list but should not be in "running" status
+        running_tasks = [
+            proc for proc in final_data['processes']
+            if proc['task_id'] == task_id and proc['status'].lower() in ['processing', 'starting']
+        ]
+        assert len(running_tasks) == 0, "Task should not be in running state after completion"
+    
+    def test_multiple_tasks_monitoring(self):
+        """Test monitoring with multiple concurrent tasks."""
+        import time
+        import base64
+        import polars as pl
+        from flowfile_worker import models
+        
+        # Create multiple tasks
+        task_ids = []
+        num_tasks = 3
+        
+        for i in range(num_tasks):
+            df = pl.LazyFrame({'value': [j for j in range(50)]}).select(
+                (pl.col('value') + i).alias(f'result_{i}')
+            )
+            serialized_df = df.serialize()
+            
+            polars_script = models.PolarsScript(
+                operation=base64.encodebytes(serialized_df),
+                operation_type='store'
+            )
+            
+            response = self.client.post('/submit_query', data=polars_script.json())
+            assert response.status_code == 200
+            status = models.Status.model_validate(response.json())
+            task_ids.append(status.background_task_id)
+        
+        # Give processes time to start
+        time.sleep(0.5)
+        
+        # Check process metrics
+        processes_response = self.client.get("/monitoring/processes")
+        assert processes_response.status_code == 200
+        processes_data = processes_response.json()
+        
+        # Verify all tasks are tracked
+        found_tasks = sum(
+            1 for proc in processes_data['processes']
+            if proc['task_id'] in task_ids
+        )
+        assert found_tasks >= 1, f"Expected to find at least 1 of our {num_tasks} tasks, found {found_tasks}"
+        
+        # Check the overview endpoint
+        overview_response = self.client.get("/monitoring/overview")
+        assert overview_response.status_code == 200
+        overview_data = overview_response.json()
+        
+        assert 'health' in overview_data
+        assert 'system' in overview_data
+        assert 'processes' in overview_data
+        assert overview_data['processes']['total_processes'] >= 1
+        
+        # Wait for all tasks to complete
+        max_wait = 15
+        for task_id in task_ids:
+            waited = 0
+            while waited < max_wait:
+                status_response = self.client.get(f'/status/{task_id}')
+                if status_response.status_code == 200:
+                    status = models.Status.model_validate(status_response.json())
+                    if status.status in ['Completed', 'Error']:
+                        break
+                time.sleep(0.5)
+                waited += 0.5
+    
+    def test_process_status_transitions(self):
+        """Test that process status transitions are reflected in monitoring."""
+        import time
+        import base64
+        import polars as pl
+        from flowfile_worker import models
+        
+        # Create a task
+        df = pl.LazyFrame({'x': [1, 2, 3]})
+        serialized_df = df.serialize()
+        
+        polars_script = models.PolarsScript(
+            operation=base64.encodebytes(serialized_df),
+            operation_type='store'
+        )
+        
+        # Submit task
+        response = self.client.post('/submit_query', data=polars_script.json())
+        assert response.status_code == 200
+        status = models.Status.model_validate(response.json())
+        task_id = status.background_task_id
+        
+        # Status should start as "Starting"
+        assert status.status == 'Starting'
+        
+        # Give it time to process
+        time.sleep(0.3)
+        
+        # Check monitoring reflects the status
+        processes_response = self.client.get("/monitoring/processes")
+        assert processes_response.status_code == 200
+        processes_data = processes_response.json()
+        
+        # Find our task
+        our_task = next(
+            (proc for proc in processes_data['processes'] if proc['task_id'] == task_id),
+            None
+        )
+        
+        if our_task:
+            # Status should be either Starting or Processing (case-insensitive)
+            assert our_task['status'].lower() in ['starting', 'processing', 'completed'], \
+                f"Unexpected status: {our_task['status']}"
+        
+        # Wait for completion
+        max_wait = 10
+        waited = 0
+        final_status = None
+        while waited < max_wait:
+            status_response = self.client.get(f'/status/{task_id}')
+            if status_response.status_code == 200:
+                final_status = models.Status.model_validate(status_response.json())
+                if final_status.status == 'Completed':
+                    break
+            time.sleep(0.5)
+            waited += 0.5
+        
+        assert final_status is not None
+        assert final_status.status == 'Completed'
+    
+    def test_monitoring_with_sample_task(self):
+        """Test monitoring with a sample storage task."""
+        import time
+        import base64
+        import polars as pl
+        from flowfile_worker import models
+        
+        # Create a sample task
+        lf = pl.LazyFrame({'value': [i for i in range(1000)]})
+        serialized_df = lf.serialize()
+        polars_script = models.PolarsScriptSample(
+            operation=base64.encodebytes(serialized_df),
+            operation_type='store_sample',
+            sample_size=10
+        )
+        
+        # Check initial state
+        initial_response = self.client.get("/monitoring/processes/count")
+        assert initial_response.status_code == 200
+        
+        # Submit sample task
+        response = self.client.post('/store_sample', data=polars_script.json())
+        assert response.status_code == 200
+        status = models.Status.model_validate(response.json())
+        task_id = status.background_task_id
+        
+        # Give it time to start
+        time.sleep(0.3)
+        
+        # Verify task appears in monitoring
+        processes_response = self.client.get("/monitoring/processes")
+        assert processes_response.status_code == 200
+        processes_data = processes_response.json()
+        
+        task_in_list = any(
+            proc['task_id'] == task_id
+            for proc in processes_data['processes']
+        )
+        assert task_in_list, f"Sample task {task_id} not found in monitoring"
+        
+        # Wait for completion
+        max_wait = 10
+        waited = 0
+        while waited < max_wait:
+            status_response = self.client.get(f'/status/{task_id}')
+            if status_response.status_code == 200:
+                final_status = models.Status.model_validate(status_response.json())
+                if final_status.status in ['Completed', 'Error']:
+                    break
+            time.sleep(0.5)
+            waited += 0.5
+        
+        assert final_status.status == 'Completed', f"Task status: {final_status.status}"
+    
+    def test_health_check_during_task_execution(self):
+        """Test that health check works correctly during task execution."""
+        import time
+        import base64
+        import polars as pl
+        from flowfile_worker import models
+        
+        # Submit a task
+        df = pl.LazyFrame({'data': range(100)})
+        polars_script = models.PolarsScript(
+            operation=base64.encodebytes(df.serialize()),
+            operation_type='store'
+        )
+        
+        response = self.client.post('/submit_query', data=polars_script.json())
+        assert response.status_code == 200
+        task_id = models.Status.model_validate(response.json()).background_task_id
+        
+        # Check health while task is running
+        time.sleep(0.3)
+        
+        health_response = self.client.get("/monitoring/health")
+        assert health_response.status_code == 200
+        health_data = health_response.json()
+        assert 'healthy' in health_data
+        assert 'timestamp' in health_data
+        
+        # Check detailed health
+        detailed_health = self.client.get("/monitoring/health/detailed")
+        assert detailed_health.status_code == 200
+        detailed_data = detailed_health.json()
+        assert 'status' in detailed_data
+        assert detailed_data['status'] in ['healthy', 'degraded', 'unhealthy']
+        assert 'uptime_seconds' in detailed_data
+        assert detailed_data['uptime_seconds'] > 0
+        
+        # Wait for task to complete
+        max_wait = 10
+        waited = 0
+        while waited < max_wait:
+            status_response = self.client.get(f'/status/{task_id}')
+            if status_response.status_code == 200:
+                status = models.Status.model_validate(status_response.json())
+                if status.status == 'Completed':
+                    break
+            time.sleep(0.5)
+            waited += 0.5

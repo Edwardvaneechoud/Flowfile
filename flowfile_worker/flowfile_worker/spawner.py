@@ -144,9 +144,10 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         except Exception as e:
             logger.error(f"Error cleaning up queue for task {task_id}: {e}")
 
-        # Step 4: Remove from process manager
+        # Step 4: Remove from process manager and worker state
         try:
             process_manager.remove_process(task_id)
+            worker_state.remove_process(task_id)
         except Exception as e:
             logger.error(f"Error removing process from manager for task {task_id}: {e}")
 
@@ -234,7 +235,9 @@ def start_process(
         p.start()
         logger.debug(f"Started process {p.pid} for task {task_id}")
 
+        # Register process in both process_manager and worker_state
         process_manager.add_process(task_id, p)
+        worker_state.set_process(task_id, p)
 
         # Monitor the process until completion
         handle_task(
@@ -313,7 +316,9 @@ def start_generic_process(
         p.start()
         logger.debug(f"Started generic process {p.pid} for task {task_id}")
 
+        # Register process in both process_manager and worker_state
         process_manager.add_process(task_id, p)
+        worker_state.set_process(task_id, p)
 
         # Monitor the process until completion
         handle_task(
@@ -389,7 +394,9 @@ def start_fuzzy_process(
         p.start()
         logger.debug(f"Started fuzzy process {p.pid} for task {task_id}")
 
+        # Register process in both process_manager and worker_state
         process_manager.add_process(task_id, p)
+        worker_state.set_process(task_id, p)
 
         # Monitor the process until completion
         handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
