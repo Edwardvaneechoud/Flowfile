@@ -3,6 +3,7 @@ export interface ProcessInfo {
   pid: number | null;
   status: string;
   start_time: number | null;
+  end_time: number | null;
 }
 
 export interface HealthStatus {

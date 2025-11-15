@@ -67,11 +67,14 @@ class ProcessInfoProvider(IProcessInfoProvider):
         
         for task_id in all_task_ids:
             process = all_process_refs.get(task_id)
+            status = self._worker_state.get_status(task_id)
+            
             process_info = ProcessInfo(
                 task_id=task_id,
                 pid=process.pid if process and hasattr(process, 'pid') else None,
                 status=self._get_process_status(task_id),
-                start_time=getattr(process, 'start_time', None) if process else None
+                start_time=status.start_time if status else None,
+                end_time=status.end_time if status else None
             )
             processes.append(process_info)
         

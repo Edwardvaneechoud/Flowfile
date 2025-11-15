@@ -105,6 +105,8 @@ class Status(BaseModel):
     error_message: Optional[str] = None  # Add error_message field
     results: Optional[Any] = None
     result_type: Optional[ResultType] = 'polars'
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
 
     def __hash__(self):
         return hash(self.file_ref)

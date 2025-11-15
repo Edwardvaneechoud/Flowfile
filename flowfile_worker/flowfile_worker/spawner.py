@@ -45,8 +45,9 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         Order matters to prevent resource leaks and zombie processes.
     """
     try:
-        # Set initial status to Processing
+        # Set initial status to Processing and record start time
         worker_state.update_status_field(task_id, 'status', 'Processing')
+        worker_state.update_status_field(task_id, 'start_time', time.time())
 
         # Monitor process with responsive polling
         while p.is_alive():
@@ -79,6 +80,10 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
 
         # Wait for process to fully exit (it should be done by now)
         p.join(timeout=2)
+
+        # Record end time
+        end_time = time.time()
+        worker_state.update_status_field(task_id, 'end_time', end_time)
 
         # Update final status based on completion state
         status = worker_state.get_status(task_id)

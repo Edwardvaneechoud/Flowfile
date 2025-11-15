@@ -47,13 +47,17 @@
                 <i class="fa-solid fa-clock"></i>
                 Started {{ formatTimeAgo(process.start_time) }}
               </span>
+              <span v-if="process.end_time" class="meta-item">
+                <i class="fa-solid fa-flag-checkered"></i>
+                Ended {{ formatTimeAgo(process.end_time) }}
+              </span>
               <span v-if="process.pid" class="meta-item">
                 <i class="fa-solid fa-microchip"></i>
                 PID: {{ process.pid }}
               </span>
               <span class="meta-item">
                 <i class="fa-solid fa-stopwatch"></i>
-                {{ getDurationText(process.start_time) }}
+                {{ getDurationText(process.start_time, process.end_time) }}
               </span>
             </div>
 
@@ -75,6 +79,14 @@
                   <div class="detail-item" v-if="process.start_time">
                     <span class="detail-label">Start Time</span>
                     <span class="detail-value">{{ formatTimestamp(process.start_time) }}</span>
+                  </div>
+                  <div class="detail-item" v-if="process.end_time">
+                    <span class="detail-label">End Time</span>
+                    <span class="detail-value">{{ formatTimestamp(process.end_time) }}</span>
+                  </div>
+                  <div class="detail-item" v-if="process.start_time">
+                    <span class="detail-label">Duration</span>
+                    <span class="detail-value">{{ getDurationText(process.start_time, process.end_time) }}</span>
                   </div>
                 </div>
               </div>
@@ -150,10 +162,13 @@ const formatTimeAgo = (timestamp: number): string => {
   return `${Math.floor(diff / 86400)}d ago`;
 };
 
-const getDurationText = (startTime: number | null): string => {
+const getDurationText = (startTime: number | null, endTime: number | null = null): string => {
   if (!startTime) return 'N/A';
-  const now = Date.now();
-  const diff = Math.floor((now - startTime * 1000) / 1000);
+  
+  // If task has completed (has end_time), show actual duration
+  // Otherwise, show time since start (for running tasks)
+  const endTimestamp = endTime ? endTime * 1000 : Date.now();
+  const diff = Math.floor((endTimestamp - startTime * 1000) / 1000);
   
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`;

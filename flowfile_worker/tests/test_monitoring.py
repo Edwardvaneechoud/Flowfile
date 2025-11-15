@@ -22,16 +22,38 @@ class TestMonitoringModels:
     
     def test_process_info_creation(self):
         """Test ProcessInfo model creation."""
+        current_time = time.time()
         process_info = ProcessInfo(
             task_id="test-task-123",
             pid=1234,
             status="Running",
-            start_time=time.time()
+            start_time=current_time,
+            end_time=None
         )
         assert process_info.task_id == "test-task-123"
         assert process_info.pid == 1234
         assert process_info.status == "Running"
         assert process_info.start_time is not None
+        assert process_info.end_time is None
+    
+    def test_process_info_with_end_time(self):
+        """Test ProcessInfo model creation with end_time."""
+        start_time = time.time()
+        end_time = start_time + 10
+        process_info = ProcessInfo(
+            task_id="test-task-456",
+            pid=5678,
+            status="Completed",
+            start_time=start_time,
+            end_time=end_time
+        )
+        assert process_info.task_id == "test-task-456"
+        assert process_info.pid == 5678
+        assert process_info.status == "Completed"
+        assert process_info.start_time == start_time
+        assert process_info.end_time == end_time
+        assert process_info.end_time is not None and process_info.start_time is not None
+        assert process_info.end_time > process_info.start_time
     
     def test_health_status_creation(self):
         """Test HealthStatus model creation."""
@@ -155,14 +177,21 @@ class TestMonitoringService:
         mock_process.pid = 1234
         mock_process.start_time = time.time()
         
+        current_time = time.time()
         mock_status1 = Mock()
         mock_status1.status = "Processing"
+        mock_status1.start_time = current_time
+        mock_status1.end_time = None
         
         mock_status2 = Mock()
         mock_status2.status = "Completed"
+        mock_status2.start_time = current_time - 10
+        mock_status2.end_time = current_time
         
         mock_status3 = Mock()
         mock_status3.status = "Error"
+        mock_status3.start_time = current_time - 5
+        mock_status3.end_time = current_time
         
         self.worker_state.get_all_task_ids.return_value = ["task1", "task2", "task3"]
         self.worker_state.get_all_processes.return_value = {
@@ -367,18 +396,21 @@ class TestProcessInfoProvider:
         # Mock process data
         mock_process1 = Mock()
         mock_process1.pid = 1234
-        mock_process1.start_time = time.time()
         
         mock_process2 = Mock()
         mock_process2.pid = 5678
-        mock_process2.start_time = time.time()
         
+        current_time = time.time()
         # Mock status data
         mock_status1 = Mock()
         mock_status1.status = "Processing"
+        mock_status1.start_time = current_time
+        mock_status1.end_time = None
         
         mock_status2 = Mock()
         mock_status2.status = "Completed"
+        mock_status2.start_time = current_time - 10
+        mock_status2.end_time = current_time
         
         self.worker_state.get_all_task_ids.return_value = ["task1", "task2"]
         self.worker_state.get_all_processes.return_value = {
@@ -407,10 +439,14 @@ class TestProcessInfoProvider:
         assert process1 is not None
         assert process1.pid == 1234
         assert process1.status == "Processing"
+        assert process1.start_time == current_time
+        assert process1.end_time is None
         
         assert process2 is not None
         assert process2.pid == 5678
         assert process2.status == "Completed"
+        assert process2.start_time == current_time - 10
+        assert process2.end_time == current_time
     
     def test_get_process_count_by_status(self):
         """Test counting processes by status."""

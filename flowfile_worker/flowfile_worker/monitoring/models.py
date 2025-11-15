@@ -13,6 +13,7 @@ class ProcessInfo(BaseModel):
     pid: Optional[int] = None
     status: str
     start_time: Optional[float] = None
+    end_time: Optional[float] = None
 
 
 class HealthStatus(BaseModel):
