@@ -1,15 +1,16 @@
 from flowfile_worker import status_dict
-from time import sleep
 import gc
+import time
 from typing import List, Tuple
 from multiprocessing import Process, Queue
 from flowfile_worker.process_manager import ProcessManager
-from flowfile_worker import models, mp_context, funcs, status_dict_lock
+from flowfile_worker import models, mp_context, funcs, status_dict_lock, process_semaphore
+from flowfile_worker.configs import logger
 
 # Initialize ProcessManager
 process_manager = ProcessManager()
 
-flowfile_node_id_type = int|str
+flowfile_node_id_type = int | str
 
 
 def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_message: mp_context.Array, q: Queue):
@@ -32,44 +33,115 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         with status_dict_lock:
             status_dict[task_id].status = "Processing"
 
+        # Monitor process with responsive polling
         while p.is_alive():
-            sleep(1)
+            # Sleep briefly for responsive cancellation checks
+            time.sleep(0.5)
+
             with progress.get_lock():
                 current_progress = progress.value
+
             with status_dict_lock:
                 status_dict[task_id].progress = current_progress
 
                 # Check if the task has been cancelled via status_dict
                 if status_dict[task_id].status == "Cancelled":
+                    logger.info(f"Task {task_id} cancelled, terminating process")
                     p.terminate()
                     break
 
+            # Check for error condition
             if current_progress == -1:
                 with status_dict_lock:
                     status_dict[task_id].status = "Error"
                     with error_message.get_lock():
                         status_dict[task_id].error_message = error_message.value.decode().rstrip('\x00')
+                logger.error(f"Task {task_id} encountered error: {status_dict[task_id].error_message}")
                 break
 
-        p.join()
+        # Wait for process to fully exit (it should be done by now)
+        p.join(timeout=2)
 
+        # Update final status
         with status_dict_lock:
             status = status_dict[task_id]
             if status.status != "Cancelled":
                 if progress.value == 100:
                     status.status = "Completed"
                     if not q.empty():
-                        status.results = q.get()
+                        try:
+                            status.results = q.get_nowait()
+                        except:
+                            pass
                 elif progress.value != -1:
                     status_dict[task_id].status = "Unknown Error"
+                    logger.warning(f"Task {task_id} ended without completion or error flag")
 
     finally:
-        if p.is_alive():
-            p.terminate()
-        p.join()
-        process_manager.remove_process(task_id)  # Remove from process manager
-        del p, progress, error_message
+        # CRITICAL CLEANUP SEQUENCE
+        # The order matters for proper resource release
+
+        # Step 1: Ensure process is fully terminated
+        try:
+            if p.is_alive():
+                logger.warning(f"Task {task_id} process still alive, terminating")
+                p.terminate()
+                p.join(timeout=5)
+
+            if p.is_alive():
+                logger.error(f"Task {task_id} process did not terminate, killing")
+                p.kill()
+                p.join(timeout=2)
+
+            if p.is_alive():
+                logger.critical(f"Task {task_id} process could not be killed!")
+        except Exception as e:
+            logger.error(f"Error terminating process for task {task_id}: {e}")
+
+        # Step 2: CRITICAL - Close the process object to release OS resources
+        # This is what allows the resource tracker to exit!
+        try:
+            p.close()
+            logger.debug(f"Closed process for task {task_id}")
+        except ValueError:
+            # Process already closed or not properly initialized
+            pass
+        except Exception as e:
+            logger.error(f"Error closing process for task {task_id}: {e}")
+
+        # Step 3: Clean up the queue
+        try:
+            # Drain any remaining items
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except:
+                    break
+
+            # Close the queue and join its background thread
+            q.close()
+            q.join_thread()
+            logger.debug(f"Cleaned up queue for task {task_id}")
+        except Exception as e:
+            logger.error(f"Error cleaning up queue for task {task_id}: {e}")
+
+        # Step 4: Remove from process manager
+        try:
+            process_manager.remove_process(task_id)
+        except Exception as e:
+            logger.error(f"Error removing process from manager for task {task_id}: {e}")
+
+        # Step 5: Delete all references explicitly
+        # Setting to None first helps ensure they're released
+        try:
+            del progress, error_message, q, p
+        except Exception as e:
+            logger.error(f"Error deleting references for task {task_id}: {e}")
+
+        # Step 6: Force garbage collection to reclaim memory
         gc.collect()
+
+        logger.debug(f"Completed cleanup for task {task_id}")
 
 
 def start_process(polars_serializable_object: bytes, task_id: str,
@@ -96,20 +168,47 @@ def start_process(polars_serializable_object: bytes, task_id: str,
     """
     if kwargs is None:
         kwargs = {}
-    process_task = getattr(funcs, operation)
-    kwargs['polars_serializable_object'] = polars_serializable_object
-    kwargs['progress'] = mp_context.Value('i', 0)
-    kwargs['error_message'] = mp_context.Array('c', 1024)
-    kwargs['queue'] = Queue(maxsize=1)
-    kwargs['file_path'] = file_ref
-    kwargs['flowfile_flow_id'] = flowfile_flow_id
-    kwargs['flowfile_node_id'] = flowfile_node_id
 
-    p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
-    p.start()
+    # Acquire semaphore slot (wait up to 30 seconds)
+    logger.debug(f"Attempting to acquire process slot for task {task_id}")
+    acquired = process_semaphore.acquire(blocking=True, timeout=30)
 
-    process_manager.add_process(task_id, p)
-    handle_task(task_id=task_id, p=p, progress=kwargs['progress'], error_message=kwargs['error_message'], q=kwargs['queue'])
+    if not acquired:
+        # Could not acquire slot within timeout - worker at capacity
+        logger.error(f"Could not acquire process slot for task {task_id} - worker at capacity")
+        with status_dict_lock:
+            status_dict[task_id].status = "Error"
+            status_dict[task_id].error_message = "Worker at capacity, could not start task within 30 seconds"
+        return
+
+    logger.debug(f"Acquired process slot for task {task_id}")
+
+    try:
+        # Create shared memory objects
+        process_task = getattr(funcs, operation)
+        kwargs['polars_serializable_object'] = polars_serializable_object
+        kwargs['progress'] = mp_context.Value('i', 0)
+        kwargs['error_message'] = mp_context.Array('c', 1024)
+        kwargs['queue'] = Queue(maxsize=1)
+        kwargs['file_path'] = file_ref
+        kwargs['flowfile_flow_id'] = flowfile_flow_id
+        kwargs['flowfile_node_id'] = flowfile_node_id
+
+        # Start the process
+        p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
+        p.start()
+        logger.debug(f"Started process {p.pid} for task {task_id}")
+
+        process_manager.add_process(task_id, p)
+
+        # Monitor the process until completion
+        handle_task(task_id=task_id, p=p, progress=kwargs['progress'],
+                    error_message=kwargs['error_message'], q=kwargs['queue'])
+
+    finally:
+        # CRITICAL: Always release semaphore, even if something fails
+        logger.debug(f"Releasing process slot for task {task_id}")
+        process_semaphore.release()
 
 
 def start_generic_process(func_ref: callable, task_id: str,
@@ -132,21 +231,46 @@ def start_generic_process(func_ref: callable, task_id: str,
         - Delegates to handle_task for process monitoring
     """
     kwargs = {} if kwargs is None else kwargs
-    kwargs['func'] = func_ref
-    kwargs['progress'] = mp_context.Value('i', 0)
-    kwargs['error_message'] = mp_context.Array('c', 1024)
-    kwargs['queue'] = Queue(maxsize=1)
-    kwargs['file_path'] = file_ref
-    kwargs['flowfile_flow_id'] = flowfile_flow_id
-    kwargs['flowfile_node_id'] = flowfile_node_id
 
-    process_task = getattr(funcs, 'generic_task')
-    p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
-    p.start()
+    # Acquire semaphore slot (wait up to 30 seconds)
+    logger.debug(f"Attempting to acquire process slot for task {task_id}")
+    acquired = process_semaphore.acquire(blocking=True, timeout=30)
 
-    process_manager.add_process(task_id, p)  # Add process to process manager
-    handle_task(task_id=task_id, p=p, progress=kwargs['progress'],
-                error_message=kwargs['error_message'], q=kwargs['queue'])
+    if not acquired:
+        # Could not acquire slot within timeout - worker at capacity
+        logger.error(f"Could not acquire process slot for task {task_id} - worker at capacity")
+        with status_dict_lock:
+            status_dict[task_id].status = "Error"
+            status_dict[task_id].error_message = "Worker at capacity, could not start task within 30 seconds"
+        return
+
+    logger.debug(f"Acquired process slot for task {task_id}")
+
+    try:
+        # Create shared memory objects
+        kwargs['func'] = func_ref
+        kwargs['progress'] = mp_context.Value('i', 0)
+        kwargs['error_message'] = mp_context.Array('c', 1024)
+        kwargs['queue'] = Queue(maxsize=1)
+        kwargs['file_path'] = file_ref
+        kwargs['flowfile_flow_id'] = flowfile_flow_id
+        kwargs['flowfile_node_id'] = flowfile_node_id
+
+        process_task = getattr(funcs, 'generic_task')
+        p: Process = mp_context.Process(target=process_task, kwargs=kwargs)
+        p.start()
+        logger.debug(f"Started generic process {p.pid} for task {task_id}")
+
+        process_manager.add_process(task_id, p)
+
+        # Monitor the process until completion
+        handle_task(task_id=task_id, p=p, progress=kwargs['progress'],
+                    error_message=kwargs['error_message'], q=kwargs['queue'])
+
+    finally:
+        # CRITICAL: Always release semaphore, even if something fails
+        logger.debug(f"Releasing process slot for task {task_id}")
+        process_semaphore.release()
 
 
 def start_fuzzy_process(left_serializable_object: bytes,
@@ -172,16 +296,40 @@ def start_fuzzy_process(left_serializable_object: bytes,
         - Initializes and starts a new process for fuzzy joining operation
         - Delegates to handle_task for process monitoring
     """
-    progress = mp_context.Value('i', 0)
-    error_message = mp_context.Array('c', 1024)
-    q = Queue(maxsize=1)
+    # Acquire semaphore slot (wait up to 30 seconds)
+    logger.debug(f"Attempting to acquire process slot for task {task_id}")
+    acquired = process_semaphore.acquire(blocking=True, timeout=30)
 
-    args: Tuple[bytes, bytes, List[models.FuzzyMapping], mp_context.Array, str, mp_context.Value, Queue, int, flowfile_node_id_type] = \
-        (left_serializable_object, right_serializable_object, fuzzy_maps, error_message, file_ref, progress, q,
-         flowfile_flow_id, flowfile_node_id)
+    if not acquired:
+        # Could not acquire slot within timeout - worker at capacity
+        logger.error(f"Could not acquire process slot for task {task_id} - worker at capacity")
+        with status_dict_lock:
+            status_dict[task_id].status = "Error"
+            status_dict[task_id].error_message = "Worker at capacity, could not start task within 30 seconds"
+        return
 
-    p: Process = mp_context.Process(target=funcs.fuzzy_join_task, args=args)
-    p.start()
+    logger.debug(f"Acquired process slot for task {task_id}")
 
-    process_manager.add_process(task_id, p)  # Add process to process manager
-    handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+    try:
+        # Create shared memory objects
+        progress = mp_context.Value('i', 0)
+        error_message = mp_context.Array('c', 1024)
+        q = Queue(maxsize=1)
+
+        args: Tuple[bytes, bytes, List[models.FuzzyMapping], mp_context.Array, str, mp_context.Value, Queue, int, flowfile_node_id_type] = \
+            (left_serializable_object, right_serializable_object, fuzzy_maps, error_message, file_ref, progress, q,
+             flowfile_flow_id, flowfile_node_id)
+
+        p: Process = mp_context.Process(target=funcs.fuzzy_join_task, args=args)
+        p.start()
+        logger.debug(f"Started fuzzy process {p.pid} for task {task_id}")
+
+        process_manager.add_process(task_id, p)
+
+        # Monitor the process until completion
+        handle_task(task_id=task_id, p=p, progress=progress, error_message=error_message, q=q)
+
+    finally:
+        # CRITICAL: Always release semaphore, even if something fails
+        logger.debug(f"Releasing process slot for task {task_id}")
+        process_semaphore.release()

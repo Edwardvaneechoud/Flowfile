@@ -107,5 +107,26 @@ def run(host: str = None, port: int = None):
 
 if __name__ == "__main__":
     import multiprocessing
+    import platform
+    
+    # CRITICAL: Initialize multiprocessing BEFORE any imports that might spawn processes
+    # This prevents the duplicate process spawning issue
+    
+    # freeze_support() is required for Windows when using multiprocessing in frozen executables (PyInstaller)
     multiprocessing.freeze_support()
+    
+    # Set spawn method for consistency across all platforms
+    # - Windows: spawn is the only option
+    # - macOS/Linux: spawn avoids fork() issues with threads and is PyInstaller-compatible
+    try:
+        multiprocessing.set_start_method('spawn', force=False)
+        logger.info(f"Multiprocessing start method set to 'spawn' on {platform.system()}")
+    except RuntimeError as e:
+        # Method already set (e.g., during testing or if imported multiple times)
+        # This is acceptable - just log it
+        logger.debug(f"Multiprocessing start method already set: {e}")
+    
+    logger.info(f"Starting on platform: {platform.system()}")
+    logger.info(f"CPU count: {multiprocessing.cpu_count()}")
+    
     run()
