@@ -336,6 +336,7 @@
     "secretManager": "Secret Manager",
     "databaseManager": "Database Connection Manager",
     "cloudConnectionManager": "Cloud Connection Manager",
+    "monitoring": "System Monitoring",
     "popovers": "Popovers",
     "chat": "Chat",
     "maplibre-maps": "MapLibre Maps",

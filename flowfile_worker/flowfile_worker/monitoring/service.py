@@ -118,10 +118,12 @@ class MonitoringService(IMonitoringService):
         cpu_count = self._system_metrics_provider.get_cpu_count()
         
         # Simple health determination logic
+        # "degraded" means the system is under moderate load (75-90% memory)
+        # "unhealthy" means the system is under heavy load (>90% memory)
         health_status = "healthy"
         if memory_info['percent'] > 90:
             health_status = "unhealthy"
-        elif memory_info['percent'] > 75:
+        elif memory_info['percent'] > 80:
             health_status = "degraded"
         
         return HealthStatus(

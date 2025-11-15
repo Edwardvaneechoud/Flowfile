@@ -696,3 +696,38 @@ async def validate_db_settings(
         return {"message": "Query settings are valid"}
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get('/monitoring/overview', tags=['monitoring'])
+async def get_monitoring_overview():
+    """
+    Proxy endpoint to fetch monitoring data from the worker service.
+    
+    This endpoint forwards the request to the worker service and returns
+    the monitoring overview data, allowing the frontend to communicate
+    with a single endpoint.
+    """
+    from flowfile_core.configs.settings import WORKER_URL
+    import httpx
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{WORKER_URL}/monitoring/overview")
+            response.raise_for_status()
+            return response.json()
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Worker service is not available. Please ensure the Flowfile Worker is running."
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Worker service request timed out."
+        )
+    except Exception as e:
+        logger.error(f"Error fetching monitoring data from worker: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch monitoring data: {str(e)}"
+        )
