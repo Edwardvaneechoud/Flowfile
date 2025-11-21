@@ -242,7 +242,7 @@ class FlowFileData(BaseModel):
     flowfile_settings: FlowSettings
     nodes: List[NodeInformation]
     node_connections: List[NodeConnection]
-    _node_starts: List[int] = None
+    starting_node_ids: List[int] = None
 
 
 class NodeInput(NodeTemplate):

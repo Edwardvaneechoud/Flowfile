@@ -595,4 +595,5 @@ def test_execution_complex_flow_local_development(complex_elaborate_flow: FlowGr
 
 
 def test_store_flow(complex_elaborate_flow: FlowGraph):
-    complex_elaborate_flow.get_yaml_representation()
+    breakpoint()
+    complex_elaborate_flow.get_flowfile_data()

@@ -1803,13 +1803,15 @@ class FlowGraph:
         node = self._node_db[node_id]
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
 
-    def get_yaml_representation(self) -> str:
+    def get_flowfile_data(self) -> schemas.FlowFileData:
         """Generates a YAML representation of the entire graph structure, This will be the long-term supported way
         of storing flows."""
         import yaml
+        breakpoint()
+
+        schemas.FlowFileData()
         json_model = self.get_node_storage().model_dump()
         yaml_string = yaml.dump(json_model, default_flow_style=False, sort_keys=False)
-
         breakpoint()
 
     def get_node_storage(self) -> schemas.FlowInformation:
