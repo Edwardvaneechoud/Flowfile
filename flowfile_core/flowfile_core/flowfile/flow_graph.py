@@ -547,6 +547,8 @@ class FlowGraph:
             )
             node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref,
                                                                   n=min(sample_size, number_of_records))
+            node.results.analysis_data_generator = get_read_top_n(external_sampler.status.file_ref,
+                                                                  n=min(sample_size, number_of_records))
             return flowfile_table
 
         def schema_callback():

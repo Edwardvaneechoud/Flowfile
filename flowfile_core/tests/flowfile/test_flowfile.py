@@ -268,13 +268,20 @@ def test_opening_parquet_file(flow_logger: FlowLogger):
 def test_running_performance_mode():
     graph = create_graph()
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
     add_node_promise_on_type(graph, 'read', 1, 1)
+    from flowfile_core.configs.flow_logger import main_logger
+    received_table = input_schema.ReceivedTable(
+        file_type='parquet', name='table.parquet',
+        path=str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/data/table.parquet'))
     from flowfile_core.configs.flow_logger import main_logger
     received_table = input_schema.ReceivedTable(
         file_type='parquet', name='table.parquet',
         path=str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/data/table.parquet'))
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
     graph.add_read(node_read)
+    main_logger.warning(str(graph))
+    main_logger.warning(OFFLOAD_TO_WORKER)
     main_logger.warning(str(graph))
     main_logger.warning(OFFLOAD_TO_WORKER)
     add_node_promise_on_type(graph, 'record_count', 2)
@@ -287,6 +294,7 @@ def test_running_performance_mode():
     graph.reset()
     graph.flow_settings.execution_mode = 'Development'
     slow = graph.run_graph()
+
 
     assert slow.node_step_result[1].run_time > fast.node_step_result[1].run_time, 'Performance mode should be faster'
 
@@ -402,6 +410,25 @@ def test_add_read_excel():
     graph = create_graph()
     add_node_promise_on_type(graph, node_type='read', node_id=1)
     graph.add_read(input_file=input_schema.NodeRead(**settings))
+
+
+def get_dependency_example():
+    graph = create_graph()
+    graph = add_manual_input(graph, data=[{'name': 'John', 'city': 'New York'},
+            {'name': 'Jane', 'city': 'Los Angeles'},
+            {'name': 'Edward', 'city': 'Chicago'},
+            {'name': 'Courtney', 'city': 'Chicago'}]
+)
+    node_promise = input_schema.NodePromise(flow_id=1, node_id=2, node_type='unique')
+    graph.add_node_promise(node_promise)
+
+    node_connection = input_schema.NodeConnection.create_from_simple_input(from_id=1, to_id=2)
+    add_connection(graph, node_connection)
+    input_file = input_schema.NodeUnique(flow_id=1, node_id=2,
+                                         unique_input=transform_schema.UniqueInput(columns=['city'])
+                                         )
+    graph.add_unique(input_file)
+    return graph
 
 
 def get_dependency_example():
@@ -1110,6 +1137,7 @@ def test_schema_callback_cloud_read(flow_logger):
     graph.add_cloud_storage_reader(node_settings)
     node = graph.get_node(1)
     assert node.schema_callback._future is not None, 'Schema callback future should be set'
+    assert node.schema_callback._future is not None, 'Schema callback future should be set'
     assert len(node.schema_callback()) == 4, 'Schema should have 4 columns'
     original_schema_callback = id(node.schema_callback)
     graph.add_cloud_storage_reader(node_settings)
@@ -1154,10 +1182,14 @@ def test_add_cloud_writer(flow_logger):
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
+@pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_complex_cloud_write_scenario():
+
 
     ensure_cloud_storage_connection_is_available_and_get_connection()
     handler = FlowfileHandler()
+
+    flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
 
     flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
     graph = handler.get_flow(flow_id)

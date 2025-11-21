@@ -740,6 +740,19 @@ class FlowNode:
         if not performance_mode:
             self.node_stats.has_run_with_current_setup = True
             self.results.example_data_generator = example_data_generator()
+        def example_data_generator():
+            example_data = None
+
+            def get_example_data():
+                nonlocal example_data
+                if example_data is None:
+                    example_data = resulting_data.get_sample(100).to_arrow()
+                return example_data
+            return get_example_data
+        resulting_data = self.get_resulting_data()
+
+        if not performance_mode:
+            self.results.example_data_generator = example_data_generator()
             self.node_schema.result_schema = self.results.resulting_data.schema
             self.node_stats.has_completed_last_run = True
 
