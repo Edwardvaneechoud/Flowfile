@@ -897,7 +897,7 @@ class FlowNode:
         is_remote = run_location == 'remote'
         is_output_node = self.node_template.node_group == "output"
         should_cache = self.node_settings.cache_results
-        is_wide_transform = self.node_default.transform_type == 'wide'
+        is_wide_transform = self.node_default is not None and self.node_default.transform_type == 'wide'
         has_run = self.node_stats.has_run_with_current_setup
 
         # Determine if node needs standard execution (remote or local worker)
