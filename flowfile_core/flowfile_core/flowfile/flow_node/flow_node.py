@@ -880,71 +880,135 @@ class FlowNode:
         """
         if node_logger is None:
             raise Exception('Flow logger is not defined')
-        #  TODO: Simplify which route is being picked there are many duplicate checks
 
         if reset_cache:
             self.remove_cache()
             self.node_stats.has_run_with_current_setup = False
             self.node_stats.has_completed_last_run = False
 
-        if self.is_setup:
-            node_logger.info(f'Starting to run {self.__name__}')
-            if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
-                    and not (run_location == 'local')):
-                self.clear_table_example()
-                self.prepare_before_run()
-                self.reset()
-                try:
-                    if (((run_location == 'remote' or
-                         (self.node_default.transform_type == 'wide' and optimize_for_downstream) and
-                         not run_location == 'local'))
-                            or self.node_settings.cache_results):
-                        node_logger.info('Running the node remotely')
-                        if self.node_settings.cache_results:
-                            performance_mode = False
-                        self.execute_remote(performance_mode=(performance_mode if not self.node_settings.cache_results
-                                                              else False),
-                                            node_logger=node_logger
-                                            )
-                    else:
-                        node_logger.info('Running the node locally')
-                        self.execute_local(performance_mode=performance_mode, flow_id=node_logger.flow_id)
-                except Exception as e:
-                    if 'No such file or directory (os error' in str(e) and retry:
-                        logger.warning('Error with the input node, starting to rerun the input node...')
-                        all_inputs: List[FlowNode] = self.node_inputs.get_all_inputs()
-                        for node_input in all_inputs:
-                            node_input.execute_node(run_location=run_location,
-                                                    performance_mode=performance_mode, retry=True,
-                                                    reset_cache=True,
-                                                    node_logger=node_logger)
-                        self.execute_node(run_location=run_location,
-                                          performance_mode=performance_mode, retry=False,
-                                          node_logger=node_logger)
-                    else:
-                        self.results.errors = str(e)
-                        if "Connection refused" in str(e) and "/submit_query/" in str(e):
-                            node_logger.warning("There was an issue connecting to the remote worker, "
-                                                "ensure the worker process is running, "
-                                                "or change the settings to, so it executes locally")
-                            node_logger.error("Could not execute in the remote worker. (Re)start the worker service, or change settings to local settings.")
-                        else:
-                            node_logger.error(f'Error with running the node: {e}')
-            elif ((run_location == 'local') and
-                  (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
-                try:
-                    node_logger.info('Executing fully locally')
-                    self.execute_full_local(performance_mode)
-                except Exception as e:
-                    self.results.errors = str(e)
-                    node_logger.error(f'Error with running the node: {e}')
-                    self.node_stats.error = str(e)
-                    self.node_stats.has_completed_last_run = False
-
-            else:
-                node_logger.info('Node has already run, not running the node')
-        else:
+        if not self.is_setup:
             node_logger.warning(f'Node {self.__name__} is not setup, cannot run the node')
+            return
+
+        node_logger.info(f'Starting to run {self.__name__}')
+
+        # Pre-compute execution conditions for clarity
+        is_local = run_location == 'local'
+        is_remote = run_location == 'remote'
+        is_output_node = self.node_template.node_group == "output"
+        should_cache = self.node_settings.cache_results
+        is_wide_transform = self.node_default.transform_type == 'wide'
+        has_run = self.node_stats.has_run_with_current_setup
+
+        # Determine if node needs standard execution (remote or local worker)
+        needs_standard_run = self.needs_run(performance_mode, node_logger, run_location)
+        # Output nodes always run unless in local mode
+        should_run_output = is_output_node and not is_local
+        should_run_standard = needs_standard_run or should_run_output
+
+        # Determine if remote execution should be used:
+        # - Explicitly remote, OR
+        # - Wide transforms with optimization enabled (unless explicitly local), OR
+        # - Caching is enabled
+        use_remote = (is_remote or
+                      (is_wide_transform and optimize_for_downstream and not is_local) or
+                      should_cache)
+
+        # Full local execution: when local mode and (first run or output node)
+        should_run_full_local = is_local and (not has_run or is_output_node)
+
+        if should_run_standard:
+            self._execute_standard(
+                use_remote=use_remote,
+                performance_mode=performance_mode,
+                should_cache=should_cache,
+                node_logger=node_logger,
+                run_location=run_location,
+                retry=retry
+            )
+        elif should_run_full_local:
+            self._execute_full_local_with_error_handling(performance_mode, node_logger)
+        else:
+            node_logger.info('Node has already run, not running the node')
+
+    def _execute_standard(self, use_remote: bool, performance_mode: bool, should_cache: bool,
+                          node_logger: NodeLogger, run_location: schemas.ExecutionLocationsLiteral,
+                          retry: bool) -> None:
+        """Execute node using standard remote or local worker execution.
+
+        Args:
+            use_remote: Whether to use remote execution.
+            performance_mode: If True, optimizes for speed over diagnostics.
+            should_cache: Whether results should be cached.
+            node_logger: The logger for this node execution.
+            run_location: The location for execution.
+            retry: If True, allows retrying execution on recoverable errors.
+        """
+        self.clear_table_example()
+        self.prepare_before_run()
+        self.reset()
+        try:
+            if use_remote:
+                node_logger.info('Running the node remotely')
+                # Disable performance mode when caching to ensure full results are stored
+                effective_performance_mode = False if should_cache else performance_mode
+                self.execute_remote(performance_mode=effective_performance_mode, node_logger=node_logger)
+            else:
+                node_logger.info('Running the node locally')
+                self.execute_local(performance_mode=performance_mode, flow_id=node_logger.flow_id)
+        except Exception as e:
+            self._handle_execution_error(e, run_location, performance_mode, retry, node_logger)
+
+    def _execute_full_local_with_error_handling(self, performance_mode: bool, node_logger: NodeLogger) -> None:
+        """Execute node fully locally with error handling.
+
+        Args:
+            performance_mode: If True, optimizes for speed over diagnostics.
+            node_logger: The logger for this node execution.
+        """
+        try:
+            node_logger.info('Executing fully locally')
+            self.execute_full_local(performance_mode)
+        except Exception as e:
+            self.results.errors = str(e)
+            node_logger.error(f'Error with running the node: {e}')
+            self.node_stats.error = str(e)
+            self.node_stats.has_completed_last_run = False
+
+    def _handle_execution_error(self, e: Exception, run_location: schemas.ExecutionLocationsLiteral,
+                                 performance_mode: bool, retry: bool, node_logger: NodeLogger) -> None:
+        """Handle errors during node execution with retry logic.
+
+        Args:
+            e: The exception that occurred.
+            run_location: The location for execution.
+            performance_mode: If True, optimizes for speed over diagnostics.
+            retry: If True, allows retrying execution on recoverable errors.
+            node_logger: The logger for this node execution.
+        """
+        error_str = str(e)
+        # Retry on file not found errors (may indicate stale input cache)
+        if 'No such file or directory (os error' in error_str and retry:
+            logger.warning('Error with the input node, starting to rerun the input node...')
+            all_inputs: List[FlowNode] = self.node_inputs.get_all_inputs()
+            for node_input in all_inputs:
+                node_input.execute_node(run_location=run_location,
+                                        performance_mode=performance_mode, retry=True,
+                                        reset_cache=True,
+                                        node_logger=node_logger)
+            self.execute_node(run_location=run_location,
+                              performance_mode=performance_mode, retry=False,
+                              node_logger=node_logger)
+        else:
+            self.results.errors = error_str
+            if "Connection refused" in error_str and "/submit_query/" in error_str:
+                node_logger.warning("There was an issue connecting to the remote worker, "
+                                    "ensure the worker process is running, "
+                                    "or change the settings to, so it executes locally")
+                node_logger.error("Could not execute in the remote worker. (Re)start the worker service, "
+                                  "or change settings to local settings.")
+            else:
+                node_logger.error(f'Error with running the node: {e}')
 
     def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
         """Stores a generator function for fetching a sample of the result data.
