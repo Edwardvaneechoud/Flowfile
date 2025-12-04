@@ -136,11 +136,9 @@ class CloudStorageReadSettings(CloudStorageSettings):
 
     scan_mode: Literal["single_file", "directory"] = "single_file"
     file_format: Literal["csv", "parquet", "json", "delta", "iceberg"] = "parquet"
-    # CSV specific options
     csv_has_header: Optional[bool] = True
     csv_delimiter: Optional[str] = ","
     csv_encoding: Optional[str] = "utf8"
-    # Deltalake specific settings
     delta_version: Optional[int] = None
 
 

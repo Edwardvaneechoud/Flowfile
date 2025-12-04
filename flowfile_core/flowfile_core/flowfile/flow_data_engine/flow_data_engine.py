@@ -1148,7 +1148,7 @@ class FlowDataEngine:
         return cls(df, schema=schema, calculate_schema_stats=False, number_of_records=0)
 
     @classmethod
-    def create_from_path(cls, received_table: input_schema.ReceivedTableBase) -> "FlowDataEngine":
+    def create_from_path(cls, received_table: input_schema.ReceivedTable) -> "FlowDataEngine":
         """Creates a FlowDataEngine from a local file path.
 
         Supports various file types like CSV, Parquet, and Excel.
@@ -2123,8 +2123,8 @@ class FlowDataEngine:
                 data_type=output_fs.file_type,
                 path=output_fs.abs_file_path,
                 write_mode=output_fs.write_mode,
-                sheet_name=output_fs.output_excel_table.sheet_name,
-                delimiter=output_fs.output_csv_table.delimiter,
+                sheet_name=output_fs.sheet_name,
+                delimiter=output_fs.delimiter,
                 flow_id=flow_id,
                 node_id=node_id
             )
@@ -2138,8 +2138,8 @@ class FlowDataEngine:
                 data_type=output_fs.file_type,
                 path=output_fs.abs_file_path,
                 write_mode=output_fs.write_mode,
-                sheet_name=output_fs.output_excel_table.sheet_name,
-                delimiter=output_fs.output_csv_table.delimiter,
+                sheet_name=output_fs.sheet_name,
+                delimiter=output_fs.delimiter,
                 flow_id=flow_id,
                 node_id=node_id,
             )

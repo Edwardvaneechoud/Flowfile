@@ -8,11 +8,11 @@ from base64 import encodebytes
 from flowfile_worker import status_dict, CACHE_DIR, PROCESS_MEMORY_USAGE, status_dict_lock
 from flowfile_worker import models
 from flowfile_worker.spawner import start_process, start_fuzzy_process, start_generic_process, process_manager
-from flowfile_worker.create import table_creator_factory_method, received_table_parser, FileType
+from flowfile_worker.create import table_creator_factory_method, FileType
 from flowfile_worker.configs import logger
 from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.external_sources.sql_source.main import read_sql_source, write_serialized_df_to_database
-
+from flowfile_worker.external_sources.sql_source.main import read_sql_source
+from flowfile_worker.create.models import ReceivedTable
 
 router = APIRouter()
 
@@ -237,7 +237,7 @@ def store_sql_db_result(database_read_settings: DatabaseReadSettings, background
 
 
 @router.post('/create_table/{file_type}')
-def create_table(file_type: FileType, received_table: Dict, background_tasks: BackgroundTasks,
+def create_table(file_type: FileType, received_table: ReceivedTable, background_tasks: BackgroundTasks,
                  flowfile_flow_id: int = 1, flowfile_node_id: int | str = -1) -> models.Status:
     """
     Create a Polars table from received dictionary data based on specified file type.
@@ -262,9 +262,8 @@ def create_table(file_type: FileType, received_table: Dict, background_tasks: Ba
                                result_type="polars")
         status_dict[task_id] = status
         func_ref = table_creator_factory_method(file_type)
-        received_table_parsed = received_table_parser(received_table, file_type)
         background_tasks.add_task(start_generic_process, func_ref=func_ref, file_ref=file_ref,
-                                  task_id=task_id, kwargs={'received_table': received_table_parsed},
+                                  task_id=task_id, kwargs={'received_table': received_table},
                                   flowfile_flow_id=flowfile_flow_id,
                                   flowfile_node_id=flowfile_node_id)
         logger.info(f"Started table creation task: {task_id}")

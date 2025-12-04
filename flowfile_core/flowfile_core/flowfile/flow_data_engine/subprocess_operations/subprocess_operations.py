@@ -23,14 +23,9 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (D
                                                                                DatabaseExternalWriteSettings)
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import (
-    ReceivedCsvTable,
-    ReceivedExcelTable,
-    ReceivedJsonTable,
-    ReceivedParquetTable
+    ReceivedTable
 )
 from flowfile_core.utils.arrow_reader import read
-
-ReceivedTableCollection = ReceivedCsvTable | ReceivedParquetTable | ReceivedJsonTable | ReceivedExcelTable
 
 
 def trigger_df_operation(flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = 'store') -> Status:
@@ -74,7 +69,7 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
     return Status(**v.json())
 
 
-def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTableCollection,
+def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTable,
                              file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
     f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.model_dump_json(),
                       params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
@@ -465,7 +460,7 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
 
 
 class ExternalCreateFetcher(BaseFetcher):
-    def __init__(self, received_table: ReceivedTableCollection, node_id: int, flow_id: int,
+    def __init__(self, received_table: ReceivedTable, node_id: int, flow_id: int,
                  file_type: str = 'csv', wait_on_completion: bool = True):
         r = trigger_create_operation(received_table=received_table, file_type=file_type,
                                      node_id=node_id, flow_id=flow_id)

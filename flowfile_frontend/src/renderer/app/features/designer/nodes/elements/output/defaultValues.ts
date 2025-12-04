@@ -25,15 +25,40 @@ export const createDefaultExcelSettings = (): OutputExcelTable => {
     }
 
 
-export const createDefaultOutputSettings = (): OutputSettings => {
-        return {
-            name: '',
-            directory: '',
-            file_type: 'parquet',
-            fields: [],
-            write_mode: 'overwrite',
-            output_csv_table: createDefaultCsvSettings(),
-            output_parquet_table: createDefaultParquetSettings(),
-            output_excel_table: createDefaultExcelSettings()
+
+export function createDefaultOutputSettings(): OutputSettings {
+    return {
+        name: 'output.csv',
+        directory: '.',
+        file_type: 'csv',
+        write_mode: 'overwrite',
+        table_settings: {
+        file_type: 'csv',
+        delimiter: ',',
+        encoding: 'utf-8'
         }
     }
+    }
+    
+    // Helper functions for creating specific table settings
+    export function createCsvTableSettings(): OutputCsvTable {
+    return {
+        file_type: 'csv',
+        delimiter: ',',
+        encoding: 'utf-8'
+    }
+    }
+    
+    export function createParquetTableSettings(): OutputParquetTable {
+    return {
+        file_type: 'parquet'
+    }
+    }
+    
+    export function createExcelTableSettings(): OutputExcelTable {
+    return {
+        file_type: 'excel',
+        sheet_name: 'Sheet1'
+    }
+    }
+    

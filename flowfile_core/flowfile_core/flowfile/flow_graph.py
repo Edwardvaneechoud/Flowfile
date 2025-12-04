@@ -1128,7 +1128,6 @@ class FlowGraph:
         """
 
         def _func(df: FlowDataEngine):
-            output_file.output_settings.populate_abs_file_path()
             execute_remote = self.execution_location != 'local'
             df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id,
                       execute_remote=execute_remote)
@@ -1803,16 +1802,25 @@ class FlowGraph:
         node = self._node_db[node_id]
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
 
-    def get_flowfile_data(self) -> schemas.FlowFileData:
+    def get_flowfile_data(self) -> schemas.FlowfileData:
         """Generates a YAML representation of the entire graph structure, This will be the long-term supported way
         of storing flows."""
         import yaml
-        breakpoint()
 
-        schemas.FlowFileData()
-        json_model = self.get_node_storage().model_dump()
+
+        node_storage = self.get_node_storage()
+
+        flowfile_data = schemas.FlowfileData(flowfile_version='1',
+                             flowfile_id=self.flow_id,
+                             flowfile_name=self.__name__,
+                             flowfile_settings=self.flow_settings,
+                             nodes=[node.get_node_information() for node in self.nodes],
+                             node_connections=[schemas.NodeConnection(from_node_id=src, to_node_id=tgt) for src, tgt in self.node_connections],
+                                             starting_node_ids=[v.node_id for v in self._flow_starts]
+                            )
+        json_model = flowfile_data.model_dump()
+        schemas.FlowfileData.model_validate(json_model)
         yaml_string = yaml.dump(json_model, default_flow_style=False, sort_keys=False)
-        breakpoint()
 
     def get_node_storage(self) -> schemas.FlowInformation:
         """Serializes the entire graph's state into a storable format.
