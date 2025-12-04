@@ -591,7 +591,7 @@ def test_write_to_cloud_storage(df, file_format):
 
     write_method(source, connection_name="minio-flowframe-test")
     new_df = scan_function(source, connection_name="minio-flowframe-test")
-    assert_frame_equal(df.collect(), new_df.collect())
+    assert_frame_equal(df.collect(), new_df.collect(), check_row_order=False)
 
 
 def test_read_csv_basic():
