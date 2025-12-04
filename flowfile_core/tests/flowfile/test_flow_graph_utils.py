@@ -428,6 +428,7 @@ def test_combine_complex_flow_graphs():
     # Run the combined graph
     run_info = combined.run_graph()
     handle_run_info(run_info)
+    combined.get_node_storage()
 
     # Verify each node produces correct results
     for node in combined.nodes:

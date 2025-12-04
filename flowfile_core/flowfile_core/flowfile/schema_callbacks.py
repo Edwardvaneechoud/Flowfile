@@ -12,11 +12,12 @@ from flowfile_core.configs.flow_logger import main_logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
 from flowfile_core.schemas import transform_schema
 from flowfile_core.schemas import input_schema
+from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 
 
 def _ensure_all_columns_have_select(left_cols: List[str],
                                     right_cols: List[str],
-                                    fuzzy_match_input: transform_schema.FuzzyMatchInput):
+                                    fuzzy_match_input: transform_schema.FuzzyMatchInputManager):
     """
     Ensure that all columns in the left and right FlowDataEngines are included in the fuzzy match input's select
      statements.
@@ -38,7 +39,7 @@ def _ensure_all_columns_have_select(left_cols: List[str],
     )
 
 
-def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: transform_schema.JoinInputs) -> None:
+def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: transform_schema.JoinInputsManager) -> None:
     """
     Ensure that the select columns in the fuzzy match input match the order of the incoming columns.
     This function modifies the join_inputs object in-place.
@@ -46,17 +47,18 @@ def _order_join_inputs_based_on_col_order(col_order: List[str], join_inputs: tra
     Returns:
         None
     """
-    select_map = {select.new_name: select for select in join_inputs.renames}
+    select_map = {select.old_name: select for select in join_inputs.renames}
     ordered_renames = [select_map[col] for col in col_order if col in select_map]
-    join_inputs.renames = ordered_renames
+    join_inputs.select_inputs.renames = ordered_renames
 
 
-def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
+def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInputManager,
                                  left_schema: List[FlowfileColumn],
                                  right_schema: List[FlowfileColumn]):
     _ensure_all_columns_have_select(left_cols=[col.column_name for col in left_schema],
                                     right_cols=[col.column_name for col in right_schema],
                                     fuzzy_match_input=fm_input)
+
     _order_join_inputs_based_on_col_order(col_order=[col.column_name for col in left_schema],
                                           join_inputs=fm_input.left_select)
     _order_join_inputs_based_on_col_order(col_order=[col.column_name for col in right_schema],
@@ -67,6 +69,7 @@ def calculate_fuzzy_match_schema(fm_input: transform_schema.FuzzyMatchInput,
     for column in fm_input.right_select.renames:
         if column.join_key:
             column.keep = True
+
     left_schema_dict, right_schema_dict = ({ls.name: ls for ls in left_schema}, {rs.name: rs for rs in right_schema})
     fm_input.auto_rename()
     right_renames = {column.old_name: column.new_name for column in fm_input.right_select.renames}

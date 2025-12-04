@@ -1533,3 +1533,6 @@ def test_join_where_bad_input_type() -> None:
             pl.col("rev") < pl.col("cost"),
         )
 
+
+if __name__ == "__main__":
+    pytest.main([__file__])

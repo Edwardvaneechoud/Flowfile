@@ -457,6 +457,8 @@ def test_analytics_processor_existing_specs_run():
 def test_analytics_changing_data_processor_existing_specs_run():
     # In this scenario, we want to reset the data types of the columns in the graphic walker settings
     graph = create_big_flow()
+
+    graph.get_node(2).get_predicted_schema()
     # We want to run the graph in development mode
     graph.flow_settings.execution_mode = "Performance"
     # Shuffle things up by changing the data type input. Instead of float, we get string as input

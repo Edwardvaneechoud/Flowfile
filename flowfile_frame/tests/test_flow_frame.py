@@ -249,7 +249,6 @@ def test_join_not_in_graph():
         "id": [1, 2, 4],
         "age": [25, 30, 40]
     })
-
     result = df1.join(df2, on="id").collect()
     assert len(result) == 2  # Only matches for id 1 and 2
     assert result.columns == ["id", "name", "age"]
@@ -845,3 +844,5 @@ def test_fuzzy_match():
     assert_frame_equal(result, expected_df, check_row_order=False, check_exact=False)
 
 
+if __name__ == "__main__":
+    pytest.main([__file__])

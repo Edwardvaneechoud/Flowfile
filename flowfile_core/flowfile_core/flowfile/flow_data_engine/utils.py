@@ -23,8 +23,10 @@ def get_data_type(vals: Iterable[Any]):
 def calculate_schema(lf: pl.LazyFrame) -> List[Dict]:
     r = ExternalDfFetcher(lf=lf, operation_type='calculate_schema', wait_on_completion=False, flow_id=-1, node_id=-1)
     schema_stats: List[Dict] = r.get_result()
+
     for schema_stat in schema_stats:
         schema_stat['pl_datatype'] = getattr(pl.datatypes, schema_stat['pl_datatype'])
+
     return schema_stats
 
 

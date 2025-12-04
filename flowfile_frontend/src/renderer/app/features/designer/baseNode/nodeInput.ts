@@ -199,15 +199,31 @@ export interface NodeRead extends NodeBase {
 }
 
 
+export type OutputTableSettings = 
+  | OutputCsvTable 
+  | OutputParquetTable 
+  | OutputExcelTable
+
+
 export interface OutputSettings {
   name: string
   directory: string
   file_type: 'parquet' | 'csv' | 'excel'
   fields?: string[]
   write_mode: 'overwrite' | 'append' | 'error'
-  output_csv_table: OutputCsvTable
-  output_parquet_table: OutputParquetTable
-  output_excel_table: OutputExcelTable
+  table_settings: OutputTableSettings
+}
+
+export function isOutputCsvTable(settings: OutputTableSettings): settings is OutputCsvTable {
+  return settings.file_type === 'csv'
+}
+
+export function isOutputParquetTable(settings: OutputTableSettings): settings is OutputParquetTable {
+  return settings.file_type === 'parquet'
+}
+
+export function isOutputExcelTable(settings: OutputTableSettings): settings is OutputExcelTable {
+  return settings.file_type === 'excel'
 }
 
 export interface NodeOutput extends NodeBase {

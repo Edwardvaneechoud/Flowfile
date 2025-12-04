@@ -19,6 +19,7 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (get_open_xlsx_datatypes,
@@ -771,13 +772,11 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in cross_join_settings.cross_join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in cross_join_settings.cross_join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
-
             return main.do_cross_join(cross_join_input=cross_join_settings.cross_join_input,
                                       auto_generate_selection=cross_join_settings.auto_generate_selection,
                                       verify_integrity=False,
@@ -800,13 +799,11 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in join_settings.join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in join_settings.join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
-
             return main.join(join_input=join_settings.join_input,
                              auto_generate_selection=join_settings.auto_generate_selection,
                              verify_integrity=False,
@@ -844,7 +841,7 @@ class FlowGraph:
             return FlowDataEngine(f.get_result())
 
         def schema_callback():
-            fm_input_copy = deepcopy(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
+            fm_input_copy = FuzzyMatchInputManager(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
             node = self.get_node(node_id=fuzzy_settings.node_id)
             return calculate_fuzzy_match_schema(fm_input_copy,
                                                 left_schema=node.node_inputs.main_inputs[0].schema,
@@ -1131,7 +1128,6 @@ class FlowGraph:
         """
 
         def _func(df: FlowDataEngine):
-            output_file.output_settings.populate_abs_file_path()
             execute_remote = self.execution_location != 'local'
             df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id,
                       execute_remote=execute_remote)
@@ -1805,6 +1801,26 @@ class FlowGraph:
         """
         node = self._node_db[node_id]
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
+
+    def get_flowfile_data(self) -> schemas.FlowfileData:
+        """Generates a YAML representation of the entire graph structure, This will be the long-term supported way
+        of storing flows."""
+        import yaml
+
+
+        node_storage = self.get_node_storage()
+
+        flowfile_data = schemas.FlowfileData(flowfile_version='1',
+                             flowfile_id=self.flow_id,
+                             flowfile_name=self.__name__,
+                             flowfile_settings=self.flow_settings,
+                             nodes=[node.get_node_information() for node in self.nodes],
+                             node_connections=[schemas.NodeConnection(from_node_id=src, to_node_id=tgt) for src, tgt in self.node_connections],
+                                             starting_node_ids=[v.node_id for v in self._flow_starts]
+                            )
+        json_model = flowfile_data.model_dump()
+        schemas.FlowfileData.model_validate(json_model)
+        yaml_string = yaml.dump(json_model, default_flow_style=False, sort_keys=False)
 
     def get_node_storage(self) -> schemas.FlowInformation:
         """Serializes the entire graph's state into a storable format.
