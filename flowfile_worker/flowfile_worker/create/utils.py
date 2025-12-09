@@ -52,9 +52,10 @@ def create_fake_data(n_records: int = 1000) -> pl.DataFrame:
 
 
 def convert_to_string(v):
+    """Convert a value to string, returning None if conversion fails."""
     try:
         return str(v)
-    except:
+    except (TypeError, ValueError, AttributeError):
         return None
 
 

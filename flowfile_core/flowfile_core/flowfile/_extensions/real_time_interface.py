@@ -32,7 +32,7 @@ class RealTimeResult:
             try:
                 self.result_df.select(pl.col(self.result_df.columns[0]).cast(pl.Boolean))
                 return True
-            except:
+            except (pl.exceptions.ComputeError, pl.exceptions.InvalidOperationError, pl.exceptions.SchemaError):
                 return False
 
 

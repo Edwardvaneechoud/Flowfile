@@ -151,9 +151,9 @@ async def get_directory_contents(directory: str, file_types: List[str] = None,
     directory_explorer = SecureFileExplorer(directory, storage.user_data_directory)
     try:
         return directory_explorer.list_contents(show_hidden=include_hidden, file_types=file_types)
-    except Exception as e:
-        logger.error(e)
-        HTTPException(404, 'Could not access the directory')
+    except (FileNotFoundError, PermissionError, OSError) as e:
+        logger.error(f"Could not access directory '{directory}': {e}")
+        raise HTTPException(404, 'Could not access the directory')
 
 
 @router.get('/files/current_directory_contents/', response_model=List[FileInfo], tags=['file manager'])
@@ -286,7 +286,8 @@ def add_flow_input(input_data: input_schema.NodeDatasource):
     flow = flow_file_handler.get_flow(input_data.flow_id)
     try:
         flow.add_datasource(input_data)
-    except:
+    except (FileNotFoundError, ValueError, OSError) as e:
+        logger.warning(f"Initial datasource add failed, trying with db_data prefix: {e}")
         input_data.file_ref = os.path.join('db_data', input_data.file_ref)
         flow.add_datasource(input_data)
 
@@ -537,7 +538,8 @@ def get_list_of_saved_flows(path: str):
     """Scans a directory for saved flow files (`.flowfile`)."""
     try:
         return get_files_from_directory(path, types=['flowfile'])
-    except:
+    except (FileNotFoundError, PermissionError, OSError) as e:
+        logger.warning(f"Could not scan directory for flow files at '{path}': {e}")
         return []
 
 
@@ -563,8 +565,16 @@ def get_node(flow_id: int, node_id: int, get_data: bool = False):
 def update_description_node(flow_id: int, node_id: int, description: str = Body(...)):
     """Updates the description text for a specific node."""
     try:
-        node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except:
+        flow = flow_file_handler.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, 'Could not find the flow')
+        node = flow.get_node(node_id)
+    except HTTPException:
+        raise
+    except (KeyError, AttributeError, ValueError) as e:
+        logger.error(f"Could not find node {node_id} in flow {flow_id}: {e}")
+        raise HTTPException(404, 'Could not find the node')
+    if node is None:
         raise HTTPException(404, 'Could not find the node')
     node.setting_input.description = description
     return True
@@ -574,8 +584,14 @@ def update_description_node(flow_id: int, node_id: int, description: str = Body(
 def get_description_node(flow_id: int, node_id: int):
     """Retrieves the description text for a specific node."""
     try:
-        node = flow_file_handler.get_flow(flow_id).get_node(node_id)
-    except:
+        flow = flow_file_handler.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, 'Could not find the flow')
+        node = flow.get_node(node_id)
+    except HTTPException:
+        raise
+    except (KeyError, AttributeError, ValueError) as e:
+        logger.error(f"Could not find node {node_id} in flow {flow_id}: {e}")
         raise HTTPException(404, 'Could not find the node')
     if node is None:
         raise HTTPException(404, 'Could not find the node')

@@ -29,7 +29,18 @@ def calculate_schema(lf: pl.LazyFrame) -> List[Dict]:
 
 
 def write_polars_frame(_df: pl.LazyFrame | pl.DataFrame, path: str, data_type: str = 'parquet',
-                       estimated_size: int = 0):
+                       estimated_size: int = 0) -> bool:
+    """Write a Polars DataFrame or LazyFrame to a file.
+
+    Args:
+        _df: The DataFrame or LazyFrame to write
+        path: The output file path
+        data_type: The output format ('parquet', 'csv', etc.)
+        estimated_size: Estimated size in bytes for memory optimization
+
+    Returns:
+        True if write succeeded, False otherwise
+    """
     is_lazy = isinstance(_df, pl.LazyFrame)
     logger.info('Caching data frame')
     if is_lazy:
@@ -41,26 +52,43 @@ def write_polars_frame(_df: pl.LazyFrame | pl.DataFrame, path: str, data_type: s
 
         if is_lazy:
             logger.info("Writing in memory efficient mode")
-            write_method = getattr(_df, 'sink_' + data_type)
-            try:
-                write_method(path)
-                return True
-            except Exception as e:
-                pass
+            sink_method_name = 'sink_' + data_type
+            if hasattr(_df, sink_method_name):
+                write_method = getattr(_df, sink_method_name)
+                try:
+                    write_method(path)
+                    return True
+                except (pl.exceptions.ComputeError, pl.exceptions.SchemaError, IOError, OSError) as e:
+                    logger.debug(f"Sink method failed, falling back to collect: {e}")
         if is_lazy:
             _df = _df.collect()
     try:
-        write_method = getattr(_df, 'write_' + data_type)
+        write_method_name = 'write_' + data_type
+        if not hasattr(_df, write_method_name):
+            logger.error(f"DataFrame has no method '{write_method_name}'")
+            return False
+        write_method = getattr(_df, write_method_name)
         write_method(path)
         return True
-    except:
+    except (pl.exceptions.ComputeError, pl.exceptions.SchemaError, IOError, OSError) as e:
+        logger.error(f"Failed to write DataFrame to {path}: {e}")
         return False
 
 
-def collect(df: pl.LazyFrame, streamable: bool = True):
+def collect(df: pl.LazyFrame, streamable: bool = True) -> pl.DataFrame:
+    """Collect a LazyFrame into a DataFrame with streaming fallback.
+
+    Args:
+        df: The LazyFrame to collect
+        streamable: Whether to try streaming engine first
+
+    Returns:
+        The collected DataFrame
+    """
     try:
         return df.collect(engine="streaming" if streamable else "auto")
-    except:
+    except (pl.exceptions.ComputeError, pl.exceptions.InvalidOperationError) as e:
+        logger.debug(f"Streaming collection failed, falling back to auto: {e}")
         return df.collect(engine="auto")
 
 

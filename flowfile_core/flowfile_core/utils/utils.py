@@ -31,9 +31,10 @@ def ensure_similarity_dicts(datas: List[Dict], respect_order: bool = True):
 
 
 def convert_to_string(v):
+    """Convert a value to string, returning None if conversion fails."""
     try:
         return str(v)
-    except:
+    except (TypeError, ValueError, AttributeError):
         return None
 
 

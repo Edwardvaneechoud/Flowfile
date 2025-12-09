@@ -1,95 +1,160 @@
 import polars as pl
 import os
+import logging
+from typing import Literal
 
 from flowfile_worker.create.models import ReceivedCsvTable, ReceivedParquetTable, ReceivedExcelTable
 from flowfile_worker.create.utils import create_fake_data
 from flowfile_worker.create.read_excel_tables import df_from_openpyxl, df_from_calamine_xlsx
 
+logger = logging.getLogger(__name__)
+
+CsvEncoding = Literal['utf8', 'utf8-lossy']
+
+
+def _try_scan_csv_with_fallbacks(
+    file_path: str,
+    low_memory: bool,
+    separator: str,
+    has_header: bool,
+    skip_rows: int,
+    encoding: CsvEncoding,
+    infer_schema_length: int | None = None,
+    try_parse_dates: bool = True
+) -> pl.LazyFrame:
+    """Try to scan a CSV file with progressive fallback strategies.
+
+    First attempts strict parsing, then falls back to lossy encoding,
+    and finally to error-ignoring mode.
+
+    Args:
+        file_path: Path to the CSV file
+        low_memory: Whether to use low memory mode
+        separator: CSV delimiter character
+        has_header: Whether the CSV has headers
+        skip_rows: Number of rows to skip
+        encoding: Character encoding to use
+        infer_schema_length: Number of rows to use for schema inference
+        try_parse_dates: Whether to attempt date parsing
+
+    Returns:
+        A LazyFrame representing the CSV data
+    """
+    # Strategy 1: Strict parsing with full schema inference
+    try:
+        data = pl.scan_csv(
+            file_path,
+            low_memory=low_memory,
+            try_parse_dates=try_parse_dates,
+            separator=separator,
+            has_header=has_header,
+            skip_rows=skip_rows,
+            encoding=encoding,
+            infer_schema_length=infer_schema_length
+        )
+        # Validate by reading first row
+        data.head(1).collect()
+        return data
+    except (pl.exceptions.ComputeError, pl.exceptions.SchemaError, UnicodeDecodeError) as e:
+        logger.debug(f"Strict CSV parsing failed for {file_path}: {e}")
+
+    # Strategy 2: Try with lossy UTF-8 encoding
+    try:
+        data = pl.scan_csv(
+            file_path,
+            low_memory=low_memory,
+            separator=separator,
+            has_header=has_header,
+            skip_rows=skip_rows,
+            encoding='utf8-lossy',
+            ignore_errors=True
+        )
+        return data
+    except (pl.exceptions.ComputeError, pl.exceptions.SchemaError) as e:
+        logger.debug(f"Lossy CSV parsing failed for {file_path}: {e}")
+
+    # Strategy 3: Final fallback with original encoding and error ignoring
+    data = pl.scan_csv(
+        file_path,
+        low_memory=low_memory,
+        separator=separator,
+        has_header=has_header,
+        skip_rows=skip_rows,
+        encoding=encoding,
+        ignore_errors=True
+    )
+    return data
+
 
 def create_from_path_json(received_table: ReceivedCsvTable):
+    """Create a LazyFrame from a CSV file (legacy JSON-named function).
+
+    Args:
+        received_table: Configuration for reading the CSV file
+
+    Returns:
+        A LazyFrame or DataFrame representing the CSV data
+    """
     f = received_table.abs_file_path
     gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
     low_mem = gbs_to_load > 10
-    if received_table.encoding.upper() == 'UTF8' or received_table.encoding.upper() == 'UTF-8':
-        try:
-            df = pl.scan_csv(f,
-                               low_memory=low_mem,
-                               try_parse_dates=True,
-                               separator=received_table.delimiter,
-                               has_header=received_table.has_headers,
-                               skip_rows=received_table.starting_from_line,
-                               encoding='utf8',
-                               infer_schema_length=received_table.infer_schema_length)
-            df.head(1).collect()
-            return df
-        except:
-            try:
-                df = pl.scan_csv(f, low_memory=low_mem,
-                                   separator=received_table.delimiter,
-                                   has_header=received_table.has_headers,
-                                   skip_rows=received_table.starting_from_line,
-                                   encoding='utf8-lossy',
-                                   ignore_errors=True)
-                return df
-            except:
-                df = pl.scan_csv(f, low_memory=low_mem,
-                                   separator=received_table.delimiter,
-                                   has_header=received_table.has_headers,
-                                   skip_rows=received_table.starting_from_line,
-                                   encoding='utf8',
-                                   ignore_errors=True)
-                return df
+
+    if received_table.encoding.upper() in ('UTF8', 'UTF-8'):
+        return _try_scan_csv_with_fallbacks(
+            file_path=f,
+            low_memory=low_mem,
+            separator=received_table.delimiter,
+            has_header=received_table.has_headers,
+            skip_rows=received_table.starting_from_line,
+            encoding='utf8',
+            infer_schema_length=received_table.infer_schema_length
+        )
     else:
-        df = pl.read_csv(f, low_memory=low_mem,
-                           separator=received_table.delimiter,
-                           has_header=received_table.has_headers,
-                           skip_rows=received_table.starting_from_line,
-                           encoding=received_table.encoding,
-                           ignore_errors=True)
+        df = pl.read_csv(
+            f,
+            low_memory=low_mem,
+            separator=received_table.delimiter,
+            has_header=received_table.has_headers,
+            skip_rows=received_table.starting_from_line,
+            encoding=received_table.encoding,
+            ignore_errors=True
+        )
         return df
 
 
 def create_from_path_csv(received_table: ReceivedCsvTable) -> pl.DataFrame:
+    """Create a LazyFrame from a CSV file path.
+
+    Args:
+        received_table: Configuration for reading the CSV file
+
+    Returns:
+        A LazyFrame representing the CSV data
+    """
     f = received_table.abs_file_path
     gbs_to_load = os.path.getsize(f) / 1024 / 1000 / 1000
     low_mem = gbs_to_load > 10
-    if received_table.encoding.upper() == 'UTF8' or received_table.encoding.upper() == 'UTF-8':
-        try:
-            df = pl.scan_csv(f,
-                               low_memory=low_mem,
-                               try_parse_dates=True,
-                               separator=received_table.delimiter,
-                               has_header=received_table.has_headers,
-                               skip_rows=received_table.starting_from_line,
-                               encoding='utf8',
-                               infer_schema_length=received_table.infer_schema_length)
-            df.head(1).collect()
-            return df
-        except:
-            try:
-                df = pl.scan_csv(f, low_memory=low_mem,
-                                   separator=received_table.delimiter,
-                                   has_header=received_table.has_headers,
-                                   skip_rows=received_table.starting_from_line,
-                                   encoding='utf8-lossy',
-                                   ignore_errors=True)
-                return df
-            except:
-                df = pl.scan_csv(f, low_memory=low_mem,
-                                   separator=received_table.delimiter,
-                                   has_header=received_table.has_headers,
-                                   skip_rows=received_table.starting_from_line,
-                                   encoding='utf8',
-                                   ignore_errors=True)
-                return df
+
+    if received_table.encoding.upper() in ('UTF8', 'UTF-8'):
+        return _try_scan_csv_with_fallbacks(
+            file_path=f,
+            low_memory=low_mem,
+            separator=received_table.delimiter,
+            has_header=received_table.has_headers,
+            skip_rows=received_table.starting_from_line,
+            encoding='utf8',
+            infer_schema_length=received_table.infer_schema_length
+        )
     else:
-        df = pl.read_csv(f,
-                           low_memory=low_mem,
-                           separator=received_table.delimiter,
-                           has_header=received_table.has_headers,
-                           skip_rows=received_table.starting_from_line,
-                           encoding=received_table.encoding,
-                           ignore_errors=True)
+        df = pl.read_csv(
+            f,
+            low_memory=low_mem,
+            separator=received_table.delimiter,
+            has_header=received_table.has_headers,
+            skip_rows=received_table.starting_from_line,
+            encoding=received_table.encoding,
+            ignore_errors=True
+        )
         return df
 
 

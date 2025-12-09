@@ -926,7 +926,8 @@ class FlowDataEngine:
             try:
                 _ = self.data_frame.select(c).head(n_records).collect()
                 ok_cols.append(c)
-            except:
+            except (pl.exceptions.ComputeError, pl.exceptions.SchemaError,
+                    pl.exceptions.InvalidOperationError, pl.exceptions.ColumnNotFoundError):
                 error_cols.append((c, self.data_frame.schema[c]))
         return ok_cols, error_cols
 

@@ -347,8 +347,8 @@ class FlowLogger:
         """Cleanup instance on deletion."""
         try:
             self.cleanup_instance(self.flow_id)
-        except:
-            pass  # Ignore errors during deletion
+        except (AttributeError, KeyError, RuntimeError, TypeError):
+            pass  # Ignore errors during deletion - object may be partially initialized
 
 
 def get_flow_log_file(flow_id: int) -> Path:
