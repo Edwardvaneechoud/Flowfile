@@ -423,7 +423,7 @@ output_df = input_df.with_columns([
             directory='.',
             file_type='csv',
             write_mode='overwrite',
-            output_csv_table=input_schema.OutputCsvTable(
+            table_settings=input_schema.OutputCsvTable(
                 delimiter=',',
                 encoding='utf-8'
             )
@@ -441,10 +441,9 @@ output_df = input_df.with_columns([
             directory='.',
             file_type='parquet',
             write_mode='overwrite',
-            output_parquet_table=input_schema.OutputParquetTable()
+            table_settings=input_schema.OutputParquetTable()
         )
     ))
-
     # Node 73: Output - Graph solver results
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=73, node_type='output'))
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(31, 73))
@@ -456,7 +455,7 @@ output_df = input_df.with_columns([
             directory='.',
             file_type='csv',
             write_mode='overwrite',
-            output_csv_table=input_schema.OutputCsvTable(
+            table_settings=input_schema.OutputCsvTable(
                 delimiter=',',
                 encoding='utf-8'
             )
@@ -474,7 +473,7 @@ output_df = input_df.with_columns([
             directory='.',
             file_type='csv',
             write_mode='overwrite',
-            output_csv_table=input_schema.OutputCsvTable(
+            table_settings=input_schema.OutputCsvTable(
                 delimiter=',',
                 encoding='utf-8'
             )

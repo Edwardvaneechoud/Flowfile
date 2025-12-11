@@ -533,7 +533,6 @@ def test_analytics_processor_from_parquet_file_run_performance():
 
 def test_analytics_processor_from_parquet_file_run_in_one_local_process():
     graph = create_graph()
-
     graph.flow_settings.execution_location = "local"
     add_node_promise_on_type(graph, 'read', 1, 1)
 

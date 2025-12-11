@@ -462,7 +462,6 @@ class FlowDataEngine:
             sink_kwargs["storage_options"] = storage_options
         if credential_provider:
             sink_kwargs["credential_provider"] = credential_provider
-        breakpoint()
         self.collect().write_delta(**sink_kwargs)
 
     def _write_csv_to_cloud(self,

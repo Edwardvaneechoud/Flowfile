@@ -89,6 +89,21 @@ class InputExcelTable(InputTableBase):
     has_headers: bool = True
     type_inference: bool = False
 
+    @model_validator(mode='before')
+    @classmethod
+    def set_default_table_settings(cls, data):
+        """Auto-populate table_settings based on file_type if not provided."""
+        if isinstance(data, dict) and data.get('table_settings') is None:
+            file_type = data.get('file_type', 'csv')
+            settings_map = {
+                'csv': InputCsvTable(),
+                'json': InputJsonTable(),
+                'parquet': InputParquetTable(),
+                'excel': InputExcelTable(),
+            }
+            data['table_settings'] = settings_map.get(file_type, InputCsvTable())
+        return data
+
     @model_validator(mode='after')
     def validate_range_values(self):
         """Validates that the Excel cell range is logical."""
@@ -162,26 +177,15 @@ class ReceivedTable(BaseModel):
             base_path = base_path / self.name
         self.abs_file_path = str(base_path.resolve())
 
-    @field_validator('table_settings', mode='before')
+    @model_validator(mode='before')
     @classmethod
-    def validate_table_settings(cls, v, info):
-        """Ensures table_settings matches the file_type."""
-        if v is None:
-            file_type = info.data.get('file_type', 'csv')
-            # Create default based on file_type
-            settings_map = {
-                'csv': InputCsvTable(),
-                'json': InputJsonTable(),
-                'parquet': InputParquetTable(),
-                'excel': InputExcelTable(),
-            }
-            return settings_map.get(file_type, InputCsvTable())
-
-        # If it's a dict, add file_type if missing
-        if isinstance(v, dict) and 'file_type' not in v:
-            v['file_type'] = info.data.get('file_type', 'csv')
-
-        return v
+    def set_default_table_settings(cls, data):
+        """Auto-populate table_settings based on file_type if not provided."""
+        if isinstance(data, dict) and 'table_settings' not in data:
+            file_type = data.get('file_type')
+            if file_type == "parquet":
+                data['table_settings'] = InputParquetTable()
+        return data
 
     @model_validator(mode='after')
     def populate_abs_file_path(self):

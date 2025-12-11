@@ -584,7 +584,6 @@ FORMAT_CONFIGS = {
 @pytest.mark.parametrize("file_format", ["delta"])
 def test_write_to_cloud_storage(df, file_format):
     config = FORMAT_CONFIGS[file_format]
-    breakpoint()
     write_method = getattr(df, config['write_method'])
     scan_function = globals()[config['scan_function']]
     source = f"s3://flowfile-test/flow_frame_{file_format}_output_{uuid4()}{config['extension']}"

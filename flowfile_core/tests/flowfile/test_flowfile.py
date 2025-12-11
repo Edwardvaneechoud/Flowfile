@@ -918,6 +918,7 @@ def test_add_join():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_reader():
+
     ensure_password_is_available()
     graph = create_graph()
     add_node_promise_on_type(graph, 'database_reader', 1)
