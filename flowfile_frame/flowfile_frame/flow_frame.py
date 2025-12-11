@@ -1142,16 +1142,11 @@ class FlowFrame:
         file_name = file_str.split(os.sep)[-1]
         use_polars_code = bool(kwargs.items()) or not is_path_input
 
-        output_parquet_table = input_schema.OutputParquetTable(
-            file_type="parquet"
-        )
         output_settings = input_schema.OutputSettings(
             file_type='parquet',
             name=file_name,
             directory=file_str if is_path_input else str(file_str),
-            output_parquet_table=output_parquet_table,
-            output_csv_table=input_schema.OutputCsvTable(),
-            output_excel_table=input_schema.OutputExcelTable()
+            table_settings=input_schema.OutputParquetTable()
         )
 
         if is_path_input:
@@ -1222,10 +1217,10 @@ class FlowFrame:
             file_type='csv',
             name=file_name,
             directory=file_str if is_path_input else str(file_str),
-            output_csv_table=input_schema.OutputCsvTable(
-                file_type="csv", delimiter=separator, encoding=encoding),
-            output_excel_table=input_schema.OutputExcelTable(),
-            output_parquet_table=input_schema.OutputParquetTable()
+            table_settings=input_schema.OutputCsvTable(
+                delimiter=separator,
+                encoding=encoding
+            )
         )
         if is_path_input:
             try:

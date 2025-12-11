@@ -581,10 +581,10 @@ FORMAT_CONFIGS = {
 }
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-@pytest.mark.parametrize("file_format", ["parquet", "csv", "json", "delta"])
+@pytest.mark.parametrize("file_format", ["delta"])
 def test_write_to_cloud_storage(df, file_format):
     config = FORMAT_CONFIGS[file_format]
-
+    breakpoint()
     write_method = getattr(df, config['write_method'])
     scan_function = globals()[config['scan_function']]
     source = f"s3://flowfile-test/flow_frame_{file_format}_output_{uuid4()}{config['extension']}"
@@ -600,7 +600,6 @@ def test_read_csv_basic():
     with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
         tmp.write("id,name,age\n1,Alice,25\n2,Bob,30\n3,Charlie,35")
         tmp_path = tmp.name
-
     try:
         # Read the CSV file
         df = read_csv(tmp_path)

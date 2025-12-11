@@ -1459,7 +1459,7 @@ class FlowGraph:
             input_file.received_file.set_absolute_filepath()
             if input_file.received_file.file_type == 'parquet':
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
-            elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:
+            elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.table_settings.encoding:
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
                 input_data = FlowDataEngine.create_from_path_worker(input_file.received_file,
