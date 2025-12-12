@@ -2,8 +2,11 @@ import datetime
 import pickle
 
 import os
+import yaml
+import json
 
 import polars as pl
+from pathlib import Path
 
 import fastexcel
 from fastapi.exceptions import HTTPException
@@ -53,6 +56,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                get_local_cloud_connection)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -1803,24 +1807,25 @@ class FlowGraph:
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
 
     def get_flowfile_data(self) -> schemas.FlowfileData:
-        """Generates a YAML representation of the entire graph structure, This will be the long-term supported way
-        of storing flows."""
-        import yaml
+        """Generates a FlowfileData representation of the entire graph structure.
 
+        This is the long-term supported way of storing flows (YAML/JSON).
 
-        node_storage = self.get_node_storage()
-
-        flowfile_data = schemas.FlowfileData(flowfile_version='1',
-                             flowfile_id=self.flow_id,
-                             flowfile_name=self.__name__,
-                             flowfile_settings=self.flow_settings,
-                             nodes=[node.get_node_information() for node in self.nodes],
-                             node_connections=[schemas.NodeConnection(from_node_id=src, to_node_id=tgt) for src, tgt in self.node_connections],
-                                             starting_node_ids=[v.node_id for v in self._flow_starts]
-                            )
-        json_model = flowfile_data.model_dump()
-        schemas.FlowfileData.model_validate(json_model)
-        yaml_string = yaml.dump(json_model, default_flow_style=False, sort_keys=False)
+        Returns:
+            FlowfileData object ready for serialization.
+        """
+        return schemas.FlowfileData(
+            flowfile_version='1.0',
+            flowfile_id=self.flow_id,
+            flowfile_name=self.__name__,
+            flowfile_settings=self.flow_settings,
+            nodes=[node.get_node_information() for node in self.nodes],
+            node_connections=[
+                schemas.NodeConnection(from_node_id=src, to_node_id=tgt)
+                for src, tgt in self.node_connections
+            ],
+            starting_node_ids=[v.node_id for v in self._flow_starts]
+        )
 
     def get_node_storage(self) -> schemas.FlowInformation:
         """Serializes the entire graph's state into a storable format.
@@ -1857,16 +1862,50 @@ class FlowGraph:
     def save_flow(self, flow_path: str):
         """Saves the current state of the flow graph to a file.
 
+        Supports multiple formats based on file extension:
+        - .flowfile: Legacy pickle format
+        - .yaml / .yml: New YAML format
+        - .json: JSON format
+
         Args:
             flow_path: The path where the flow file will be saved.
         """
         logger.info("Saving flow to %s", flow_path)
-        os.makedirs(os.path.dirname(flow_path), exist_ok=True)
+        path = Path(flow_path)
+        os.makedirs(path.parent, exist_ok=True)
+
+        suffix = path.suffix.lower()
+
         try:
-            with open(flow_path, 'wb') as f:
-                pickle.dump(self.get_node_storage(), f)
+            if suffix == '.flowfile':
+                # Legacy pickle format
+                with open(flow_path, 'wb') as f:
+                    pickle.dump(self.get_node_storage(), f)
+
+            elif suffix in ('.yaml', '.yml'):
+                # New YAML format
+
+                flowfile_data = self.get_flowfile_data()
+                data = flowfile_data.model_dump(mode='json')
+                with open(flow_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            elif suffix == '.json':
+                # JSON format
+
+                flowfile_data = self.get_flowfile_data()
+                data = flowfile_data.model_dump(mode='json')
+                with open(flow_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+
+            else:
+                # Default to pickle for unknown extensions
+                logger.warning(f"Unknown extension '{suffix}', using pickle format")
+                with open(flow_path, 'wb') as f:
+                    pickle.dump(self.get_node_storage(), f)
+
         except Exception as e:
             logger.error(f"Error saving flow: {e}")
+            raise
 
         self.flow_settings.path = flow_path
 
