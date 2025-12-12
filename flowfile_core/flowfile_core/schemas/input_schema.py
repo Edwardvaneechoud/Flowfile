@@ -89,21 +89,6 @@ class InputExcelTable(InputTableBase):
     has_headers: bool = True
     type_inference: bool = False
 
-    @model_validator(mode='before')
-    @classmethod
-    def set_default_table_settings(cls, data):
-        """Auto-populate table_settings based on file_type if not provided."""
-        if isinstance(data, dict) and data.get('table_settings') is None:
-            file_type = data.get('file_type', 'csv')
-            settings_map = {
-                'csv': InputCsvTable(),
-                'json': InputJsonTable(),
-                'parquet': InputParquetTable(),
-                'excel': InputExcelTable(),
-            }
-            data['table_settings'] = settings_map.get(file_type, InputCsvTable())
-        return data
-
     @model_validator(mode='after')
     def validate_range_values(self):
         """Validates that the Excel cell range is logical."""
