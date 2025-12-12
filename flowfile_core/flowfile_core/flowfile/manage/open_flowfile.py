@@ -1,7 +1,6 @@
 from flowfile_core.schemas import schemas, input_schema
 from typing import List, Tuple
-from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility
-import pickle
+from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from pathlib import Path
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
@@ -64,8 +63,7 @@ def open_flow(flow_path: Path) -> FlowGraph:
     Returns:
         FlowGraph: The flowfile object
     """
-    with open(str(flow_path), 'rb') as f:
-        flow_storage_obj: schemas.FlowInformation = pickle.load(f)
+    flow_storage_obj = load_flowfile_pickle(str(flow_path))
     flow_storage_obj.flow_settings.path = str(flow_path)
     flow_storage_obj.flow_settings.name = str(flow_path.stem)
     flow_storage_obj.flow_name = str(flow_path.stem)

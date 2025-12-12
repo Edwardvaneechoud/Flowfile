@@ -2,13 +2,57 @@
 Compatibility enhancements for opening old flowfile versions.
 Migrates old schema structures to new ones during file load.
 """
-from flowfile_core.schemas import schemas, input_schema
+import pickle
 from typing import Any
 
+from flowfile_core.schemas import schemas, input_schema
+from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
+
+
+# =============================================================================
+# LEGACY PICKLE LOADING
+# =============================================================================
+
+class LegacyUnpickler(pickle.Unpickler):
+    """
+    Custom unpickler that redirects class lookups to legacy dataclass definitions.
+
+    When loading old .flowfile pickles, transform_schema classes were dataclasses.
+    Now they're Pydantic BaseModels. This unpickler intercepts those classes and
+    loads them as the legacy dataclass versions, which can then be migrated.
+    """
+
+    def find_class(self, module: str, name: str):
+        """Override to redirect transform_schema dataclasses to legacy definitions."""
+        if name in LEGACY_CLASS_MAP:
+            return LEGACY_CLASS_MAP[name]
+        return super().find_class(module, name)
+
+
+def load_flowfile_pickle(path: str) -> Any:
+    """
+    Load a flowfile pickle using legacy-compatible unpickling.
+
+    This handles old flowfiles where transform_schema classes were dataclasses
+    by loading them as legacy dataclass instances, which can then be migrated
+    to the new Pydantic BaseModel versions.
+
+    Args:
+        path: Path to the .flowfile pickle
+
+    Returns:
+        The deserialized FlowInformation object
+    """
+    with open(path, 'rb') as f:
+        return LegacyUnpickler(f).load()
+
+
+# =============================================================================
+# DATACLASS DETECTION AND MIGRATION
+# =============================================================================
 
 def _is_dataclass_instance(obj: Any) -> bool:
     """Check if an object is a dataclass instance (not a Pydantic model)."""
-    # Pydantic models have model_dump, dataclasses don't
     return hasattr(obj, '__dataclass_fields__') and not hasattr(obj, 'model_dump')
 
 
@@ -20,7 +64,6 @@ def _migrate_dataclass_to_basemodel(obj: Any, model_class: type) -> Any:
     if not _is_dataclass_instance(obj):
         return obj  # Already a BaseModel or dict
 
-    # Extract fields from dataclass
     from dataclasses import fields, asdict
     try:
         data = asdict(obj)
@@ -30,6 +73,10 @@ def _migrate_dataclass_to_basemodel(obj: Any, model_class: type) -> Any:
 
     return model_class.model_validate(data)
 
+
+# =============================================================================
+# NODE-SPECIFIC COMPATIBILITY FUNCTIONS
+# =============================================================================
 
 def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
     """Migrate old NodeRead/ReceivedTable structure to new table_settings format."""
@@ -50,7 +97,6 @@ def ensure_compatibility_node_read(node_read: input_schema.NodeRead):
     # Determine file_type - use existing or infer from attributes
     file_type = getattr(received_file, 'file_type', None)
     if file_type is None:
-        # Try to infer from path or other attributes
         path = getattr(received_file, 'path', '') or ''
         if path.endswith('.parquet'):
             file_type = 'parquet'
@@ -110,9 +156,7 @@ def _build_input_table_settings(received_file: Any, file_type: str) -> dict:
         }
 
     elif file_type == 'parquet':
-        return {
-            'file_type': 'parquet',
-        }
+        return {'file_type': 'parquet'}
 
     elif file_type == 'excel':
         return {
@@ -163,7 +207,6 @@ def _build_output_table_settings(output_settings: Any, file_type: str) -> dict:
     """Build appropriate output table_settings from old separate table fields."""
 
     if file_type == 'csv':
-        # Try to get from old output_csv_table field
         old_csv = getattr(output_settings, 'output_csv_table', None)
         if old_csv is not None:
             return {
@@ -174,7 +217,6 @@ def _build_output_table_settings(output_settings: Any, file_type: str) -> dict:
         return {'file_type': 'csv', 'delimiter': ',', 'encoding': 'utf-8'}
 
     elif file_type == 'parquet':
-        # Parquet has minimal settings
         return {'file_type': 'parquet'}
 
     elif file_type == 'excel':
@@ -229,9 +271,10 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
     if not hasattr(join_input, 'right_select') or not hasattr(join_input, 'left_select'):
         return
 
+    from flowfile_core.schemas import transform_schema
+
     # Handle dataclass -> BaseModel migration for join_mapping
     if hasattr(join_input, 'join_mapping') and join_input.join_mapping:
-        from flowfile_core.schemas import transform_schema
         new_mapping = []
         for jm in join_input.join_mapping:
             if _is_dataclass_instance(jm):
@@ -249,7 +292,6 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
 
         renames = getattr(select, 'renames', []) or []
         if renames and any(_is_dataclass_instance(r) for r in renames):
-            from flowfile_core.schemas import transform_schema
             new_renames = []
             for r in renames:
                 if _is_dataclass_instance(r):
@@ -292,14 +334,17 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
     if hasattr(node_polars, 'polars_code_input') and node_polars.polars_code_input is not None:
         polars_code_input = node_polars.polars_code_input
 
-        # Check if it's an old dataclass (not a Pydantic model)
-        if not hasattr(polars_code_input, 'model_dump'):
-            # It's an old dataclass, convert to new BaseModel
+        if _is_dataclass_instance(polars_code_input):
             from flowfile_core.schemas import transform_schema
-            polars_code = getattr(polars_code_input, 'polars_code', '')
-            new_polars_code_input = transform_schema.PolarsCodeInput(polars_code=polars_code)
+            new_polars_code_input = _migrate_dataclass_to_basemodel(
+                polars_code_input, transform_schema.PolarsCodeInput
+            )
             node_polars.polars_code_input = new_polars_code_input
 
+
+# =============================================================================
+# FLOW-LEVEL COMPATIBILITY
+# =============================================================================
 
 def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: str):
     """Ensure flow_settings exists and has all required fields."""
@@ -330,6 +375,10 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     return flow_storage_obj
 
 
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
+
 def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: str):
     """
     Main compatibility function - migrates old flowfile schemas to current version.
@@ -338,9 +387,9 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - FlowSettings structure
     - NodeRead (ReceivedTable with table_settings)
     - NodeOutput (OutputSettings with table_settings)
-    - NodeSelect (position attributes)
-    - NodeJoin/NodeFuzzyMatch (join input positions)
-    - NodePolarsCode (depending_on_ids)
+    - NodeSelect (position attributes, dataclass -> BaseModel)
+    - NodeJoin/NodeFuzzyMatch (join input positions, dataclass -> BaseModel)
+    - NodePolarsCode (depending_on_ids, dataclass -> BaseModel)
     - Node descriptions
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
@@ -366,3 +415,17 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
         ensure_description(setting_input)
 
     return flow_storage_obj
+
+
+def load_and_migrate_flowfile(flow_path: str) -> schemas.FlowInformation:
+    """
+    Convenience function: Load a flowfile and apply all compatibility migrations.
+
+    Args:
+        flow_path: Path to the .flowfile pickle
+
+    Returns:
+        Fully migrated FlowInformation object
+    """
+    flow_storage_obj = load_flowfile_pickle(flow_path)
+    return ensure_compatibility(flow_storage_obj, flow_path)

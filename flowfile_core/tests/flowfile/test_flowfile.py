@@ -1253,13 +1253,11 @@ def test_add_cloud_writer(flow_logger):
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_complex_cloud_write_scenario():
-
     ensure_cloud_storage_connection_is_available_and_get_connection()
     handler = FlowfileHandler()
-
     flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
     graph = handler.get_flow(flow_id)
-    node= graph.get_node(3)
+    node = graph.get_node(3)
     example_data = node.get_table_example(True)
     assert example_data.number_of_columns == 4
     run_info = graph.run_graph()
