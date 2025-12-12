@@ -924,14 +924,44 @@ def test_text_to_rows():
 
 
 def test_polars_code():
-    handler = create_flowfile_handler()
-    breakpoint()
-    flow_path = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/polars_code.flowfile"
-    open(flow_path, "rb")
-    graph_id = handler.import_flow(flow_path)
-    graph = handler.get_flow(graph_id)
+    graph = create_graph()
+    file_path = str(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/data/fake_data.parquet")
+    # Add read node with test data
+    read_node = input_schema.NodeRead(
+        flow_id=graph.flow_id,
+        node_id=1,
+        received_file=input_schema.ReceivedTable.create_from_path(
+            file_path
+            ,
+            file_type='parquet'
+        )
+    )
+    graph.add_read(read_node)
+
+    # Add polars code node
+    polars_node = input_schema.NodePolarsCode(
+        flow_id=graph.flow_id,
+        node_id=2,
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code='output_df = input_df.with_columns(pl.col("Email").str.to_uppercase())'
+        ),
+        depending_on_ids=[1]
+    )
+    graph.add_polars_code(polars_node)
+
+    # Connect nodes
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Run and verify
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+    # Verify the transformation worked
+    result = graph.get_node(2).get_resulting_data()
+    assert result is not None
+    # Check that Email column is uppercase
+    emails = result.to_dict()["Email"]
+    assert all(email == email.upper() for email in emails if email)
 
 
 def get_join_data(how: str = 'inner'):

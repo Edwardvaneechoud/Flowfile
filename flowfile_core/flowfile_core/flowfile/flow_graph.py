@@ -657,7 +657,6 @@ class FlowGraph:
         """
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
-            breakpoint()
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
         self.add_node_step(node_id=node_polars_code.node_id,
                            function=_func,
