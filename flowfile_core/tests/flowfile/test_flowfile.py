@@ -726,7 +726,7 @@ def test_add_cross_join():
     except:
         raise ValueError('Node data should be available')
     data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'pos_x': 632.8727272727273, 'pos_y': 298.4,
-            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'is_setup': True, 'description': '', 'depending_on_ids': [], 'auto_generate_selection': True,
             'verify_integrity': True, 'cross_join_input': {'left_select': {'renames': [
             {'old_name': 'name', 'new_name': 'name', 'keep': True, 'data_type': None, 'data_type_change': False,
              'join_key': False, 'is_altered': False, 'position': None, 'is_available': True}]}, 'right_select': {
@@ -966,7 +966,7 @@ def test_polars_code():
 
 def get_join_data(how: str = 'inner'):
     return {'flow_id': 1, 'node_id': 3, 'cache_results': False, 'pos_x': 788.8727272727273, 'pos_y': 186.4,
-            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'is_setup': True, 'description': '', 'depending_on_ids': [], 'auto_generate_selection': True,
             'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
                                                      'left_select': {'renames': [
                                                          {'old_name': 'name', 'new_name': 'name', 'data_type': None,

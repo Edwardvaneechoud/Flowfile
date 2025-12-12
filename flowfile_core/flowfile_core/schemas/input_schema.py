@@ -286,7 +286,7 @@ class NodeSingleInput(NodeBase):
 
 class NodeMultiInput(NodeBase):
     """A base model for any node that takes multiple data inputs."""
-    depending_on_ids: Optional[List[int]] = [-1]
+    depending_on_ids: Optional[List[int]] = Field(default_factory=list)
 
 
 class NodeSelect(NodeSingleInput):

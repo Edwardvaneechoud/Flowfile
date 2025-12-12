@@ -207,8 +207,8 @@ class NodeInformation(BaseModel):
     y_position: Optional[int] = 0
     left_input_id: Optional[int] = None
     right_input_id: Optional[int] = None
-    input_ids: Optional[List[int]] = [-1]
-    outputs: Optional[List[int]] = [-1]
+    input_ids: Optional[List[int]] = Field(default_factory=list)
+    outputs: Optional[List[int]] = Field(default_factory=list)
     setting_input: Optional[Any] = None
 
     @property
