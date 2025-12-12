@@ -657,6 +657,7 @@ class FlowGraph:
         """
 
         def _func(*flowfile_tables: FlowDataEngine) -> FlowDataEngine:
+            breakpoint()
             return execute_polars_code(*flowfile_tables, code=node_polars_code.polars_code_input.polars_code)
         self.add_node_step(node_id=node_polars_code.node_id,
                            function=_func,
@@ -1447,10 +1448,10 @@ class FlowGraph:
         Args:
             input_file: The settings for the read operation.
         """
-
-        if input_file.received_file.file_type in ('xlsx', 'excel') and input_file.received_file.sheet_name == '':
+        if (input_file.received_file.file_type in ('xlsx', 'excel') and
+                input_file.received_file.table_settings.sheet_name == ''):
             sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
-            input_file.received_file.sheet_name = sheet_name
+            input_file.received_file.table_settings.sheet_name = sheet_name
 
         received_file = input_file.received_file
         input_file.received_file.set_absolute_filepath()
@@ -1496,12 +1497,12 @@ class FlowGraph:
                     # If the file is an Excel file, we need to use the openpyxl engine to read the schema
                     schema_callback = get_xlsx_schema_callback(engine='openpyxl',
                                                                file_path=received_file.file_path,
-                                                               sheet_name=received_file.sheet_name,
-                                                               start_row=received_file.start_row,
-                                                               end_row=received_file.end_row,
-                                                               start_column=received_file.start_column,
-                                                               end_column=received_file.end_column,
-                                                               has_headers=received_file.has_headers)
+                                                               sheet_name=received_file.table_settings.sheet_name,
+                                                               start_row=received_file.table_settings.start_row,
+                                                               end_row=received_file.table_settings.end_row,
+                                                               start_column=received_file.table_settings.start_column,
+                                                               end_column=received_file.table_settings.end_column,
+                                                               has_headers=received_file.table_settings.has_headers)
                 else:
                     schema_callback = None
         else:

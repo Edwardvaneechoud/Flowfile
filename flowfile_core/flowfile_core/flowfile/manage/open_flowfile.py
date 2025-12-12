@@ -69,6 +69,7 @@ def open_flow(flow_path: Path) -> FlowGraph:
     flow_storage_obj.flow_settings.path = str(flow_path)
     flow_storage_obj.flow_settings.name = str(flow_path.stem)
     flow_storage_obj.flow_name = str(flow_path.stem)
+    breakpoint()
     ensure_compatibility(flow_storage_obj, str(flow_path))
     ingestion_order = determine_insertion_order(flow_storage_obj)
     new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)

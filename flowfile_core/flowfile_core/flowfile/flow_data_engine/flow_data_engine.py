@@ -2245,7 +2245,6 @@ class FlowDataEngine:
     @classmethod
     def create_from_path_worker(cls, received_table: input_schema.ReceivedTable, flow_id: int, node_id: int | str):
         """Creates a FlowDataEngine from a path in a worker process."""
-        breakpoint()
         received_table.set_absolute_filepath()
 
         external_fetcher = ExternalCreateFetcher(received_table=received_table,

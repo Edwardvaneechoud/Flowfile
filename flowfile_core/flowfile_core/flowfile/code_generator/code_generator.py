@@ -110,25 +110,25 @@ class FlowGraphToPolarsConverter:
         return input_vars
 
     def _handle_csv_read(self, file_settings: input_schema.ReceivedTable, var_name: str):
-        if file_settings.encoding.lower() in ('utf-8', 'utf8'):
+        if file_settings.table_settings.encoding.lower() in ('utf-8', 'utf8'):
             encoding = "utf8-lossy"
             self._add_code(f"{var_name} = pl.scan_csv(")
             self._add_code(f'    "{file_settings.abs_file_path}",')
-            self._add_code(f'    separator="{file_settings.delimiter}",')
-            self._add_code(f'    has_header={file_settings.has_headers},')
-            self._add_code(f'    ignore_errors={file_settings.ignore_errors},')
+            self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
+            self._add_code(f'    has_header={file_settings.table_settings.has_headers},')
+            self._add_code(f'    ignore_errors={file_settings.table_settings.ignore_errors},')
             self._add_code(f'    encoding="{encoding}",')
-            self._add_code(f'    skip_rows={file_settings.starting_from_line},')
+            self._add_code(f'    skip_rows={file_settings.table_settings.starting_from_line},')
             self._add_code(")")
         else:
             self._add_code(f"{var_name} = pl.read_csv(")
             self._add_code(f'    "{file_settings.abs_file_path}",')
-            self._add_code(f'    separator="{file_settings.delimiter}",')
-            self._add_code(f'    has_header={file_settings.has_headers},')
-            self._add_code(f'    ignore_errors={file_settings.ignore_errors},')
-            if file_settings.encoding:
-                self._add_code(f'    encoding="{file_settings.encoding}",')
-            self._add_code(f'    skip_rows={file_settings.starting_from_line},')
+            self._add_code(f'    separator="{file_settings.table_settings.delimiter}",')
+            self._add_code(f'    has_header={file_settings.table_settings.has_headers},')
+            self._add_code(f'    ignore_errors={file_settings.table_settings.ignore_errors},')
+            if file_settings.table_settings.encoding:
+                self._add_code(f'    encoding="{file_settings.table_settings.encoding}",')
+            self._add_code(f'    skip_rows={file_settings.table_settings.starting_from_line},')
             self._add_code(").lazy()")
 
     def _handle_cloud_storage_reader(self, settings: input_schema.NodeCloudStorageReader, var_name: str, input_vars: Dict[str, str]):
@@ -180,8 +180,8 @@ class FlowGraphToPolarsConverter:
         elif file_settings.file_type in ('xlsx', 'excel'):
             self._add_code(f"{var_name} = pl.read_excel(")
             self._add_code(f'    "{file_settings.abs_file_path}",')
-            if file_settings.sheet_name:
-                self._add_code(f'    sheet_name="{file_settings.sheet_name}",')
+            if file_settings.table_settings.sheet_name:
+                self._add_code(f'    sheet_name="{file_settings.table_settings.sheet_name}",')
             self._add_code(").lazy()")
 
         self._add_code("")
@@ -959,7 +959,7 @@ class FlowGraphToPolarsConverter:
         if output_settings.file_type == 'csv':
             self._add_code(f'{input_df}.sink_csv(')
             self._add_code(f'    "{output_settings.abs_file_path}",')
-            self._add_code(f'    separator="{output_settings.output_csv_table.delimiter}"')
+            self._add_code(f'    separator="{output_settings.table_settings.delimiter}"')
             self._add_code(')')
 
         elif output_settings.file_type == 'parquet':
@@ -968,7 +968,7 @@ class FlowGraphToPolarsConverter:
         elif output_settings.file_type == 'excel':
             self._add_code(f'{input_df}.collect().write_excel(')
             self._add_code(f'    "{output_settings.abs_file_path}",')
-            self._add_code(f'    worksheet="{output_settings.output_excel_table.sheet_name}"')
+            self._add_code(f'    worksheet="{output_settings.table_settings.sheet_name}"')
             self._add_code(')')
 
         self._add_code("")

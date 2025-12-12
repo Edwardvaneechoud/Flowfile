@@ -470,7 +470,6 @@ def test_complex_workflow():
         "salary": [50000, 60000, 55000, 65000, 70000]
     }
     df = FlowFrame(data)
-
     # Build a workflow: filter → transform → group → sort
     result = (df
               .filter(col("age") > 30)  # Keep employees older than 30

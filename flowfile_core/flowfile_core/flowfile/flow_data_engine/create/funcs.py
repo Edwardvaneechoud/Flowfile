@@ -143,7 +143,7 @@ def create_from_path_excel(received_table: input_schema.ReceivedTable):
     sheet_name = table_settings.sheet_name
 
     if engine == 'calamine':
-        df = df_from_calamine_xlsx(file_path=table_settings.abs_file_path, sheet_name=sheet_name,
+        df = df_from_calamine_xlsx(file_path=received_table.abs_file_path, sheet_name=sheet_name,
                                    start_row=table_settings.start_row, end_row=table_settings.end_row)
         if table_settings.end_column > 0:
             end_col_index = table_settings.end_column
@@ -152,7 +152,7 @@ def create_from_path_excel(received_table: input_schema.ReceivedTable):
 
     elif engine == 'xlsx2csv':
         csv_options = {'has_header': table_settings.has_headers, 'skip_rows': table_settings.start_row}
-        df = pl.read_excel(source=table_settings.abs_file_path,
+        df = pl.read_excel(source=received_table.abs_file_path,
                            read_options=csv_options,
                            engine='xlsx2csv',
                            sheet_name=table_settings.sheet_name)
