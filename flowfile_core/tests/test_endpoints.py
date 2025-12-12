@@ -350,15 +350,13 @@ def test_run_invalid_flow():
 
 def test_save_flow():
     flow_id = create_flow_with_manual_input_and_select()
-    file_path = 'flowfile_core/tests/support_files/flows/sample_save.flowfile'
+    breakpoint()
+    file_path = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_save.yaml')
     remove_flow(file_path)
     # def save_flow(flow_id: int, flow_path: str = None)
     response = client.get("/save_flow", params={'flow_id': flow_id, 'flow_path': file_path})
     assert response.status_code == 200, 'Flow not saved'
     assert os.path.exists(file_path), 'Flow not saved, file not found'
-    with open(file_path, 'rb') as f:
-        pickle_obj = pickle.load(f)
-        assert pickle_obj.flow_id == flow_id, 'Flow not stored correctly'
     imported_flow_id = flow_file_handler.import_flow(file_path)
     assert imported_flow_id == flow_id, 'Flow not stored or imported correctly correctly'
     remove_flow(file_path)
