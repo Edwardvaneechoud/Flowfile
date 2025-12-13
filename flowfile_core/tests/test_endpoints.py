@@ -350,7 +350,6 @@ def test_run_invalid_flow():
 
 def test_save_flow():
     flow_id = create_flow_with_manual_input_and_select()
-    breakpoint()
     file_path = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_save.yaml')
     remove_flow(file_path)
     # def save_flow(flow_id: int, flow_path: str = None)
