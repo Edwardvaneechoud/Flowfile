@@ -9,19 +9,17 @@ def test_prepare_for_fuzzy_match():
     r = transform_schema.SelectInputs([transform_schema.SelectInput(old_name='column_0', new_name='name')])
     left_flowfile_table = FlowDataEngine(['edward', 'eduward', 'court']).do_select(r)
     right_flowfile_table = left_flowfile_table
-
     left_flowfile_table.calculate_schema()
-
     left_select = [transform_schema.SelectInput(c) for c in left_flowfile_table.columns]
     right_select = [transform_schema.SelectInput(c) for c in right_flowfile_table.columns]
     fuzzy_match_input = transform_schema.FuzzyMatchInput(join_mapping=[FuzzyMapping(left_col='name')],
                                                          left_select=left_select, right_select=right_select
                                                          )
-
-    f = prepare_for_fuzzy_match(left_flowfile_table, right_flowfile_table, fuzzy_match_input)
+    fuzzy_match_input_manager = transform_schema.FuzzyMatchInputManager(fuzzy_match_input)
+    f = prepare_for_fuzzy_match(left_flowfile_table, right_flowfile_table, fuzzy_match_input_manager)
     assert f[0].columns == ['name'], 'Left column should still be named name'
     assert f[1].columns == ['name_right'], 'Right column should be renamed to name_right'
 
-    assert fuzzy_match_input.used_join_mapping[0].left_col == '_FLOWFILE_JOIN_KEY_LEFT_name', 'Left column should still be named name'
-    assert fuzzy_match_input.used_join_mapping[0].right_col == '_FLOWFILE_JOIN_KEY_RIGHT_name_right', 'Right column should be renamed to name_right'
+    assert fuzzy_match_input_manager.used_join_mapping[0].left_col == '_FLOWFILE_JOIN_KEY_LEFT_name', 'Left column should still be named name'
+    assert fuzzy_match_input_manager.used_join_mapping[0].right_col == '_FLOWFILE_JOIN_KEY_RIGHT_name_right', 'Right column should be renamed to name_right'
 

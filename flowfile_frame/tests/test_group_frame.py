@@ -447,3 +447,7 @@ class TestGroupByFrame:
         # Check that sorting was applied
         sales_values = result["total_sales"].to_list()
         assert sales_values == sorted(sales_values, reverse=True)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

@@ -27,6 +27,7 @@ class AnalyticsProcessor:
     def create_graphic_walker_input(node_step: FlowNode,
                                     graphic_walker_input: GraphicWalkerInput = None) -> GraphicWalkerInput:
         if not node_step.results.analysis_data_generator:
+            node_step.get_predicted_schema()
             fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
             data_model = DataModel(data=[], fields=fields)
         else:

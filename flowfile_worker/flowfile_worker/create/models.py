@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional
+from pydantic import BaseModel, Field, model_validator, field_validator
+from typing import List, Optional, Literal, Annotated
 import os
 from pathlib import Path
 
@@ -9,78 +9,146 @@ class MinimalFieldInfo(BaseModel):
     data_type: str
 
 
-class ReceivedTableBase(BaseModel):
-    id: Optional[int] = None
-    name: str
-    path: str
-    directory: Optional[str] = None
-    analysis_file_available: Optional[bool] = False
-    status: Optional[str] = None
-    file_type: Optional[str] = None
-    fields: List[MinimalFieldInfo] = Field(default_factory=list)
-    abs_file_path: Optional[str] = None
-
-    @classmethod
-    def create_from_path(cls, path: str):
-        filename = os.path.basename(path)
-        return cls(name=filename, path=path)
-
-    @property
-    def file_path(self) -> str:
-        if self.name not in self.path:
-            return os.path.join(self.path, self.name)
-        return self.path
-
-    @model_validator(mode="after")
-    def set_abs_file_path(cls, values):
-        abs_file_path = getattr(values, "abs_file_path", None)
-        if abs_file_path is None:
-            path = getattr(values, "path", None)
-            if not path:
-                raise ValueError("Field 'path' is required to compute abs_file_path")
-            setattr(values, "abs_file_path", str(Path(path).absolute()))
-        return values
+class InputTableBase(BaseModel):
+    """Base settings for input file operations."""
+    file_type: str  # Will be overridden with Literal in subclasses
 
 
-class ReceivedCsvTable(ReceivedTableBase):
-    file_type: Optional[str] = 'csv'
-    reference: Optional[str] = ''
-    starting_from_line: Optional[int] = 0
-    delimiter: Optional[str] = ','
-    has_headers: Optional[bool] = True
-    encoding: Optional[str] = 'utf-8'
+class InputCsvTable(InputTableBase):
+    """Defines settings for reading a CSV file."""
+    file_type: Literal['csv'] = 'csv'
+    reference: str = ''
+    starting_from_line: int = 0
+    delimiter: str = ','
+    has_headers: bool = True
+    encoding: str = 'utf-8'
     parquet_ref: Optional[str] = None
-    row_delimiter: Optional[str] = '\n'
-    quote_char: Optional[str] = '"'
-    infer_schema_length: Optional[int] = 10_000
-    truncate_ragged_lines: Optional[bool] = False
-    ignore_errors: Optional[bool] = False
+    row_delimiter: str = '\n'
+    quote_char: str = '"'
+    infer_schema_length: int = 10_000
+    truncate_ragged_lines: bool = False
+    ignore_errors: bool = False
 
 
-class ReceivedJsonTable(ReceivedCsvTable):
-    pass
+class InputJsonTable(InputCsvTable):
+    """Defines settings for reading a JSON file."""
+    file_type: Literal['json'] = 'json'
 
 
-class ReceivedParquetTable(ReceivedTableBase):
-    file_type: Optional[str] = 'parquet'
+class InputParquetTable(InputTableBase):
+    """Defines settings for reading a Parquet file."""
+    file_type: Literal['parquet'] = 'parquet'
 
 
-class ReceivedExcelTable(ReceivedTableBase):
+class InputExcelTable(InputTableBase):
+    """Defines settings for reading an Excel file."""
+    file_type: Literal['excel'] = 'excel'
     sheet_name: Optional[str] = None
-    start_row: Optional[int] = 0  # optional
-    start_column: Optional[int] = 0  # optional
-    end_row: Optional[int] = 0  # optional
-    end_column: Optional[int] = 0  # optional
-    has_headers: Optional[bool] = True  # optional
-    type_inference: Optional[bool] = False  # optional
+    start_row: int = 0
+    start_column: int = 0
+    end_row: int = 0
+    end_column: int = 0
+    has_headers: bool = True
+    type_inference: bool = False
 
+    @model_validator(mode='after')
     def validate_range_values(self):
-        # Validate that start and end rows/columns are non-negative integers
+        """Validates that the Excel cell range is logical."""
         for attribute in [self.start_row, self.start_column, self.end_row, self.end_column]:
             if not isinstance(attribute, int) or attribute < 0:
                 raise ValueError("Row and column indices must be non-negative integers")
+        if (self.end_row > 0 and self.start_row > self.end_row) or \
+                (self.end_column > 0 and self.start_column > self.end_column):
+            raise ValueError("Start row/column must not be greater than end row/column")
+        return self
 
-        # Validate that start is before end if end is specified (non-zero)
-        if (0 < self.end_row < self.start_row) or \
-                (0 < self.end_column < self.start_column):
-            raise ValueError("Start row/column must not be greater than end row/column if specified")
+
+# Create the discriminated union (similar to OutputTableSettings)
+InputTableSettings = Annotated[
+    InputCsvTable | InputJsonTable | InputParquetTable | InputExcelTable,
+    Field(discriminator='file_type')
+]
+
+
+# Now create the main ReceivedTable model
+class ReceivedTable(BaseModel):
+    """Model for defining a table received from an external source."""
+    # Metadata fields
+    id: Optional[int] = None
+    name: Optional[str] = None
+    path: str  # This can be an absolute or relative path
+    directory: Optional[str] = None
+    analysis_file_available: bool = False
+    status: Optional[str] = None
+    fields: List[MinimalFieldInfo] = Field(default_factory=list)
+    abs_file_path: Optional[str] = None
+
+    file_type: Literal['csv', 'json', 'parquet', 'excel']
+
+    table_settings: InputTableSettings
+
+    @classmethod
+    def create_from_path(cls, path: str, file_type: Literal['csv', 'json', 'parquet', 'excel'] = 'csv'):
+        """Creates an instance from a file path string."""
+        filename = Path(path).name
+
+        # Create appropriate table_settings based on file_type
+        settings_map = {
+            'csv': InputCsvTable(),
+            'json': InputJsonTable(),
+            'parquet': InputParquetTable(),
+            'excel': InputExcelTable(),
+        }
+
+        return cls(
+            name=filename,
+            path=path,
+            file_type=file_type,
+            table_settings=settings_map.get(file_type, InputCsvTable())
+        )
+
+    @property
+    def file_path(self) -> str:
+        """Constructs the full file path from the directory and name."""
+        if self.name and self.name not in self.path:
+            return os.path.join(self.path, self.name)
+        else:
+            return self.path
+
+    def set_absolute_filepath(self):
+        """Resolves the path to an absolute file path."""
+        base_path = Path(self.path).expanduser()
+        if not base_path.is_absolute():
+            base_path = Path.cwd() / base_path
+        if self.name and self.name not in base_path.name:
+            base_path = base_path / self.name
+        self.abs_file_path = str(base_path.resolve())
+
+    @field_validator('table_settings', mode='before')
+    @classmethod
+    def validate_table_settings(cls, v, info):
+        """Ensures table_settings matches the file_type."""
+        if v is None:
+            file_type = info.data.get('file_type', 'csv')
+            # Create default based on file_type
+            settings_map = {
+                'csv': InputCsvTable(),
+                'json': InputJsonTable(),
+                'parquet': InputParquetTable(),
+                'excel': InputExcelTable(),
+            }
+            return settings_map.get(file_type, InputCsvTable())
+
+        # If it's a dict, add file_type if missing
+        if isinstance(v, dict) and 'file_type' not in v:
+            v['file_type'] = info.data.get('file_type', 'csv')
+
+        return v
+
+    @model_validator(mode='after')
+    def populate_abs_file_path(self):
+        """Ensures the absolute file path is populated after validation."""
+        if not self.abs_file_path:
+            self.set_absolute_filepath()
+        return self
+

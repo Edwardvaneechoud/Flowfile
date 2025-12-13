@@ -457,6 +457,8 @@ def test_analytics_processor_existing_specs_run():
 def test_analytics_changing_data_processor_existing_specs_run():
     # In this scenario, we want to reset the data types of the columns in the graphic walker settings
     graph = create_big_flow()
+
+    graph.get_node(2).get_predicted_schema()
     # We want to run the graph in development mode
     graph.flow_settings.execution_mode = "Performance"
     # Shuffle things up by changing the data type input. Instead of float, we get string as input
@@ -531,7 +533,6 @@ def test_analytics_processor_from_parquet_file_run_performance():
 
 def test_analytics_processor_from_parquet_file_run_in_one_local_process():
     graph = create_graph()
-
     graph.flow_settings.execution_location = "local"
     add_node_promise_on_type(graph, 'read', 1, 1)
 

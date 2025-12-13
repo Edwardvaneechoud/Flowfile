@@ -1,13 +1,47 @@
 from typing import Optional, List, Dict, Tuple, Any, Literal, Annotated
-from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints, ValidationInfo
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.schemas import input_schema
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['local', 'remote']
 
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal['input', 'output', 'process']
 TransformTypeLiteral = Literal['narrow', 'wide', 'other']
+
+NODE_TYPE_TO_SETTINGS_CLASS = {
+    'manual_input': input_schema.NodeManualInput,
+    'filter': input_schema.NodeFilter,
+    'formula': input_schema.NodeFormula,
+    'select': input_schema.NodeSelect,
+    'sort': input_schema.NodeSort,
+    'record_id': input_schema.NodeRecordId,
+    'sample': input_schema.NodeSample,
+    'unique': input_schema.NodeUnique,
+    'group_by': input_schema.NodeGroupBy,
+    'pivot': input_schema.NodePivot,
+    'unpivot': input_schema.NodeUnpivot,
+    'text_to_rows': input_schema.NodeTextToRows,
+    'graph_solver': input_schema.NodeGraphSolver,
+    'polars_code': input_schema.NodePolarsCode,
+    'join': input_schema.NodeJoin,
+    'cross_join': input_schema.NodeCrossJoin,
+    'fuzzy_match': input_schema.NodeFuzzyMatch,
+    'record_count': input_schema.NodeRecordCount,
+    'explore_data': input_schema.NodeExploreData,
+    'union': input_schema.NodeUnion,
+    'output': input_schema.NodeOutput,
+    'read': input_schema.NodeRead,
+    'database_reader': input_schema.NodeDatabaseReader,
+    'database_writer': input_schema.NodeDatabaseWriter,
+    'cloud_storage_reader': input_schema.NodeCloudStorageReader,
+    'cloud_storage_writer': input_schema.NodeCloudStorageWriter,
+    'external_source': input_schema.NodeExternalSource,
+    'promise': input_schema.NodePromise,
+    'user_defined': input_schema.UserDefinedNode,
+}
+
 
 def get_global_execution_location() -> ExecutionLocationsLiteral:
     """
@@ -173,8 +207,8 @@ class NodeInformation(BaseModel):
     y_position: Optional[int] = 0
     left_input_id: Optional[int] = None
     right_input_id: Optional[int] = None
-    input_ids: Optional[List[int]] = [-1]
-    outputs: Optional[List[int]] = [-1]
+    input_ids: Optional[List[int]] = Field(default_factory=list)
+    outputs: Optional[List[int]] = Field(default_factory=list)
     setting_input: Optional[Any] = None
 
     @property
@@ -192,6 +226,25 @@ class NodeInformation(BaseModel):
         :return: A list of main input node IDs.
         """
         return self.input_ids
+
+    @field_validator('setting_input', mode='before')
+    @classmethod
+    def validate_setting_input(cls, v, info: ValidationInfo):
+        if v is None:
+            return None
+
+        # Get the node type from the same data
+        node_type = info.data.get('type')
+        model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
+        if model_class is None:
+            raise ValueError(f"Unknown node type: {node_type}")
+
+        # If it's already the right type, return it
+        if isinstance(v, model_class):
+            return v
+
+        # Otherwise, validate it as the correct type
+        return model_class.model_validate(v)
 
 
 class FlowInformation(BaseModel):
@@ -221,6 +274,29 @@ class FlowInformation(BaseModel):
         :return: The value as a string, or an empty string if it's None.
         """
         return str(v) if v is not None else ''
+
+
+class NodeConnection(BaseModel):
+    """
+    Represents a connection between two nodes in the flow.
+
+    Attributes:
+        from_node_id (int): The ID of the source node.
+        to_node_id (int): The ID of the target node.
+    """
+    model_config = ConfigDict(frozen=True)
+    from_node_id: int
+    to_node_id: int
+
+
+class FlowfileData(BaseModel):
+    flowfile_version: str
+    flowfile_id: int
+    flowfile_name: str
+    flowfile_settings: FlowSettings
+    nodes: List[NodeInformation]
+    node_connections: List[NodeConnection]
+    starting_node_ids: List[int] = None
 
 
 class NodeInput(NodeTemplate):
@@ -269,8 +345,6 @@ class VueFlowInput(BaseModel):
     node_inputs: List[NodeInput]
 
 
-
-
 class NodeDefault(BaseModel):
     """
     Defines default properties for a node type.
@@ -285,8 +359,3 @@ class NodeDefault(BaseModel):
     node_type: NodeTypeLiteral
     transform_type: TransformTypeLiteral
     has_default_settings: Optional[Any] = None
-
-
-# Define SecretRef here if not in a common location
-SecretRef = Annotated[str, StringConstraints(min_length=1, max_length=100),
-                      Field(description="An ID referencing an encrypted secret.")]

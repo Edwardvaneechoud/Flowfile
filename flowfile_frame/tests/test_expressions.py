@@ -804,3 +804,7 @@ class TestAdvancedExpressions:
 
         assert result["float_val"].dtype == pl.Float64
         assert result["float_val"].to_list() == [10.0, 20.0, 30.0, 40.0, 50.0]
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

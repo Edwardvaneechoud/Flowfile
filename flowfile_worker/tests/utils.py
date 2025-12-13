@@ -3,6 +3,7 @@ import platform
 import subprocess
 
 import pytest
+from pathlib import Path
 from pydantic import SecretStr
 
 from flowfile_worker.external_sources.s3_source.models import (FullCloudStorageConnection,
@@ -19,6 +20,19 @@ def is_docker_available():
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+
+def find_parent_directory(target_dir_name, start_path=None):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(start_path) if start_path else Path.cwd()
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 
 @pytest.fixture

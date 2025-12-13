@@ -2,8 +2,11 @@ import datetime
 import pickle
 
 import os
+import yaml
+import json
 
 import polars as pl
+from pathlib import Path
 
 import fastexcel
 from fastapi.exceptions import HTTPException
@@ -19,6 +22,7 @@ from flowfile_core.flowfile.sources.external_sources.factory import data_source_
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 
 from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.utils.arrow_reader import get_read_top_n
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (get_open_xlsx_datatypes,
@@ -52,6 +56,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                get_local_cloud_connection)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+
 
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
@@ -771,13 +776,11 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in cross_join_settings.cross_join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in cross_join_settings.cross_join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
-
             return main.do_cross_join(cross_join_input=cross_join_settings.cross_join_input,
                                       auto_generate_selection=cross_join_settings.auto_generate_selection,
                                       verify_integrity=False,
@@ -800,13 +803,11 @@ class FlowGraph:
         Returns:
             The `FlowGraph` instance for method chaining.
         """
-
         def _func(main: FlowDataEngine, right: FlowDataEngine) -> FlowDataEngine:
             for left_select in join_settings.join_input.left_select.renames:
                 left_select.is_available = True if left_select.old_name in main.schema else False
             for right_select in join_settings.join_input.right_select.renames:
                 right_select.is_available = True if right_select.old_name in right.schema else False
-
             return main.join(join_input=join_settings.join_input,
                              auto_generate_selection=join_settings.auto_generate_selection,
                              verify_integrity=False,
@@ -844,7 +845,7 @@ class FlowGraph:
             return FlowDataEngine(f.get_result())
 
         def schema_callback():
-            fm_input_copy = deepcopy(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
+            fm_input_copy = FuzzyMatchInputManager(fuzzy_settings.join_input)  # Deepcopy create an unique object per func
             node = self.get_node(node_id=fuzzy_settings.node_id)
             return calculate_fuzzy_match_schema(fm_input_copy,
                                                 left_schema=node.node_inputs.main_inputs[0].schema,
@@ -1131,7 +1132,6 @@ class FlowGraph:
         """
 
         def _func(df: FlowDataEngine):
-            output_file.output_settings.populate_abs_file_path()
             execute_remote = self.execution_location != 'local'
             df.output(output_fs=output_file.output_settings, flow_id=self.flow_id, node_id=output_file.node_id,
                       execute_remote=execute_remote)
@@ -1451,10 +1451,10 @@ class FlowGraph:
         Args:
             input_file: The settings for the read operation.
         """
-
-        if input_file.received_file.file_type in ('xlsx', 'excel') and input_file.received_file.sheet_name == '':
+        if (input_file.received_file.file_type in ('xlsx', 'excel') and
+                input_file.received_file.table_settings.sheet_name == ''):
             sheet_name = fastexcel.read_excel(input_file.received_file.path).sheet_names[0]
-            input_file.received_file.sheet_name = sheet_name
+            input_file.received_file.table_settings.sheet_name = sheet_name
 
         received_file = input_file.received_file
         input_file.received_file.set_absolute_filepath()
@@ -1463,7 +1463,7 @@ class FlowGraph:
             input_file.received_file.set_absolute_filepath()
             if input_file.received_file.file_type == 'parquet':
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
-            elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.encoding:
+            elif input_file.received_file.file_type == 'csv' and 'utf' in input_file.received_file.table_settings.encoding:
                 input_data = FlowDataEngine.create_from_path(input_file.received_file)
             else:
                 input_data = FlowDataEngine.create_from_path_worker(input_file.received_file,
@@ -1500,12 +1500,12 @@ class FlowGraph:
                     # If the file is an Excel file, we need to use the openpyxl engine to read the schema
                     schema_callback = get_xlsx_schema_callback(engine='openpyxl',
                                                                file_path=received_file.file_path,
-                                                               sheet_name=received_file.sheet_name,
-                                                               start_row=received_file.start_row,
-                                                               end_row=received_file.end_row,
-                                                               start_column=received_file.start_column,
-                                                               end_column=received_file.end_column,
-                                                               has_headers=received_file.has_headers)
+                                                               sheet_name=received_file.table_settings.sheet_name,
+                                                               start_row=received_file.table_settings.start_row,
+                                                               end_row=received_file.table_settings.end_row,
+                                                               start_column=received_file.table_settings.start_column,
+                                                               end_column=received_file.table_settings.end_column,
+                                                               has_headers=received_file.table_settings.has_headers)
                 else:
                     schema_callback = None
         else:
@@ -1806,6 +1806,27 @@ class FlowGraph:
         node = self._node_db[node_id]
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
 
+    def get_flowfile_data(self) -> schemas.FlowfileData:
+        """Generates a FlowfileData representation of the entire graph structure.
+
+        This is the long-term supported way of storing flows (YAML/JSON).
+
+        Returns:
+            FlowfileData object ready for serialization.
+        """
+        return schemas.FlowfileData(
+            flowfile_version='1.0',
+            flowfile_id=self.flow_id,
+            flowfile_name=self.__name__,
+            flowfile_settings=self.flow_settings,
+            nodes=[node.get_node_information() for node in self.nodes],
+            node_connections=[
+                schemas.NodeConnection(from_node_id=src, to_node_id=tgt)
+                for src, tgt in self.node_connections
+            ],
+            starting_node_ids=[v.node_id for v in self._flow_starts]
+        )
+
     def get_node_storage(self) -> schemas.FlowInformation:
         """Serializes the entire graph's state into a storable format.
 
@@ -1841,16 +1862,50 @@ class FlowGraph:
     def save_flow(self, flow_path: str):
         """Saves the current state of the flow graph to a file.
 
+        Supports multiple formats based on file extension:
+        - .flowfile: Legacy pickle format
+        - .yaml / .yml: New YAML format
+        - .json: JSON format
+
         Args:
             flow_path: The path where the flow file will be saved.
         """
         logger.info("Saving flow to %s", flow_path)
-        os.makedirs(os.path.dirname(flow_path), exist_ok=True)
+        path = Path(flow_path)
+        os.makedirs(path.parent, exist_ok=True)
+
+        suffix = path.suffix.lower()
+
         try:
-            with open(flow_path, 'wb') as f:
-                pickle.dump(self.get_node_storage(), f)
+            if suffix == '.flowfile':
+                # Legacy pickle format
+                with open(flow_path, 'wb') as f:
+                    pickle.dump(self.get_node_storage(), f)
+
+            elif suffix in ('.yaml', '.yml'):
+                # New YAML format
+
+                flowfile_data = self.get_flowfile_data()
+                data = flowfile_data.model_dump(mode='json')
+                with open(flow_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            elif suffix == '.json':
+                # JSON format
+
+                flowfile_data = self.get_flowfile_data()
+                data = flowfile_data.model_dump(mode='json')
+                with open(flow_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+
+            else:
+                # Default to pickle for unknown extensions
+                logger.warning(f"Unknown extension '{suffix}', using pickle format")
+                with open(flow_path, 'wb') as f:
+                    pickle.dump(self.get_node_storage(), f)
+
         except Exception as e:
             logger.error(f"Error saving flow: {e}")
+            raise
 
         self.flow_settings.path = flow_path
 
