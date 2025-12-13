@@ -253,11 +253,9 @@ def create_table(file_type: FileType, received_table: ReceivedTable, background_
         models.Status: Status object tracking the table creation
     """
     logger.info(f"Creating table of type: {file_type}")
-
     try:
         task_id = str(uuid.uuid4())
         file_ref = os.path.join(create_and_get_default_cache_dir(flowfile_flow_id), f"{task_id}.arrow")
-
         status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_ref,
                                result_type="polars")
         status_dict[task_id] = status
