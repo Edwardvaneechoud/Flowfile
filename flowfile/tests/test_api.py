@@ -212,7 +212,7 @@ class TestFlowfileAPI:
         """Test the complete pipeline from graph creation to UI opening."""
         # First ensure server is started
         server_started, _ = start_flowfile_server_process()
-        flow_path = find_parent_directory("Flowfile") / "flowfile" / "tests" / 'supporting_files' / '_test_pipeline.yml'
+        flow_path = Path('supporting_files') / '_test_pipeline.yml'
         if not server_started:
             pytest.skip("Server failed to start, skipping integration test")
 
@@ -230,7 +230,7 @@ class TestFlowfileAPI:
             (col("value") * 2).alias("double_value")
         ])
         # Add write step for verification
-        output_path = find_parent_directory("Flowfile") / "flowfile" / "tests" / Path("supporting_files") / "output.csv"
+        output_path = Path("supporting_files") / "output.csv"
         grouped = result.group_by("category").agg(ff.col("value").sum())
         result_with_write = grouped.write_csv(str(output_path))
         if output_path.exists():
