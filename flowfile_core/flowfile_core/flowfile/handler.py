@@ -14,14 +14,14 @@ from shared.storage_config import storage
 
 def get_flow_save_location(flow_name: str) -> Path:
     """Gets the initial save location for flow files"""
-    if ".flowfile" not in flow_name:
-        flow_name += ".flowfile"
+    if ".yaml" not in flow_name and ".yml" not in flow_name:
+        flow_name += ".yaml"
     return storage.temp_directory_for_flows / flow_name
 
 
 def create_flow_name() -> str:
     """Creates a unique flow name"""
-    return datetime.now().strftime("%Y%m%d_%H_%M_%S")+"_flow.flowfile"
+    return datetime.now().strftime("%Y%m%d_%H_%M_%S")+"_flow.yaml"
 
 
 @dataclass
@@ -39,7 +39,7 @@ class FlowfileHandler:
         self._flows[other.flow_id] = other
         return other.flow_id
 
-    def import_flow(self, flow_path: Path|str) -> int:
+    def import_flow(self, flow_path: Path | str) -> int:
         if isinstance(flow_path, str):
             flow_path = Path(flow_path)
         imported_flow = open_flow(flow_path)

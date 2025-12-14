@@ -474,14 +474,14 @@ def create_flow(flow_path: str = None, name: str = None):
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
     elif flow_path is not None and name is not None:
-        if name not in flow_path and flow_path.endswith(".flowfile"):
+        if name not in flow_path and (flow_path.endswith(".yaml") or flow_path.endswith(".yml")):
             raise HTTPException(422, 'The name must be part of the flow path when a full path is provided')
-        elif name in flow_path and not flow_path.endswith(".flowfile"):
-            flow_path = str(Path(flow_path) / (name + ".flowfile"))
-        elif name not in flow_path and name.endswith(".flowfile"):
+        elif name in flow_path and not (flow_path.endswith(".yaml") or flow_path.endswith(".yml")):
+            flow_path = str(Path(flow_path) / (name + ".yaml"))
+        elif name not in flow_path and (name.endswith(".yaml") or name.endswith(".yml")):
             flow_path = str(Path(flow_path) / name)
-        elif name not in flow_path and not name.endswith(".flowfile"):
-            flow_path = str(Path(flow_path) / (name + ".flowfile"))
+        elif name not in flow_path and not (name.endswith(".yaml") or name.endswith(".yml")):
+            flow_path = str(Path(flow_path) / (name + ".yaml"))
     if flow_path is not None:
         flow_path_ref = Path(flow_path)
         if not flow_path_ref.parent.exists():

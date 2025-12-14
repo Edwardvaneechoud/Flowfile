@@ -152,7 +152,6 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
         FlowInformation object
     """
     suffix = flow_path.suffix.lower()
-
     if suffix == '.flowfile':
         # Legacy pickle format
         flow_storage_obj = load_flowfile_pickle(str(flow_path))

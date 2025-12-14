@@ -76,7 +76,7 @@ client = get_test_client()
 
 def get_flow_settings() -> Dict:
     return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
-            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/test_flow.flowfile',
+            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/test_flow.yaml',
             'execution_mode': 'Development', 'is_running': False, 'is_canceled': False}
 
 
@@ -120,7 +120,7 @@ def ensure_no_flow_registered():
 
 
 def ensure_clean_flow() -> FlowId:
-    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile')
+    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_flow_path.yaml')
     remove_flow(flow_path)  # Remove the flow if it exists
     sleep(.1)
     r = client.post("editor/create_flow", params={'flow_path': flow_path})
@@ -187,7 +187,7 @@ def create_flow_with_manual_input() -> FlowId:
 
 def test_register_flow():
     ensure_no_flow_registered()
-    flow_path: str = 'flowfile_core/tests/support_files/flows/test_flow.flowfile'
+    flow_path: str = 'flowfile_core/tests/support_files/flows/test_flow.yaml'
     response = client.post("editor/create_flow", params={'flow_path': flow_path})
     assert response.status_code == 200, 'Flow not registered'
     flow = flow_file_handler.get_flow(response.json())
@@ -312,8 +312,7 @@ def test_run_error_flow_with_join():
 def test_import_flow():
     if flow_file_handler.get_flow(1):
         flow_file_handler.delete_flow(1)
-
-    flow_path = 'flowfile_core/tests/support_files/flows/test_flow.flowfile'
+    flow_path = str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/flows/test_flow.flowfile')
     response = client.get("/import_flow", params={'flow_path': flow_path})
     assert response.status_code == 200, 'Flow not imported'
     flow_id = response.json()
@@ -977,7 +976,7 @@ def test_editor_create_flow_only_name():
     response = client.post("/editor/create_flow/", params={'name': 'test_flow_1'})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert ".flowfile/temp/flows/test_flow_1.flowfile" in flow_info.path
+    assert ".flowfile/temp/flows/test_flow_1.yaml" in flow_info.path
     assert Path(flow_info.path).exists()
 
 
@@ -990,7 +989,7 @@ def test_editor_create_flow_no_params():
 
 
 def test_editor_create_flow_with_only_path():
-    path = str(storage.flows_directory / "test_flow_1.flowfile")
+    path = str(storage.flows_directory / "test_flow_1.yaml")
     response = client.post("/editor/create_flow/", params={'flow_path': path})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
@@ -999,8 +998,8 @@ def test_editor_create_flow_with_only_path():
 
 
 def test_editor_create_flow_with_both_name_and_full_path():
-    path = str(storage.flows_directory / "test_flow_1.flowfile")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    path = str(storage.flows_directory / "test_flow_1.yaml")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
     assert path == flow_info.path
@@ -1009,23 +1008,23 @@ def test_editor_create_flow_with_both_name_and_full_path():
 
 def test_editor_create_flow_with_both_name_and_path():
     path = str(storage.flows_directory)
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert storage.flows_directory / "test_flow_1.flowfile" == Path(flow_info.path)
+    assert storage.flows_directory / "test_flow_1.yaml" == Path(flow_info.path)
     assert Path(flow_info.path).exists()
 
 
 def test_editor_create_flow_with_both_name_and_non_existing_path():
     path = str(storage.flows_directory/"WRONG_SUBDIR")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 422, "Flow should not be created"
     assert response.json()["detail"] == "The directory does not exist"
 
 
 def test_editor_create_flow_with_both_name_no_overlap():
-    path = str(storage.flows_directory/"test_flow_2.flowfile")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    path = str(storage.flows_directory/"test_flow_2.yaml")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 422, "Flow should not be created"
     assert response.json()["detail"] == 'The name must be part of the flow path when a full path is provided'
 

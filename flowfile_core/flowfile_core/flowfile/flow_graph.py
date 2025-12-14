@@ -228,7 +228,7 @@ class FlowGraph:
         self._node_ids = []
         self._node_db = {}
         self.cache_results = cache_results
-        self.__name__ = name if name else id(self)
+        self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
         if path_ref is not None:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
@@ -1879,12 +1879,9 @@ class FlowGraph:
         try:
             if suffix == '.flowfile':
                 # Legacy pickle format
-                with open(flow_path, 'wb') as f:
-                    pickle.dump(self.get_node_storage(), f)
-
+                raise DeprecationWarning("The .flowfile format is deprecated. Please use .yaml or .json formats.")
             elif suffix in ('.yaml', '.yml'):
                 # New YAML format
-
                 flowfile_data = self.get_flowfile_data()
                 data = flowfile_data.model_dump(mode='json')
                 with open(flow_path, 'w', encoding='utf-8') as f:
@@ -1898,10 +1895,12 @@ class FlowGraph:
                     json.dump(data, f, indent=2, ensure_ascii=False)
 
             else:
-                # Default to pickle for unknown extensions
-                logger.warning(f"Unknown extension '{suffix}', using pickle format")
-                with open(flow_path, 'wb') as f:
-                    pickle.dump(self.get_node_storage(), f)
+                # Default to yml for unknown extensions
+                flowfile_data = self.get_flowfile_data()
+                logger.warning(f"Unknown file extension {suffix}. Defaulting to YAML format.")
+                data = flowfile_data.model_dump(mode='json')
+                with open(flow_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
         except Exception as e:
             logger.error(f"Error saving flow: {e}")

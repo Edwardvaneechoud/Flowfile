@@ -23,6 +23,20 @@ import flowfile as ff
 from flowfile import col, open_graph_in_editor
 
 
+def find_parent_directory(target_dir_name, start_path=None):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(start_path) if start_path else Path.cwd()
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
+
+
 def ensure_folder_empty(folder_path: str) -> None:
     """Remove all contents from folder, create if missing."""
     folder = Path(folder_path)
@@ -41,7 +55,7 @@ def _get_active_flows():
     return requests.get(f"{FLOWFILE_BASE_URL}/active_flowfile_sessions/", headers=headers).json()
 
 
-def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.flowfile') -> Optional[int]:
+def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> Optional[int]:
     active_flows = _get_active_flows()
     for flow in active_flows:
         flow_path: str = flow.get('path')
@@ -198,13 +212,12 @@ class TestFlowfileAPI:
         """Test the complete pipeline from graph creation to UI opening."""
         # First ensure server is started
         server_started, _ = start_flowfile_server_process()
-        flow_path = Path('supporting_files') / '_test_pipeline.flowfile'
+        flow_path = find_parent_directory("Flowfile") / "flowfile" / "tests" / 'supporting_files' / '_test_pipeline.yml'
         if not server_started:
             pytest.skip("Server failed to start, skipping integration test")
 
         # Wait a bit for server to be fully ready
         time.sleep(2)
-
         # Create a test pipeline as shown in the example
         df = ff.from_dict({
             "id": [1, 2, 3, 4, 5],
@@ -217,7 +230,7 @@ class TestFlowfileAPI:
             (col("value") * 2).alias("double_value")
         ])
         # Add write step for verification
-        output_path = Path("supporting_files") / "output.csv"
+        output_path = find_parent_directory("Flowfile") / "flowfile" / "tests" / Path("supporting_files") / "output.csv"
         grouped = result.group_by("category").agg(ff.col("value").sum())
         result_with_write = grouped.write_csv(str(output_path))
         if output_path.exists():
@@ -228,7 +241,7 @@ class TestFlowfileAPI:
                                        automatically_open_browser=False)
         assert isinstance(success, bool)
         assert flow_path.exists()
-        flow_id = _get_flow_id_on_flow_location()
+        flow_id = _get_flow_id_on_flow_location("_test_pipeline.yml")
         _trigger_flow_execution(flow_id)
         execution_complete = _poll_for_execution_completion(flow_id)
 
@@ -253,7 +266,7 @@ class TestFlowfileAPI:
         # Ensure the server is stopped before we begin
         stop_flowfile_server_process()
 
-        flow_path = Path('supporting_files') / '_test_pipeline.flowfile'
+        flow_path = Path('supporting_files') / '_test_pipeline.yml'
 
         # Create a test pipeline
         df = ff.from_dict({
