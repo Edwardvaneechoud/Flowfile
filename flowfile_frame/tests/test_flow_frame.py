@@ -431,7 +431,7 @@ def test_save_flow_graph(tmpdir):
     df2 = df.select("id", "name").filter(col("id") > 1)
 
     # Define a temporary path
-    temp_path = os.path.join(tmpdir, "test_flow.flowfile")
+    temp_path = os.path.join(tmpdir, "test_flow.yaml")
 
     # Save the graph
     df2.save_graph(temp_path)
