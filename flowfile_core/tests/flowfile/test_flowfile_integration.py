@@ -1,10 +1,26 @@
 import pytest
+from pathlib import Path
 from typing import Dict, Any
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, transform_schema, schemas
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from pl_fuzzy_frame_match.models import FuzzyMapping
 from flowfile_core.flowfile.flow_graph import (FlowGraph, add_connection, RunInformation)
+
+
+def find_parent_directory(target_dir_name,):
+    """Navigate up directories until finding the target directory"""
+    current_path = Path(__file__)
+
+    while current_path != current_path.parent:
+        if current_path.name == target_dir_name:
+            return current_path
+        if current_path.name == target_dir_name:
+            return current_path
+        current_path = current_path.parent
+
+    raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
+
 
 @pytest.fixture
 def complex_elaborate_flow() -> FlowGraph:
@@ -591,6 +607,17 @@ def test_execution_complex_flow_local_development(complex_elaborate_flow: FlowGr
     # Execute the entire flow
     results = complex_elaborate_flow.run_graph()
     handle_run_info(results)
+
+
+def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph):
+    main_path = find_parent_directory('Flowfile')
+    complex_elaborate_flow.flow_settings.execution_mode = "Performance"
+    complex_elaborate_flow.save_flow(main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"complex_elaborate_flow.yaml")
+    from flowfile_core.flowfile.handler import FlowfileHandler
+    handler = FlowfileHandler()
+    flow_id = handler.import_flow(flow_path=main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"complex_elaborate_flow.yaml")
+    flow = handler.get_flow(flow_id)
+    flow.run_graph()
 
 
 def test_store_flow(complex_elaborate_flow: FlowGraph):

@@ -1,5 +1,5 @@
-from typing import Optional, List, Dict, Tuple, Any, Literal, Annotated
-from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints, ValidationInfo
+from typing import Optional, List, Dict, Tuple, Any, Literal, ClassVar
+from pydantic import BaseModel, field_validator, ConfigDict, Field, ValidationInfo, field_serializer
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
 from flowfile_core.schemas import input_schema
@@ -151,6 +151,54 @@ class RawLogInput(BaseModel):
     extra: Optional[dict] = None
 
 
+class FlowfileSettings(BaseModel):
+    """Settings for flowfile serialization (YAML/JSON).
+
+    Excludes runtime state fields like is_running, is_canceled, modified_on.
+    """
+    description: Optional[str] = None
+    execution_mode: ExecutionModeLiteral = 'Performance'
+    execution_location: ExecutionLocationsLiteral = 'local'
+    auto_save: bool = False
+    show_detailed_progress: bool = True
+
+
+class FlowfileNode(BaseModel):
+    """Node representation for flowfile serialization (YAML/JSON)."""
+    id: int
+    type: str
+    is_start_node: bool = False
+    description: Optional[str] = ''
+    x_position: Optional[int] = 0
+    y_position: Optional[int] = 0
+    left_input_id: Optional[int] = None
+    right_input_id: Optional[int] = None
+    input_ids: Optional[List[int]] = Field(default_factory=list)
+    outputs: Optional[List[int]] = Field(default_factory=list)
+    setting_input: Optional[Any] = None  # Validated in _flowfile_data_to_flow_information
+
+    _setting_input_exclude: ClassVar[set] = {
+        'flow_id', 'node_id', 'pos_x', 'pos_y', 'is_setup',
+        'description', 'user_id', 'is_flow_output', 'is_user_defined',
+        'depending_on_id', 'depending_on_ids'
+    }
+
+    @field_serializer('setting_input')
+    def serialize_setting_input(self, value, _info):
+        if value is None:
+            return None
+        return value.model_dump(exclude=self._setting_input_exclude)
+
+
+class FlowfileData(BaseModel):
+    """Root model for flowfile serialization (YAML/JSON)."""
+    flowfile_version: str
+    flowfile_id: int
+    flowfile_name: str
+    flowfile_settings: FlowfileSettings
+    nodes: List[FlowfileNode]
+
+
 class NodeTemplate(BaseModel):
     """
     Defines the template for a node type, specifying its UI and functional characteristics.
@@ -202,6 +250,7 @@ class NodeInformation(BaseModel):
     id: Optional[int] = None
     type: Optional[str] = None
     is_setup: Optional[bool] = None
+    is_start_node: bool = False
     description: Optional[str] = ''
     x_position: Optional[int] = 0
     y_position: Optional[int] = 0
@@ -287,16 +336,6 @@ class NodeConnection(BaseModel):
     model_config = ConfigDict(frozen=True)
     from_node_id: int
     to_node_id: int
-
-
-class FlowfileData(BaseModel):
-    flowfile_version: str
-    flowfile_id: int
-    flowfile_name: str
-    flowfile_settings: FlowSettings
-    nodes: List[NodeInformation]
-    node_connections: List[NodeConnection]
-    starting_node_ids: List[int] = None
 
 
 class NodeInput(NodeTemplate):

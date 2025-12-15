@@ -4,11 +4,63 @@ from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_comp
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from pathlib import Path
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
+from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
+import json
+from shared.storage_config import storage
+
 
 try:
     import yaml
 except ImportError:
     yaml = None
+
+
+def _validate_flow_path(flow_path: Path) -> Path:
+    """Validate flow path is within allowed directories or is an explicit absolute path."""
+    resolved = flow_path.resolve()
+
+    # Check extension
+    allowed_extensions = {'.yaml', '.yml', '.json', '.flowfile'}
+    if resolved.suffix.lower() not in allowed_extensions:
+        raise ValueError(f"Unsupported file extension: {resolved.suffix}")
+
+    # Check file exists
+    if not resolved.is_file():
+        raise FileNotFoundError(f"Flow file not found: {resolved}")
+
+    # Allow paths within known safe directories
+
+    if IS_RUNNING_IN_DOCKER:
+        safe_directories = [
+            storage.flows_directory,
+            storage.uploads_directory,
+            storage.temp_directory_for_flows,
+        ]
+        is_safe = any(
+            resolved.is_relative_to(safe_dir)
+            for safe_dir in safe_directories
+        )
+    else:
+        is_safe = True
+
+    if not is_safe and not flow_path.is_absolute():
+        raise ValueError(
+            f"Relative paths must be within flows or uploads directory. "
+            f"Use absolute path or place file in: {storage.flows_directory}"
+        )
+
+    return resolved
+
+
+def _derive_connections_from_nodes(nodes: List[schemas.FlowfileNode]) -> List[Tuple[int, int]]:
+    """Derive node connections from the outputs stored in each node."""
+    connections = []
+    for node in nodes:
+        if node.outputs:
+            for output_id in node.outputs:
+                connections.append((node.id, output_id))
+    return connections
 
 
 def determine_insertion_order(node_storage: schemas.FlowInformation):
@@ -71,13 +123,11 @@ def _load_flowfile_yaml(flow_path: Path) -> schemas.FlowInformation:
     """
     if yaml is None:
         raise ImportError("PyYAML is required for YAML files. Install with: pip install pyyaml")
-
+    flow_path = _validate_flow_path(flow_path)
     with open(flow_path, 'r', encoding='utf-8') as f:
         data = yaml.safe_load(f)
-
     # Load as FlowfileData first (handles setting_input validation via node type)
     flowfile_data = schemas.FlowfileData.model_validate(data)
-
     # Convert to FlowInformation
     return _flowfile_data_to_flow_information(flowfile_data)
 
@@ -92,8 +142,7 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
     Returns:
         FlowInformation object
     """
-    import json
-
+    flow_path = _validate_flow_path(flow_path)
     with open(flow_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -105,33 +154,73 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
 
 
 def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> schemas.FlowInformation:
-    """
-    Convert FlowfileData (new YAML format) to FlowInformation (internal format).
-
-    Args:
-        flowfile_data: The FlowfileData from YAML
-
-    Returns:
-        FlowInformation object for use with FlowGraph
-    """
-    # Convert nodes list to dict keyed by ID
     nodes_dict = {}
+    node_starts = []
     for node in flowfile_data.nodes:
-        node_id = node.id
-        nodes_dict[node_id] = node
+        # Validate and populate setting_input with full context
+        setting_input = None
+        if node.setting_input is not None:
+            model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node.type)
+            if model_class is None:
+                raise ValueError(f"Unknown node type: {node.type}")
 
-    # Convert NodeConnection objects to tuples
-    connections = [
-        (conn.from_node_id, conn.to_node_id)
-        for conn in flowfile_data.node_connections
-    ]
+            # Inject fields that were excluded during serialization
+            setting_data = node.setting_input if isinstance(node.setting_input, dict) else node.setting_input.model_dump()
+            setting_data['flow_id'] = flowfile_data.flowfile_id
+            setting_data['node_id'] = node.id
+            setting_data['pos_x'] = float(node.x_position or 0)
+            setting_data['pos_y'] = float(node.y_position or 0)
+            setting_data['description'] = node.description or ''
+            setting_data['is_setup'] = True
+
+            # Populate depending_on_id(s)
+            if 'depending_on_id' in model_class.model_fields:
+                setting_data['depending_on_id'] = node.input_ids[0] if node.input_ids else -1
+            if 'depending_on_ids' in model_class.model_fields:
+                depending_ids = list(node.input_ids or [])
+                if node.left_input_id:
+                    depending_ids.append(node.left_input_id)
+                if node.right_input_id:
+                    depending_ids.append(node.right_input_id)
+                setting_data['depending_on_ids'] = depending_ids
+
+            setting_input = model_class.model_validate(setting_data)
+
+        node_info = schemas.NodeInformation(
+            id=node.id,
+            type=node.type,
+            is_setup=setting_input is not None,
+            description=node.description,
+            x_position=node.x_position,
+            y_position=node.y_position,
+            left_input_id=node.left_input_id,
+            right_input_id=node.right_input_id,
+            input_ids=node.input_ids,
+            outputs=node.outputs,
+            setting_input=setting_input,
+        )
+        nodes_dict[node.id] = node_info
+        if node.is_start_node:
+            node_starts.append(node.id)
+
+    connections = _derive_connections_from_nodes(flowfile_data.nodes)
+
+    flow_settings = schemas.FlowSettings(
+        flow_id=flowfile_data.flowfile_id,
+        name=flowfile_data.flowfile_name,
+        description=flowfile_data.flowfile_settings.description,
+        execution_mode=flowfile_data.flowfile_settings.execution_mode,
+        execution_location=flowfile_data.flowfile_settings.execution_location,
+        auto_save=flowfile_data.flowfile_settings.auto_save,
+        show_detailed_progress=flowfile_data.flowfile_settings.show_detailed_progress,
+    )
 
     return schemas.FlowInformation(
         flow_id=flowfile_data.flowfile_id,
         flow_name=flowfile_data.flowfile_name,
-        flow_settings=flowfile_data.flowfile_settings,
+        flow_settings=flow_settings,
         data=nodes_dict,
-        node_starts=flowfile_data.starting_node_ids or [],
+        node_starts=node_starts,
         node_connections=connections,
     )
 
@@ -151,6 +240,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     Returns:
         FlowInformation object
     """
+    flow_path = _validate_flow_path(flow_path)
     suffix = flow_path.suffix.lower()
     if suffix == '.flowfile':
         # Legacy pickle format
@@ -159,17 +249,13 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
         return flow_storage_obj
 
     elif suffix in ('.yaml', '.yml'):
-        # New YAML format
         return _load_flowfile_yaml(flow_path)
 
     elif suffix == '.json':
-        # JSON format
         return _load_flowfile_json(flow_path)
 
     else:
-        # Try to detect format by content
         try:
-            # Try YAML first
             return _load_flowfile_yaml(flow_path)
         except Exception:
             # Fall back to pickle
@@ -194,8 +280,8 @@ def open_flow(flow_path: Path) -> FlowGraph:
         FlowGraph: The flowfile object
     """
     # Load flow storage (handles format detection)
+    flow_path = _validate_flow_path(flow_path)
     flow_storage_obj = _load_flow_storage(flow_path)
-    # Update path info
     flow_storage_obj.flow_settings.path = str(flow_path)
     flow_storage_obj.flow_settings.name = str(flow_path.stem)
     flow_storage_obj.flow_name = str(flow_path.stem)
@@ -220,11 +306,9 @@ def open_flow(flow_path: Path) -> FlowGraph:
             node_promise.cache_results = node_info.setting_input.cache_results
         new_flow.add_node_promise(node_promise)
 
-    # Second pass: add actual nodes and connections
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
 
-        # Handle user-defined nodes
         if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
             if node_info.type not in CUSTOM_NODE_STORE:
                 continue

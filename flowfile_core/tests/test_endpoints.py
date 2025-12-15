@@ -25,9 +25,10 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                get_all_database_connections_interface,
                                                                                get_local_cloud_connection,)
 from shared.storage_config import storage
-from tests.flowfile.test_flowfile import find_parent_directory
+
 
 try:
+    from tests.flowfile.test_flowfile import find_parent_directory
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
     from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
                              ensure_no_cloud_storage_connection_is_available,
@@ -37,7 +38,8 @@ except ModuleNotFoundError:
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
-    # noinspection PyUnresolvedReferences
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile/test_flowfile.py")))
+    from tests.flowfile.test_flowfile import find_parent_directory
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
     from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
                              ensure_no_cloud_storage_connection_is_available,

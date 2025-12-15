@@ -370,6 +370,7 @@ class FlowNode:
                                       self.node_inputs.main_inputs] if self.node_inputs.main_inputs is not None else None
         node_information.setting_input = self.setting_input
         node_information.outputs = [n.node_id for n in self.leads_to_nodes]
+        node_information.description = self.setting_input.description if hasattr(self.setting_input, 'description') else ''
         node_information.is_setup = self.is_setup
         node_information.x_position = self.setting_input.pos_x
         node_information.y_position = self.setting_input.pos_y

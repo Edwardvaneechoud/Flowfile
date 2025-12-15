@@ -21,8 +21,6 @@ from copy import deepcopy
 from time import sleep
 
 
-
-
 def find_parent_directory(target_dir_name,):
     """Navigate up directories until finding the target directory"""
     current_path = Path(__file__)
@@ -917,7 +915,7 @@ def test_analytics_processor_after_run(raw_data):
 
 def test_text_to_rows():
     handler = create_flowfile_handler()
-    graph_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/text_to_rows.flowfile"))
+    graph_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/text_to_rows.flowfile")
     graph = handler.get_flow(graph_id)
     run_info = graph.run_graph()
     handle_run_info(run_info)

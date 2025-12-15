@@ -58,6 +58,14 @@ from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layou
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 
 
+def represent_list_json(dumper, data):
+    """Use inline style for short simple lists, block style for complex ones."""
+    if len(data) <= 10 and all(isinstance(item, (int, str, float, bool, type(None))) for item in data):
+        return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+    return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=False)
+
+yaml.add_representer(list, represent_list_json)
+
 
 def get_xlsx_schema(engine: str, file_path: str, sheet_name: str, start_row: int, start_column: int,
                     end_row: int, end_column: int, has_headers: bool):
@@ -1807,24 +1815,40 @@ class FlowGraph:
         return node.get_node_data(flow_id=self.flow_id, include_example=include_example)
 
     def get_flowfile_data(self) -> schemas.FlowfileData:
-        """Generates a FlowfileData representation of the entire graph structure.
+        start_node_ids = {v.node_id for v in self._flow_starts}
 
-        This is the long-term supported way of storing flows (YAML/JSON).
+        nodes = []
+        for node in self.nodes:
+            node_info = node.get_node_information()
+            flowfile_node = schemas.FlowfileNode(
+                id=node_info.id,
+                type=node_info.type,
+                is_start_node=node.node_id in start_node_ids,
+                description=node_info.description,
+                x_position=int(node_info.x_position),
+                y_position=int(node_info.y_position),
+                left_input_id=node_info.left_input_id,
+                right_input_id=node_info.right_input_id,
+                input_ids=node_info.input_ids,
+                outputs=node_info.outputs,
+                setting_input=node_info.setting_input,
+            )
+            nodes.append(flowfile_node)
 
-        Returns:
-            FlowfileData object ready for serialization.
-        """
+        settings = schemas.FlowfileSettings(
+            description=self.flow_settings.description,
+            execution_mode=self.flow_settings.execution_mode,
+            execution_location=self.flow_settings.execution_location,
+            auto_save=self.flow_settings.auto_save,
+            show_detailed_progress=self.flow_settings.show_detailed_progress,
+        )
+
         return schemas.FlowfileData(
             flowfile_version='1.0',
             flowfile_id=self.flow_id,
             flowfile_name=self.__name__,
-            flowfile_settings=self.flow_settings,
-            nodes=[node.get_node_information() for node in self.nodes],
-            node_connections=[
-                schemas.NodeConnection(from_node_id=src, to_node_id=tgt)
-                for src, tgt in self.node_connections
-            ],
-            starting_node_ids=[v.node_id for v in self._flow_starts]
+            flowfile_settings=settings,
+            nodes=nodes,
         )
 
     def get_node_storage(self) -> schemas.FlowInformation:
@@ -1863,7 +1887,6 @@ class FlowGraph:
         """Saves the current state of the flow graph to a file.
 
         Supports multiple formats based on file extension:
-        - .flowfile: Legacy pickle format
         - .yaml / .yml: New YAML format
         - .json: JSON format
 
@@ -1873,15 +1896,12 @@ class FlowGraph:
         logger.info("Saving flow to %s", flow_path)
         path = Path(flow_path)
         os.makedirs(path.parent, exist_ok=True)
-
         suffix = path.suffix.lower()
 
         try:
             if suffix == '.flowfile':
-                # Legacy pickle format
                 raise DeprecationWarning("The .flowfile format is deprecated. Please use .yaml or .json formats.")
             elif suffix in ('.yaml', '.yml'):
-                # New YAML format
                 flowfile_data = self.get_flowfile_data()
                 data = flowfile_data.model_dump(mode='json')
                 with open(flow_path, 'w', encoding='utf-8') as f:
@@ -1895,7 +1915,6 @@ class FlowGraph:
                     json.dump(data, f, indent=2, ensure_ascii=False)
 
             else:
-                # Default to yml for unknown extensions
                 flowfile_data = self.get_flowfile_data()
                 logger.warning(f"Unknown file extension {suffix}. Defaulting to YAML format.")
                 data = flowfile_data.model_dump(mode='json')
