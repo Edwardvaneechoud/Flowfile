@@ -184,6 +184,14 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
                     depending_ids.append(node.right_input_id)
                 setting_data['depending_on_ids'] = depending_ids
 
+            if node.type == 'output' and 'output_settings' in setting_data:
+                output_settings = setting_data['output_settings']
+                file_type = output_settings.get('file_type', None)
+                if file_type is None:
+                    raise ValueError("Output node's output_settings must include 'file_type'")
+                if 'table_settings' not in output_settings:
+                    output_settings['table_settings'] = {"file_type": file_type}
+
             setting_input = model_class.model_validate(setting_data)
 
         node_info = schemas.NodeInformation(

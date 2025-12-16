@@ -1,13 +1,17 @@
 from typing import List, Dict, Tuple, Set, Optional, Literal, Callable
+from dataclasses import asdict
 import polars as pl
 from polars import selectors
 from copy import deepcopy
 from pydantic import BaseModel, ConfigDict, model_validator, Field
 from typing import NamedTuple, Union, Any
-
+from flowfile_core.schemas.yaml_types import (
+    SelectInputYaml, JoinInputsYaml, JoinInputYaml,
+    CrossJoinInputYaml, FuzzyMatchInputYaml
+)
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
-FuzzyMap = FuzzyMapping  # For backwards compatibility
+FuzzyMap = FuzzyMapping
 
 
 def get_func_type_mapping(func: str):
@@ -81,11 +85,38 @@ class SelectInput(BaseModel):
             data['new_name'] = new_name
         super().__init__(**data)
 
+    def to_yaml_dict(self) -> SelectInputYaml:
+        """Serialize for YAML output - only user-relevant fields."""
+        result: SelectInputYaml = {"old_name": self.old_name}
+        if self.new_name != self.old_name:
+            result["new_name"] = self.new_name
+        if not self.keep:
+            result["keep"] = self.keep
+        if self.data_type_change and self.data_type:
+            result["data_type"] = self.data_type
+        return result
+
+    @classmethod
+    def from_yaml_dict(cls, data: dict) -> "SelectInput":
+        """Load from slim YAML format."""
+        old_name = data["old_name"]
+        new_name = data.get("new_name", old_name)
+        return cls(
+            old_name=old_name,
+            new_name=new_name,
+            keep=data.get("keep", True),
+            data_type=data.get("data_type"),
+            data_type_change=data.get("data_type") is not None,
+            is_altered=old_name != new_name,
+        )
+
     @model_validator(mode='after')
     def set_default_new_name(self):
         """If new_name is None, default it to old_name."""
         if self.new_name is None:
             self.new_name = self.old_name
+        if self.old_name != self.new_name:
+            self.is_altered = True
         return self
 
     def __hash__(self):
@@ -174,6 +205,16 @@ class SelectInputs(BaseModel):
             kwargs['renames'] = []
         super().__init__(**kwargs)
 
+    def to_yaml_dict(self) -> JoinInputsYaml:
+        """Serialize for YAML output."""
+        return {"select": [r.to_yaml_dict() for r in self.renames]}
+
+    @classmethod
+    def from_yaml_dict(cls, data: dict) -> "SelectInputs":
+        """Load from slim YAML format. Supports both 'select' (new) and 'renames' (internal)."""
+        items = data.get("select", data.get("renames", []))
+        return cls(renames=[SelectInput.from_yaml_dict(item) for item in items])
+
     @classmethod
     def create_from_list(cls, col_list: List[str]) -> "SelectInputs":
         """Creates a SelectInputs object from a simple list of column names."""
@@ -220,7 +261,6 @@ class CrossJoinInput(BaseModel):
     """Data model for cross join operations."""
     left_select: JoinInputs
     right_select: JoinInputs
-
 
     @model_validator(mode='before')
     @classmethod
@@ -290,8 +330,10 @@ class CrossJoinInput(BaseModel):
             elif all(isinstance(s, dict) for s in select):
                 return JoinInputs(renames=[SelectInput(**s) for s in select])
 
-        # Dict with 'renames' key
+        # Dict with 'select' (new YAML) or 'renames' (internal) key
         if isinstance(select, dict):
+            if 'select' in select:
+                return JoinInputs(renames=[SelectInput.from_yaml_dict(s) for s in select['select']])
             if 'renames' in select:
                 return JoinInputs(**select)
 
@@ -307,6 +349,13 @@ class CrossJoinInput(BaseModel):
         if right_select is not None:
             data['right_select'] = right_select
         super().__init__(**data)
+
+    def to_yaml_dict(self) -> CrossJoinInputYaml:
+        """Serialize for YAML output."""
+        return {
+            "left_select": self.left_select.to_yaml_dict(),
+            "right_select": self.right_select.to_yaml_dict(),
+        }
 
 
 class JoinInput(BaseModel):
@@ -384,8 +433,10 @@ class JoinInput(BaseModel):
             elif all(isinstance(s, dict) for s in select):
                 return JoinInputs(renames=[SelectInput(**s) for s in select])
 
-        # Dict with 'renames' key
+        # Dict with 'select' (new YAML) or 'renames' (internal) key
         if isinstance(select, dict):
+            if 'select' in select:
+                return JoinInputs(renames=[SelectInput.from_yaml_dict(s) for s in select['select']])
             if 'renames' in select:
                 return JoinInputs(**select)
 
@@ -409,6 +460,15 @@ class JoinInput(BaseModel):
 
         super().__init__(**data)
 
+    def to_yaml_dict(self) -> JoinInputYaml:
+        """Serialize for YAML output."""
+        return {
+            "join_mapping": [{"left_col": jm.left_col, "right_col": jm.right_col} for jm in self.join_mapping],
+            "left_select": self.left_select.to_yaml_dict(),
+            "right_select": self.right_select.to_yaml_dict(),
+            "how": self.how,
+        }
+
 
 class FuzzyMatchInput(BaseModel):
     """Data model for fuzzy matching join operations."""
@@ -430,6 +490,16 @@ class FuzzyMatchInput(BaseModel):
 
         super().__init__(**data)
 
+    def to_yaml_dict(self) -> FuzzyMatchInputYaml:
+        """Serialize for YAML output."""
+        return {
+            "join_mapping": [asdict(jm) for jm in self.join_mapping],
+            "left_select": self.left_select.to_yaml_dict(),
+            "right_select": self.right_select.to_yaml_dict(),
+            "how": self.how,
+            "aggregate_output": self.aggregate_output,
+        }
+
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
         """Parse various select input formats."""
@@ -446,8 +516,10 @@ class FuzzyMatchInput(BaseModel):
             elif all(isinstance(s, dict) for s in select):
                 return JoinInputs(renames=[SelectInput(**s) for s in select])
 
-        # Dict with 'renames' key
+        # Dict with 'select' (new YAML) or 'renames' (internal) key
         if isinstance(select, dict):
+            if 'select' in select:
+                return JoinInputs(renames=[SelectInput.from_yaml_dict(s) for s in select['select']])
             if 'renames' in select:
                 return JoinInputs(**select)
 

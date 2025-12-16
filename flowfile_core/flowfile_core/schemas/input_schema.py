@@ -4,6 +4,10 @@ from pathlib import Path
 import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
+from flowfile_core.schemas.yaml_types import (
+    OutputSettingsYaml, NodeSelectYaml, NodeJoinYaml,
+    NodeCrossJoinYaml, NodeFuzzyMatchYaml, NodeOutputYaml
+)
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 from pydantic import (BaseModel, Field, model_validator, field_validator,
                       SecretStr, ConfigDict, StringConstraints, ValidationInfo)
@@ -165,11 +169,13 @@ class ReceivedTable(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def set_default_table_settings(cls, data):
-        """Auto-populate table_settings based on file_type if not provided."""
-        if isinstance(data, dict) and 'table_settings' not in data:
-            file_type = data.get('file_type')
-            if file_type == "parquet":
-                data['table_settings'] = InputParquetTable()
+        """Create default table_settings based on file_type if not provided."""
+        if isinstance(data, dict):
+            if 'table_settings' not in data or data['table_settings'] is None:
+                data['table_settings'] = {}
+
+            if isinstance(data['table_settings'], dict) and 'file_type' not in data['table_settings']:
+                data['table_settings']['file_type'] = data.get('file_type', 'csv')
         return data
 
     @model_validator(mode='after')
@@ -214,6 +220,24 @@ class OutputSettings(BaseModel):
     write_mode: str = 'overwrite'
     table_settings: OutputTableSettings
     abs_file_path: Optional[str] = None
+
+    def to_yaml_dict(self) -> OutputSettingsYaml:
+        """Converts the output settings to a dictionary suitable for YAML serialization."""
+        result: OutputSettingsYaml = {
+            "name": self.name,
+            "directory": self.directory,
+            "file_type": self.file_type,
+            "write_mode": self.write_mode,
+        }
+        if self.abs_file_path:
+            result["abs_file_path"] = self.abs_file_path
+        if self.fields:
+            result["fields"] = self.fields
+        # Only include table_settings if it has non-default values beyond file_type
+        ts_dict = self.table_settings.model_dump(exclude={"file_type"})
+        if any(v for v in ts_dict.values()):  # Has meaningful settings
+            result["table_settings"] = ts_dict
+        return result
 
     @property
     def sheet_name(self) -> str | None:
@@ -295,6 +319,15 @@ class NodeSelect(NodeSingleInput):
     select_input: List[transform_schema.SelectInput] = Field(default_factory=list)
     sorted_by: Optional[Literal['none', 'asc', 'desc']] = 'none'
 
+    def to_yaml_dict(self) -> NodeSelectYaml:
+        """Converts the select node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "keep_missing": self.keep_missing,
+            "select_input": [s.to_yaml_dict() for s in self.select_input],
+            "sorted_by": self.sorted_by,
+        }
+
 
 class NodeFilter(NodeSingleInput):
     """Settings for a node that filters rows based on a condition."""
@@ -330,6 +363,18 @@ class NodeJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def to_yaml_dict(self) -> NodeJoinYaml:
+        """Converts the join node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "auto_generate_selection": self.auto_generate_selection,
+            "verify_integrity": self.verify_integrity,
+            "join_input": self.join_input.to_yaml_dict(),
+            "auto_keep_all": self.auto_keep_all,
+            "auto_keep_right": self.auto_keep_right,
+            "auto_keep_left": self.auto_keep_left,
+        }
+
 
 class NodeCrossJoin(NodeMultiInput):
     """Settings for a node that performs a cross join."""
@@ -340,10 +385,34 @@ class NodeCrossJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def to_yaml_dict(self) -> NodeCrossJoinYaml:
+        """Converts the cross join node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "auto_generate_selection": self.auto_generate_selection,
+            "verify_integrity": self.verify_integrity,
+            "cross_join_input": self.cross_join_input.to_yaml_dict(),
+            "auto_keep_all": self.auto_keep_all,
+            "auto_keep_right": self.auto_keep_right,
+            "auto_keep_left": self.auto_keep_left,
+        }
+
 
 class NodeFuzzyMatch(NodeJoin):
     """Settings for a node that performs a fuzzy join based on string similarity."""
     join_input: transform_schema.FuzzyMatchInput
+
+    def to_yaml_dict(self) -> NodeFuzzyMatchYaml:
+        """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "auto_generate_selection": self.auto_generate_selection,
+            "verify_integrity": self.verify_integrity,
+            "join_input": self.join_input.to_yaml_dict(),
+            "auto_keep_all": self.auto_keep_all,
+            "auto_keep_right": self.auto_keep_right,
+            "auto_keep_left": self.auto_keep_left,
+        }
 
 
 class NodeDatasource(NodeBase):
@@ -545,6 +614,13 @@ class NodeUnion(NodeMultiInput):
 class NodeOutput(NodeSingleInput):
     """Settings for a node that writes its input to a file."""
     output_settings: OutputSettings
+
+    def to_yaml_dict(self) -> NodeOutputYaml:
+        """Converts the output node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "output_settings": self.output_settings.to_yaml_dict(),
+        }
 
 
 class NodeOutputConnection(BaseModel):

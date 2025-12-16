@@ -175,7 +175,7 @@ class FlowfileNode(BaseModel):
     right_input_id: Optional[int] = None
     input_ids: Optional[List[int]] = Field(default_factory=list)
     outputs: Optional[List[int]] = Field(default_factory=list)
-    setting_input: Optional[Any] = None  # Validated in _flowfile_data_to_flow_information
+    setting_input: Optional[Any] = None
 
     _setting_input_exclude: ClassVar[set] = {
         'flow_id', 'node_id', 'pos_x', 'pos_y', 'is_setup',
@@ -187,6 +187,8 @@ class FlowfileNode(BaseModel):
     def serialize_setting_input(self, value, _info):
         if value is None:
             return None
+        if hasattr(value, 'to_yaml_dict'):
+            return value.to_yaml_dict()
         return value.model_dump(exclude=self._setting_input_exclude)
 
 
