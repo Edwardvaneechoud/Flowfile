@@ -164,33 +164,39 @@
       </div>
     </div>
 
-    <!-- Create File Dialog -->
     <el-dialog
-      v-model="showCreateDialog"
-      title="Create New File"
-      width="30%"
-      :close-on-click-modal="false"
-      @closed="handleDialogClosed"
-    >
-      <el-form @submit.prevent="handleCreateFile">
-        <el-form-item :error="fileNameError" label="File Name">
-          <el-input
-            ref="fileNameInput"
-            v-model="newFileName"
-            placeholder="Enter file name"
-            @keyup.enter="handleCreateFile"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="showCreateDialog = false">Cancel</el-button>
-          <el-button type="primary" :disabled="!newFileName.trim()" @click="handleCreateFile">
-            Create
-          </el-button>
+  v-model="showCreateDialog"
+  title="Create New File"
+  width="30%"
+  :close-on-click-modal="false"
+  @closed="handleDialogClosed"
+>
+  <el-form @submit.prevent="handleCreateFile">
+    <el-form-item :error="fileNameError" label="File Name">
+      <el-input
+        ref="fileNameInput"
+        v-model="newFileName"
+        placeholder="Enter file name (e.g., my_flow)"
+        @keyup.enter="handleCreateFile"
+      />
+      <div v-if="newFileName.trim()" class="form-hint">
+        <span class="preview-label">Will be saved as:</span>
+        <code>{{ previewFileName }}</code>
+        <span v-if="!hasValidExtension" class="auto-extension-hint">
+          (.yaml added automatically)
         </span>
-      </template>
-    </el-dialog>
+      </div>
+    </el-form-item>
+  </el-form>
+  <template #footer>
+    <span class="dialog-footer">
+      <el-button @click="showCreateDialog = false">Cancel</el-button>
+      <el-button type="primary" :disabled="!newFileName.trim()" @click="handleCreateFile">
+        Create
+      </el-button>
+    </span>
+  </template>
+</el-dialog>
   </div>
 </template>
 
@@ -207,6 +213,9 @@ import {
   navigateInto,
   navigateTo,
 } from "./fileSystemApi";
+
+import {FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS} from "./constants"
+
 import path from "path-browserify";
 
 const fileBrowserStore = useFileBrowserStore();
@@ -289,19 +298,18 @@ const error = ref<string | null>(null);
 const showCreateDialog = ref(false);
 const newFileName = ref("");
 const fileNameError = ref("");
-const fileNameInput = ref<HTMLInputElement | null>(null);
 const selectedFile = ref<FileInfo | null>(null);
-const DATA_FILE_TYPES = ["xlsx", "parquet", "csv", "txt"];
 
-// Methods
 const isDataFile = (file: FileInfo): boolean => {
   if (file.is_directory) return false;
-  return DATA_FILE_TYPES.some((type) => file.name.toLowerCase().endsWith(`.${type.toLowerCase()}`));
+  const name = file.name.toLowerCase();
+  return DATA_FILE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
 };
 
 const isFlowfile = (file: FileInfo): boolean => {
   if (file.is_directory) return false;
-  return file.name.toLowerCase().endsWith(".flowfile");
+  const name = file.name.toLowerCase();
+  return FLOWFILE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
 };
 
 const formatFileSize = (bytes: number): string => {
@@ -422,10 +430,22 @@ const validateFileName = (fileName: string): boolean => {
   return true;
 };
 
+const hasValidExtension = computed(() => {
+  const name = newFileName.value.trim().toLowerCase();
+  return ALLOWED_SAVE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
+});
+
+const previewFileName = computed(() => {
+  const name = newFileName.value.trim();
+  if (!name) return '';
+  return hasValidExtension.value ? name : `${name}.yaml`;
+});
+
 const handleCreateFile = () => {
   if (validateFileName(newFileName.value)) {
-    const newFilePath = path.join(currentPath.value, newFileName.value);
-    emit("createFile", newFilePath, currentPath.value, newFileName.value);
+    const fileName = previewFileName.value;
+    const newFilePath = path.join(currentPath.value, fileName);
+    emit("createFile", newFilePath, currentPath.value, fileName);
     showCreateDialog.value = false;
   }
 };
@@ -787,4 +807,32 @@ onMounted(async () => {
   gap: 16px;
   margin-top: 12px;
 }
+
+.form-hint {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.preview-label {
+  color: #374151;
+}
+
+.form-hint code {
+  background-color: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  color: #1f2937;
+}
+
+.auto-extension-hint {
+  color: #9ca3af;
+  font-style: italic;
+}
+
 </style>

@@ -8,7 +8,7 @@
   >
     <file-browser
       ref="fileBrowserRef"
-      :allowed-file-types="['flowfile']"
+      :allowed-file-types="['flowfile', 'yml', 'yaml']"
       mode="create"
       :initial-file-path="initialPath"
       @create-file="handleSaveFlow"

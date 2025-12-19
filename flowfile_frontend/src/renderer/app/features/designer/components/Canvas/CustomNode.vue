@@ -1,9 +1,9 @@
 <!-- CustomNode.vue -->
 <template>
   <div v-bind="$attrs">
-    <div class="custom-node-header" data="description_display" @contextmenu="onTitleClick">
+    <div class="custom-node-header" data="description_display" @contextmenu="onTitleClick" @click.stop>
       <div>
-        <div v-if="!editMode" class="description-display" :style="descriptionTextStyle">
+        <div v-if="!editMode" class="description-display" :style="descriptionTextStyle" @click.stop>
           <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
             <svg
               width="12"
@@ -30,6 +30,7 @@
           class="custom-node-header"
           :style="overlayStyle"
           data="description_input"
+          @click.stop
         >
           <textarea
             :id="props.data.id.toLocaleString()"
@@ -37,6 +38,7 @@
             class="description-input"
             data="description_input"
             @blur="toggleEditMode(false)"
+            @click.stop
           ></textarea>
         </div>
       </div>
@@ -113,7 +115,7 @@
 
 <script setup lang="ts">
 import { Handle } from "@vue-flow/core";
-import { computed, ref, defineProps, onMounted, nextTick, watch, onUnmounted } from "vue";
+import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "./types";
