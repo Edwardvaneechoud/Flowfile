@@ -8,13 +8,13 @@
 </template>
 
 <script lang="ts" setup>
-  import { InputParquetTable } from "../../../baseNode/nodeInput";
-  
-  const props = defineProps<{
-    modelValue: InputParquetTable;
-  }>();
-  </script>
-  
+import { InputParquetTable } from "../../../baseNode/nodeInput";
+
+const props = defineProps<{
+  modelValue: InputParquetTable;
+}>();
+</script>
+
 <style scoped>
 .parquet-table-settings {
   background: #f9fafb;

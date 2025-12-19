@@ -33,7 +33,11 @@
   </div>
 
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
-    <file-browser :allowed-file-types="FLOWFILE_EXTENSIONS" mode="open" @file-selected="openFlowAction" />
+    <file-browser
+      :allowed-file-types="FLOWFILE_EXTENSIONS"
+      mode="open"
+      @file-selected="openFlowAction"
+    />
   </el-dialog>
 
   <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%">
@@ -172,12 +176,10 @@ const executionLocationOptions = ref<ExecutionLocationOption[]>([
 
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
-
 const isValidSaveExtension = (filePath: string): boolean => {
   const name = filePath.toLowerCase();
   return ALLOWED_SAVE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
 };
-
 
 // Generate default filename with current datetime
 const generateDefaultFileName = (): string => {
@@ -239,18 +241,18 @@ const fileBrowserRef = ref<{
 
 const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
   // Check for deprecated .flowfile extension
-  if (flowPath.toLowerCase().endsWith('.flowfile')) {
+  if (flowPath.toLowerCase().endsWith(".flowfile")) {
     ElMessage.error({
-      message: 'The .flowfile format is deprecated. Please use .yaml or .yml instead.',
+      message: "The .flowfile format is deprecated. Please use .yaml or .yml instead.",
       duration: 5000,
     });
     return;
   }
-  
+
   // Validate extension
   if (!isValidSaveExtension(flowPath)) {
     ElMessage.error({
-      message: 'Invalid file extension. Please use .yaml or .yml',
+      message: "Invalid file extension. Please use .yaml or .yml",
       duration: 5000,
     });
     return;
@@ -258,16 +260,15 @@ const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
 
   try {
     await saveFlow(nodeStore.flow_id, flowPath);
-    ElMessage.success('Flow saved successfully');
+    ElMessage.success("Flow saved successfully");
     modalVisibleForSave.value = false;
   } catch (error: any) {
     ElMessage.error({
-      message: error.message || 'Failed to save flow',
+      message: error.message || "Failed to save flow",
       duration: 5000,
     });
   }
 };
-
 
 function openFlowAction(inputSelectedFile: FileInfo | null) {
   if (inputSelectedFile) {

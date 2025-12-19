@@ -165,38 +165,38 @@
     </div>
 
     <el-dialog
-  v-model="showCreateDialog"
-  title="Create New File"
-  width="30%"
-  :close-on-click-modal="false"
-  @closed="handleDialogClosed"
->
-  <el-form @submit.prevent="handleCreateFile">
-    <el-form-item :error="fileNameError" label="File Name">
-      <el-input
-        ref="fileNameInput"
-        v-model="newFileName"
-        placeholder="Enter file name (e.g., my_flow)"
-        @keyup.enter="handleCreateFile"
-      />
-      <div v-if="newFileName.trim()" class="form-hint">
-        <span class="preview-label">Will be saved as:</span>
-        <code>{{ previewFileName }}</code>
-        <span v-if="!hasValidExtension" class="auto-extension-hint">
-          (.yaml added automatically)
+      v-model="showCreateDialog"
+      title="Create New File"
+      width="30%"
+      :close-on-click-modal="false"
+      @closed="handleDialogClosed"
+    >
+      <el-form @submit.prevent="handleCreateFile">
+        <el-form-item :error="fileNameError" label="File Name">
+          <el-input
+            ref="fileNameInput"
+            v-model="newFileName"
+            placeholder="Enter file name (e.g., my_flow)"
+            @keyup.enter="handleCreateFile"
+          />
+          <div v-if="newFileName.trim()" class="form-hint">
+            <span class="preview-label">Will be saved as:</span>
+            <code>{{ previewFileName }}</code>
+            <span v-if="!hasValidExtension" class="auto-extension-hint">
+              (.yaml added automatically)
+            </span>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="showCreateDialog = false">Cancel</el-button>
+          <el-button type="primary" :disabled="!newFileName.trim()" @click="handleCreateFile">
+            Create
+          </el-button>
         </span>
-      </div>
-    </el-form-item>
-  </el-form>
-  <template #footer>
-    <span class="dialog-footer">
-      <el-button @click="showCreateDialog = false">Cancel</el-button>
-      <el-button type="primary" :disabled="!newFileName.trim()" @click="handleCreateFile">
-        Create
-      </el-button>
-    </span>
-  </template>
-</el-dialog>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -214,7 +214,7 @@ import {
   navigateTo,
 } from "./fileSystemApi";
 
-import {FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS} from "./constants"
+import { FLOWFILE_EXTENSIONS, DATA_FILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "./constants";
 
 import path from "path-browserify";
 
@@ -432,22 +432,18 @@ const validateFileName = (fileName: string): boolean => {
 
 const hasValidExtension = computed(() => {
   const name = newFileName.value.trim().toLowerCase();
-  const validExtensions = props.allowedFileTypes.length > 0 
-    ? props.allowedFileTypes 
-    : ALLOWED_SAVE_EXTENSIONS;
+  const validExtensions =
+    props.allowedFileTypes.length > 0 ? props.allowedFileTypes : ALLOWED_SAVE_EXTENSIONS;
   return validExtensions.some((ext) => name.endsWith(`.${ext}`));
 });
 
 const previewFileName = computed(() => {
   const name = newFileName.value.trim();
-  if (!name) return '';
+  if (!name) return "";
   if (hasValidExtension.value) return name;
-  const defaultExt = props.allowedFileTypes.length > 0 
-    ? props.allowedFileTypes[0] 
-    : 'yaml';
+  const defaultExt = props.allowedFileTypes.length > 0 ? props.allowedFileTypes[0] : "yaml";
   return `${name}.${defaultExt}`;
 });
-
 
 const handleCreateFile = () => {
   if (validateFileName(newFileName.value)) {
@@ -842,5 +838,4 @@ onMounted(async () => {
   color: #9ca3af;
   font-style: italic;
 }
-
 </style>

@@ -15,18 +15,18 @@
     <div v-if="receivedTable">
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">File Specs</div>
-        <ExcelTableConfig 
-          v-if="isInputExcelTable(receivedTable.table_settings)" 
+        <ExcelTableConfig
+          v-if="isInputExcelTable(receivedTable.table_settings)"
           v-model="receivedTable.table_settings"
           :path="receivedTable.path"
         />
-        <CsvTableConfig 
-          v-if="isInputCsvTable(receivedTable.table_settings)" 
-          v-model="receivedTable.table_settings" 
+        <CsvTableConfig
+          v-if="isInputCsvTable(receivedTable.table_settings)"
+          v-model="receivedTable.table_settings"
         />
-        <ParquetTableConfig 
-          v-if="isInputParquetTable(receivedTable.table_settings)" 
-          v-model="receivedTable.table_settings" 
+        <ParquetTableConfig
+          v-if="isInputParquetTable(receivedTable.table_settings)"
+          v-model="receivedTable.table_settings"
         />
       </div>
     </div>
@@ -82,13 +82,13 @@ const getDisplayFileName = computed(() => {
 // Default table settings factories
 function createDefaultCsvSettings(): InputCsvTable {
   return {
-    file_type: 'csv',
-    reference: '',
+    file_type: "csv",
+    reference: "",
     starting_from_line: 0,
-    delimiter: ',',
+    delimiter: ",",
     has_headers: true,
-    encoding: 'utf-8',
-    row_delimiter: '\n',
+    encoding: "utf-8",
+    row_delimiter: "\n",
     quote_char: '"',
     infer_schema_length: 1000,
     truncate_ragged_lines: false,
@@ -98,8 +98,8 @@ function createDefaultCsvSettings(): InputCsvTable {
 
 function createDefaultExcelSettings(): InputExcelTable {
   return {
-    file_type: 'excel',
-    sheet_name: '',
+    file_type: "excel",
+    sheet_name: "",
     start_row: 0,
     start_column: 0,
     end_row: 0,
@@ -111,7 +111,7 @@ function createDefaultExcelSettings(): InputExcelTable {
 
 function createDefaultParquetSettings(): InputParquetTable {
   return {
-    file_type: 'parquet',
+    file_type: "parquet",
   };
 }
 
@@ -128,21 +128,21 @@ const handleFileChange = (fileInfo: FileInfo) => {
       return;
     }
 
-    let fileType: 'csv' | 'excel' | 'parquet';
+    let fileType: "csv" | "excel" | "parquet";
     let tableSettings: InputCsvTable | InputExcelTable | InputParquetTable;
 
     switch (ext) {
       case "xlsx":
-        fileType = 'excel';
+        fileType = "excel";
         tableSettings = createDefaultExcelSettings();
         break;
       case "csv":
       case "txt":
-        fileType = 'csv';
+        fileType = "csv";
         tableSettings = createDefaultCsvSettings();
         break;
       case "parquet":
-        fileType = 'parquet';
+        fileType = "parquet";
         tableSettings = createDefaultParquetSettings();
         break;
       default:

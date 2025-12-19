@@ -95,58 +95,57 @@
 </template>
 
 <script lang="ts" setup>
-  import { ref, computed, watch, onMounted } from "vue";
-  import { InputExcelTable } from "../../../baseNode/nodeInput";
-  import dropDown from "../../../baseNode/page_objects/dropDown.vue";
-  import { getXlsxSheetNamesForPath } from "./utils";
-  import { CodeLoader } from "vue-content-loader";
-  
-  const props = defineProps<{
-    modelValue: InputExcelTable;
-    path: string;
-  }>();
-  
-  const isLoaded = ref(false);
-  const emit = defineEmits(["update:modelValue"]);
-  const localExcelTable = ref({ ...props.modelValue });
-  
-  const showOptionalSettings = ref(false);
-  const sheetNames = ref<string[]>([]);
-  const sheetNamesLoaded = ref(false);
-  
-  const getSheetNames = async () => {
-    sheetNames.value = await getXlsxSheetNamesForPath(props.path);
-    sheetNamesLoaded.value = true;
-  };
-  
-  const toggleOptionalSettings = () => {
-    showOptionalSettings.value = !showOptionalSettings.value;
-  };
-  
-  // FIX 1: Handle undefined sheet_name
-  const showWarning = computed(() => {
-    if (!sheetNamesLoaded.value || !localExcelTable.value.sheet_name) {
-      return false;
-    }
-    return !sheetNames.value.includes(localExcelTable.value.sheet_name);
-  });
-  
-  onMounted(() => {
-    if (props.path) {
-      getSheetNames();
-    }
-    isLoaded.value = true;
-  });
-  
-  watch(
-    () => localExcelTable.value,
-    (newValue) => {
-      emit("update:modelValue", { ...newValue });
-    },
-    { deep: true },
-  );
-  </script>
+import { ref, computed, watch, onMounted } from "vue";
+import { InputExcelTable } from "../../../baseNode/nodeInput";
+import dropDown from "../../../baseNode/page_objects/dropDown.vue";
+import { getXlsxSheetNamesForPath } from "./utils";
+import { CodeLoader } from "vue-content-loader";
 
+const props = defineProps<{
+  modelValue: InputExcelTable;
+  path: string;
+}>();
+
+const isLoaded = ref(false);
+const emit = defineEmits(["update:modelValue"]);
+const localExcelTable = ref({ ...props.modelValue });
+
+const showOptionalSettings = ref(false);
+const sheetNames = ref<string[]>([]);
+const sheetNamesLoaded = ref(false);
+
+const getSheetNames = async () => {
+  sheetNames.value = await getXlsxSheetNamesForPath(props.path);
+  sheetNamesLoaded.value = true;
+};
+
+const toggleOptionalSettings = () => {
+  showOptionalSettings.value = !showOptionalSettings.value;
+};
+
+// FIX 1: Handle undefined sheet_name
+const showWarning = computed(() => {
+  if (!sheetNamesLoaded.value || !localExcelTable.value.sheet_name) {
+    return false;
+  }
+  return !sheetNames.value.includes(localExcelTable.value.sheet_name);
+});
+
+onMounted(() => {
+  if (props.path) {
+    getSheetNames();
+  }
+  isLoaded.value = true;
+});
+
+watch(
+  () => localExcelTable.value,
+  (newValue) => {
+    emit("update:modelValue", { ...newValue });
+  },
+  { deep: true },
+);
+</script>
 
 <style scoped>
 .selectors {

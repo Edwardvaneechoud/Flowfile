@@ -115,15 +115,15 @@
 </template>
 
 <script lang="ts" setup>
-  import { ref, watch } from "vue";
-  import { InputCsvTable } from "../../../baseNode/nodeInput";
-  
-  const props = defineProps<{
-    modelValue: InputCsvTable;
-  }>();
-  
-  const emit = defineEmits(["update:modelValue"]);
-  const localCsvTable = ref({ ...props.modelValue });
+import { ref, watch } from "vue";
+import { InputCsvTable } from "../../../baseNode/nodeInput";
+
+const props = defineProps<{
+  modelValue: InputCsvTable;
+}>();
+
+const emit = defineEmits(["update:modelValue"]);
+const localCsvTable = ref({ ...props.modelValue });
 const updateParent = () => {
   emit("update:modelValue", localCsvTable.value);
 };

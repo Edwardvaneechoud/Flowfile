@@ -1,7 +1,12 @@
 <!-- CustomNode.vue -->
 <template>
   <div v-bind="$attrs">
-    <div class="custom-node-header" data="description_display" @contextmenu="onTitleClick" @click.stop>
+    <div
+      class="custom-node-header"
+      data="description_display"
+      @contextmenu="onTitleClick"
+      @click.stop
+    >
       <div>
         <div v-if="!editMode" class="description-display" :style="descriptionTextStyle" @click.stop>
           <div class="edit-icon" title="Edit description" @click.stop="toggleEditMode(true)">
