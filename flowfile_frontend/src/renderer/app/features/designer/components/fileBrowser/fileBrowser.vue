@@ -432,14 +432,22 @@ const validateFileName = (fileName: string): boolean => {
 
 const hasValidExtension = computed(() => {
   const name = newFileName.value.trim().toLowerCase();
-  return ALLOWED_SAVE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
+  const validExtensions = props.allowedFileTypes.length > 0 
+    ? props.allowedFileTypes 
+    : ALLOWED_SAVE_EXTENSIONS;
+  return validExtensions.some((ext) => name.endsWith(`.${ext}`));
 });
 
 const previewFileName = computed(() => {
   const name = newFileName.value.trim();
   if (!name) return '';
-  return hasValidExtension.value ? name : `${name}.yaml`;
+  if (hasValidExtension.value) return name;
+  const defaultExt = props.allowedFileTypes.length > 0 
+    ? props.allowedFileTypes[0] 
+    : 'yaml';
+  return `${name}.${defaultExt}`;
 });
+
 
 const handleCreateFile = () => {
   if (validateFileName(newFileName.value)) {
