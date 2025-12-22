@@ -24,8 +24,8 @@ import { ref, watch } from "vue";
 import FileBrowser from "./fileBrowser/fileBrowser.vue";
 import { FileInfo } from "./fileBrowser/types";
 import { saveFlow } from "./HeaderButtons/utils";
-import { getFlowSettings } from "../nodes/nodeLogic"
-import { ALLOWED_SAVE_EXTENSIONS } from "./fileBrowser/constants"
+import { getFlowSettings } from "../nodes/nodeLogic";
+import { ALLOWED_SAVE_EXTENSIONS } from "./fileBrowser/constants";
 
 const props = defineProps({
   visible: {

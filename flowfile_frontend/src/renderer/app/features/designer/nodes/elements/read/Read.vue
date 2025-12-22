@@ -213,3 +213,76 @@ defineExpose({
   pushNodeData,
 });
 </script>
+
+<style scoped>
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  border: 1px solid #ccc;
+  background-color: white;
+  padding: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+.context-menu button {
+  display: block;
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+
+.context-menu button:hover {
+  background-color: #f0f0f0;
+}
+
+.file-upload-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.file-upload-label {
+  display: flex;
+  align-items: center;
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 15px;
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.file-upload-label:hover {
+  background-color: #e4e4e4;
+}
+
+.file-icon {
+  margin-right: 10px;
+  font-size: 20px;
+}
+
+.file-label-text {
+  flex-grow: 1;
+  margin-left: 10px;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: border-color 0.2s ease;
+}
+
+input[type="text"]:focus {
+  border-color: #3498db;
+  outline: none;
+}
+</style>
