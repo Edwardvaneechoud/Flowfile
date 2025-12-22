@@ -1,3 +1,5 @@
+// saveDialog.vue
+
 <template>
   <el-dialog
     v-model="isVisible"
@@ -8,7 +10,7 @@
   >
     <file-browser
       ref="fileBrowserRef"
-      :allowed-file-types="['flowfile', 'yml', 'yaml']"
+      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       :initial-file-path="initialPath"
       @create-file="handleSaveFlow"
@@ -22,7 +24,8 @@ import { ref, watch } from "vue";
 import FileBrowser from "./fileBrowser/fileBrowser.vue";
 import { FileInfo } from "./fileBrowser/types";
 import { saveFlow } from "./HeaderButtons/utils";
-import { getFlowSettings } from "../nodes/nodeLogic";
+import { getFlowSettings } from "../nodes/nodeLogic"
+import { ALLOWED_SAVE_EXTENSIONS } from "./fileBrowser/constants"
 
 const props = defineProps({
   visible: {
@@ -47,8 +50,6 @@ const fileBrowserRef = ref<{
   navigateUpDirectory: () => Promise<void>;
   selectedFile: FileInfo | null;
 } | null>(null);
-
-// Synchronize visible prop with local state
 watch(
   () => props.visible,
   (newValue) => {
@@ -99,6 +100,7 @@ const updateInitialPath = async () => {
 };
 
 const handleSaveFlow = async (flowPath: string) => {
+  console.log("Saving flow to path:", flowPath);
   try {
     await saveFlow(props.flowId, flowPath);
     isVisible.value = false;

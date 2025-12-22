@@ -266,8 +266,6 @@ def get_run_status(flow_id: int, response: Response):
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-    if flow.latest_run_info is None:
-        raise HTTPException(status_code=404, detail="No run information available")
     if flow.flow_settings.is_running:
         response.status_code = status.HTTP_202_ACCEPTED
     else:

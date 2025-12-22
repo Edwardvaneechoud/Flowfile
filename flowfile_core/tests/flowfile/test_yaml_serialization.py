@@ -893,5 +893,211 @@ class TestYamlStructure:
         print(yaml.dump(item, default_flow_style=False))
 
 
+class TestNodePromiseSerialization:
+    """Test that NodePromise (unconfigured nodes) serialize correctly."""
+
+    def test_node_promise_serializes_as_null(self, temp_dir: Path):
+        """Verify NodePromise becomes setting_input: null in YAML."""
+        flow = create_graph(flow_id=900)
+
+        # Add a configured input node
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        # Add an unconfigured filter node (just the promise)
+        add_node_promise(flow, 'filter', node_id=2)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(flow, connection)
+
+        yaml_path = temp_dir / "promise_test.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+
+        print(f"\n=== Full YAML with NodePromise ===\n{content}")
+
+        data = yaml.safe_load(content)
+
+        # Find the filter node
+        filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
+
+        # Verify node exists but setting_input is null
+        assert filter_node['id'] == 2
+        assert filter_node['type'] == 'filter'
+        assert filter_node['setting_input'] is None, "NodePromise should serialize as null"
+        assert filter_node['input_ids'] == [1], "Connections should be preserved"
+
+        print(f"\n=== Filter Node (NodePromise) ===")
+        print(yaml.dump(filter_node, default_flow_style=False))
+
+    def test_record_count_vs_node_promise(self, temp_dir: Path):
+        """Compare record_count (configured, minimal) vs NodePromise (unconfigured)."""
+        flow = create_graph(flow_id=903)
+
+        # Input node
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        # Configured record_count node (has settings but minimal)
+        add_node_promise(flow, 'record_count', node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        flow.add_record_count(input_schema.NodeRecordCount(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+        ))
+
+        # Unconfigured filter node (NodePromise)
+        add_node_promise(flow, 'filter', node_id=3)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
+        # Note: NOT calling flow.add_filter() - leaving as promise
+
+        yaml_path = temp_dir / "record_count_vs_promise.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+
+        print(f"\n=== Full YAML: record_count vs NodePromise ===\n{content}")
+
+        data = yaml.safe_load(content)
+
+        # Find nodes
+        record_count_node = next(n for n in data['nodes'] if n['type'] == 'record_count')
+        filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
+
+        print(f"\n=== record_count node (configured, minimal settings) ===")
+        print(yaml.dump(record_count_node, default_flow_style=False))
+
+        print(f"\n=== filter node (unconfigured NodePromise) ===")
+        print(yaml.dump(filter_node, default_flow_style=False))
+
+        # record_count should have setting_input (even if minimal/empty)
+        # filter (NodePromise) should have setting_input: null
+        print(f"\nrecord_count setting_input: {record_count_node['setting_input']}")
+        print(f"filter setting_input: {filter_node['setting_input']}")
+
+    def test_node_promise_roundtrip_preserves_structure(self, temp_dir: Path):
+        """Verify unconfigured node survives round-trip with is_setup=False."""
+        flow = create_graph(flow_id=901)
+
+        add_manual_input(flow, data=[{'x': 1}], node_id=1)
+
+        # Add unconfigured nodes
+        add_node_promise(flow, 'filter', node_id=2)
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(flow, connection)
+
+        add_node_promise(flow, 'select', node_id=3)
+        connection2 = input_schema.NodeConnection.create_from_simple_input(2, 3)
+        add_connection(flow, connection2)
+
+        # Save and reload
+        yaml_path = temp_dir / "promise_roundtrip.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+        print(f"\n=== YAML before roundtrip ===\n{content}")
+
+        loaded_flow = open_flow(yaml_path)
+
+        # Verify unconfigured nodes loaded with is_setup=False
+        filter_node = loaded_flow.get_node(2)
+        assert filter_node is not None, "Filter node should exist"
+        assert filter_node.setting_input.is_setup == False, "Unconfigured node should have is_setup=False"
+        assert filter_node.node_type == 'filter'
+
+        select_node = loaded_flow.get_node(3)
+        assert select_node is not None, "Select node should exist"
+        assert select_node.setting_input.is_setup == False
+
+        # Verify connections preserved
+        assert filter_node.main_input is not None
+        assert filter_node.main_input[0].node_id == 1
+
+        print(f"\n=== After roundtrip ===")
+        print(f"filter_node.is_setup: {filter_node.is_setup}")
+        print(f"filter_node.node_type: {filter_node.node_type}")
+        print(f"filter_node.main_input.node_id: {filter_node.main_input[0].node_id}")
+
+    def test_mixed_configured_and_unconfigured_nodes(self, temp_dir: Path):
+        """Verify flow with both configured and unconfigured nodes works."""
+        flow = create_graph(flow_id=902)
+
+        # Configured input
+        add_manual_input(flow, data=[{'name': 'John', 'age': 30}], node_id=1)
+
+        # Configured select
+        add_node_promise(flow, 'select', node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        flow.add_select(input_schema.NodeSelect(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[transform_schema.SelectInput(old_name='name', new_name='customer_name')],
+        ))
+
+        # Unconfigured filter (user hasn't set it up yet)
+        add_node_promise(flow, 'filter', node_id=3)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+        # Configured record_count (minimal settings)
+        add_node_promise(flow, 'record_count', node_id=4)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+        flow.add_record_count(input_schema.NodeRecordCount(
+            flow_id=flow.flow_id,
+            node_id=4,
+            depending_on_id=3,
+        ))
+
+        # Unconfigured output
+        add_node_promise(flow, 'output', node_id=5)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(4, 5))
+
+        yaml_path = temp_dir / "mixed_test.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+
+        print(f"\n=== Mixed Flow YAML ===\n{content}")
+
+        data = yaml.safe_load(content)
+
+        # Summary
+        print(f"\n=== Node Summary ===")
+        for node in data['nodes']:
+            has_settings = node['setting_input'] is not None
+            print(f"Node {node['id']} ({node['type']}): setting_input={'present' if has_settings else 'null'}")
+
+        # Check configured nodes have settings
+        select_node = next(n for n in data['nodes'] if n['type'] == 'select')
+        assert select_node['setting_input'] is not None
+        assert 'select_input' in select_node['setting_input']
+
+        record_count_node = next(n for n in data['nodes'] if n['type'] == 'record_count')
+        assert record_count_node['setting_input'] is not None
+
+        # Check unconfigured nodes have null settings
+        filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
+        assert filter_node['setting_input'] is None
+
+        output_node = next(n for n in data['nodes'] if n['type'] == 'output')
+        assert output_node['setting_input'] is None
+
+        # Verify round-trip
+        loaded_flow = open_flow(yaml_path)
+
+        print(f"\n=== After roundtrip ===")
+        for node_id in [1, 2, 3, 4, 5]:
+            node = loaded_flow.get_node(node_id)
+            print(f"Node {node_id} ({node.node_type}): is_setup={node.is_setup}")
+
+        assert loaded_flow.get_node(1).setting_input.is_setup == True  # manual_input
+        assert loaded_flow.get_node(2).setting_input.is_setup == True  # select (configured)
+        assert loaded_flow.get_node(3).setting_input.is_setup == False  # filter (NodePromise)
+        assert loaded_flow.get_node(4).setting_input.is_setup == True  # record_count (configured)
+        assert loaded_flow.get_node(5).setting_input.is_setup == False  # output (NodePromise)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

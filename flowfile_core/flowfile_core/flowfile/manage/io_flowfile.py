@@ -316,17 +316,17 @@ def open_flow(flow_path: Path) -> FlowGraph:
 
     for node_id in ingestion_order:
         node_info: schemas.NodeInformation = flow_storage_obj.data[node_id]
-
-        if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
-            if node_info.type not in CUSTOM_NODE_STORE:
-                continue
-            user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
-            new_flow.add_user_defined_node(
-                custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
-                user_defined_node_settings=node_info.setting_input
-            )
-        else:
-            getattr(new_flow, 'add_' + node_info.type)(node_info.setting_input)
+        if node_info.is_setup:
+            if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
+                if node_info.type not in CUSTOM_NODE_STORE:
+                    continue
+                user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
+                new_flow.add_user_defined_node(
+                    custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
+                    user_defined_node_settings=node_info.setting_input
+                )
+            else:
+                getattr(new_flow, 'add_' + node_info.type)(node_info.setting_input)
 
         # Setup connections
         from_node = new_flow.get_node(node_id)

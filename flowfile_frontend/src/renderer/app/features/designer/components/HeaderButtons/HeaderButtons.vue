@@ -43,7 +43,7 @@
   <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%">
     <file-browser
       ref="fileBrowserRef"
-      :allowed-file-types="FLOWFILE_EXTENSIONS"
+      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       :initial-file-path="savePath"
       @create-file="saveFlowAction"
@@ -53,7 +53,7 @@
 
   <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%">
     <file-browser
-      :allowed-file-types="FLOWFILE_EXTENSIONS"
+      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
@@ -301,16 +301,22 @@ const toggleCodeGenerator = () => {
 };
 
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
-  const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
-  const normalizedPath = `${pathWithoutExtension}.flowfile`;
+  if (!isValidSaveExtension(flowPath)) {
+    ElMessage.error({
+      message: "Invalid file extension. Please use .yaml or .yml",
+      duration: 5000,
+    });
+    return;
+  }
 
-  const createdFlowId = await createFlow(normalizedPath);
+  const createdFlowId = await createFlow(flowPath);
 
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;
 
   emit("refreshFlow");
 };
+
 
 const handleQuickCreateAction = async () => {
   const fileName = getPreviewFileName();

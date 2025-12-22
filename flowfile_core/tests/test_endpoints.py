@@ -1046,3 +1046,16 @@ def test_fetch_node_data():
     assert response.status_code == 200, 'Node data not retrieved'
     assert len(response.json()["data"]) > 0 , "Data should not be empty"
     assert response.json()["has_run_with_current_setup"], "Node should have run"
+
+
+def test_flow_run_status():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.get("/flow/run_status", params={'flow_id': flow_id})
+    assert response.status_code == 200, 'Flow run status not retrieved'
+    assert response.json()['start_time'] is None, 'Flow should not be running'
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
+    flow.run_graph()
+    response = client.get("/flow/run_status", params={'flow_id': flow_id})
+    assert response.status_code == 200, 'Flow run status not retrieved'
+    assert response.json()['end_time'] is not None, 'Flow should have ended'

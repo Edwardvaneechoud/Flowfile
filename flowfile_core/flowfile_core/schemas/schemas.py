@@ -187,6 +187,10 @@ class FlowfileNode(BaseModel):
     def serialize_setting_input(self, value, _info):
         if value is None:
             return None
+        if isinstance(value, input_schema.NodePromise):
+            return None
+        if hasattr(value, 'to_yaml_dict'):
+            return value.to_yaml_dict()
         if hasattr(value, 'to_yaml_dict'):
             return value.to_yaml_dict()
         return value.model_dump(exclude=self._setting_input_exclude)

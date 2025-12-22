@@ -1644,6 +1644,13 @@ class FlowGraph:
             run_type=run_type
         )
 
+    def create_empty_run_information(self) -> RunInformation:
+        return RunInformation(
+            flow_id=self.flow_id, start_time=None, end_time=None,
+            success=None, number_of_nodes=0, node_step_result=[],
+            run_type="init"
+        )
+
     def trigger_fetch_node(self, node_id: int) -> RunInformation | None:
         """Executes a specific node in the graph by its ID."""
         if self.flow_settings.is_running:
@@ -1754,6 +1761,7 @@ class FlowGraph:
                     skip_nodes.extend(list(node.get_all_dependent_nodes()))
                 node_logger.info(f'Completed node with success: {node_result.success}')
                 self.latest_run_info.nodes_completed += 1
+            self.latest_run_info.end_time = datetime.datetime.now()
             self.flow_logger.info('Flow completed!')
             self.end_datetime = datetime.datetime.now()
             self.flow_settings.is_running = False
@@ -1765,7 +1773,7 @@ class FlowGraph:
         finally:
             self.flow_settings.is_running = False
 
-    def get_run_info(self) -> RunInformation | None:
+    def get_run_info(self) -> RunInformation:
         """Gets a summary of the most recent graph execution.
 
         Returns:
@@ -1773,7 +1781,7 @@ class FlowGraph:
         """
         is_running = self.flow_settings.is_running
         if self.latest_run_info is None:
-            return
+            return self.create_empty_run_information()
 
         elif not is_running and self.latest_run_info.success is not None:
             return self.latest_run_info
@@ -1900,9 +1908,13 @@ class FlowGraph:
 
         try:
             if suffix == '.flowfile':
-                raise DeprecationWarning("The .flowfile format is deprecated. Please use .yaml or .json formats.")
+                raise DeprecationWarning(f"The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n{str(path)}")
             elif suffix in ('.yaml', '.yml'):
                 flowfile_data = self.get_flowfile_data()
+                print(flowfile_data)
+                print("------------")
+                print(self.nodes)
+                print("------------")
                 data = flowfile_data.model_dump(mode='json')
                 with open(flow_path, 'w', encoding='utf-8') as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)

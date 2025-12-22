@@ -1,7 +1,6 @@
-//flowfile_frontend/src/renderer/app/pages/designer/components/fileBrowser/fileBrowser.vue
-
 <template>
   <div class="file-browser">
+    {{ allowedFileTypes }}
     <!-- Title Section -->
     <div class="browser-header">
       <div class="browser-title">
