@@ -284,7 +284,7 @@ def _transform_select_settings(settings: Dict) -> Dict:
     select_input = settings.get('select_input', [])
     if isinstance(select_input, list):
         for i, item in enumerate(select_input):
-            if isinstance(item, dict) and 'position' not in item:
+            if isinstance(item, dict) and item.get('position') is None:
                 item['position'] = i
 
     return settings
@@ -313,7 +313,7 @@ def _transform_join_settings(settings: Dict) -> Dict:
                 renames = select.get('renames', [])
                 if isinstance(renames, list):
                     for i, item in enumerate(renames):
-                        if isinstance(item, dict) and 'position' not in item:
+                        if isinstance(item, dict) and item.get('position') is None:
                             item['position'] = i
 
     return settings

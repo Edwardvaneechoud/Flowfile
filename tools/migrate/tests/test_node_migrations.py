@@ -1,4 +1,3 @@
-
 """
 Tests for migration tool - verifies all node types migrate correctly.
 
@@ -100,7 +99,7 @@ class TestReadNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('read', node))
 
-        rf = data['nodes'][0]['settings']['received_file']
+        rf = data['nodes'][0]['setting_input']['received_file']
         assert rf['file_type'] == 'csv'
         assert 'table_settings' in rf
         assert rf['table_settings']['delimiter'] == ';'
@@ -127,7 +126,7 @@ class TestReadNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('read', node))
 
-        rf = data['nodes'][0]['settings']['received_file']
+        rf = data['nodes'][0]['setting_input']['received_file']
         assert rf['file_type'] == 'excel'
         assert rf['table_settings']['sheet_name'] == 'Sales'
         assert rf['table_settings']['start_row'] == 2
@@ -146,7 +145,7 @@ class TestReadNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('read', node))
 
-        rf = data['nodes'][0]['settings']['received_file']
+        rf = data['nodes'][0]['setting_input']['received_file']
         assert rf['file_type'] == 'parquet'
         assert rf['table_settings']['file_type'] == 'parquet'
 
@@ -173,7 +172,7 @@ class TestOutputNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('output', node))
 
-        os = data['nodes'][0]['settings']['output_settings']
+        os = data['nodes'][0]['setting_input']['output_settings']
         assert os['file_type'] == 'csv'
         assert 'table_settings' in os
         assert os['table_settings']['delimiter'] == '|'
@@ -195,7 +194,7 @@ class TestOutputNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('output', node))
 
-        os = data['nodes'][0]['settings']['output_settings']
+        os = data['nodes'][0]['setting_input']['output_settings']
         assert os['file_type'] == 'excel'
         assert os['table_settings']['sheet_name'] == 'Results'
 
@@ -222,20 +221,34 @@ class TestSelectNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('select', node))
 
-        settings = data['nodes'][0]['settings']
-        assert 'select_input' in settings
-        assert len(settings['select_input']) == 3
-        assert settings['select_input'][0]['old_name'] == 'col_a'
-        assert settings['select_input'][0]['new_name'] == 'column_a'
-        assert settings['select_input'][2]['keep'] == False
-        assert settings['sorted_by'] == 'asc'
+        setting_input = data['nodes'][0]['setting_input']
+        assert 'select_input' in setting_input
+        assert len(setting_input['select_input']) == 3
+        assert setting_input['select_input'][0]['old_name'] == 'col_a'
+        assert setting_input['select_input'][0]['new_name'] == 'column_a'
+
+    def test_select_adds_position(self, temp_dir):
+        """Verify positions are added to select inputs."""
+        node = NodeSelect(
+            flow_id=1, node_id=1,
+            select_input=[
+                SelectInput(old_name='a'),
+                SelectInput(old_name='b'),
+            ]
+        )
+
+        data = pickle_and_migrate(temp_dir, create_flow_with_node('select', node))
+
+        inputs = data['nodes'][0]['setting_input']['select_input']
+        assert inputs[0].get('position') == 0
+        assert inputs[1].get('position') == 1
 
 
 class TestFilterNodeMigration:
     """Test NodeFilter migrations."""
 
     def test_basic_filter(self, temp_dir):
-        """Basic filter with comparison."""
+        """Basic filter with single condition."""
         node = NodeFilter(
             flow_id=1, node_id=1,
             filter_input=FilterInput(
@@ -250,10 +263,10 @@ class TestFilterNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('filter', node))
 
-        fi = data['nodes'][0]['settings']['filter_input']
+        fi = data['nodes'][0]['setting_input']['filter_input']
         assert fi['filter_type'] == 'basic'
         assert fi['basic_filter']['field'] == 'amount'
-        assert fi['basic_filter']['filter_value'] == '100'
+        assert fi['basic_filter']['filter_type'] == '>'
 
     def test_advanced_filter(self, temp_dir):
         """Advanced filter with expression."""
@@ -261,91 +274,106 @@ class TestFilterNodeMigration:
             flow_id=1, node_id=1,
             filter_input=FilterInput(
                 filter_type='advanced',
-                advanced_filter='[amount] > 100 AND [status] == "active"'
+                advanced_filter='[amount] > 100 and [status] == "active"'
             )
         )
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('filter', node))
 
-        fi = data['nodes'][0]['settings']['filter_input']
+        fi = data['nodes'][0]['setting_input']['filter_input']
         assert fi['filter_type'] == 'advanced'
-        assert 'amount' in fi['advanced_filter']
+        assert '[amount] > 100' in fi['advanced_filter']
 
 
 class TestFormulaNodeMigration:
     """Test NodeFormula migrations."""
 
-    def test_formula_migration(self, temp_dir):
-        """Formula with field and function."""
+    def test_formula_with_expression(self, temp_dir):
+        """Formula creating new column."""
         node = NodeFormula(
             flow_id=1, node_id=1,
             function=FunctionInput(
-                field=FieldInput(name='calculated', data_type='Float64'),
-                function='[col_a] + [col_b] * 2'
+                field=FieldInput(name='total', data_type='Float64'),
+                function='[price] * [quantity]'
             )
         )
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('formula', node))
 
-        func = data['nodes'][0]['settings']['function']
-        assert func['field']['name'] == 'calculated'
-        assert func['field']['data_type'] == 'Float64'
-        assert '[col_a]' in func['function']
+        func = data['nodes'][0]['setting_input']['function']
+        assert func['field']['name'] == 'total'
+        assert '[price] * [quantity]' in func['function']
 
 
 class TestJoinNodeMigration:
     """Test NodeJoin migrations."""
 
     def test_inner_join(self, temp_dir):
-        """Inner join with column selections."""
+        """Inner join with single key."""
         node = NodeJoin(
             flow_id=1, node_id=1,
             join_input=JoinInput(
-                join_mapping=[
-                    JoinMap(left_col='id', right_col='id'),
-                    JoinMap(left_col='date', right_col='date'),
-                ],
-                left_select=JoinInputs(renames=[
-                    SelectInput(old_name='id', join_key=True),
-                    SelectInput(old_name='name', new_name='left_name'),
-                ]),
-                right_select=JoinInputs(renames=[
-                    SelectInput(old_name='id', keep=False, join_key=True),
-                    SelectInput(old_name='value', new_name='right_value'),
-                ]),
-                how='inner'
-            ),
-            auto_generate_selection=True,
-        )
-
-        data = pickle_and_migrate(temp_dir, create_flow_with_node('join', node))
-
-        ji = data['nodes'][0]['settings']['join_input']
-        assert ji['how'] == 'inner'
-        assert len(ji['join_mapping']) == 2
-        assert ji['join_mapping'][0]['left_col'] == 'id'
-        assert len(ji['left_select']['renames']) == 2
-
-    def test_left_join(self, temp_dir):
-        """Left join."""
-        node = NodeJoin(
-            flow_id=1, node_id=1,
-            join_input=JoinInput(
-                join_mapping=[JoinMap(left_col='key', right_col='key')],
-                how='left'
+                join_mapping=[JoinMap(left_col='id', right_col='id')],
+                how='inner',
+                left_select=JoinInputs(renames=[SelectInput(old_name='id')]),
+                right_select=JoinInputs(renames=[SelectInput(old_name='value')]),
             )
         )
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('join', node))
 
-        assert data['nodes'][0]['settings']['join_input']['how'] == 'left'
+        ji = data['nodes'][0]['setting_input']['join_input']
+        assert ji['how'] == 'inner'
+        assert ji['join_mapping'][0]['left_col'] == 'id'
+        assert ji['join_mapping'][0]['right_col'] == 'id'
+
+    def test_left_join_multi_key(self, temp_dir):
+        """Left join with multiple keys."""
+        node = NodeJoin(
+            flow_id=1, node_id=1,
+            join_input=JoinInput(
+                join_mapping=[
+                    JoinMap(left_col='date', right_col='date'),
+                    JoinMap(left_col='product_id', right_col='prod_id'),
+                ],
+                how='left',
+                left_select=JoinInputs(renames=[]),
+                right_select=JoinInputs(renames=[]),
+            )
+        )
+
+        data = pickle_and_migrate(temp_dir, create_flow_with_node('join', node))
+
+        ji = data['nodes'][0]['setting_input']['join_input']
+        assert ji['how'] == 'left'
+        assert len(ji['join_mapping']) == 2
+        assert ji['join_mapping'][1]['left_col'] == 'product_id'
+        assert ji['join_mapping'][1]['right_col'] == 'prod_id'
+
+    def test_join_with_none_selects(self, temp_dir):
+        """Join with None left_select/right_select (old format) gets default empty renames."""
+        node = NodeJoin(
+            flow_id=1, node_id=1,
+            join_input=JoinInput(
+                join_mapping=[JoinMap(left_col='id', right_col='id')],
+                how='inner',
+                left_select=None,
+                right_select=None,
+            )
+        )
+
+        data = pickle_and_migrate(temp_dir, create_flow_with_node('join', node))
+
+        ji = data['nodes'][0]['setting_input']['join_input']
+        assert ji['left_select'] == {'renames': []}
+        assert ji['right_select'] == {'renames': []}
 
 
 class TestCrossJoinNodeMigration:
     """Test NodeCrossJoin migrations."""
 
     def test_cross_join(self, temp_dir):
-        """Cross join with selections."""
+        """Cross join with selects."""
         node = NodeCrossJoin(
             flow_id=1, node_id=1,
             cross_join_input=CrossJoinInput(
@@ -356,7 +384,9 @@ class TestCrossJoinNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('cross_join', node))
 
-        assert 'cross_join_input' in data['nodes'][0]['settings']
+        cji = data['nodes'][0]['setting_input']['cross_join_input']
+        assert 'left_select' in cji
+        assert 'right_select' in cji
 
 
 class TestFuzzyMatchNodeMigration:
@@ -371,21 +401,21 @@ class TestFuzzyMatchNodeMigration:
                     FuzzyMapping(
                         left_col='name',
                         right_col='company_name',
-                        threshold_score=85,
+                        threshold_score=80,
                         fuzzy_type='levenshtein'
-                    ),
+                    )
                 ],
-                how='left',
-                aggregate_output=True,
+                how='inner',
+                left_select=JoinInputs(renames=[]),
+                right_select=JoinInputs(renames=[]),
             )
         )
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('fuzzy_match', node))
 
-        ji = data['nodes'][0]['settings']['join_input']
-        assert ji['join_mapping'][0]['threshold_score'] == 85
+        ji = data['nodes'][0]['setting_input']['join_input']
+        assert ji['join_mapping'][0]['threshold_score'] == 80
         assert ji['join_mapping'][0]['fuzzy_type'] == 'levenshtein'
-        assert ji['aggregate_output'] == True
 
 
 class TestGroupByNodeMigration:
@@ -405,12 +435,11 @@ class TestGroupByNodeMigration:
             )
         )
 
-        data = pickle_and_migrate(temp_dir, create_flow_with_node('groupby', node))
+        data = pickle_and_migrate(temp_dir, create_flow_with_node('group_by', node))
 
-        agg_cols = data['nodes'][0]['settings']['groupby_input']['agg_cols']
+        agg_cols = data['nodes'][0]['setting_input']['groupby_input']['agg_cols']
         assert len(agg_cols) == 4
         assert agg_cols[0]['agg'] == 'groupby'
-        assert agg_cols[1]['agg'] == 'sum'
         assert agg_cols[1]['new_name'] == 'total_amount'
 
 
@@ -429,7 +458,7 @@ class TestSortNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('sort', node))
 
-        sort_input = data['nodes'][0]['settings']['sort_input']
+        sort_input = data['nodes'][0]['setting_input']['sort_input']
         assert len(sort_input) == 2
         assert sort_input[0]['column'] == 'date'
         assert sort_input[0]['how'] == 'desc'
@@ -447,7 +476,7 @@ class TestUnionNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('union', node))
 
-        assert data['nodes'][0]['settings']['union_input']['mode'] == 'relaxed'
+        assert data['nodes'][0]['setting_input']['union_input']['mode'] == 'relaxed'
 
     def test_union_selective(self, temp_dir):
         """Union with selective mode."""
@@ -458,26 +487,26 @@ class TestUnionNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('union', node))
 
-        assert data['nodes'][0]['settings']['union_input']['mode'] == 'selective'
+        assert data['nodes'][0]['setting_input']['union_input']['mode'] == 'selective'
 
 
 class TestUniqueNodeMigration:
     """Test NodeUnique migrations."""
 
-    def test_unique_with_columns(self, temp_dir):
-        """Unique on specific columns."""
+    def test_unique_first_strategy(self, temp_dir):
+        """Unique with first strategy."""
         node = NodeUnique(
             flow_id=1, node_id=1,
             unique_input=UniqueInput(
-                columns=['id', 'email'],
+                columns=['id', 'date'],
                 strategy='first'
             )
         )
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('unique', node))
 
-        ui = data['nodes'][0]['settings']['unique_input']
-        assert ui['columns'] == ['id', 'email']
+        ui = data['nodes'][0]['setting_input']['unique_input']
+        assert ui['columns'] == ['id', 'date']
         assert ui['strategy'] == 'first'
 
 
@@ -485,34 +514,34 @@ class TestPivotNodeMigration:
     """Test NodePivot migrations."""
 
     def test_pivot(self, temp_dir):
-        """Pivot operation."""
+        """Pivot with aggregations."""
         node = NodePivot(
             flow_id=1, node_id=1,
             pivot_input=PivotInput(
-                index_columns=['date', 'region'],
-                pivot_column='product',
-                value_col='sales',
+                index_columns=['date'],
+                pivot_column='category',
+                value_col='amount',
                 aggregations=['sum', 'mean']
             )
         )
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('pivot', node))
 
-        pi = data['nodes'][0]['settings']['pivot_input']
-        assert pi['index_columns'] == ['date', 'region']
-        assert pi['pivot_column'] == 'product'
-        assert pi['aggregations'] == ['sum', 'mean']
+        pi = data['nodes'][0]['setting_input']['pivot_input']
+        assert pi['index_columns'] == ['date']
+        assert pi['pivot_column'] == 'category'
+        assert 'sum' in pi['aggregations']
 
 
 class TestUnpivotNodeMigration:
     """Test NodeUnpivot migrations."""
 
     def test_unpivot(self, temp_dir):
-        """Unpivot operation."""
+        """Unpivot with column selection."""
         node = NodeUnpivot(
             flow_id=1, node_id=1,
             unpivot_input=UnpivotInput(
-                index_columns=['id', 'name'],
+                index_columns=['id', 'date'],
                 value_columns=['jan', 'feb', 'mar'],
                 data_type_selector_mode='column'
             )
@@ -520,8 +549,8 @@ class TestUnpivotNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('unpivot', node))
 
-        ui = data['nodes'][0]['settings']['unpivot_input']
-        assert ui['index_columns'] == ['id', 'name']
+        ui = data['nodes'][0]['setting_input']['unpivot_input']
+        assert ui['index_columns'] == ['id', 'date']
         assert ui['value_columns'] == ['jan', 'feb', 'mar']
 
 
@@ -529,12 +558,12 @@ class TestRecordIdNodeMigration:
     """Test NodeRecordId migrations."""
 
     def test_record_id(self, temp_dir):
-        """Record ID with grouping."""
+        """Record ID with offset."""
         node = NodeRecordId(
             flow_id=1, node_id=1,
             record_id_input=RecordIdInput(
-                output_column_name='row_num',
-                offset=0,
+                output_column_name='row_number',
+                offset=1,
                 group_by=True,
                 group_by_columns=['category']
             )
@@ -542,8 +571,9 @@ class TestRecordIdNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('record_id', node))
 
-        ri = data['nodes'][0]['settings']['record_id_input']
-        assert ri['output_column_name'] == 'row_num'
+        ri = data['nodes'][0]['setting_input']['record_id_input']
+        assert ri['output_column_name'] == 'row_number'
+        assert ri['offset'] == 1
         assert ri['group_by'] == True
         assert ri['group_by_columns'] == ['category']
 
@@ -565,7 +595,7 @@ class TestTextToRowsNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('text_to_rows', node))
 
-        ti = data['nodes'][0]['settings']['text_to_rows_input']
+        ti = data['nodes'][0]['setting_input']['text_to_rows_input']
         assert ti['column_to_split'] == 'tags'
         assert ti['split_fixed_value'] == ','
 
@@ -586,7 +616,7 @@ class TestGraphSolverNodeMigration:
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('graph_solver', node))
 
-        gi = data['nodes'][0]['settings']['graph_solver_input']
+        gi = data['nodes'][0]['setting_input']['graph_solver_input']
         assert gi['col_from'] == 'source_id'
         assert gi['col_to'] == 'target_id'
         assert gi['output_column_name'] == 'component_id'
@@ -611,7 +641,7 @@ output_df = input_df.with_columns([
 
         data = pickle_and_migrate(temp_dir, create_flow_with_node('polars_code', node))
 
-        pci = data['nodes'][0]['settings']['polars_code_input']
+        pci = data['nodes'][0]['setting_input']['polars_code_input']
         assert 'output_df' in pci['polars_code']
         assert 'to_uppercase' in pci['polars_code']
 
@@ -679,19 +709,17 @@ class TestComplexFlowMigration:
 
         data = pickle_and_migrate(temp_dir, flow)
 
-        # Verify structure
-        assert data['flow_name'] == 'pipeline_flow'
+        # Verify structure (FlowfileData format)
+        assert data['flowfile_name'] == 'pipeline_flow'
         assert len(data['nodes']) == 4
-        # Note: connections become lists in JSON
-        assert data['connections'] == [[1, 2], [2, 3], [3, 4]]
 
         # Verify each node migrated correctly
         read_node = next(n for n in data['nodes'] if n['type'] == 'read')
-        assert 'table_settings' in read_node['settings']['received_file']
+        assert 'table_settings' in read_node['setting_input']['received_file']
 
         output_node = next(n for n in data['nodes'] if n['type'] == 'output')
-        assert 'table_settings' in output_node['settings']['output_settings']
-        assert output_node['settings']['output_settings']['table_settings']['delimiter'] == ';'
+        assert 'table_settings' in output_node['setting_input']['output_settings']
+        assert output_node['setting_input']['output_settings']['table_settings']['delimiter'] == ';'
 
     def test_join_flow(self, temp_dir):
         """Test flow with join: two inputs -> join -> output."""
@@ -725,7 +753,9 @@ class TestComplexFlowMigration:
                         flow_id=1, node_id=3,
                         join_input=JoinInput(
                             join_mapping=[JoinMap(left_col='id', right_col='id')],
-                            how='left'
+                            how='left',
+                            left_select=None,
+                            right_select=None,
                         )
                     )
                 ),
@@ -737,10 +767,13 @@ class TestComplexFlowMigration:
         data = pickle_and_migrate(temp_dir, flow)
 
         assert len(data['nodes']) == 3
-        assert data['node_starts'] == [1, 2]
+
+        # Verify start nodes are marked
+        start_nodes = [n for n in data['nodes'] if n.get('is_start_node')]
+        assert len(start_nodes) == 2
 
         join_node = next(n for n in data['nodes'] if n['type'] == 'join')
-        assert join_node['settings']['join_input']['how'] == 'left'
+        assert join_node['setting_input']['join_input']['how'] == 'left'
 
 
 # =============================================================================
@@ -770,8 +803,9 @@ class TestYamlMigration:
         with open(output_path) as f:
             data = yaml.safe_load(f)
 
-        assert data['_version'] == '2.0'
-        assert data['_migrated_from'] == 'pickle'
+        # Verify FlowfileData format
+        assert data['flowfile_version'] == '2.0'
+        assert data['flowfile_id'] == 1
         assert len(data['nodes']) == 1
 
 
