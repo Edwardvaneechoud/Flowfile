@@ -20,6 +20,7 @@ from typing import List, Dict, Literal
 from copy import deepcopy
 from time import sleep
 
+
 def find_parent_directory(target_dir_name,):
     """Navigate up directories until finding the target directory"""
     current_path = Path(__file__)
@@ -103,6 +104,7 @@ def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flo
 
 def get_group_by_flow():
     graph = create_graph()
+    # breakpoint()
     input_data = (FlowDataEngine.create_random(100).apply_flowfile_formula('random_int(0, 4)', 'groups')
                   .select_columns(['groups', 'Country', 'sales_data']))
     add_manual_input(graph, data=input_data.to_pylist())
@@ -111,9 +113,18 @@ def get_group_by_flow():
     add_connection(graph, connection)
     group_by_input = transform_schema.GroupByInput([transform_schema.AggColl('groups', 'groupby'),
                                                     transform_schema.AggColl('sales_data', 'sum', 'sales_data_output')])
+    # breakpoint()
     node_group_by = input_schema.NodeGroupBy(flow_id=1, node_id=2, groupby_input=group_by_input)
     graph.add_group_by(node_group_by)
     return graph
+
+@pytest.fixture
+def complex_graph():
+    group_by_flow = get_group_by_flow()
+
+
+def test_save_flow(complex_graph):
+    ...
 
 
 def test_create_flowfile_handler():
@@ -123,8 +134,8 @@ def test_create_flowfile_handler():
 
 def test_import_flow():
     handler = create_flowfile_handler()
-    flow_path = "flowfile_core/tests/support_files/flows/read_csv.flowfile"
-    flow_id = handler.import_flow(Path(flow_path))
+    flow_path = find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/read_csv.flowfile"
+    flow_id = handler.import_flow(flow_path)
     flow = handler.get_flow(flow_id)
     run_results = flow.run_graph()
     handle_run_info(run_results)
@@ -257,8 +268,9 @@ def test_running_unique(raw_data):
 def test_opening_parquet_file(flow_logger: FlowLogger):
     graph = create_graph()
     add_node_promise_on_type(graph, 'read', 1, 1)
+    path = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/data/table.parquet')
     received_table = input_schema.ReceivedTable(file_type='parquet', name='table.parquet',
-                                                path='flowfile_core/tests/support_files/data/table.parquet')
+                                                path=path)
     node_read = input_schema.NodeRead(flow_id=1, node_id=1, cache_data=False, received_file=received_table)
     graph.add_read(node_read)
     self = graph.get_node(1)
@@ -388,21 +400,38 @@ def test_add_record_count():
 
 
 def test_add_read_excel():
-    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
-                'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
-                'received_file': {'id': None, 'name': 'fake_data.xlsx',
-                                  'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
-                                  'directory': None, 'analysis_file_available': False, 'status': None,
-                                  'file_type': 'excel', 'fields': [], 'reference': '', 'starting_from_line': 0,
-                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
-                                  'row_delimiter': '\n', 'quote_char': '"', 'infer_schema_length': 1000,
-                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': 'Sheet1',
-                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
-                                  'type_inference': False}}
+    settings = {
+        'flow_id': 1,
+        'node_id': 1,
+        'cache_results': True,
+        'pos_x': 234.37272727272727,
+        'pos_y': 271.5272727272727,
+        'is_setup': True,
+        'description': '',
+        'received_file': {
+            'id': None,
+            'name': 'fake_data.xlsx',
+            'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
+            'directory': None,
+            'analysis_file_available': False,
+            'status': None,
+            'file_type': 'excel',
+            'fields': [],
+            'table_settings': {
+                'file_type': 'excel',
+                'sheet_name': 'Sheet1',
+                'start_row': 0,
+                'start_column': 0,
+                'end_row': 0,
+                'end_column': 0,
+                'has_headers': True,
+                'type_inference': False
+            }
+        }
+    }
     graph = create_graph()
     add_node_promise_on_type(graph, node_type='read', node_id=1)
     graph.add_read(input_file=input_schema.NodeRead(**settings))
-
 
 def get_dependency_example():
     graph = create_graph()
@@ -695,7 +724,7 @@ def test_add_cross_join():
     except:
         raise ValueError('Node data should be available')
     data = {'flow_id': 1, 'node_id': 2, 'cache_results': False, 'pos_x': 632.8727272727273, 'pos_y': 298.4,
-            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'is_setup': True, 'description': '', 'depending_on_ids': [], 'auto_generate_selection': True,
             'verify_integrity': True, 'cross_join_input': {'left_select': {'renames': [
             {'old_name': 'name', 'new_name': 'name', 'keep': True, 'data_type': None, 'data_type_change': False,
              'join_key': False, 'is_altered': False, 'position': None, 'is_available': True}]}, 'right_select': {
@@ -712,17 +741,35 @@ def test_add_cross_join():
 
 
 def test_read_excel():
-    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 234.37272727272727,
-                'pos_y': 271.5272727272727, 'is_setup': True, 'description': '',
-                'received_file': {'id': None, 'name': 'fake_data.xlsx',
-                                  'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
-                                  'directory': None, 'analysis_file_available': False, 'status': None,
-                                  'file_type': 'excel', 'fields': [], 'reference': '', 'starting_from_line': 0,
-                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
-                                  'row_delimiter': '\n', 'quote_char': '"', 'infer_schema_length': 1000,
-                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': 'Sheet1',
-                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
-                                  'type_inference': False}}
+    settings = {
+        'flow_id': 1,
+        'node_id': 1,
+        'cache_results': True,
+        'pos_x': 234.37272727272727,
+        'pos_y': 271.5272727272727,
+        'is_setup': True,
+        'description': '',
+        'received_file': {
+            'id': None,
+            'name': 'fake_data.xlsx',
+            'path': 'flowfile_core/tests/support_files/data/fake_data.xlsx',
+            'directory': None,
+            'analysis_file_available': False,
+            'status': None,
+            'file_type': 'excel',
+            'fields': [],
+            'table_settings': {
+                'file_type': 'excel',
+                'sheet_name': 'Sheet1',
+                'start_row': 0,
+                'start_column': 0,
+                'end_row': 0,
+                'end_column': 0,
+                'has_headers': True,
+                'type_inference': False
+            }
+        }
+    }
     graph = create_graph()
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
@@ -733,17 +780,39 @@ def test_read_excel():
 
 
 def test_read_csv():
-    settings = {'flow_id': 1, 'node_id': 1, 'cache_results': True, 'pos_x': 304.8727272727273,
-                'pos_y': 549.5272727272727, 'is_setup': True, 'description': 'Test csv',
-                'received_file': {'id': None, 'name': 'fake_data.csv',
-                                  'path': 'flowfile_core/tests/support_files/data/fake_data.csv',
-                                  'directory': None, 'analysis_file_available': False, 'status': None,
-                                  'file_type': 'csv', 'fields': [], 'reference': '', 'starting_from_line': 0,
-                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
-                                  'row_delimiter': '', 'quote_char': '', 'infer_schema_length': 20000,
-                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': None,
-                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
-                                  'type_inference': False}}
+    settings = {
+        'flow_id': 1,
+        'node_id': 1,
+        'cache_results': True,
+        'pos_x': 304.8727272727273,
+        'pos_y': 549.5272727272727,
+        'is_setup': True,
+        'description': 'Test csv',
+        'received_file': {
+            'id': None,
+            'name': 'fake_data.csv',
+            'path': 'flowfile_core/tests/support_files/data/fake_data.csv',
+            'directory': None,
+            'analysis_file_available': False,
+            'status': None,
+            'file_type': 'csv',
+            'fields': [],
+            'table_settings': {
+                'file_type': 'csv',
+                'reference': '',
+                'starting_from_line': 0,
+                'delimiter': ',',
+                'has_headers': True,
+                'encoding': 'utf-8',
+                'parquet_ref': None,
+                'row_delimiter': '',
+                'quote_char': '',
+                'infer_schema_length': 20000,
+                'truncate_ragged_lines': False,
+                'ignore_errors': False
+            }
+        }
+    }
     graph = create_graph()
     add_node_promise_on_type(graph, 'read', 1)
     input_file = input_schema.NodeRead(**settings)
@@ -783,17 +852,10 @@ def test_write_csv():
             'file_type': 'csv',
             'fields': [],
             'write_mode': 'overwrite',
-            'output_csv_table': {
+            'table_settings': {
                 'file_type': 'csv',
                 'delimiter': ',',
                 'encoding': 'utf-8',
-            },
-            'output_parquet_table': {
-                'file_type': 'parquet',
-            },
-            'output_excel_table': {
-                'file_type': 'excel',
-                'sheet_name': 'Sheet1',
             },
         },
     }
@@ -853,23 +915,56 @@ def test_analytics_processor_after_run(raw_data):
 
 def test_text_to_rows():
     handler = create_flowfile_handler()
-    graph_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/text_to_rows.flowfile"))
+    graph_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/text_to_rows.flowfile")
     graph = handler.get_flow(graph_id)
     run_info = graph.run_graph()
     handle_run_info(run_info)
 
 
 def test_polars_code():
-    handler = create_flowfile_handler()
-    graph_id = handler.import_flow(Path("flowfile_core/tests/support_files/flows/polars_code.flowfile"))
-    graph = handler.get_flow(graph_id)
+    graph = create_graph()
+    file_path = str(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/data/fake_data.parquet")
+    # Add read node with test data
+    read_node = input_schema.NodeRead(
+        flow_id=graph.flow_id,
+        node_id=1,
+        received_file=input_schema.ReceivedTable.create_from_path(
+            file_path
+            ,
+            file_type='parquet'
+        )
+    )
+    graph.add_read(read_node)
+
+    # Add polars code node
+    polars_node = input_schema.NodePolarsCode(
+        flow_id=graph.flow_id,
+        node_id=2,
+        polars_code_input=transform_schema.PolarsCodeInput(
+            polars_code='output_df = input_df.with_columns(pl.col("Email").str.to_uppercase())'
+        ),
+        depending_on_ids=[1]
+    )
+    graph.add_polars_code(polars_node)
+
+    # Connect nodes
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+    # Run and verify
     run_info = graph.run_graph()
     handle_run_info(run_info)
+
+    # Verify the transformation worked
+    result = graph.get_node(2).get_resulting_data()
+    assert result is not None
+    # Check that Email column is uppercase
+    emails = result.to_dict()["Email"]
+    assert all(email == email.upper() for email in emails if email)
 
 
 def get_join_data(how: str = 'inner'):
     return {'flow_id': 1, 'node_id': 3, 'cache_results': False, 'pos_x': 788.8727272727273, 'pos_y': 186.4,
-            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'is_setup': True, 'description': '', 'depending_on_ids': [], 'auto_generate_selection': True,
             'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
                                                      'left_select': {'renames': [
                                                          {'old_name': 'name', 'new_name': 'name', 'data_type': None,
@@ -905,6 +1000,7 @@ def test_add_join():
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_add_database_reader():
+
     ensure_password_is_available()
     graph = create_graph()
     add_node_promise_on_type(graph, 'database_reader', 1)
@@ -1155,13 +1251,11 @@ def test_add_cloud_writer(flow_logger):
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running so database reader cannot be tested")
 def test_complex_cloud_write_scenario():
-
     ensure_cloud_storage_connection_is_available_and_get_connection()
     handler = FlowfileHandler()
-
     flow_id = handler.import_flow(find_parent_directory("Flowfile") / "flowfile_core/tests/support_files/flows/test_cloud_local.flowfile")
     graph = handler.get_flow(flow_id)
-    node= graph.get_node(3)
+    node = graph.get_node(3)
     example_data = node.get_table_example(True)
     assert example_data.number_of_columns == 4
     run_info = graph.run_graph()
@@ -1237,17 +1331,39 @@ def test_add_fuzzy_match_only_local():
 
 
 def test_changes_execution_mode(flow_logger):
-    settings = {'flow_id': 1, 'node_id': 1, 'pos_x': 304.8727272727273,
-                'pos_y': 549.5272727272727, 'is_setup': True, 'description': 'Test csv',
-                'received_file': {'id': None, 'name': 'fake_data.csv',
-                                  'path': str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/data/fake_data.csv'),
-                                  'directory': None, 'analysis_file_available': False, 'status': None,
-                                  'file_type': 'csv', 'fields': [], 'reference': '', 'starting_from_line': 0,
-                                  'delimiter': ',', 'has_headers': True, 'encoding': 'utf-8', 'parquet_ref': None,
-                                  'row_delimiter': '', 'quote_char': '', 'infer_schema_length': 20000,
-                                  'truncate_ragged_lines': False, 'ignore_errors': False, 'sheet_name': None,
-                                  'start_row': 0, 'start_column': 0, 'end_row': 0, 'end_column': 0,
-                                  'type_inference': False}}
+    settings = {
+        'flow_id': 1,
+        'node_id': 1,
+        'cache_results': True,
+        'pos_x': 304.8727272727273,
+        'pos_y': 549.5272727272727,
+        'is_setup': True,
+        'description': 'Test csv',
+        'received_file': {
+            'id': None,
+            'name': 'fake_data.csv',
+            'path': 'flowfile_core/tests/support_files/data/fake_data.csv',
+            'directory': None,
+            'analysis_file_available': False,
+            'status': None,
+            'file_type': 'csv',
+            'fields': [],
+            'table_settings': {
+                'file_type': 'csv',
+                'reference': '',
+                'starting_from_line': 0,
+                'delimiter': ',',
+                'has_headers': True,
+                'encoding': 'utf-8',
+                'parquet_ref': None,
+                'row_delimiter': '',
+                'quote_char': '',
+                'infer_schema_length': 20000,
+                'truncate_ragged_lines': False,
+                'ignore_errors': False
+            }
+        }
+    }
     graph = create_graph()
     flow_logger.warning(str(graph))
     add_node_promise_on_type(graph, 'read', 1)
@@ -1541,5 +1657,4 @@ def test_fetch_before_run_debug():
     example_data_after_run = node.get_table_example(True).data
 
     assert len(example_data_after_run) > 0, "There should be data after fetch operation"
-
 

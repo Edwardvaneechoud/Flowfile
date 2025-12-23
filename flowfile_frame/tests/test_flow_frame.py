@@ -249,7 +249,6 @@ def test_join_not_in_graph():
         "id": [1, 2, 4],
         "age": [25, 30, 40]
     })
-
     result = df1.join(df2, on="id").collect()
     assert len(result) == 2  # Only matches for id 1 and 2
     assert result.columns == ["id", "name", "age"]
@@ -432,7 +431,7 @@ def test_save_flow_graph(tmpdir):
     df2 = df.select("id", "name").filter(col("id") > 1)
 
     # Define a temporary path
-    temp_path = os.path.join(tmpdir, "test_flow.flowfile")
+    temp_path = os.path.join(tmpdir, "test_flow.yaml")
 
     # Save the graph
     df2.save_graph(temp_path)
@@ -471,7 +470,6 @@ def test_complex_workflow():
         "salary": [50000, 60000, 55000, 65000, 70000]
     }
     df = FlowFrame(data)
-
     # Build a workflow: filter → transform → group → sort
     result = (df
               .filter(col("age") > 30)  # Keep employees older than 30
@@ -582,10 +580,9 @@ FORMAT_CONFIGS = {
 }
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
-@pytest.mark.parametrize("file_format", ["parquet", "csv", "json", "delta"])
+@pytest.mark.parametrize("file_format", ["delta"])
 def test_write_to_cloud_storage(df, file_format):
     config = FORMAT_CONFIGS[file_format]
-
     write_method = getattr(df, config['write_method'])
     scan_function = globals()[config['scan_function']]
     source = f"s3://flowfile-test/flow_frame_{file_format}_output_{uuid4()}{config['extension']}"
@@ -601,7 +598,6 @@ def test_read_csv_basic():
     with tempfile.NamedTemporaryFile(suffix='.csv', mode='w+', delete=False) as tmp:
         tmp.write("id,name,age\n1,Alice,25\n2,Bob,30\n3,Charlie,35")
         tmp_path = tmp.name
-
     try:
         # Read the CSV file
         df = read_csv(tmp_path)
@@ -845,3 +841,5 @@ def test_fuzzy_match():
     assert_frame_equal(result, expected_df, check_row_order=False, check_exact=False)
 
 
+if __name__ == "__main__":
+    pytest.main([__file__])

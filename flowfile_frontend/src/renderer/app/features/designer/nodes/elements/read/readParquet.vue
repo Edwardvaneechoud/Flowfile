@@ -8,12 +8,11 @@
 </template>
 
 <script lang="ts" setup>
-const props = defineProps({
-  modelValue: {
-    type: Object,
-    required: true,
-  },
-});
+import { InputParquetTable } from "../../../baseNode/nodeInput";
+
+const props = defineProps<{
+  modelValue: InputParquetTable;
+}>();
 </script>
 
 <style scoped>

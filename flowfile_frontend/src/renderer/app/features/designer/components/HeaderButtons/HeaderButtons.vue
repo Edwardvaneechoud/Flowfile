@@ -33,13 +33,17 @@
   </div>
 
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
-    <file-browser :allowed-file-types="['flowfile']" mode="open" @file-selected="openFlowAction" />
+    <file-browser
+      :allowed-file-types="FLOWFILE_EXTENSIONS"
+      mode="open"
+      @file-selected="openFlowAction"
+    />
   </el-dialog>
 
   <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%">
     <file-browser
       ref="fileBrowserRef"
-      :allowed-file-types="['flowfile']"
+      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       :initial-file-path="savePath"
       @create-file="saveFlowAction"
@@ -49,7 +53,7 @@
 
   <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%">
     <file-browser
-      :allowed-file-types="['flowfile']"
+      :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
@@ -126,11 +130,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, defineExpose, computed, watch } from "vue";
+import { ref, onMounted, computed, watch } from "vue";
+import { ElMessage } from "element-plus";
+
 import { saveFlow } from "./utils";
 import RunButton from "./run.vue";
 import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
+import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../fileBrowser/constants";
 import { useNodeStore } from "../../../../stores/column-store";
 import {
   createFlow,
@@ -169,6 +176,11 @@ const executionLocationOptions = ref<ExecutionLocationOption[]>([
 
 const emit = defineEmits(["openFlow", "refreshFlow", "logs-start", "logs-stop"]);
 
+const isValidSaveExtension = (filePath: string): boolean => {
+  const name = filePath.toLowerCase();
+  return ALLOWED_SAVE_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
+};
+
 // Generate default filename with current datetime
 const generateDefaultFileName = (): string => {
   const now = new Date();
@@ -179,14 +191,13 @@ const generateDefaultFileName = (): string => {
   const minutes = String(now.getMinutes()).padStart(2, "0");
   const seconds = String(now.getSeconds()).padStart(2, "0");
 
-  return `${year}${month}${day}_${hours}${minutes}${seconds}_flow.flowfile`;
+  return `${year}${month}${day}_${hours}${minutes}${seconds}_flow`;
 };
 
 // Get preview filename for the modal
 const getPreviewFileName = (): string => {
   if (quickCreateName.value.trim()) {
-    const name = quickCreateName.value.trim();
-    return name.endsWith(".flowfile") ? name : `${name}.flowfile`;
+    return quickCreateName.value.trim();
   }
   return generateDefaultFileName();
 };
@@ -228,8 +239,34 @@ const fileBrowserRef = ref<{
 } | null>(null);
 
 const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
-  await saveFlow(nodeStore.flow_id, flowPath);
-  modalVisibleForSave.value = false;
+  // Check for deprecated .flowfile extension
+  if (flowPath.toLowerCase().endsWith(".flowfile")) {
+    ElMessage.error({
+      message: "The .flowfile format is deprecated. Please use .yaml or .yml instead.",
+      duration: 5000,
+    });
+    return;
+  }
+
+  // Validate extension
+  if (!isValidSaveExtension(flowPath)) {
+    ElMessage.error({
+      message: "Invalid file extension. Please use .yaml or .yml",
+      duration: 5000,
+    });
+    return;
+  }
+
+  try {
+    await saveFlow(nodeStore.flow_id, flowPath);
+    ElMessage.success("Flow saved successfully");
+    modalVisibleForSave.value = false;
+  } catch (error: any) {
+    ElMessage.error({
+      message: error.message || "Failed to save flow",
+      duration: 5000,
+    });
+  }
 };
 
 function openFlowAction(inputSelectedFile: FileInfo | null) {
@@ -263,10 +300,15 @@ const toggleCodeGenerator = () => {
 };
 
 const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
-  const pathWithoutExtension = flowPath.replace(/\.[^/.]+$/, "");
-  const normalizedPath = `${pathWithoutExtension}.flowfile`;
+  if (!isValidSaveExtension(flowPath)) {
+    ElMessage.error({
+      message: "Invalid file extension. Please use .yaml or .yml",
+      duration: 5000,
+    });
+    return;
+  }
 
-  const createdFlowId = await createFlow(normalizedPath);
+  const createdFlowId = await createFlow(flowPath);
 
   modalVisibleForCreate.value = false;
   nodeStore.flow_id = createdFlowId;

@@ -2,6 +2,9 @@ from typing import Dict
 import threading
 import multiprocessing
 from shared.storage_config import storage
+from importlib.metadata import version
+
+__version__ = version("Flowfile")
 
 multiprocessing.set_start_method('spawn', force=True)
 

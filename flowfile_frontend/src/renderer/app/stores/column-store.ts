@@ -224,7 +224,10 @@ export const useNodeStore = defineStore('node', {
     cacheNodeDescriptionDict(flowId: number, nodeId: number, description: string): void {
       this.initializeDescriptionCache(flowId);
       this.nodeDescriptions[flowId][nodeId] = description;
-    },
+      if (this.nodeData && this.nodeData.node_id === nodeId && this.nodeData.setting_input) {
+        this.nodeData.setting_input.description = description;
+      }
+      },
     clearNodeDescriptionCache(flowId: number, nodeId: number): void {
       if (this.nodeDescriptions[flowId] && this.nodeDescriptions[flowId][nodeId]) {
         delete this.nodeDescriptions[flowId][nodeId];
@@ -281,12 +284,12 @@ export const useNodeStore = defineStore('node', {
             'Content-Type': 'application/json',
           },
         });
-        if (response.data.status === 'success') {
-          console.log(response.data.message);
+        if (response.data === true) {
+          console.log('Description updated successfully');
         } else {
-          console.warn('Unexpected success response structure:', response.data);
+          console.warn('Unexpected response:', response.data);
         }
-      } catch (error: any) {
+      } catch (error: any) {    
         if (error.response) {
           console.error('API error:', error.response.data.message);
         } else if (error.request) {

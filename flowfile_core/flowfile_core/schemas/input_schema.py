@@ -1,13 +1,21 @@
-from typing import List, Optional, Literal, Iterator, Any
+from typing import List, Optional, Literal, Iterator, Any, Annotated
 from flowfile_core.schemas import transform_schema
 from pathlib import Path
 import os
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gs_schemas
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageReadSettings, CloudStorageWriteSettings
-from flowfile_core.schemas.schemas import SecretRef
+from flowfile_core.schemas.yaml_types import (
+    OutputSettingsYaml, NodeSelectYaml, NodeJoinYaml,
+    NodeCrossJoinYaml, NodeFuzzyMatchYaml, NodeOutputYaml
+)
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
-from pydantic import BaseModel, Field, model_validator, SecretStr, ConfigDict
+from pydantic import (BaseModel, Field, model_validator, field_validator,
+                      SecretStr, ConfigDict, StringConstraints, ValidationInfo)
 import polars as pl
+
+
+SecretRef = Annotated[str, StringConstraints(min_length=1, max_length=100),
+                      Field(description="An ID referencing an encrypted secret.")]
 
 
 OutputConnectionClass = Literal['output-0', 'output-1', 'output-2', 'output-3', 'output-4',
@@ -43,28 +51,108 @@ class MinimalFieldInfo(BaseModel):
     data_type: str = "String"
 
 
-class ReceivedTableBase(BaseModel):
-    """Base model for defining a table received from an external source."""
+class InputTableBase(BaseModel):
+    """Base settings for input file operations."""
+    file_type: str  # Will be overridden with Literal in subclasses
+
+
+class InputCsvTable(InputTableBase):
+    """Defines settings for reading a CSV file."""
+    file_type: Literal['csv'] = 'csv'
+    reference: str = ''
+    starting_from_line: int = 0
+    delimiter: str = ','
+    has_headers: bool = True
+    encoding: str = 'utf-8'
+    parquet_ref: Optional[str] = None
+    row_delimiter: str = '\n'
+    quote_char: str = '"'
+    infer_schema_length: int = 10_000
+    truncate_ragged_lines: bool = False
+    ignore_errors: bool = False
+
+
+class InputJsonTable(InputCsvTable):
+    """Defines settings for reading a JSON file."""
+    file_type: Literal['json'] = 'json'
+
+
+class InputParquetTable(InputTableBase):
+    """Defines settings for reading a Parquet file."""
+    file_type: Literal['parquet'] = 'parquet'
+
+
+class InputExcelTable(InputTableBase):
+    """Defines settings for reading an Excel file."""
+    file_type: Literal['excel'] = 'excel'
+    sheet_name: Optional[str] = None
+    start_row: int = 0
+    start_column: int = 0
+    end_row: int = 0
+    end_column: int = 0
+    has_headers: bool = True
+    type_inference: bool = False
+
+    @model_validator(mode='after')
+    def validate_range_values(self):
+        """Validates that the Excel cell range is logical."""
+        for attribute in [self.start_row, self.start_column, self.end_row, self.end_column]:
+            if not isinstance(attribute, int) or attribute < 0:
+                raise ValueError("Row and column indices must be non-negative integers")
+        if (self.end_row > 0 and self.start_row > self.end_row) or \
+                (self.end_column > 0 and self.start_column > self.end_column):
+            raise ValueError("Start row/column must not be greater than end row/column")
+        return self
+
+
+# Create the discriminated union (similar to OutputTableSettings)
+InputTableSettings = Annotated[
+    InputCsvTable | InputJsonTable | InputParquetTable | InputExcelTable,
+    Field(discriminator='file_type')
+]
+
+
+# Now create the main ReceivedTable model
+class ReceivedTable(BaseModel):
+    """Model for defining a table received from an external source."""
+    # Metadata fields
     id: Optional[int] = None
-    name: Optional[str]
+    name: Optional[str] = None
     path: str  # This can be an absolute or relative path
     directory: Optional[str] = None
     analysis_file_available: bool = False
     status: Optional[str] = None
-    file_type: Optional[str] = None
     fields: List[MinimalFieldInfo] = Field(default_factory=list)
     abs_file_path: Optional[str] = None
 
+    file_type: Literal['csv', 'json', 'parquet', 'excel']
+
+    table_settings: InputTableSettings
+
     @classmethod
-    def create_from_path(cls, path: str):
+    def create_from_path(cls, path: str, file_type: Literal['csv', 'json', 'parquet', 'excel'] = 'csv'):
         """Creates an instance from a file path string."""
         filename = Path(path).name
-        return cls(name=filename, path=path)
+
+        # Create appropriate table_settings based on file_type
+        settings_map = {
+            'csv': InputCsvTable(),
+            'json': InputJsonTable(),
+            'parquet': InputParquetTable(),
+            'excel': InputExcelTable(),
+        }
+
+        return cls(
+            name=filename,
+            path=path,
+            file_type=file_type,
+            table_settings=settings_map.get(file_type, InputCsvTable())
+        )
 
     @property
     def file_path(self) -> str:
         """Constructs the full file path from the directory and name."""
-        if not self.name in self.path:
+        if self.name and self.name not in self.path:
             return os.path.join(self.path, self.name)
         else:
             return self.path
@@ -78,6 +166,18 @@ class ReceivedTableBase(BaseModel):
             base_path = base_path / self.name
         self.abs_file_path = str(base_path.resolve())
 
+    @model_validator(mode='before')
+    @classmethod
+    def set_default_table_settings(cls, data):
+        """Create default table_settings based on file_type if not provided."""
+        if isinstance(data, dict):
+            if 'table_settings' not in data or data['table_settings'] is None:
+                data['table_settings'] = {}
+
+            if isinstance(data['table_settings'], dict) and 'file_type' not in data['table_settings']:
+                data['table_settings']['file_type'] = data.get('file_type', 'csv')
+        return data
+
     @model_validator(mode='after')
     def populate_abs_file_path(self):
         """Ensures the absolute file path is populated after validation."""
@@ -86,86 +186,91 @@ class ReceivedTableBase(BaseModel):
         return self
 
 
-class ReceivedCsvTable(ReceivedTableBase):
-    """Defines settings for reading a CSV file."""
-    file_type: str = 'csv'
-    reference: str = ''
-    starting_from_line: int = 0
-    delimiter: str = ','
-    has_headers: bool = True
-    encoding: Optional[str] = 'utf-8'
-    parquet_ref: Optional[str] = None
-    row_delimiter: str = '\n'
-    quote_char: str = '"'
-    infer_schema_length: int = 10_000
-    truncate_ragged_lines: bool = False
-    ignore_errors: bool = False
-
-
-class ReceivedJsonTable(ReceivedCsvTable):
-    """Defines settings for reading a JSON file (inherits from CSV settings)."""
-    pass
-
-
-class ReceivedParquetTable(ReceivedTableBase):
-    """Defines settings for reading a Parquet file."""
-    file_type: str = 'parquet'
-
-
-class ReceivedExcelTable(ReceivedTableBase):
-    """Defines settings for reading an Excel file."""
-    sheet_name: Optional[str] = None
-    start_row: int = 0
-    start_column: int = 0
-    end_row: int = 0
-    end_column: int = 0
-    has_headers: bool = True
-    type_inference: bool = False
-
-    def validate_range_values(self):
-        """Validates that the Excel cell range is logical."""
-        for attribute in [self.start_row, self.start_column, self.end_row, self.end_column]:
-            if not isinstance(attribute, int) or attribute < 0:
-                raise ValueError("Row and column indices must be non-negative integers")
-        if (self.end_row > 0 and self.start_row > self.end_row) or \
-           (self.end_column > 0 and self.start_column > self.end_column):
-            raise ValueError("Start row/column must not be greater than end row/column")
-
-
-class ReceivedTable(ReceivedExcelTable, ReceivedCsvTable, ReceivedParquetTable):
-    """A comprehensive model that can represent any type of received table."""
-    ...
-
-
 class OutputCsvTable(BaseModel):
     """Defines settings for writing a CSV file."""
-    file_type: str = 'csv'
+    file_type: Literal['csv'] = 'csv'
     delimiter: str = ','
     encoding: str = 'utf-8'
 
 
 class OutputParquetTable(BaseModel):
     """Defines settings for writing a Parquet file."""
-    file_type: str = 'parquet'
+    file_type: Literal['parquet'] = 'parquet'
 
 
 class OutputExcelTable(BaseModel):
     """Defines settings for writing an Excel file."""
-    file_type: str = 'excel'
+    file_type: Literal['excel'] = 'excel'
     sheet_name: str = 'Sheet1'
+
+
+# Create a discriminated union
+OutputTableSettings = Annotated[
+    OutputCsvTable | OutputParquetTable | OutputExcelTable,
+    Field(discriminator='file_type')
+]
 
 
 class OutputSettings(BaseModel):
     """Defines the complete settings for an output node."""
     name: str
     directory: str
-    file_type: str
+    file_type: str  # This drives which table_settings to use
     fields: Optional[List[str]] = Field(default_factory=list)
     write_mode: str = 'overwrite'
-    output_csv_table: Optional[OutputCsvTable] = Field(default_factory=OutputCsvTable)
-    output_parquet_table: OutputParquetTable = Field(default_factory=OutputParquetTable)
-    output_excel_table: OutputExcelTable = Field(default_factory=OutputExcelTable)
+    table_settings: OutputTableSettings
     abs_file_path: Optional[str] = None
+
+    def to_yaml_dict(self) -> OutputSettingsYaml:
+        """Converts the output settings to a dictionary suitable for YAML serialization."""
+        result: OutputSettingsYaml = {
+            "name": self.name,
+            "directory": self.directory,
+            "file_type": self.file_type,
+            "write_mode": self.write_mode,
+        }
+        if self.abs_file_path:
+            result["abs_file_path"] = self.abs_file_path
+        if self.fields:
+            result["fields"] = self.fields
+        # Only include table_settings if it has non-default values beyond file_type
+        ts_dict = self.table_settings.model_dump(exclude={"file_type"})
+        if any(v for v in ts_dict.values()):  # Has meaningful settings
+            result["table_settings"] = ts_dict
+        return result
+
+    @property
+    def sheet_name(self) -> str | None:
+        if self.file_type == 'excel':
+            return self.table_settings.sheet_name
+
+    @property
+    def delimiter(self) -> str | None:
+        if self.file_type == 'csv':
+            return self.table_settings.delimiter
+
+    @field_validator('table_settings', mode='before')
+    @classmethod
+    def validate_table_settings(cls, v, info: ValidationInfo):
+        """Ensures table_settings matches the file_type."""
+        if v is None:
+            file_type = info.data.get('file_type', 'csv')
+            # Create default based on file_type
+            match file_type:
+                case 'csv':
+                    return OutputCsvTable()
+                case 'parquet':
+                    return OutputParquetTable()
+                case 'excel':
+                    return OutputExcelTable()
+                case _:
+                    return OutputCsvTable()
+
+        # If it's a dict, add file_type if missing
+        if isinstance(v, dict) and 'file_type' not in v:
+            v['file_type'] = info.data.get('file_type', 'csv')
+
+        return v
 
     def set_absolute_filepath(self):
         """Resolves the output directory and name into an absolute path."""
@@ -205,7 +310,7 @@ class NodeSingleInput(NodeBase):
 
 class NodeMultiInput(NodeBase):
     """A base model for any node that takes multiple data inputs."""
-    depending_on_ids: Optional[List[int]] = [-1]
+    depending_on_ids: Optional[List[int]] = Field(default_factory=list)
 
 
 class NodeSelect(NodeSingleInput):
@@ -213,6 +318,15 @@ class NodeSelect(NodeSingleInput):
     keep_missing: bool = True
     select_input: List[transform_schema.SelectInput] = Field(default_factory=list)
     sorted_by: Optional[Literal['none', 'asc', 'desc']] = 'none'
+
+    def to_yaml_dict(self) -> NodeSelectYaml:
+        """Converts the select node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "keep_missing": self.keep_missing,
+            "select_input": [s.to_yaml_dict() for s in self.select_input],
+            "sorted_by": self.sorted_by,
+        }
 
 
 class NodeFilter(NodeSingleInput):
@@ -249,6 +363,18 @@ class NodeJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def to_yaml_dict(self) -> NodeJoinYaml:
+        """Converts the join node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "auto_generate_selection": self.auto_generate_selection,
+            "verify_integrity": self.verify_integrity,
+            "join_input": self.join_input.to_yaml_dict(),
+            "auto_keep_all": self.auto_keep_all,
+            "auto_keep_right": self.auto_keep_right,
+            "auto_keep_left": self.auto_keep_left,
+        }
+
 
 class NodeCrossJoin(NodeMultiInput):
     """Settings for a node that performs a cross join."""
@@ -259,10 +385,34 @@ class NodeCrossJoin(NodeMultiInput):
     auto_keep_right: bool = True
     auto_keep_left: bool = True
 
+    def to_yaml_dict(self) -> NodeCrossJoinYaml:
+        """Converts the cross join node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "auto_generate_selection": self.auto_generate_selection,
+            "verify_integrity": self.verify_integrity,
+            "cross_join_input": self.cross_join_input.to_yaml_dict(),
+            "auto_keep_all": self.auto_keep_all,
+            "auto_keep_right": self.auto_keep_right,
+            "auto_keep_left": self.auto_keep_left,
+        }
+
 
 class NodeFuzzyMatch(NodeJoin):
     """Settings for a node that performs a fuzzy join based on string similarity."""
     join_input: transform_schema.FuzzyMatchInput
+
+    def to_yaml_dict(self) -> NodeFuzzyMatchYaml:
+        """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "auto_generate_selection": self.auto_generate_selection,
+            "verify_integrity": self.verify_integrity,
+            "join_input": self.join_input.to_yaml_dict(),
+            "auto_keep_all": self.auto_keep_all,
+            "auto_keep_right": self.auto_keep_right,
+            "auto_keep_left": self.auto_keep_left,
+        }
 
 
 class NodeDatasource(NodeBase):
@@ -464,6 +614,13 @@ class NodeUnion(NodeMultiInput):
 class NodeOutput(NodeSingleInput):
     """Settings for a node that writes its input to a file."""
     output_settings: OutputSettings
+
+    def to_yaml_dict(self) -> NodeOutputYaml:
+        """Converts the output node settings to a dictionary for YAML serialization."""
+        return {
+            "cache_results": self.cache_results,
+            "output_settings": self.output_settings.to_yaml_dict(),
+        }
 
 
 class NodeOutputConnection(BaseModel):

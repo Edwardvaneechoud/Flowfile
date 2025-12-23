@@ -1,13 +1,48 @@
-from typing import Optional, List, Dict, Tuple, Any, Literal, Annotated
-from pydantic import BaseModel, field_validator, ConfigDict, Field, StringConstraints
+from typing import Optional, List, Dict, Tuple, Any, Literal, ClassVar
+from pydantic import BaseModel, field_validator, ConfigDict, Field, ValidationInfo, field_serializer
 from flowfile_core.flowfile.utils import create_unique_id
 from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+from flowfile_core.schemas import input_schema
 ExecutionModeLiteral = Literal['Development', 'Performance']
 ExecutionLocationsLiteral = Literal['local', 'remote']
 
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal['input', 'output', 'process']
 TransformTypeLiteral = Literal['narrow', 'wide', 'other']
+_custom_node_store_cache = None
+
+NODE_TYPE_TO_SETTINGS_CLASS = {
+    'manual_input': input_schema.NodeManualInput,
+    'filter': input_schema.NodeFilter,
+    'formula': input_schema.NodeFormula,
+    'select': input_schema.NodeSelect,
+    'sort': input_schema.NodeSort,
+    'record_id': input_schema.NodeRecordId,
+    'sample': input_schema.NodeSample,
+    'unique': input_schema.NodeUnique,
+    'group_by': input_schema.NodeGroupBy,
+    'pivot': input_schema.NodePivot,
+    'unpivot': input_schema.NodeUnpivot,
+    'text_to_rows': input_schema.NodeTextToRows,
+    'graph_solver': input_schema.NodeGraphSolver,
+    'polars_code': input_schema.NodePolarsCode,
+    'join': input_schema.NodeJoin,
+    'cross_join': input_schema.NodeCrossJoin,
+    'fuzzy_match': input_schema.NodeFuzzyMatch,
+    'record_count': input_schema.NodeRecordCount,
+    'explore_data': input_schema.NodeExploreData,
+    'union': input_schema.NodeUnion,
+    'output': input_schema.NodeOutput,
+    'read': input_schema.NodeRead,
+    'database_reader': input_schema.NodeDatabaseReader,
+    'database_writer': input_schema.NodeDatabaseWriter,
+    'cloud_storage_reader': input_schema.NodeCloudStorageReader,
+    'cloud_storage_writer': input_schema.NodeCloudStorageWriter,
+    'external_source': input_schema.NodeExternalSource,
+    'promise': input_schema.NodePromise,
+    'user_defined': input_schema.UserDefinedNode,
+}
+
 
 def get_global_execution_location() -> ExecutionLocationsLiteral:
     """
@@ -19,6 +54,25 @@ def get_global_execution_location() -> ExecutionLocationsLiteral:
     if OFFLOAD_TO_WORKER:
         return "remote"
     return "local"
+
+
+def _get_custom_node_store():
+    """Lazy load CUSTOM_NODE_STORE once and cache it."""
+    global _custom_node_store_cache
+    if _custom_node_store_cache is None:
+        from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+        _custom_node_store_cache = CUSTOM_NODE_STORE
+    return _custom_node_store_cache
+
+
+def get_settings_class_for_node_type(node_type: str):
+    """Get the settings class for a node type, supporting both standard and user-defined nodes."""
+    model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
+    if model_class is None:
+        if node_type in _get_custom_node_store():
+            return input_schema.UserDefinedNode
+        return None
+    return model_class
 
 
 def is_valid_execution_location_in_current_global_settings(execution_location: ExecutionLocationsLiteral) -> bool:
@@ -117,6 +171,60 @@ class RawLogInput(BaseModel):
     extra: Optional[dict] = None
 
 
+class FlowfileSettings(BaseModel):
+    """Settings for flowfile serialization (YAML/JSON).
+
+    Excludes runtime state fields like is_running, is_canceled, modified_on.
+    """
+    description: Optional[str] = None
+    execution_mode: ExecutionModeLiteral = 'Performance'
+    execution_location: ExecutionLocationsLiteral = 'local'
+    auto_save: bool = False
+    show_detailed_progress: bool = True
+
+
+class FlowfileNode(BaseModel):
+    """Node representation for flowfile serialization (YAML/JSON)."""
+    id: int
+    type: str
+    is_start_node: bool = False
+    description: Optional[str] = ''
+    x_position: Optional[int] = 0
+    y_position: Optional[int] = 0
+    left_input_id: Optional[int] = None
+    right_input_id: Optional[int] = None
+    input_ids: Optional[List[int]] = Field(default_factory=list)
+    outputs: Optional[List[int]] = Field(default_factory=list)
+    setting_input: Optional[Any] = None
+
+    _setting_input_exclude: ClassVar[set] = {
+        'flow_id', 'node_id', 'pos_x', 'pos_y', 'is_setup',
+        'description', 'user_id', 'is_flow_output', 'is_user_defined',
+        'depending_on_id', 'depending_on_ids'
+    }
+
+    @field_serializer('setting_input')
+    def serialize_setting_input(self, value, _info):
+        if value is None:
+            return None
+        if isinstance(value, input_schema.NodePromise):
+            return None
+        if hasattr(value, 'to_yaml_dict'):
+            return value.to_yaml_dict()
+        if hasattr(value, 'to_yaml_dict'):
+            return value.to_yaml_dict()
+        return value.model_dump(exclude=self._setting_input_exclude)
+
+
+class FlowfileData(BaseModel):
+    """Root model for flowfile serialization (YAML/JSON)."""
+    flowfile_version: str
+    flowfile_id: int
+    flowfile_name: str
+    flowfile_settings: FlowfileSettings
+    nodes: List[FlowfileNode]
+
+
 class NodeTemplate(BaseModel):
     """
     Defines the template for a node type, specifying its UI and functional characteristics.
@@ -151,47 +259,46 @@ class NodeTemplate(BaseModel):
 class NodeInformation(BaseModel):
     """
     Stores the state and configuration of a specific node instance within a flow.
-
-    Attributes:
-        id (Optional[int]): The unique ID of the node instance.
-        type (Optional[str]): The type of the node (e.g., 'join', 'filter').
-        is_setup (Optional[bool]): Whether the node has been configured.
-        description (Optional[str]): A user-provided description.
-        x_position (Optional[int]): The x-coordinate on the canvas.
-        y_position (Optional[int]): The y-coordinate on the canvas.
-        left_input_id (Optional[int]): The ID of the node connected to the left input.
-        right_input_id (Optional[int]): The ID of the node connected to the right input.
-        input_ids (Optional[List[int]]): A list of IDs for main input nodes.
-        outputs (Optional[List[int]]): A list of IDs for nodes this node outputs to.
-        setting_input (Optional[Any]): The specific settings for this node instance.
     """
     id: Optional[int] = None
     type: Optional[str] = None
     is_setup: Optional[bool] = None
+    is_start_node: bool = False
     description: Optional[str] = ''
     x_position: Optional[int] = 0
     y_position: Optional[int] = 0
     left_input_id: Optional[int] = None
     right_input_id: Optional[int] = None
-    input_ids: Optional[List[int]] = [-1]
-    outputs: Optional[List[int]] = [-1]
+    input_ids: Optional[List[int]] = Field(default_factory=list)
+    outputs: Optional[List[int]] = Field(default_factory=list)
     setting_input: Optional[Any] = None
 
     @property
     def data(self) -> Any:
-        """
-        Property to access the node's specific settings.
-        :return: The settings of the node.
-        """
         return self.setting_input
 
     @property
     def main_input_ids(self) -> Optional[List[int]]:
-        """
-        Property to access the main input node IDs.
-        :return: A list of main input node IDs.
-        """
         return self.input_ids
+
+    @field_validator('setting_input', mode='before')
+    @classmethod
+    def validate_setting_input(cls, v, info: ValidationInfo):
+        if v is None:
+            return None
+        if isinstance(v, BaseModel):
+            return v
+
+        node_type = info.data.get('type')
+        model_class = get_settings_class_for_node_type(node_type)
+
+        if model_class is None:
+            raise ValueError(f"Unknown node type: {node_type}")
+
+        if isinstance(v, model_class):
+            return v
+
+        return model_class.model_validate(v)
 
 
 class FlowInformation(BaseModel):
@@ -221,6 +328,19 @@ class FlowInformation(BaseModel):
         :return: The value as a string, or an empty string if it's None.
         """
         return str(v) if v is not None else ''
+
+
+class NodeConnection(BaseModel):
+    """
+    Represents a connection between two nodes in the flow.
+
+    Attributes:
+        from_node_id (int): The ID of the source node.
+        to_node_id (int): The ID of the target node.
+    """
+    model_config = ConfigDict(frozen=True)
+    from_node_id: int
+    to_node_id: int
 
 
 class NodeInput(NodeTemplate):
@@ -269,8 +389,6 @@ class VueFlowInput(BaseModel):
     node_inputs: List[NodeInput]
 
 
-
-
 class NodeDefault(BaseModel):
     """
     Defines default properties for a node type.
@@ -285,8 +403,3 @@ class NodeDefault(BaseModel):
     node_type: NodeTypeLiteral
     transform_type: TransformTypeLiteral
     has_default_settings: Optional[Any] = None
-
-
-# Define SecretRef here if not in a common location
-SecretRef = Annotated[str, StringConstraints(min_length=1, max_length=100),
-                      Field(description="An ID referencing an encrypted secret.")]

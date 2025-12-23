@@ -10,7 +10,7 @@ from flowfile_frame.lazy_methods import add_lazyframe_methods
 from polars._typing import (CsvEncoding, FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
 from collections.abc import Iterator
 
-from pl_fuzzy_frame_match import FuzzyMapping, fuzzy_match_dfs
+from pl_fuzzy_frame_match import FuzzyMapping
 
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
@@ -626,7 +626,6 @@ class FlowFrame:
         left_columns, right_columns = self._parse_join_columns(
             on, left_on, right_on, how
         )
-
         # Step 5: Validate column lists have same length (except for cross join)
         if how != 'cross' and left_columns is not None and right_columns is not None:
             if len(left_columns) != len(right_columns):
@@ -798,33 +797,36 @@ class FlowFrame:
     ) -> "FlowFrame":
         """Execute join using native FlowFile join nodes."""
         # Create select inputs for both frames
+
         left_select = transform_schema.SelectInputs.create_from_pl_df(self.data)
         right_select = transform_schema.SelectInputs.create_from_pl_df(other.data)
         # Create appropriate join input based on join type
         if how == 'cross':
             join_input = transform_schema.CrossJoinInput(
-                left_select=left_select.renames,
+                left_select=transform_schema.JoinInputs(renames=left_select.renames),
                 right_select=right_select.renames,
             )
+            join_input_manager = transform_schema.CrossJoinInputManager(join_input)
+
         else:
             join_input = transform_schema.JoinInput(
                 join_mapping=join_mappings,
-                left_select=left_select.renames,
+                left_select=transform_schema.JoinInputs(renames=left_select.renames),
                 right_select=right_select.renames,
                 how=how,
             )
+            join_input_manager = transform_schema.JoinInputManager(join_input)
 
         # Configure join input
-        join_input.auto_rename()
-        for right_column in right_select.renames:
+        for right_column in join_input_manager.right_select.renames:
             if right_column.join_key:
                 right_column.keep = False
 
         # Create and add appropriate node
         if how == 'cross':
-            self._add_cross_join_node(new_node_id, join_input, description, other)
+            self._add_cross_join_node(new_node_id, join_input_manager.to_cross_join_input(), description, other)
         else:
-            self._add_regular_join_node(new_node_id, join_input, description, other)
+            self._add_regular_join_node(new_node_id, join_input_manager.to_join_input(), description, other)
 
         # Add connections
         self._add_connection(self.node_id, new_node_id, "main")
@@ -1140,16 +1142,11 @@ class FlowFrame:
         file_name = file_str.split(os.sep)[-1]
         use_polars_code = bool(kwargs.items()) or not is_path_input
 
-        output_parquet_table = input_schema.OutputParquetTable(
-            file_type="parquet"
-        )
         output_settings = input_schema.OutputSettings(
             file_type='parquet',
             name=file_name,
             directory=file_str if is_path_input else str(file_str),
-            output_parquet_table=output_parquet_table,
-            output_csv_table=input_schema.OutputCsvTable(),
-            output_excel_table=input_schema.OutputExcelTable()
+            table_settings=input_schema.OutputParquetTable()
         )
 
         if is_path_input:
@@ -1220,10 +1217,10 @@ class FlowFrame:
             file_type='csv',
             name=file_name,
             directory=file_str if is_path_input else str(file_str),
-            output_csv_table=input_schema.OutputCsvTable(
-                file_type="csv", delimiter=separator, encoding=encoding),
-            output_excel_table=input_schema.OutputExcelTable(),
-            output_parquet_table=input_schema.OutputParquetTable()
+            table_settings=input_schema.OutputCsvTable(
+                delimiter=separator,
+                encoding=encoding
+            )
         )
         if is_path_input:
             try:

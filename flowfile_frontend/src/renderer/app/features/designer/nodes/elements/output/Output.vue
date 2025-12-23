@@ -66,16 +66,16 @@
       </el-select>
 
       <CsvTableConfig
-        v-if="nodeOutput.output_settings.file_type === 'csv'"
-        v-model="nodeOutput.output_settings.output_csv_table"
+        v-if="isOutputCsvTable(nodeOutput.output_settings.table_settings)"
+        v-model="nodeOutput.output_settings.table_settings"
       />
       <ExcelTableConfig
-        v-if="nodeOutput.output_settings.file_type === 'excel'"
-        v-model="nodeOutput.output_settings.output_excel_table"
+        v-if="isOutputExcelTable(nodeOutput.output_settings.table_settings)"
+        v-model="nodeOutput.output_settings.table_settings"
       />
       <ParquetTableConfig
-        v-if="nodeOutput.output_settings.file_type === 'parquet'"
-        v-model="nodeOutput.output_settings.output_parquet_table"
+        v-if="isOutputParquetTable(nodeOutput.output_settings.table_settings)"
+        v-model="nodeOutput.output_settings.table_settings"
       />
     </div>
 
@@ -95,11 +95,21 @@
     </el-dialog>
   </div>
 </template>
-
 <script lang="ts" setup>
 import { ref, computed } from "vue";
-import { NodeOutput } from "../../../baseNode/nodeInput";
-import { createDefaultOutputSettings } from "./defaultValues";
+import {
+  NodeOutput,
+  isOutputCsvTable,
+  isOutputParquetTable,
+  isOutputExcelTable,
+  OutputTableSettings,
+} from "../../../baseNode/nodeInput";
+import {
+  createDefaultOutputSettings,
+  createCsvTableSettings,
+  createParquetTableSettings,
+  createExcelTableSettings,
+} from "./defaultValues";
 import { useNodeStore } from "../../../../../stores/column-store";
 import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
@@ -165,6 +175,25 @@ function detectFileType(fileName: string) {
   if (nodeOutput.value && fileTypeMap[verifiedExtension]) {
     nodeOutput.value.output_settings.file_type = fileTypeMap[verifiedExtension];
     nodeOutput.value.output_settings.write_mode = "overwrite";
+
+    // Update table_settings to match the new file type
+    updateTableSettings(fileTypeMap[verifiedExtension]);
+  }
+}
+
+function updateTableSettings(fileType: "csv" | "excel" | "parquet") {
+  if (!nodeOutput.value) return;
+
+  switch (fileType) {
+    case "csv":
+      nodeOutput.value.output_settings.table_settings = createCsvTableSettings();
+      break;
+    case "parquet":
+      nodeOutput.value.output_settings.table_settings = createParquetTableSettings();
+      break;
+    case "excel":
+      nodeOutput.value.output_settings.table_settings = createExcelTableSettings();
+      break;
   }
 }
 
@@ -190,6 +219,9 @@ function handleFileTypeChange() {
   if (!nodeOutput.value.output_settings.write_mode) {
     nodeOutput.value.output_settings.write_mode = "overwrite";
   }
+
+  // Update table_settings when file type changes
+  updateTableSettings(nodeOutput.value.output_settings.file_type);
 }
 
 function handleDirectorySelected(directoryPath: string) {

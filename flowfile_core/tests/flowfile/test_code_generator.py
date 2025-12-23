@@ -271,7 +271,6 @@ def join_input_large_dataset() -> tuple[input_schema.NodeManualInput, input_sche
         node_id=1,
         raw_data_format=data_engine.select_columns(['ID', "Name", "Address", "Zipcode"]).to_raw_data()
     )
-
     right_data = input_schema.NodeManualInput(
         flow_id=1,
         node_id=2,
@@ -377,19 +376,21 @@ def create_csv_file_node(flow: FlowGraph, tmp_path: Path, node_id: int = 1,
         df = get_csv_df()
     csv_path = tmp_path / filename
     df.write_csv(csv_path)
-
     read_node = input_schema.NodeRead(
         flow_id=flow.flow_id,
         node_id=node_id,
-        received_file=input_schema.ReceivedTable.model_validate(input_schema.ReceivedCsvTable(
+        received_file=input_schema.ReceivedTable(
             name=filename,
             path=str(csv_path),
             file_type="csv",
-            delimiter=",",
-            has_headers=True,
-            encoding="utf-8"
-        ).__dict__)
+            table_settings=input_schema.InputCsvTable(
+                delimiter=",",
+                has_headers=True,
+                encoding="utf-8"
+            )
+        )
     )
+
     flow.add_read(read_node)
     return flow
 
@@ -583,7 +584,6 @@ def test_join_operation_left(join_input_dataset):
     """Test join operation between two datasets"""
     flow = create_basic_flow()
     left_data, right_data = join_input_dataset
-
     flow.add_manual_input(left_data)
     flow.add_manual_input(right_data)
 
@@ -607,7 +607,6 @@ def test_join_operation_left(join_input_dataset):
 
     # Convert to Polars code
     code = export_flow_to_polars(flow)
-
     # Verify join code
     verify_code_contains(code,
                          "df_1.join(",
@@ -1510,7 +1509,6 @@ def test_custom_polars_no_inputs():
 def test_complex_workflow(tmp_path):
     """Test a complex workflow with multiple operations"""
     flow = create_basic_flow()
-
     flow = create_csv_file_node(flow, tmp_path,
                                 df=pl.DataFrame({
                                     "date": ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"],
@@ -1569,9 +1567,7 @@ def test_complex_workflow(tmp_path):
             name="output.parquet",
             directory=str(tmp_path),
             file_type="parquet",
-            output_csv_table=input_schema.OutputCsvTable(),
-            output_parquet_table=input_schema.OutputParquetTable(),
-            output_excel_table=input_schema.OutputExcelTable()
+            table_settings=input_schema.OutputParquetTable()
         )
     )
     flow.add_output(output_node)
@@ -1636,9 +1632,7 @@ def test_complex_workflow_unordered(tmp_path):
             name="output.parquet",
             directory=str(tmp_path),
             file_type="parquet",
-            output_csv_table=input_schema.OutputCsvTable(),
-            output_parquet_table=input_schema.OutputParquetTable(),
-            output_excel_table=input_schema.OutputExcelTable()
+            table_settings=input_schema.OutputParquetTable()
         )
     )
     flow.add_output(output_node)
@@ -2174,9 +2168,7 @@ def test_multiple_output_formats(tmp_path):
             name="output.csv",
             directory=str(tmp_path),
             file_type="csv",
-            output_csv_table=input_schema.OutputCsvTable(delimiter="|"),
-            output_parquet_table=input_schema.OutputParquetTable(),
-            output_excel_table=input_schema.OutputExcelTable()
+            table_settings=input_schema.OutputCsvTable(delimiter="|")
         )
     )
     flow.add_output(csv_output)
@@ -2196,9 +2188,7 @@ def test_multiple_output_formats(tmp_path):
             name="output.xlsx",
             directory=str(tmp_path),
             file_type="excel",
-            output_csv_table=input_schema.OutputCsvTable(),
-            output_parquet_table=input_schema.OutputParquetTable(),
-            output_excel_table=input_schema.OutputExcelTable(sheet_name="Results")
+            table_settings=input_schema.OutputExcelTable(sheet_name="Results")
         )
     )
     flow.add_output(excel_output)
@@ -2212,9 +2202,7 @@ def test_multiple_output_formats(tmp_path):
             name="output.parquet",
             directory=str(tmp_path),
             file_type="parquet",
-            output_csv_table=input_schema.OutputCsvTable(),
-            output_parquet_table=input_schema.OutputParquetTable(),
-            output_excel_table=input_schema.OutputExcelTable()
+            table_settings=input_schema.OutputParquetTable()
         )
     )
     flow.add_output(parquet_output)
@@ -2296,12 +2284,14 @@ def test_csv_read_utf_8():
     read_node = input_schema.NodeRead(
         flow_id=1,
         node_id=1,
-        received_file=input_schema.ReceivedTable.model_validate(input_schema.ReceivedCsvTable(
+        received_file=input_schema.ReceivedTable(
             name="fake_data.csv",
             path=file_path,
-            file_type="csv"
-        ).__dict__)
+            file_type="csv",
+            table_settings=input_schema.InputCsvTable()
+        )
     )
+
     flow.add_read(read_node)
     flow.get_node(1).get_resulting_data()
     # Convert to Polars code
@@ -2316,16 +2306,20 @@ def test_parquet_read():
     flow = create_basic_flow()
     flowfile_core_path = find_parent_directory('Flowfile')
     file_path = str(
-        (Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'))
+        (
+                Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.parquet'
+         ).absolute()
+    )
     # Add parquet read node
     read_node = input_schema.NodeRead(
         flow_id=1,
         node_id=1,
-        received_file=input_schema.ReceivedTable.model_validate(input_schema.ReceivedParquetTable(
+        received_file=input_schema.ReceivedTable(
             name="fake_data.parquet",
             path=file_path,
-            file_type="parquet"
-        ).__dict__)
+            file_type="parquet",
+            table_settings=input_schema.InputParquetTable()
+        )
     )
 
     flow.add_read(read_node)
@@ -2344,17 +2338,16 @@ def test_excel_read():
 
     file_path = str(
         (Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx'))
-
     # Add Excel read node
     read_node = input_schema.NodeRead(
         flow_id=1,
         node_id=1,
-        received_file=input_schema.ReceivedTable.model_validate(input_schema.ReceivedExcelTable(
+        received_file=input_schema.ReceivedTable(
             name="data.xlsx",
             path=file_path,
-            file_type="xlsx",
-            sheet_name="Sheet1"
-        ).__dict__)
+            file_type="excel",
+            table_settings=input_schema.InputExcelTable(sheet_name="Sheet1")
+        )
     )
     flow.add_read(read_node)
 
@@ -2677,3 +2670,7 @@ def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data):
     result = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

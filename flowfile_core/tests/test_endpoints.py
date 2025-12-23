@@ -1,6 +1,6 @@
 import os
 import threading
-import pickle
+import datetime
 import pytest
 from pathlib import Path
 
@@ -25,9 +25,10 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                get_all_database_connections_interface,
                                                                                get_local_cloud_connection,)
 from shared.storage_config import storage
-from tests.flowfile.test_flowfile import find_parent_directory
+
 
 try:
+    from tests.flowfile.test_flowfile import find_parent_directory
     from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
     from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
                              ensure_no_cloud_storage_connection_is_available,
@@ -37,7 +38,8 @@ except ModuleNotFoundError:
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
-    # noinspection PyUnresolvedReferences
+    sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile/test_flowfile.py")))
+    from tests.flowfile.test_flowfile import find_parent_directory
     from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
     from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
                              ensure_no_cloud_storage_connection_is_available,
@@ -76,13 +78,13 @@ client = get_test_client()
 
 def get_flow_settings() -> Dict:
     return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
-            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/test_flow.flowfile',
+            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/tmp/test_flow.yaml',
             'execution_mode': 'Development', 'is_running': False, 'is_canceled': False}
 
 
 def get_join_data(flow_id: int, how: str = 'inner'):
     return {'flow_id': flow_id, 'node_id': 3, 'cache_results': False, 'pos_x': 788.8727272727273, 'pos_y': 186.4,
-            'is_setup': True, 'description': '', 'depending_on_ids': [-1], 'auto_generate_selection': True,
+            'is_setup': True, 'description': '', 'depending_on_ids': [], 'auto_generate_selection': True,
             'verify_integrity': True, 'join_input': {'join_mapping': [{'left_col': 'name', 'right_col': 'name'}],
                                                      'left_select': {'renames': [
                                                          {'old_name': 'name', 'new_name': 'name', 'data_type': None,
@@ -120,7 +122,7 @@ def ensure_no_flow_registered():
 
 
 def ensure_clean_flow() -> FlowId:
-    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_flow_path.flowfile')
+    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/tmp/sample_flow_path.yaml')
     remove_flow(flow_path)  # Remove the flow if it exists
     sleep(.1)
     r = client.post("editor/create_flow", params={'flow_path': flow_path})
@@ -187,7 +189,7 @@ def create_flow_with_manual_input() -> FlowId:
 
 def test_register_flow():
     ensure_no_flow_registered()
-    flow_path: str = 'flowfile_core/tests/support_files/flows/test_flow.flowfile'
+    flow_path: str = 'flowfile_core/tests/support_files/flows/tmp/test_flow.yaml'
     response = client.post("editor/create_flow", params={'flow_path': flow_path})
     assert response.status_code == 200, 'Flow not registered'
     flow = flow_file_handler.get_flow(response.json())
@@ -312,8 +314,7 @@ def test_run_error_flow_with_join():
 def test_import_flow():
     if flow_file_handler.get_flow(1):
         flow_file_handler.delete_flow(1)
-
-    flow_path = 'flowfile_core/tests/support_files/flows/test_flow.flowfile'
+    flow_path = str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/flows/tmp/test_flow.yaml')
     response = client.get("/import_flow", params={'flow_path': flow_path})
     assert response.status_code == 200, 'Flow not imported'
     flow_id = response.json()
@@ -350,18 +351,35 @@ def test_run_invalid_flow():
 
 def test_save_flow():
     flow_id = create_flow_with_manual_input_and_select()
-    file_path = 'flowfile_core/tests/support_files/flows/sample_save.flowfile'
+    imported_flow = flow_file_handler.get_flow(flow_id)
+    assert imported_flow.__name__ != "sample_save"
+    assert imported_flow.flow_settings.name != "sample_save"
+    file_path = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_save.yaml')
     remove_flow(file_path)
+    start_time = datetime.datetime.now().timestamp()
     # def save_flow(flow_id: int, flow_path: str = None)
     response = client.get("/save_flow", params={'flow_id': flow_id, 'flow_path': file_path})
     assert response.status_code == 200, 'Flow not saved'
     assert os.path.exists(file_path), 'Flow not saved, file not found'
-    with open(file_path, 'rb') as f:
-        pickle_obj = pickle.load(f)
-        assert pickle_obj.flow_id == flow_id, 'Flow not stored correctly'
     imported_flow_id = flow_file_handler.import_flow(file_path)
     assert imported_flow_id == flow_id, 'Flow not stored or imported correctly correctly'
+    assert imported_flow.__name__ == "sample_save"
+    assert imported_flow.flow_settings.name == "sample_save"
+    assert imported_flow.flow_settings.modified_on > start_time
     remove_flow(file_path)
+
+
+def test_save_imported_flow():
+    path = str(storage.flows_directory / "random_value.yaml")
+    response = client.post("/editor/create_flow/", params={'flow_path': path})
+    assert response.status_code == 200, 'Flow not created'
+    created_flow = flow_file_handler.get_flow(response.json())
+    assert created_flow.__name__ == "random_value"
+    new_path = str(storage.flows_directory / "readable_flow.yaml")
+
+    response = client.get("/save_flow", params={'flow_id': created_flow.flow_id, 'flow_path': new_path})
+    assert response.status_code == 200, 'Flow not saved'
+    assert created_flow.__name__ == "readable_flow"
 
 
 def test_delete_node():
@@ -980,7 +998,7 @@ def test_editor_create_flow_only_name():
     response = client.post("/editor/create_flow/", params={'name': 'test_flow_1'})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert ".flowfile/temp/flows/test_flow_1.flowfile" in flow_info.path
+    assert ".flowfile/temp/flows/test_flow_1.yaml" in flow_info.path
     assert Path(flow_info.path).exists()
 
 
@@ -993,17 +1011,8 @@ def test_editor_create_flow_no_params():
 
 
 def test_editor_create_flow_with_only_path():
-    path = str(storage.flows_directory / "test_flow_1.flowfile")
+    path = str(storage.flows_directory / "test_flow_1.yaml")
     response = client.post("/editor/create_flow/", params={'flow_path': path})
-    assert response.status_code == 200, 'Flow not created'
-    flow_info = flow_file_handler.get_flow_info(response.json())
-    assert path == flow_info.path
-    assert Path(flow_info.path).exists()
-
-
-def test_editor_create_flow_with_both_name_and_full_path():
-    path = str(storage.flows_directory / "test_flow_1.flowfile")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
     assert path == flow_info.path
@@ -1012,23 +1021,23 @@ def test_editor_create_flow_with_both_name_and_full_path():
 
 def test_editor_create_flow_with_both_name_and_path():
     path = str(storage.flows_directory)
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
-    assert storage.flows_directory / "test_flow_1.flowfile" == Path(flow_info.path)
+    assert storage.flows_directory / "test_flow_1.yaml" == Path(flow_info.path)
     assert Path(flow_info.path).exists()
 
 
 def test_editor_create_flow_with_both_name_and_non_existing_path():
     path = str(storage.flows_directory/"WRONG_SUBDIR")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 422, "Flow should not be created"
     assert response.json()["detail"] == "The directory does not exist"
 
 
 def test_editor_create_flow_with_both_name_no_overlap():
-    path = str(storage.flows_directory/"test_flow_2.flowfile")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.flowfile"})
+    path = str(storage.flows_directory/"test_flow_2.yaml")
+    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 422, "Flow should not be created"
     assert response.json()["detail"] == 'The name must be part of the flow path when a full path is provided'
 
@@ -1048,3 +1057,16 @@ def test_fetch_node_data():
     assert response.status_code == 200, 'Node data not retrieved'
     assert len(response.json()["data"]) > 0 , "Data should not be empty"
     assert response.json()["has_run_with_current_setup"], "Node should have run"
+
+
+def test_flow_run_status():
+    flow_id = create_flow_with_manual_input_and_select()
+    response = client.get("/flow/run_status", params={'flow_id': flow_id})
+    assert response.status_code == 200, 'Flow run status not retrieved'
+    assert response.json()['start_time'] is None, 'Flow should not be running'
+    flow = flow_file_handler.get_flow(flow_id)
+    flow.flow_settings.execution_mode = "Development"
+    flow.run_graph()
+    response = client.get("/flow/run_status", params={'flow_id': flow_id})
+    assert response.status_code == 200, 'Flow run status not retrieved'
+    assert response.json()['end_time'] is not None, 'Flow should have ended'

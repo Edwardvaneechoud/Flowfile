@@ -4,9 +4,14 @@ from flowfile_core.schemas import transform_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
 
-def verify_join_select_integrity(join_input: transform_schema.JoinInput | transform_schema.CrossJoinInput,
-                                 left_columns: List[str],
-                                 right_columns: List[str]):
+def verify_join_select_integrity(
+        join_input:
+        transform_schema.JoinInput |
+        transform_schema.CrossJoinInput |
+        transform_schema.FuzzyMatchInput |
+        transform_schema.JoinInputsManager,
+        left_columns: List[str],
+        right_columns: List[str]):
     """
     Verify column availability for join selection and update availability flags.
 
@@ -27,7 +32,7 @@ def verify_join_select_integrity(join_input: transform_schema.JoinInput | transf
             c.is_available = True
 
 
-def verify_join_map_integrity(join_input: transform_schema.JoinInput,
+def verify_join_map_integrity(join_input: transform_schema.JoinInput | transform_schema.FuzzyMatchInput | transform_schema.JoinInputManager,
                               left_columns: List[FlowfileColumn],
                               right_columns: List[FlowfileColumn]
                               ):

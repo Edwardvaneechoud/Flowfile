@@ -370,6 +370,7 @@ class FlowNode:
                                       self.node_inputs.main_inputs] if self.node_inputs.main_inputs is not None else None
         node_information.setting_input = self.setting_input
         node_information.outputs = [n.node_id for n in self.leads_to_nodes]
+        node_information.description = self.setting_input.description if hasattr(self.setting_input, 'description') else ''
         node_information.is_setup = self.is_setup
         node_information.x_position = self.setting_input.pos_x
         node_information.y_position = self.setting_input.pos_y
@@ -498,6 +499,7 @@ class FlowNode:
         Returns:
             A list of FlowfileColumn objects representing the predicted schema.
         """
+
         if self.node_schema.predicted_schema and not force:
             return self.node_schema.predicted_schema
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
@@ -514,6 +516,7 @@ class FlowNode:
         if predicted_data is not None and predicted_data.schema is not None:
             self.print('Calculating the schema based on the predicted resulting data')
             self.node_schema.predicted_schema = self._predicted_data_getter().schema
+
         return self.node_schema.predicted_schema
 
     @property

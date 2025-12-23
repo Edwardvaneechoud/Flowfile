@@ -13,9 +13,6 @@ from multiprocessing import Queue
 
 import polars as pl
 import pytest
-from pydantic import SecretStr
-
-from flowfile_worker import mp_context
 from flowfile_worker.external_sources.s3_source.models import (CloudStorageWriteSettings,
                                                                FullCloudStorageConnection,
                                                                WriteSettings,
@@ -29,7 +26,7 @@ client = TestClient(main.app)
 
 try:
     # noinspection PyUnresolvedReferences
-    from tests.utils import is_docker_available, cloud_storage_connection_settings
+    from tests.utils import is_docker_available, cloud_storage_connection_settings, find_parent_directory
     from test_utils.s3.fixtures import get_minio_client
 except ModuleNotFoundError:
     import os
@@ -37,7 +34,7 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
-    from utils import is_docker_available, cloud_storage_connection_settings
+    from utils import is_docker_available, cloud_storage_connection_settings, find_parent_directory
     from test_utils.s3.fixtures import get_minio_client
 
 @pytest.fixture
@@ -174,11 +171,22 @@ def test_polars_transformation():
 
 
 def test_create_func():
-    received_table = '{"id": null, "name": "cross-verified-database.csv", "path": "flowfile_core/tests/inputFile/Mall_Customers.csv", "directory": null, "analysis_file_available": false, "status": null, "file_type": "csv", "fields": [], "reference": "", "starting_from_line": 0, "delimiter": ",", "has_headers": true, "encoding": "ISO-8859-1", "parquet_ref": null, "row_delimiter": "", "quote_char": "", "infer_schema_length": 260000, "truncate_ragged_lines": false, "ignore_errors": false, "sheet_name": null, "start_row": 0, "start_column": 0, "end_row": 0, "end_column": 0, "type_inference": false}'
     file_type = 'csv'
+    from flowfile_core.schemas import input_schema
+    path = str(find_parent_directory("Flowfile") / "flowfile_core/tests/inputFile/Mall_Customers.csv")
+    received_table = input_schema.ReceivedTable(name="Mall_Customers.csv",
+                                                path=path,
+                                                file_type="csv",
+                                                table_settings=input_schema.InputCsvTable(
+                                                    delimiter=",",
+                                                    has_headers=True,
+                                                    encoding="ISO-8859-1",
+                                                    infer_schema_length=260000,
+                                                    truncate_ragged_lines=False,
+                                                    ignore_errors=False
+                                                )).model_dump()
 
-    v = client.post(f'/create_table/{file_type}', data=received_table)
-
+    v = client.post(f'/create_table/{file_type}', json=received_table)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())

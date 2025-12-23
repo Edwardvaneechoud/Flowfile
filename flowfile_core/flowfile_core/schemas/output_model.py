@@ -25,7 +25,7 @@ class RunInformation(BaseModel):
     nodes_completed: int = 0
     number_of_nodes: int = 0
     node_step_result: List[NodeResult]
-    run_type: Literal["fetch_one", "full_run"]
+    run_type: Literal["fetch_one", "full_run", "init"]
 
 
 class BaseItem(BaseModel):

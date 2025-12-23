@@ -1,6 +1,8 @@
 # flowframe/__init__.py
 """A Polars-like API for building ETL graphs."""
 
+from importlib.metadata import version
+
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
 from pl_fuzzy_frame_match.models import FuzzyMapping  # noqa: F401
@@ -64,4 +66,4 @@ from polars.datatypes import (  # noqa: F401
     DataType, DataTypeClass, Field
 )
 
-__version__ = "0.1.0"
+__version__ = version("Flowfile")
