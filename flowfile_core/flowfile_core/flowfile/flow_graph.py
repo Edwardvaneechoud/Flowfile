@@ -1,5 +1,4 @@
 import datetime
-import pickle
 
 import os
 import yaml
@@ -56,6 +55,12 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
                                                                                get_local_cloud_connection)
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("Flowfile")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 
 def represent_list_json(dumper, data):
@@ -63,6 +68,7 @@ def represent_list_json(dumper, data):
     if len(data) <= 10 and all(isinstance(item, (int, str, float, bool, type(None))) for item in data):
         return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
     return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=False)
+
 
 yaml.add_representer(list, represent_list_json)
 
@@ -1850,9 +1856,8 @@ class FlowGraph:
             auto_save=self.flow_settings.auto_save,
             show_detailed_progress=self.flow_settings.show_detailed_progress,
         )
-
         return schemas.FlowfileData(
-            flowfile_version='1.0',
+            flowfile_version=__version__,
             flowfile_id=self.flow_id,
             flowfile_name=self.__name__,
             flowfile_settings=settings,

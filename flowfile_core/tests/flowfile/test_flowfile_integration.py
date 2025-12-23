@@ -23,7 +23,7 @@ def find_parent_directory(target_dir_name,):
 
 
 @pytest.fixture
-def complex_elaborate_flow() -> FlowGraph:
+def complex_elaborate_flow(tmp_path) -> FlowGraph:
     """
     Creates a super complex elaborate flow using all available node types.
 
@@ -436,7 +436,7 @@ output_df = input_df.with_columns([
         node_id=71,
         output_settings=input_schema.OutputSettings(
             name='customer_sales_analysis.csv',
-            directory='.',
+            directory=str(tmp_path),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -454,7 +454,7 @@ output_df = input_df.with_columns([
         node_id=72,
         output_settings=input_schema.OutputSettings(
             name='fuzzy_matched_customers.parquet',
-            directory='.',
+            directory=str(tmp_path),
             file_type='parquet',
             write_mode='overwrite',
             table_settings=input_schema.OutputParquetTable()
@@ -468,7 +468,7 @@ output_df = input_df.with_columns([
         node_id=73,
         output_settings=input_schema.OutputSettings(
             name='network_components.csv',
-            directory='.',
+            directory=str(tmp_path),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -486,7 +486,7 @@ output_df = input_df.with_columns([
         node_id=74,
         output_settings=input_schema.OutputSettings(
             name='combined_aggregations.csv',
-            directory='.',
+            directory=str(tmp_path),
             file_type='csv',
             write_mode='overwrite',
             table_settings=input_schema.OutputCsvTable(
@@ -621,5 +621,4 @@ def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph):
 
 
 def test_store_flow(complex_elaborate_flow: FlowGraph):
-    # breakpoint()
     complex_elaborate_flow.get_flowfile_data()

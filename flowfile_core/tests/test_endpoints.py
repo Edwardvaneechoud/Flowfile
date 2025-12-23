@@ -122,7 +122,7 @@ def ensure_no_flow_registered():
 
 
 def ensure_clean_flow() -> FlowId:
-    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_flow_path.yaml')
+    flow_path: str = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/tmp/sample_flow_path.yaml')
     remove_flow(flow_path)  # Remove the flow if it exists
     sleep(.1)
     r = client.post("editor/create_flow", params={'flow_path': flow_path})
@@ -379,7 +379,7 @@ def test_save_imported_flow():
 
     response = client.get("/save_flow", params={'flow_id': created_flow.flow_id, 'flow_path': new_path})
     assert response.status_code == 200, 'Flow not saved'
-    assert created_flow.__name__ == "random_value"
+    assert created_flow.__name__ == "readable_flow"
 
 
 def test_delete_node():

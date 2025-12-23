@@ -1,3 +1,5 @@
+from importlib.metadata import version
+
 
 import os
 from flowfile_core.utils.validate_setup import validate_setup
@@ -13,4 +15,5 @@ class ServerRun:
     exit: bool = False
 
 
+__version__ = version("Flowfile")
 flow_file_handler = FlowfileHandler()
