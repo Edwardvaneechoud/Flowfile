@@ -78,7 +78,7 @@ client = get_test_client()
 
 def get_flow_settings() -> Dict:
     return {'flow_id': 1, 'description': None, 'save_location': None, 'auto_save': False, 'name': '',
-            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/test_flow.yaml',
+            'modified_on': None, 'path': 'flowfile_core/tests/support_files/flows/tmp/test_flow.yaml',
             'execution_mode': 'Development', 'is_running': False, 'is_canceled': False}
 
 
@@ -189,7 +189,7 @@ def create_flow_with_manual_input() -> FlowId:
 
 def test_register_flow():
     ensure_no_flow_registered()
-    flow_path: str = 'flowfile_core/tests/support_files/flows/test_flow.yaml'
+    flow_path: str = 'flowfile_core/tests/support_files/flows/tmp/test_flow.yaml'
     response = client.post("editor/create_flow", params={'flow_path': flow_path})
     assert response.status_code == 200, 'Flow not registered'
     flow = flow_file_handler.get_flow(response.json())
@@ -314,7 +314,7 @@ def test_run_error_flow_with_join():
 def test_import_flow():
     if flow_file_handler.get_flow(1):
         flow_file_handler.delete_flow(1)
-    flow_path = str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/flows/test_flow.flowfile')
+    flow_path = str(find_parent_directory("Flowfile")/'flowfile_core/tests/support_files/flows/tmp/test_flow.yaml')
     response = client.get("/import_flow", params={'flow_path': flow_path})
     assert response.status_code == 200, 'Flow not imported'
     flow_id = response.json()
