@@ -191,14 +191,13 @@ const generateDefaultFileName = (): string => {
   const minutes = String(now.getMinutes()).padStart(2, "0");
   const seconds = String(now.getSeconds()).padStart(2, "0");
 
-  return `${year}${month}${day}_${hours}${minutes}${seconds}_flow.flowfile`;
+  return `${year}${month}${day}_${hours}${minutes}${seconds}_flow`;
 };
 
 // Get preview filename for the modal
 const getPreviewFileName = (): string => {
   if (quickCreateName.value.trim()) {
-    const name = quickCreateName.value.trim();
-    return name.endsWith(".flowfile") ? name : `${name}.flowfile`;
+    return quickCreateName.value.trim();
   }
   return generateDefaultFileName();
 };
