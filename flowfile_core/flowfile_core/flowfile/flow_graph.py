@@ -1928,15 +1928,16 @@ class FlowGraph:
         self.flow_settings.modified_on = datetime.datetime.now().timestamp()
         try:
             if suffix == '.flowfile':
-                raise DeprecationWarning(f"The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n{str(path)}")
+                raise DeprecationWarning(
+                    f"The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n"
+                    "Or stay on v0.4.1 if you still need .flowfile support.\n\n"
+                )
             elif suffix in ('.yaml', '.yml'):
                 flowfile_data = self.get_flowfile_data()
                 data = flowfile_data.model_dump(mode='json')
                 with open(flow_path, 'w', encoding='utf-8') as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
             elif suffix == '.json':
-                # JSON format
-
                 flowfile_data = self.get_flowfile_data()
                 data = flowfile_data.model_dump(mode='json')
                 with open(flow_path, 'w', encoding='utf-8') as f:

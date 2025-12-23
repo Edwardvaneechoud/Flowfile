@@ -261,25 +261,23 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     flow_path = _validate_flow_path(flow_path)
     suffix = flow_path.suffix.lower()
     if suffix == '.flowfile':
-        # Legacy pickle format
-        flow_storage_obj = load_flowfile_pickle(str(flow_path))
-        ensure_compatibility(flow_storage_obj, str(flow_path))
-        return flow_storage_obj
+        try:
+            flow_storage_obj = load_flowfile_pickle(str(flow_path))
+            ensure_compatibility(flow_storage_obj, str(flow_path))
+            return flow_storage_obj
+        except Exception as e:
+            raise ValueError(
+                f"Failed to open legacy .flowfile: {e}\n\n"
+                f"Try migrating: migrate_flowfile('{flow_path}')"
+            ) from e
 
     elif suffix in ('.yaml', '.yml'):
         return _load_flowfile_yaml(flow_path)
 
     elif suffix == '.json':
         return _load_flowfile_json(flow_path)
-
     else:
-        try:
-            return _load_flowfile_yaml(flow_path)
-        except Exception:
-            # Fall back to pickle
-            flow_storage_obj = load_flowfile_pickle(str(flow_path))
-            ensure_compatibility(flow_storage_obj, str(flow_path))
-            return flow_storage_obj
+        raise ValueError(f"Unsupported file format: {suffix}")
 
 
 def open_flow(flow_path: Path) -> FlowGraph:
