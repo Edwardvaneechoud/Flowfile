@@ -163,71 +163,71 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
 
 def transform_to_new_schema(data: Dict) -> Dict:
     """
-    Transform the legacy schema structure to the new YAML-friendly format.
+    Transform the legacy schema structure to the new FlowfileData format.
 
     This handles:
     - ReceivedTable: flat fields -> nested table_settings
     - OutputSettings: separate table fields -> unified table_settings
-    - Adding version info
+    - Field name changes (flow_id -> flowfile_id, etc.)
 
     Args:
         data: Dict representation of legacy FlowInformation
 
     Returns:
-        Transformed dict ready for YAML serialization
+        Transformed dict ready for YAML serialization (FlowfileData format)
     """
+    node_starts = set(data.get('node_starts', []))
+
     result = {
-        '_version': '2.0',  # New format version
-        '_migrated_from': 'pickle',
-        'flow_id': data.get('flow_id', 1),
-        'flow_name': data.get('flow_name', ''),
-        'flow_settings': _transform_flow_settings(data.get('flow_settings', {})),
-        'nodes': _transform_nodes(data.get('data', {})),
-        'node_starts': data.get('node_starts', []),
-        'connections': data.get('node_connections', []),
+        'flowfile_version': '2.0',
+        'flowfile_id': data.get('flow_id', 1),
+        'flowfile_name': data.get('flow_name', ''),
+        'flowfile_settings': _transform_flow_settings(data.get('flow_settings', {})),
+        'nodes': _transform_nodes(data.get('data', {}), node_starts),
     }
 
     return result
 
 
 def _transform_flow_settings(settings: Dict) -> Dict:
-    """Transform flow settings to new format."""
+    """Transform flow settings to FlowfileSettings format."""
     if not settings:
-        return {}
+        return {
+            'execution_mode': 'Development',
+            'execution_location': 'local',
+            'auto_save': False,
+            'show_detailed_progress': True,
+        }
 
     return {
-        'flow_id': settings.get('flow_id', 1),
-        'name': settings.get('name', ''),
         'description': settings.get('description'),
-        'path': settings.get('path', ''),
         'execution_mode': settings.get('execution_mode', 'Development'),
-        'save_location': settings.get('save_location', 'saved_flows'),
+        'execution_location': settings.get('execution_location', 'local'),
         'auto_save': settings.get('auto_save', False),
+        'show_detailed_progress': settings.get('show_detailed_progress', True),
     }
 
 
-def _transform_nodes(nodes_data: Dict) -> List[Dict]:
-    """Transform nodes dict to list format with transformed settings."""
+def _transform_nodes(nodes_data: Dict, node_starts: set) -> List[Dict]:
+    """Transform nodes dict to FlowfileNode list format."""
     nodes = []
 
     for node_id, node_info in nodes_data.items():
         if not isinstance(node_info, dict):
             node_info = convert_to_dict(node_info)
 
+        actual_node_id = node_info.get('id', node_id)
+
         node = {
-            'id': node_info.get('id', node_id),
+            'id': actual_node_id,
             'type': node_info.get('type', ''),
-            'position': {
-                'x': node_info.get('x_position', 0),
-                'y': node_info.get('y_position', 0),
-            },
-            'is_setup': node_info.get('is_setup', False),
+            'is_start_node': actual_node_id in node_starts,
             'description': node_info.get('description', ''),
-            'inputs': {
-                'left': node_info.get('left_input_id'),
-                'right': node_info.get('right_input_id'),
-                'main': node_info.get('input_ids', []),
-            },
+            'x_position': int(node_info.get('x_position', 0) or 0),
+            'y_position': int(node_info.get('y_position', 0) or 0),
+            'left_input_id': node_info.get('left_input_id'),
+            'right_input_id': node_info.get('right_input_id'),
+            'input_ids': node_info.get('input_ids', []),
             'outputs': node_info.get('outputs', []),
         }
 
@@ -236,7 +236,7 @@ def _transform_nodes(nodes_data: Dict) -> List[Dict]:
         if setting_input:
             if not isinstance(setting_input, dict):
                 setting_input = convert_to_dict(setting_input)
-            node['settings'] = _transform_node_settings(node['type'], setting_input)
+            node['setting_input'] = _transform_node_settings(node['type'], setting_input)
 
         nodes.append(node)
 
@@ -291,14 +291,25 @@ def _transform_select_settings(settings: Dict) -> Dict:
 
 
 def _transform_join_settings(settings: Dict) -> Dict:
-    """Transform join-related node settings."""
+    """Transform join-related node settings.
+
+    Handles migration of old JoinInput where left_select/right_select could be None.
+    New schema requires these to be JoinInputs with renames list.
+    """
     # Handle join_input transformation
     join_input = settings.get('join_input') or settings.get('cross_join_input')
     if join_input and isinstance(join_input, dict):
-        # Ensure left_select and right_select have proper structure
+        # ADD DEFAULT EMPTY JoinInputs IF MISSING (required in new schema)
         for side in ['left_select', 'right_select']:
+            if join_input.get(side) is None:
+                join_input[side] = {'renames': []}
+
             select = join_input.get(side)
             if select and isinstance(select, dict):
+                # Ensure renames key exists
+                if 'renames' not in select:
+                    select['renames'] = []
+
                 renames = select.get('renames', [])
                 if isinstance(renames, list):
                     for i, item in enumerate(renames):
