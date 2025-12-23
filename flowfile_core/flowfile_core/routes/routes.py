@@ -598,7 +598,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
-    """Imports a flow from a saved `.flowfile` and registers it as a new session."""
+    """Imports a flow from a saved `.yaml` and registers it as a new session."""
     flow_path = Path(flow_path)
     if not flow_path.exists():
         raise HTTPException(404, 'File not found')
@@ -607,7 +607,7 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
-    """Saves the current state of a flow to a `.flowfile`."""
+    """Saves the current state of a flow to a `.yaml`."""
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 

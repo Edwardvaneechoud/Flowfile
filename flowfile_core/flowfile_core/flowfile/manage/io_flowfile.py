@@ -5,7 +5,6 @@ from flowfile_core.flowfile.flow_graph import FlowGraph
 from pathlib import Path
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
-from flowfile_core.schemas.schemas import NODE_TYPE_TO_SETTINGS_CLASS
 import json
 from shared.storage_config import storage
 
@@ -154,15 +153,19 @@ def _load_flowfile_json(flow_path: Path) -> schemas.FlowInformation:
 
 
 def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> schemas.FlowInformation:
+    from flowfile_core.schemas.schemas import get_settings_class_for_node_type
+
     nodes_dict = {}
     node_starts = []
     for node in flowfile_data.nodes:
-        # Validate and populate setting_input with full context
         setting_input = None
         if node.setting_input is not None:
-            model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node.type)
+            model_class = get_settings_class_for_node_type(node.type)
+
             if model_class is None:
                 raise ValueError(f"Unknown node type: {node.type}")
+
+            is_user_defined = model_class == input_schema.UserDefinedNode
 
             # Inject fields that were excluded during serialization
             setting_data = node.setting_input if isinstance(node.setting_input, dict) else node.setting_input.model_dump()
@@ -173,24 +176,32 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
             setting_data['description'] = node.description or ''
             setting_data['is_setup'] = True
 
-            # Populate depending_on_id(s)
-            if 'depending_on_id' in model_class.model_fields:
-                setting_data['depending_on_id'] = node.input_ids[0] if node.input_ids else -1
-            if 'depending_on_ids' in model_class.model_fields:
+            if is_user_defined:
+                setting_data['is_user_defined'] = True
                 depending_ids = list(node.input_ids or [])
                 if node.left_input_id:
                     depending_ids.append(node.left_input_id)
                 if node.right_input_id:
                     depending_ids.append(node.right_input_id)
                 setting_data['depending_on_ids'] = depending_ids
+            else:
+                if 'depending_on_id' in model_class.model_fields:
+                    setting_data['depending_on_id'] = node.input_ids[0] if node.input_ids else -1
+                if 'depending_on_ids' in model_class.model_fields:
+                    depending_ids = list(node.input_ids or [])
+                    if node.left_input_id:
+                        depending_ids.append(node.left_input_id)
+                    if node.right_input_id:
+                        depending_ids.append(node.right_input_id)
+                    setting_data['depending_on_ids'] = depending_ids
 
-            if node.type == 'output' and 'output_settings' in setting_data:
-                output_settings = setting_data['output_settings']
-                file_type = output_settings.get('file_type', None)
-                if file_type is None:
-                    raise ValueError("Output node's output_settings must include 'file_type'")
-                if 'table_settings' not in output_settings:
-                    output_settings['table_settings'] = {"file_type": file_type}
+                if node.type == 'output' and 'output_settings' in setting_data:
+                    output_settings = setting_data['output_settings']
+                    file_type = output_settings.get('file_type', None)
+                    if file_type is None:
+                        raise ValueError("Output node's output_settings must include 'file_type'")
+                    if 'table_settings' not in output_settings:
+                        output_settings['table_settings'] = {"file_type": file_type}
 
             setting_input = model_class.model_validate(setting_data)
 
@@ -231,7 +242,6 @@ def _flowfile_data_to_flow_information(flowfile_data: schemas.FlowfileData) -> s
         node_starts=node_starts,
         node_connections=connections,
     )
-
 
 def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     """

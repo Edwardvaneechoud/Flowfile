@@ -1891,6 +1891,19 @@ class FlowGraph:
         for node in self.nodes:
             node.remove_cache()
 
+    def _handle_flow_renaming(self, new_name: str, new_path: Path):
+        """
+        Handle the rename of a flow when it is being saved.
+        """
+        if self.flow_settings and self.flow_settings.path and Path(self.flow_settings.path).absolute() != new_path.absolute():
+            self.__name__ = new_name
+            self.flow_settings.save_location = str(new_path.absolute())
+            self.flow_settings.name = new_name
+        if self.flow_settings and not self.flow_settings.save_location:
+            self.flow_settings.save_location = str(new_path.absolute())
+            self.__name__ = new_name
+            self.flow_settings.name = new_name
+
     def save_flow(self, flow_path: str):
         """Saves the current state of the flow graph to a file.
 
@@ -1905,16 +1918,14 @@ class FlowGraph:
         path = Path(flow_path)
         os.makedirs(path.parent, exist_ok=True)
         suffix = path.suffix.lower()
-
+        new_flow_name = path.name.replace(suffix, "")
+        self._handle_flow_renaming(new_flow_name, path)
+        self.flow_settings.modified_on = datetime.datetime.now().timestamp()
         try:
             if suffix == '.flowfile':
                 raise DeprecationWarning(f"The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n{str(path)}")
             elif suffix in ('.yaml', '.yml'):
                 flowfile_data = self.get_flowfile_data()
-                print(flowfile_data)
-                print("------------")
-                print(self.nodes)
-                print("------------")
                 data = flowfile_data.model_dump(mode='json')
                 with open(flow_path, 'w', encoding='utf-8') as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)

@@ -9,6 +9,7 @@ ExecutionLocationsLiteral = Literal['local', 'remote']
 # Type literals for classifying nodes.
 NodeTypeLiteral = Literal['input', 'output', 'process']
 TransformTypeLiteral = Literal['narrow', 'wide', 'other']
+_custom_node_store_cache = None
 
 NODE_TYPE_TO_SETTINGS_CLASS = {
     'manual_input': input_schema.NodeManualInput,
@@ -53,6 +54,25 @@ def get_global_execution_location() -> ExecutionLocationsLiteral:
     if OFFLOAD_TO_WORKER:
         return "remote"
     return "local"
+
+
+def _get_custom_node_store():
+    """Lazy load CUSTOM_NODE_STORE once and cache it."""
+    global _custom_node_store_cache
+    if _custom_node_store_cache is None:
+        from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+        _custom_node_store_cache = CUSTOM_NODE_STORE
+    return _custom_node_store_cache
+
+
+def get_settings_class_for_node_type(node_type: str):
+    """Get the settings class for a node type, supporting both standard and user-defined nodes."""
+    model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
+    if model_class is None:
+        if node_type in _get_custom_node_store():
+            return input_schema.UserDefinedNode
+        return None
+    return model_class
 
 
 def is_valid_execution_location_in_current_global_settings(execution_location: ExecutionLocationsLiteral) -> bool:
@@ -239,19 +259,6 @@ class NodeTemplate(BaseModel):
 class NodeInformation(BaseModel):
     """
     Stores the state and configuration of a specific node instance within a flow.
-
-    Attributes:
-        id (Optional[int]): The unique ID of the node instance.
-        type (Optional[str]): The type of the node (e.g., 'join', 'filter').
-        is_setup (Optional[bool]): Whether the node has been configured.
-        description (Optional[str]): A user-provided description.
-        x_position (Optional[int]): The x-coordinate on the canvas.
-        y_position (Optional[int]): The y-coordinate on the canvas.
-        left_input_id (Optional[int]): The ID of the node connected to the left input.
-        right_input_id (Optional[int]): The ID of the node connected to the right input.
-        input_ids (Optional[List[int]]): A list of IDs for main input nodes.
-        outputs (Optional[List[int]]): A list of IDs for nodes this node outputs to.
-        setting_input (Optional[Any]): The specific settings for this node instance.
     """
     id: Optional[int] = None
     type: Optional[str] = None
@@ -268,18 +275,10 @@ class NodeInformation(BaseModel):
 
     @property
     def data(self) -> Any:
-        """
-        Property to access the node's specific settings.
-        :return: The settings of the node.
-        """
         return self.setting_input
 
     @property
     def main_input_ids(self) -> Optional[List[int]]:
-        """
-        Property to access the main input node IDs.
-        :return: A list of main input node IDs.
-        """
         return self.input_ids
 
     @field_validator('setting_input', mode='before')
@@ -287,18 +286,18 @@ class NodeInformation(BaseModel):
     def validate_setting_input(cls, v, info: ValidationInfo):
         if v is None:
             return None
+        if isinstance(v, BaseModel):
+            return v
 
-        # Get the node type from the same data
         node_type = info.data.get('type')
-        model_class = NODE_TYPE_TO_SETTINGS_CLASS.get(node_type)
+        model_class = get_settings_class_for_node_type(node_type)
+
         if model_class is None:
             raise ValueError(f"Unknown node type: {node_type}")
 
-        # If it's already the right type, return it
         if isinstance(v, model_class):
             return v
 
-        # Otherwise, validate it as the correct type
         return model_class.model_validate(v)
 
 

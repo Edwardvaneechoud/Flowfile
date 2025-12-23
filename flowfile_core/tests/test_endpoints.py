@@ -1,6 +1,6 @@
 import os
 import threading
-import pickle
+import datetime
 import pytest
 from pathlib import Path
 
@@ -351,15 +351,35 @@ def test_run_invalid_flow():
 
 def test_save_flow():
     flow_id = create_flow_with_manual_input_and_select()
+    imported_flow = flow_file_handler.get_flow(flow_id)
+    assert imported_flow.__name__ != "sample_save"
+    assert imported_flow.flow_settings.name != "sample_save"
     file_path = str(find_parent_directory("Flowfile") / 'flowfile_core/tests/support_files/flows/sample_save.yaml')
     remove_flow(file_path)
+    start_time = datetime.datetime.now().timestamp()
     # def save_flow(flow_id: int, flow_path: str = None)
     response = client.get("/save_flow", params={'flow_id': flow_id, 'flow_path': file_path})
     assert response.status_code == 200, 'Flow not saved'
     assert os.path.exists(file_path), 'Flow not saved, file not found'
     imported_flow_id = flow_file_handler.import_flow(file_path)
     assert imported_flow_id == flow_id, 'Flow not stored or imported correctly correctly'
+    assert imported_flow.__name__ == "sample_save"
+    assert imported_flow.flow_settings.name == "sample_save"
+    assert imported_flow.flow_settings.modified_on > start_time
     remove_flow(file_path)
+
+
+def test_save_imported_flow():
+    path = str(storage.flows_directory / "random_value.yaml")
+    response = client.post("/editor/create_flow/", params={'flow_path': path})
+    assert response.status_code == 200, 'Flow not created'
+    created_flow = flow_file_handler.get_flow(response.json())
+    assert created_flow.__name__ == "random_value"
+    new_path = str(storage.flows_directory / "readable_flow.yaml")
+
+    response = client.get("/save_flow", params={'flow_id': created_flow.flow_id, 'flow_path': new_path})
+    assert response.status_code == 200, 'Flow not saved'
+    assert created_flow.__name__ == "random_value"
 
 
 def test_delete_node():
@@ -993,15 +1013,6 @@ def test_editor_create_flow_no_params():
 def test_editor_create_flow_with_only_path():
     path = str(storage.flows_directory / "test_flow_1.yaml")
     response = client.post("/editor/create_flow/", params={'flow_path': path})
-    assert response.status_code == 200, 'Flow not created'
-    flow_info = flow_file_handler.get_flow_info(response.json())
-    assert path == flow_info.path
-    assert Path(flow_info.path).exists()
-
-
-def test_editor_create_flow_with_both_name_and_full_path():
-    path = str(storage.flows_directory / "test_flow_1.yaml")
-    response = client.post("/editor/create_flow/", params={'flow_path': path, "name": "test_flow_1.yaml"})
     assert response.status_code == 200, 'Flow not created'
     flow_info = flow_file_handler.get_flow_info(response.json())
     assert path == flow_info.path

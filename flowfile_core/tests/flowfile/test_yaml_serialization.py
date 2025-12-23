@@ -1099,5 +1099,326 @@ class TestNodePromiseSerialization:
         assert loaded_flow.get_node(5).setting_input.is_setup == False  # output (NodePromise)
 
 
+# =============================================================================
+# USER DEFINED NODE SERIALIZATION TESTS
+# =============================================================================
+
+class TestUserDefinedNodeSerialization:
+    """Test that user-defined/custom nodes serialize and deserialize correctly."""
+
+    @pytest.fixture
+    def UserDefinedNode(self):
+        """Fixture providing a sample custom node class."""
+        from flowfile_core.flowfile.node_designer.custom_node import (
+            CustomNodeBase,
+            NodeSettings
+        )
+        from flowfile_core.flowfile.node_designer.ui_components import (
+            TextInput,
+            Section
+        )
+
+        class FixedColumn(CustomNodeBase):
+            """A custom node that adds a new column with a fixed value."""
+            node_name: str = "Add Fixed Column"
+            node_group: str = "custom"
+            intro: str = "Adds a new column with a fixed value you provide."
+            title: str = "Add Fixed Column"
+            number_of_inputs: int = 1
+            number_of_outputs: int = 1
+
+            settings_schema: NodeSettings = NodeSettings(
+                main_section=Section(
+                    title="Configuration",
+                    standard_input=TextInput(
+                        label="Fixed Value",
+                        placeholder="Enter the value to set..."
+                    ),
+                    column_name=TextInput(
+                        label="New Column Name",
+                        placeholder="Enter the output column name"
+                    )
+                ),
+            )
+
+            def process(self, *inputs):
+                import polars as pl
+                if not inputs:
+                    return pl.DataFrame()
+
+                input_df = inputs[0]
+                fixed_value = self.settings_schema.main_section.standard_input.value
+                new_col_name = self.settings_schema.main_section.column_name.value
+
+                if fixed_value is None or not new_col_name:
+                    return input_df
+
+                return input_df.with_columns(
+                    pl.lit(fixed_value).alias(new_col_name)
+                )
+
+        return FixedColumn
+
+    @pytest.fixture
+    def custom_node_settings(self):
+        """Provides sample settings for the custom node."""
+        return {
+            "main_section": {
+                "standard_input": "hello from yaml",
+                "column_name": "custom_col"
+            }
+        }
+
+    def test_user_defined_node_serializes_to_yaml(
+        self, temp_dir: Path, UserDefinedNode, custom_node_settings
+    ):
+        """Verify user-defined node settings are preserved in YAML."""
+        from flowfile_core.configs.node_store import add_to_custom_node_store
+
+        add_to_custom_node_store(UserDefinedNode)
+
+        flow = create_graph(flow_id=1000)
+        add_manual_input(flow, data=[{'a': 1}, {'a': 2}], node_id=1)
+
+        # Add user-defined node
+        add_node_promise(flow, UserDefinedNode().item, node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        user_defined_node = UserDefinedNode.from_settings(custom_node_settings)
+        node_settings = input_schema.UserDefinedNode(
+            flow_id=flow.flow_id,
+            node_id=2,
+            settings=custom_node_settings,
+            is_user_defined=True
+        )
+        flow.add_user_defined_node(
+            custom_node=user_defined_node,
+            user_defined_node_settings=node_settings
+        )
+
+        # Save to YAML
+        yaml_path = temp_dir / "user_defined_test.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+
+        print(f"\n=== User Defined Node YAML ===\n{content}")
+
+        data = yaml.safe_load(content)
+
+        # Find the user-defined node
+        custom_node = next(n for n in data['nodes'] if n['id'] == 2)
+
+        assert custom_node['setting_input'] is not None
+        assert 'settings' in custom_node['setting_input']
+        assert custom_node['setting_input']['settings'] == custom_node_settings
+
+        print(f"\n=== Custom Node Settings in YAML ===")
+        print(yaml.dump(custom_node['setting_input'], default_flow_style=False))
+
+    def test_user_defined_node_roundtrip(
+        self, temp_dir: Path, UserDefinedNode, custom_node_settings
+    ):
+        """Verify user-defined node works correctly after round-trip."""
+        from flowfile_core.configs.node_store import add_to_custom_node_store, CUSTOM_NODE_STORE
+
+        add_to_custom_node_store(UserDefinedNode)
+
+        flow = create_graph(flow_id=1001)
+        add_manual_input(flow, data=[{'a': 1}, {'a': 2}], node_id=1)
+
+        add_node_promise(flow, UserDefinedNode().item, node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        user_defined_node = UserDefinedNode.from_settings(custom_node_settings)
+        node_settings = input_schema.UserDefinedNode(
+            flow_id=flow.flow_id,
+            node_id=2,
+            settings=custom_node_settings,
+            is_user_defined=True
+        )
+        flow.add_user_defined_node(
+            custom_node=user_defined_node,
+            user_defined_node_settings=node_settings
+        )
+
+        # Save and reload
+        yaml_path = temp_dir / "user_defined_roundtrip.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+        print(f"\n=== YAML before roundtrip ===\n{content}")
+
+        loaded_flow = open_flow(yaml_path)
+
+        # Verify node exists
+        loaded_node = loaded_flow.get_node(2)
+        assert loaded_node is not None, "User-defined node should exist"
+        assert loaded_node.setting_input.is_user_defined == True
+        assert loaded_node.setting_input.settings == custom_node_settings
+
+        print(f"\n=== After roundtrip ===")
+        print(f"is_user_defined: {loaded_node.setting_input.is_user_defined}")
+        print(f"settings: {loaded_node.setting_input.settings}")
+
+    def test_user_defined_node_execution_after_roundtrip(
+        self, temp_dir: Path, UserDefinedNode, custom_node_settings
+    ):
+        """Verify user-defined node executes correctly after round-trip."""
+        from flowfile_core.configs.node_store import add_to_custom_node_store
+        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+
+        add_to_custom_node_store(UserDefinedNode)
+        flow = create_graph(flow_id=1002)
+        flow.execution_mode = "Development"
+        add_manual_input(flow, data=[{'a': 1}, {'a': 2}], node_id=1)
+
+        add_node_promise(flow, UserDefinedNode().item, node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        user_defined_node = UserDefinedNode.from_settings(custom_node_settings)
+        node_settings = input_schema.UserDefinedNode(
+            flow_id=flow.flow_id,
+            node_id=2,
+            settings=custom_node_settings,
+            is_user_defined=True
+        )
+        flow.add_user_defined_node(
+            custom_node=user_defined_node,
+            user_defined_node_settings=node_settings
+        )
+
+        # Save and reload
+        yaml_path = temp_dir / "user_defined_execution.yaml"
+        flow.save_flow(str(yaml_path))
+        loaded_flow = open_flow(yaml_path)
+
+        # Execute the loaded flow
+        run_result = loaded_flow.run_graph()
+        assert run_result.success, f"Flow should execute successfully: {run_result}"
+
+        # Verify output
+        result_data = loaded_flow.get_node(2).get_resulting_data()
+        expected_data = FlowDataEngine({
+            "a": [1, 2],
+            "custom_col": ["hello from yaml", "hello from yaml"]
+        })
+        expected_data.assert_equal(result_data)
+
+    def test_user_defined_node_mixed_with_regular_nodes(
+        self, temp_dir: Path, UserDefinedNode, custom_node_settings
+    ):
+        """Verify flow with both user-defined and regular nodes works."""
+        from flowfile_core.configs.node_store import add_to_custom_node_store
+
+        add_to_custom_node_store(UserDefinedNode)
+        flow = create_graph(flow_id=1003)
+        add_manual_input(flow, data=[{'name': 'John', 'age': 30}], node_id=1)
+
+        # Regular select node
+        add_node_promise(flow, 'select', node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        flow.add_select(input_schema.NodeSelect(
+            flow_id=flow.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=[transform_schema.SelectInput(old_name='name', new_name='customer_name')],
+        ))
+
+        # User-defined node
+        add_node_promise(flow, UserDefinedNode().item, node_id=3)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+        user_defined_node = UserDefinedNode.from_settings(custom_node_settings)
+        node_settings = input_schema.UserDefinedNode(
+            flow_id=flow.flow_id,
+            node_id=3,
+            settings=custom_node_settings,
+            is_user_defined=True
+        )
+        flow.add_user_defined_node(
+            custom_node=user_defined_node,
+            user_defined_node_settings=node_settings
+        )
+
+        # Regular record_count node
+        add_node_promise(flow, 'record_count', node_id=4)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(3, 4))
+        flow.add_record_count(input_schema.NodeRecordCount(
+            flow_id=flow.flow_id,
+            node_id=4,
+            depending_on_id=3,
+        ))
+
+        yaml_path = temp_dir / "mixed_nodes.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+
+        print(f"\n=== Mixed Nodes YAML ===\n{content}")
+
+        data = yaml.safe_load(content)
+
+        # Verify node types
+        nodes_by_id = {n['id']: n for n in data['nodes']}
+
+        # Regular node
+        assert nodes_by_id[2]['setting_input'] is not None
+        assert 'select_input' in nodes_by_id[2]['setting_input']
+
+        # User-defined node
+        assert nodes_by_id[3]['setting_input']['settings'] == custom_node_settings
+
+        # Record count (minimal settings)
+        assert nodes_by_id[4]['setting_input'] is not None
+
+        # Roundtrip
+        loaded_flow = open_flow(yaml_path)
+
+        assert loaded_flow.get_node(2).setting_input.is_setup
+        assert loaded_flow.get_node(3).setting_input.is_user_defined
+        assert loaded_flow.get_node(4).setting_input.is_setup
+
+    def test_unconfigured_user_defined_node(self, temp_dir: Path, UserDefinedNode):
+        """Verify unconfigured user-defined node serializes as NodePromise."""
+        from flowfile_core.configs.node_store import add_to_custom_node_store
+
+        add_to_custom_node_store(UserDefinedNode)
+
+        flow = create_graph(flow_id=1004)
+        add_manual_input(flow, data=[{'a': 1}], node_id=1)
+
+        # Add user-defined node promise but don't configure it
+        add_node_promise(flow, UserDefinedNode().item, node_id=2)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+        # Note: NOT calling add_user_defined_node() - leaving as promise
+
+        yaml_path = temp_dir / "unconfigured_custom.yaml"
+        flow.save_flow(str(yaml_path))
+
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+
+        print(f"\n=== Unconfigured Custom Node YAML ===\n{content}")
+
+        data = yaml.safe_load(content)
+
+        custom_node = next(n for n in data['nodes'] if n['id'] == 2)
+
+        # Unconfigured user-defined node should have null setting_input
+        assert custom_node['setting_input'] is None, \
+            "Unconfigured user-defined node should serialize as null"
+
+        # Roundtrip
+        loaded_flow = open_flow(yaml_path)
+        loaded_node = loaded_flow.get_node(2)
+
+        assert loaded_node.setting_input.is_setup == False, \
+            "Unconfigured user-defined node should have is_setup=False"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
