@@ -4,6 +4,7 @@ Migrates old schema structures to new ones during file load.
 """
 import pickle
 from typing import Any
+from pathlib import Path
 
 from flowfile_core.schemas import schemas, input_schema
 from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
@@ -43,7 +44,8 @@ def load_flowfile_pickle(path: str) -> Any:
     Returns:
         The deserialized FlowInformation object
     """
-    with open(path, 'rb') as f:
+    resolved_path = Path(path).resolve()
+    with open(resolved_path, 'rb') as f:
         return LegacyUnpickler(f).load()
 
 
