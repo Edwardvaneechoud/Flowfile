@@ -131,21 +131,11 @@ exclude = [
 # I: isort - import sorting (auto-fixable)
 select = ["F", "E", "W", "I"]
 
-# Ignore specific rules that may be too noisy initially
-# TODO: Gradually enable these rules and fix violations
+# Ignore specific rules
 ignore = [
     "E501",  # Line too long - let formatter handle this
     "F403",  # Star imports - common pattern in __init__.py files
     "F405",  # Names from star imports - related to F403
-    "E722",  # Bare except - 27 occurrences, needs careful review
-    "E701",  # Multiple statements on one line - 8 occurrences
-    "E402",  # Module import not at top - 4 occurrences, often intentional
-    "E741",  # Ambiguous variable name - 2 occurrences
-    "F401",  # Unused import - remaining are in try/except for availability checks
-    "F811",  # Redefined while unused - 2 occurrences in try/except
-    "F601",  # Multi-value repeated key - 5 occurrences, needs review
-    "F821",  # Undefined name - 3 occurrences, needs review
-    "F722",  # Forward annotation syntax error - 2 occurrences
 ]
 
 # Allow autofix for all enabled rules
