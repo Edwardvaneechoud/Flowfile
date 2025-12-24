@@ -6,14 +6,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               store_database_connection,
-                                                                               store_cloud_connection,
-                                                                               delete_cloud_connection,
-                                                                               get_all_cloud_connections_interface)
+                                                                               store_database_connection)
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
-from flowfile_core.schemas.data_types import DataType
+from flowfile_core.types import DataType
 
 import pytest
 from pathlib import Path

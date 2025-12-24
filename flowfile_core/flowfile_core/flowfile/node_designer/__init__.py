@@ -23,7 +23,7 @@ from .ui_components import (
 )
 
 # Import the main `Types` object for filtering in ColumnSelector
-from flowfile_core.schemas.data_types import Types
+from flowfile_core.types import Types
 
 
 # Define the public API of this package

@@ -11,7 +11,7 @@ from flowfile_core.schemas.yaml_types import (
 )
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
-from flowfile_core.schemas.data_types import DataType
+from flowfile_core.types import DataType
 
 FuzzyMap = FuzzyMapping
 
