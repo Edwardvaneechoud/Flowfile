@@ -87,8 +87,7 @@ def create_fake_data_raw(n_records: int = 1000, col_selection: List[str] = None)
     first_names = partial(fake.first_name)
     last_names = partial(fake.last_name)
     domain_names = [fake.domain_name() for _ in range(10)]  # Pre-generate a small list
-    def sales_data():
-        return fake.random_int(0, 1000)
+    sales_data = lambda: fake.random_int(0, 1000)
 
     def generate_name():
         return f"{first_names()} {last_names()}"

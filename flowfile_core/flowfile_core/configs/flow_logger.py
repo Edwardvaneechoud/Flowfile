@@ -132,7 +132,7 @@ class FlowLogger:
 
         try:
             # Create an empty file
-            with open(self.log_file_path, 'w'):
+            with open(self.log_file_path, 'w') as f:
                 pass
 
             # Re-setup the logger
@@ -224,7 +224,7 @@ class FlowLogger:
             # Ensure parent directory exists
             self.refresh_logger_if_needed()
             # Truncate file
-            with open(self.log_file_path, 'w'):
+            with open(self.log_file_path, 'w') as f:
                 pass
             main_logger.info(f"Log file cleared for flow {self.flow_id}")
         except Exception as e:

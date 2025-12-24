@@ -1567,7 +1567,7 @@ class FlowFrame:
             code = f"""
     # Perform pivot operation
     result = input_df.pivot(
-        on={on_repr},
+        on={on_repr}, 
         index={index_repr},
         values={values_repr},
         aggregate_function='{aggregate_function}',
@@ -1676,7 +1676,7 @@ class FlowFrame:
             code = f"""
     # Perform unpivot operation
     output_df = input_df.unpivot(
-        on={on_repr},
+        on={on_repr}, 
         index={index_repr},
         variable_name="{variable_name}",
         value_name="{value_name}"

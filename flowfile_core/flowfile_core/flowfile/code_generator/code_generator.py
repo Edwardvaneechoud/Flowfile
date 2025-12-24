@@ -507,7 +507,7 @@ class FlowGraphToPolarsConverter:
                 - reverse_action: Mapping to rename __DROP__ columns after join
                 - after_join_drop_cols: Left join keys marked for dropping
         """
-        [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
+        left_join_keys_to_keep = [jk.new_name for jk in settings.left_select.join_key_selects if jk.keep]
         join_key_duplication_command = [
             f'pl.col("{rjk.old_name}").alias("__DROP__{rjk.new_name}__DROP__")'
             for rjk in settings.right_select.join_key_selects if rjk.keep

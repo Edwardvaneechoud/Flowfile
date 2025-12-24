@@ -396,7 +396,7 @@ def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = Non
         A FlowFrame with the Parquet data
     """
     if '~' in source:
-        os.path.expanduser(source)
+        file_path = os.path.expanduser(source)
     node_id = generate_node_id()
 
     if flow_graph is None:
