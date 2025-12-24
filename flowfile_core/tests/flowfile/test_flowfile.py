@@ -319,6 +319,64 @@ def test_adding_graph_solver():
     output_data.assert_equal(expected_data)
 
 
+def test_add_formula_no_type():
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, "formula", 2)
+    breakpoint()
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    formula_input = input_schema.NodeFormula(
+        flow_id=graph.flow_id,
+        node_id=2,
+        function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="output_field"),
+                                                function="'name = ' + [name]")
+    )
+    valid, result = graph.add_formula(formula_input)
+    assert valid
+    assert result == ""
+    assert graph.get_node(2).setting_input.function.field.data_type == "Auto"
+    graph.run_graph()
+    resulting_data = graph.get_node(2).get_resulting_data()
+    resulting_data.to_dict()
+    expected_data = FlowDataEngine({
+                'name': ['eduward', 'edward', 'courtney'],
+                'output_field': ['name = eduward', 'name = edward', 'name = courtney']
+             })
+    resulting_data.assert_equal(expected_data)
+
+
+def test_add_formula_error():
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, "formula", 2)
+    breakpoint()
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    formula_input = input_schema.NodeFormula(
+        flow_id=graph.flow_id,
+        node_id=2,
+        function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="output_field"),
+                                                function="'name = ' + 1")
+    )
+    valid, result = graph.add_formula(formula_input)
+    assert valid
+    assert result == ""
+    assert graph.get_node(2).setting_input.function.field.data_type == "Auto"
+    graph.run_graph()
+    resulting_data = graph.get_node(2).get_resulting_data()
+    resulting_data.to_dict()
+    expected_data = FlowDataEngine({
+                'name': ['eduward', 'edward', 'courtney'],
+                'output_field': ['name = eduward', 'name = edward', 'name = courtney']
+             })
+    resulting_data.assert_equal(expected_data)
+
+
 def test_add_fuzzy_match():
     graph = create_graph()
     input_data = [{'name': 'eduward'},

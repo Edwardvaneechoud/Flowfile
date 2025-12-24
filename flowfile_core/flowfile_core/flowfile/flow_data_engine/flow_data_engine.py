@@ -2094,7 +2094,7 @@ class FlowDataEngine:
             A new `FlowDataEngine` instance with the applied formula.
         """
         expr = to_expr(func)
-        if output_data_type not in (None, "Auto"):
+        if output_data_type not in (None, transform_schemas.AUTO_DATA_TYPE):
             df = self.data_frame.with_columns(expr.cast(output_data_type).alias(col_name))
         else:
             df = self.data_frame.with_columns(expr.alias(col_name))

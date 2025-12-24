@@ -13,6 +13,8 @@ from pl_fuzzy_frame_match.models import FuzzyMapping
 
 FuzzyMap = FuzzyMapping
 
+AUTO_DATA_TYPE = "Auto"
+
 
 def get_func_type_mapping(func: str):
     """Infers the output data type of common aggregation functions."""
@@ -145,7 +147,7 @@ class SelectInput(BaseModel):
 class FieldInput(BaseModel):
     """Represents a single field with its name and data type, typically for defining an output column."""
     name: str
-    data_type: Optional[str] = None
+    data_type: Optional[str] = AUTO_DATA_TYPE
 
 
 class FunctionInput(BaseModel):
