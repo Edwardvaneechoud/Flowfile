@@ -19,11 +19,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.poetry/bin" >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        run: poetry install --no-interaction --no-ansi --only dev
 
       - name: Run ruff check
-        run: ruff check .
+        run: poetry run ruff check .
 
   backend-tests:
     needs: lint
