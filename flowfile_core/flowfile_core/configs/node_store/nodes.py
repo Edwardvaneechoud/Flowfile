@@ -1,6 +1,7 @@
 
-from typing import List, Dict
-from flowfile_core.schemas.schemas import NodeTemplate, NodeDefault
+from typing import Dict, List
+
+from flowfile_core.schemas.schemas import NodeDefault, NodeTemplate
 
 
 def get_all_standard_nodes() -> tuple[List[NodeTemplate], Dict[str, NodeTemplate], Dict[str, NodeDefault]]:

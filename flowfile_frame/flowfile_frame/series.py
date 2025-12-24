@@ -1,6 +1,8 @@
 from __future__ import annotations
+
+from typing import Any
+
 import polars as pl
-from typing import Any, Optional, Union, List
 
 
 class Series:

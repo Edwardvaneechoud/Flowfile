@@ -1,34 +1,34 @@
 import inspect
 import os
-from typing import Any, Iterable, List, Literal, Optional, Tuple, Union, Dict, Callable, get_args, get_origin
-
 import re
+from collections.abc import Iterator, Mapping
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union, get_args, get_origin
 
 import polars as pl
-from flowfile_frame.lazy_methods import add_lazyframe_methods
-
-from polars._typing import (CsvEncoding, FrameInitTypes, SchemaDefinition, SchemaDict, Orientation)
-from collections.abc import Iterator
-
 from pl_fuzzy_frame_match import FuzzyMapping
+from polars._typing import CsvEncoding, FrameInitTypes, Orientation, SchemaDefinition, SchemaDict
 
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_graph_utils import combine_flow_graphs_with_mapping
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas import input_schema, transform_schema
-
-from flowfile_frame.expr import Expr, Column, lit, col
-from flowfile_frame.selectors import Selector
-from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.utils import (_parse_inputs_as_iterable, create_flow_graph, stringify_values,
-                                  ensure_inputs_as_iterable, generate_node_id, data as node_id_data)
-from flowfile_frame.join import _normalize_columns_to_list, _create_join_mappings
-from flowfile_frame.utils import _check_if_convertible_to_code
-from flowfile_frame.config import logger
 from flowfile_frame.cloud_storage.frame_helpers import add_write_ff_to_cloud_storage
-from collections.abc import Mapping
-
+from flowfile_frame.config import logger
+from flowfile_frame.expr import Column, Expr, col, lit
+from flowfile_frame.group_frame import GroupByFrame
+from flowfile_frame.join import _create_join_mappings, _normalize_columns_to_list
+from flowfile_frame.lazy_methods import add_lazyframe_methods
+from flowfile_frame.selectors import Selector
+from flowfile_frame.utils import (
+    _check_if_convertible_to_code,
+    _parse_inputs_as_iterable,
+    create_flow_graph,
+    ensure_inputs_as_iterable,
+    generate_node_id,
+    stringify_values,
+)
+from flowfile_frame.utils import data as node_id_data
 
 
 def can_be_expr(param: inspect.Parameter) -> bool:
@@ -449,7 +449,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\#─────SPLIT─────\n\n" + \
+                                      "\\#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code
@@ -853,7 +853,7 @@ class FlowFrame:
             cross_join_input=join_input,
             is_setup=True,
             depending_on_ids=[self.node_id, other.node_id],
-            description=description or f"Join with cross strategy",
+            description=description or "Join with cross strategy",
             auto_generate_selection=True,
             verify_integrity=True,
         )
@@ -976,7 +976,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\#─────SPLIT─────\n\n" + \
+                                      "\\#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code
@@ -1047,7 +1047,7 @@ class FlowFrame:
                 unique_raw_definitions = list(dict.fromkeys(collected_raw_definitions))  # Order-preserving unique
                 definitions_section = "\n\n".join(unique_raw_definitions)
                 final_code_for_node = definitions_section + \
-                                      "\#─────SPLIT─────\n\n" + \
+                                      "\\#─────SPLIT─────\n\n" + \
                                       f"output_df = {polars_operation_code}"
             else:
                 final_code_for_node = polars_operation_code

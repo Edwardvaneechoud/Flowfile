@@ -1,6 +1,7 @@
 import re
 from itertools import chain
-from typing import List, Dict
+from typing import Dict, List
+
 
 def camel_case_to_snake_case(text: str) -> str:
     # Use a regular expression to find capital letters and replace them with _ followed by the lowercase letter

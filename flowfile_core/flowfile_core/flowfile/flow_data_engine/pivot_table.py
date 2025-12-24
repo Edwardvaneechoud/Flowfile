@@ -1,7 +1,8 @@
-import polars as pl
-from polars.expr import Expr
 from dataclasses import dataclass
 from typing import List
+
+import polars as pl
+from polars.expr import Expr
 
 
 @dataclass

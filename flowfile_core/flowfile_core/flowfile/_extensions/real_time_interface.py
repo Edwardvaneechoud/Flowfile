@@ -1,8 +1,10 @@
-import polars as pl
-from polars_expr_transformer import simple_function_to_expr
-from flowfile_core.configs import logger
 from dataclasses import dataclass
 from typing import Optional
+
+import polars as pl
+from polars_expr_transformer import simple_function_to_expr
+
+from flowfile_core.configs import logger
 
 
 @dataclass

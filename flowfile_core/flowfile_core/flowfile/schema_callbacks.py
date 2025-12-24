@@ -1,18 +1,15 @@
 
 from typing import List
 
-from polars import datatypes
 import polars as pl
-
 from pl_fuzzy_frame_match.output_column_name_utils import set_name_in_fuzzy_mappings
 from pl_fuzzy_frame_match.pre_process import rename_fuzzy_right_mapping
+from polars import datatypes
 
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
 from flowfile_core.configs.flow_logger import main_logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, PlType
-from flowfile_core.schemas import transform_schema
-from flowfile_core.schemas import input_schema
-from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import fetch_unique_values
+from flowfile_core.schemas import input_schema, transform_schema
 
 
 def _ensure_all_columns_have_select(left_cols: List[str],

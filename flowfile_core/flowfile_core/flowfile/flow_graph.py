@@ -1,61 +1,74 @@
 import datetime
-
-import os
-import yaml
 import json
-
-import polars as pl
+import os
+from copy import deepcopy
+from functools import partial
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from time import time
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from uuid import uuid1
 
 import fastexcel
+import polars as pl
+import yaml
 from fastapi.exceptions import HTTPException
-from time import time
-from functools import partial
-from typing import List, Dict, Union, Callable, Any, Optional, Tuple, Literal
-from uuid import uuid1
-from copy import deepcopy
 from pyarrow.parquet import ParquetFile
+
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import FlowLogger
-from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
-
-from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
-from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
-from flowfile_core.utils.arrow_reader import get_read_top_n
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (get_open_xlsx_datatypes,
-                                                                       get_calamine_xlsx_data_types)
-
-from flowfile_core.flowfile.schema_callbacks import (calculate_fuzzy_match_schema, pre_calculate_pivot_schema)
-from flowfile_core.flowfile.sources import external_sources
-from flowfile_core.schemas import input_schema, schemas, transform_schema
-from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
-from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettingsInternal,
-                                                         CloudStorageWriteSettingsInternal,
-                                                         FullCloudStorageConnection,
-                                                         get_cloud_storage_write_settings_worker_interface, AuthMethod)
-from flowfile_core.flowfile.utils import snake_case_to_camel_case
 from flowfile_core.flowfile.analytics.utils import create_graphic_walker_node_from_node_promise
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
-from flowfile_core.flowfile.graph_tree.graph_tree import (add_un_drawn_nodes, build_flow_paths,
-                                                          build_node_info, calculate_depth,
-                                                          define_node_connections, draw_merged_paths,
-                                                          draw_standalone_paths, group_nodes_by_depth)
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    get_local_cloud_connection,
+    get_local_database_connection,
+)
+from flowfile_core.flowfile.flow_data_engine.cloud_storage_reader import CloudStorageReader
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, cast_str_to_polars_type
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import polars_code_parser
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (ExternalDatabaseFetcher,
-                                                                                                 ExternalDatabaseWriter,
-                                                                                                 ExternalDfFetcher,
-                                                                                                 ExternalCloudWriter)
-from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
-from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils, models as sql_models
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import SqlSource, BaseSqlSource
-from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               get_local_cloud_connection)
-from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
+from flowfile_core.flowfile.flow_data_engine.read_excel_tables import (
+    get_calamine_xlsx_data_types,
+    get_open_xlsx_datatypes,
+)
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations.subprocess_operations import (
+    ExternalCloudWriter,
+    ExternalDatabaseFetcher,
+    ExternalDatabaseWriter,
+    ExternalDfFetcher,
+)
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.flowfile.graph_tree.graph_tree import (
+    add_un_drawn_nodes,
+    build_flow_paths,
+    build_node_info,
+    calculate_depth,
+    define_node_connections,
+    draw_merged_paths,
+    draw_standalone_paths,
+    group_nodes_by_depth,
+)
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
-from importlib.metadata import version, PackageNotFoundError
+from flowfile_core.flowfile.schema_callbacks import calculate_fuzzy_match_schema, pre_calculate_pivot_schema
+from flowfile_core.flowfile.sources import external_sources
+from flowfile_core.flowfile.sources.external_sources.factory import data_source_factory
+from flowfile_core.flowfile.sources.external_sources.sql_source import models as sql_models
+from flowfile_core.flowfile.sources.external_sources.sql_source import utils as sql_utils
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import BaseSqlSource, SqlSource
+from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
+from flowfile_core.flowfile.util.execution_orderer import compute_execution_plan
+from flowfile_core.flowfile.utils import snake_case_to_camel_case
+from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.cloud_storage_schemas import (
+    AuthMethod,
+    CloudStorageReadSettingsInternal,
+    CloudStorageWriteSettingsInternal,
+    FullCloudStorageConnection,
+    get_cloud_storage_write_settings_worker_interface,
+)
+from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
+from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
+from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
+from flowfile_core.utils.arrow_reader import get_read_top_n
 
 try:
     __version__ = version("Flowfile")
@@ -361,7 +374,7 @@ class FlowGraph:
 
         # Group nodes by depth
         depth_groups, max_depth = group_nodes_by_depth(node_info)
-        
+
         # Sort nodes within each depth group
         for depth in depth_groups:
             depth_groups[depth].sort()
@@ -371,7 +384,7 @@ class FlowGraph:
 
         # Track which nodes connect to what
         merge_points = define_node_connections(node_info)
-        
+
         # Build the flow paths
 
         # Find the maximum label length for each depth level
@@ -380,15 +393,15 @@ class FlowGraph:
             if depth in depth_groups:
                 max_len = max(len(node_info[nid].label) for nid in depth_groups[depth])
                 max_label_length[depth] = max_len
-        
+
         # Draw the paths
         drawn_nodes = set()
         merge_drawn = set()
-        
+
         # Group paths by their merge points
         paths_by_merge = {}
         standalone_paths = []
-        
+
         # Build flow paths
         paths = build_flow_paths(node_info, self._flow_starts, merge_points)
 
@@ -410,7 +423,7 @@ class FlowGraph:
 
         # Add undrawn nodes
         add_un_drawn_nodes(drawn_nodes, node_info, lines)
-        
+
         try:
             skip_nodes, ordered_nodes = compute_execution_plan(
                 nodes=self.nodes,
@@ -420,12 +433,12 @@ class FlowGraph:
                     lines.append(f"  {i:3d}. {node_info[node.node_id].label}")
         except Exception as e:
             lines.append(f"  Could not determine execution order: {e}")
-        
+
         # Print everything
         output = "\n".join(lines)
-        
+
         print(output)
-        
+
     def get_nodes_overview(self):
         """Gets a list of dictionary representations for all nodes in the graph."""
         output = []
@@ -456,18 +469,18 @@ class FlowGraph:
         node = self._node_db.get(node_id)
         if node is not None:
             return node
-        
+
     def add_user_defined_node(self, *,
                               custom_node: CustomNodeBase,
                               user_defined_node_settings: input_schema.UserDefinedNode
                               ):
-       
+
         def _func(*fdes: FlowDataEngine) -> FlowDataEngine | None:
             output = custom_node.process(*(fde.data_frame for fde in fdes))
             if isinstance(output, pl.LazyFrame | pl.DataFrame):
                 return FlowDataEngine(output)
             return None
-        
+
         self.add_node_step(node_id=user_defined_node_settings.node_id,
                            function=_func,
                            setting_input=user_defined_node_settings,
@@ -529,7 +542,7 @@ class FlowGraph:
 
         self.add_node_step(node_id=union_settings.node_id,
                            function=_func,
-                           node_type=f'union',
+                           node_type='union',
                            setting_input=union_settings,
                            input_node_ids=union_settings.depending_on_ids)
 
@@ -593,7 +606,7 @@ class FlowGraph:
 
         self.add_node_step(node_id=group_by_settings.node_id,
                            function=_func,
-                           node_type=f'group_by',
+                           node_type='group_by',
                            setting_input=group_by_settings,
                            input_node_ids=[group_by_settings.depending_on_id])
 
@@ -1558,7 +1571,7 @@ class FlowGraph:
             node.name = ref
             node.function = input_data
             node.setting_input = input_file
-            if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
+            if input_file.node_id not in set(start_node.node_id for start_node in self._flow_starts):
                 self._flow_starts.append(node)
         else:
             input_data.collect()
@@ -1929,7 +1942,7 @@ class FlowGraph:
         try:
             if suffix == '.flowfile':
                 raise DeprecationWarning(
-                    f"The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n"
+                    "The .flowfile format is deprecated. Please use .yaml or .json formats.\n\n"
                     "Or stay on v0.4.1 if you still need .flowfile support.\n\n"
                 )
             elif suffix in ('.yaml', '.yml'):

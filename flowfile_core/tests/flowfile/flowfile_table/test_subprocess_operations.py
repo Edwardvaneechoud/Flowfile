@@ -1,22 +1,28 @@
-import polars as pl
-import pytest
 import base64
 
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (trigger_database_read_collector,
-                                                                           DatabaseExternalReadSettings,
-                                                                           ExternalDatabaseFetcher,
-                                                                           ExternalDatabaseWriter)
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import (ExtDatabaseConnection,
-                                                                               DatabaseExternalWriteSettings)
+import polars as pl
+import pytest
+
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
+    DatabaseExternalReadSettings,
+    ExternalDatabaseFetcher,
+    ExternalDatabaseWriter,
+    trigger_database_read_collector,
+)
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
+    DatabaseExternalWriteSettings,
+    ExtDatabaseConnection,
+)
 from flowfile_core.secret_manager.secret_manager import encrypt_secret
+
 try:
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import is_docker_available
 
 
 @pytest.fixture

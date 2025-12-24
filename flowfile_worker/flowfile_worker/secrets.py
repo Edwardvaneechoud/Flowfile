@@ -1,12 +1,14 @@
 """
 Simplified secure storage module for FlowFile worker to read credentials and secrets.
 """
-from cryptography.fernet import Fernet
-import os
-from pathlib import Path
 import json
 import logging
+import os
+from pathlib import Path
+
+from cryptography.fernet import Fernet
 from pydantic import SecretStr
+
 from flowfile_worker.configs import TEST_MODE
 
 # Set up logging

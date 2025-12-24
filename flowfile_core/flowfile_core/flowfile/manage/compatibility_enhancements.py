@@ -3,12 +3,11 @@ Compatibility enhancements for opening old flowfile versions.
 Migrates old schema structures to new ones during file load.
 """
 import pickle
-from typing import Any
 from pathlib import Path
+from typing import Any
 
-from flowfile_core.schemas import schemas, input_schema
+from flowfile_core.schemas import input_schema, schemas
 from tools.migrate.legacy_schemas import LEGACY_CLASS_MAP
-
 
 # =============================================================================
 # LEGACY PICKLE LOADING
@@ -66,7 +65,7 @@ def _migrate_dataclass_to_basemodel(obj: Any, model_class: type) -> Any:
     if not _is_dataclass_instance(obj):
         return obj  # Already a BaseModel or dict
 
-    from dataclasses import fields, asdict
+    from dataclasses import asdict, fields
     try:
         data = asdict(obj)
     except Exception:

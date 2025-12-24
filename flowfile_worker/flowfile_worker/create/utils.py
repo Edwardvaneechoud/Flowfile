@@ -1,8 +1,9 @@
-from faker import Faker
 from functools import partial
 from random import randint
-import polars as pl
 from typing import Iterable
+
+import polars as pl
+from faker import Faker
 
 
 def create_fake_data(n_records: int = 1000) -> pl.DataFrame:

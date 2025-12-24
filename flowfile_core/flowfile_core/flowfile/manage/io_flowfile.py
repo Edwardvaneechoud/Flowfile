@@ -1,13 +1,13 @@
-from flowfile_core.schemas import schemas, input_schema
-from typing import List, Tuple
-from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
-from flowfile_core.flowfile.flow_graph import FlowGraph
+import json
 from pathlib import Path
+from typing import List, Tuple
+
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
-import json
+from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
+from flowfile_core.schemas import input_schema, schemas
 from shared.storage_config import storage
-
 
 try:
     import yaml
@@ -362,7 +362,7 @@ def open_flow(flow_path: Path) -> FlowGraph:
                 to_node.add_node_connection(from_node, insert_type)
             else:
                 from_node.delete_lead_to_node(output_node_id)
-                if not (from_node.node_id, output_node_id) in flow_storage_obj.node_connections:
+                if (from_node.node_id, output_node_id) not in flow_storage_obj.node_connections:
                     continue
                 flow_storage_obj.node_connections.pop(
                     flow_storage_obj.node_connections.index((from_node.node_id, output_node_id))

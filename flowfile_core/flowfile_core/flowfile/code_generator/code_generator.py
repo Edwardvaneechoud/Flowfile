@@ -1,15 +1,15 @@
-from typing import List, Dict, Optional, Set, Tuple
-import polars as pl
+from typing import Dict, List, Optional, Set, Tuple
 
+import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
-from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.schemas import input_schema, transform_schema
-from flowfile_core.configs import logger
 
 
 class FlowGraphToPolarsConverter:
@@ -677,7 +677,7 @@ class FlowGraphToPolarsConverter:
 
         # Convert back to lazy for right joins
         if settings.join_input.how == 'right':
-            self._add_code(f".lazy()")
+            self._add_code(".lazy()")
 
         self._add_code(")")
 
@@ -729,7 +729,7 @@ class FlowGraphToPolarsConverter:
         self._add_code('    .with_columns(pl.lit(1).alias("__temp_index__"))')
         self._add_code('    .pivot(')
         self._add_code(f'        values="{pivot_input.value_col}",')
-        self._add_code(f'        index=["__temp_index__"],')
+        self._add_code('        index=["__temp_index__"],')
         self._add_code(f'        columns="{pivot_input.pivot_column}",')
         self._add_code(f'        aggregate_function="{agg_func}"')
         self._add_code("    )")
@@ -898,7 +898,7 @@ class FlowGraphToPolarsConverter:
             # Row number within groups
             self._add_code(f"{var_name} = ({input_df}")
             self._add_code(f"    .with_columns(pl.lit(1).alias('{record_input.output_column_name}'))")
-            self._add_code(f"    .with_columns([")
+            self._add_code("    .with_columns([")
             self._add_code(f"    (pl.cum_count('{record_input.output_column_name}').over({record_input.group_by_columns}) + {record_input.offset} - 1)")
             self._add_code(f"    .alias('{record_input.output_column_name}')")
             self._add_code("])")
@@ -926,24 +926,24 @@ class FlowGraphToPolarsConverter:
         self.imports.add("import flowfile as ff")
         self._add_code(f"(ff.FlowFrame({input_df})")
         if output_settings.file_format == "csv":
-            self._add_code(f'    .write_csv_to_cloud_storage(')
+            self._add_code('    .write_csv_to_cloud_storage(')
             self._add_code(f'        path="{output_settings.resource_path}",')
             self._add_code(f'        connection_name="{output_settings.connection_name}",')
             self._add_code(f'        delimiter="{output_settings.csv_delimiter}",')
             self._add_code(f'        encoding="{output_settings.csv_encoding}",')
             self._add_code(f'        description="{settings.description}"')
         elif output_settings.file_format == "parquet":
-            self._add_code(f'    .write_parquet_to_cloud_storage(')
+            self._add_code('    .write_parquet_to_cloud_storage(')
             self._add_code(f'        path="{output_settings.resource_path}",')
             self._add_code(f'        connection_name="{output_settings.connection_name}",')
             self._add_code(f'        description="{settings.description}"')
         elif output_settings.file_format == "json":
-            self._add_code(f'    .write_json_to_cloud_storage(')
+            self._add_code('    .write_json_to_cloud_storage(')
             self._add_code(f'        path="{output_settings.resource_path}",')
             self._add_code(f'        connection_name="{output_settings.connection_name}",')
             self._add_code(f'        description="{settings.description}"')
         elif output_settings.file_format == "delta":
-            self._add_code(f'    .write_delta(')
+            self._add_code('    .write_delta(')
             self._add_code(f'        path="{output_settings.resource_path}",')
             self._add_code(f'        write_mode="{output_settings.write_mode}",')
             self._add_code(f'        connection_name="{output_settings.connection_name}",')
@@ -1001,7 +1001,7 @@ class FlowGraphToPolarsConverter:
         is_expression = "output_df" not in code
 
         # Wrap the code in a function
-        self._add_code(f"# Custom Polars code")
+        self._add_code("# Custom Polars code")
         self._add_code(f"def _polars_code_{var_name.replace('df_', '')}({params}):")
 
         # Handle the code based on its structure

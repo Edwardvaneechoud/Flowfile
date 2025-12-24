@@ -4,9 +4,7 @@ from typing import Dict, Tuple, TypeVar
 # Third-party imports
 import polars as pl
 
-from flowfile_core.schemas import (
-    transform_schema as transform_schemas
-)
+from flowfile_core.schemas import transform_schema as transform_schemas
 
 T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
 

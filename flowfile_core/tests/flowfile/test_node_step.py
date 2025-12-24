@@ -1,15 +1,15 @@
 
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.schemas import input_schema, schemas
-from flowfile_core.configs.flow_logger import FlowLogger
-from flowfile_core.schemas import transform_schema
-import pytest
-from typing import List, Dict
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection, RunInformation
+from typing import Dict, List
 
+import pytest
+
+from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
+from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 try:
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys

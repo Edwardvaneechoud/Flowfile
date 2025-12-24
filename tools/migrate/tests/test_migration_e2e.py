@@ -11,40 +11,39 @@ Run with:
 import pickle
 import tempfile
 from pathlib import Path
-from typing import List, Dict, Literal
+from typing import Dict, List, Literal
 
 import pytest
 
-from tools.migrate.legacy_schemas import (
-    # Flow schemas
-    FlowInformation, FlowSettings, NodeInformation,
-
-    # Node schemas
-    NodeSelect, NodeFilter, NodeFormula, NodeOutput,
-    NodeJoin, NodeGroupBy, NodeSort, NodeUnique,
-    NodePivot, NodeUnpivot, NodeRecordId, NodeTextToRows,
-    NodeGraphSolver, NodeUnion,
-
-    # Input/Output schemas
-    OutputSettings, OutputCsvTable,
-
-    # Transform schemas
-    SelectInput, SelectInputs, JoinInputs, JoinInput, JoinMap,
-    FilterInput, BasicFilter, FunctionInput, FieldInput,
-    GroupByInput, AggColl, SortByInput, UniqueInput,
-    PivotInput, UnpivotInput, RecordIdInput, TextToRowsInput,
-    GraphSolverInput, UnionInput,
-)
-
-from tools.migrate.migrate import migrate_flowfile
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 
 # Import actual flowfile system for verification
 from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, transform_schema, schemas
-from flowfile_core.schemas.output_model import RunInformation
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
-
+from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.output_model import RunInformation
+from tools.migrate.legacy_schemas import (
+    AggColl,
+    FieldInput,
+    FilterInput,
+    # Flow schemas
+    FlowInformation,
+    FlowSettings,
+    FunctionInput,
+    GroupByInput,
+    JoinInput,
+    JoinMap,
+    NodeFilter,
+    NodeFormula,
+    NodeGroupBy,
+    NodeInformation,
+    NodeJoin,
+    NodeSelect,
+    NodeSort,
+    SelectInput,
+    SortByInput,
+)
+from tools.migrate.migrate import migrate_flowfile
 
 # =============================================================================
 # HELPERS

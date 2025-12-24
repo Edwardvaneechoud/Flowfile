@@ -1,9 +1,16 @@
-import polars as pl
 import os
 
-from flowfile_worker.create.models import ReceivedTable, InputCsvTable, InputJsonTable, InputExcelTable, InputParquetTable
+import polars as pl
+
+from flowfile_worker.create.models import (
+    InputCsvTable,
+    InputExcelTable,
+    InputJsonTable,
+    InputParquetTable,
+    ReceivedTable,
+)
+from flowfile_worker.create.read_excel_tables import df_from_calamine_xlsx, df_from_openpyxl
 from flowfile_worker.create.utils import create_fake_data
-from flowfile_worker.create.read_excel_tables import df_from_openpyxl, df_from_calamine_xlsx
 
 
 def create_from_path_json(received_table: ReceivedTable):

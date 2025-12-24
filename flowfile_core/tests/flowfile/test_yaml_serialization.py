@@ -11,10 +11,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import schemas, input_schema, transform_schema
+from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
 def create_graph(flow_id: int = 1) -> FlowGraph:
@@ -127,7 +127,7 @@ class TestSelectInputSerialization:
         assert item['old_name'] == 'name'
         assert item['new_name'] == 'full_name'
 
-        print(f"\n=== SelectInput in YAML ===")
+        print("\n=== SelectInput in YAML ===")
         print(yaml.dump(item, default_flow_style=False))
 
     def test_select_input_omits_new_name_when_same(self, temp_dir: Path):
@@ -373,7 +373,7 @@ class TestJoinInputSerialization:
             assert 'join_key' not in item
             assert 'is_available' not in item
 
-        print(f"\n=== Join Input in YAML ===")
+        print("\n=== Join Input in YAML ===")
         print(yaml.dump(join_input, default_flow_style=False))
 
     def test_join_input_roundtrip(self, temp_dir: Path):
@@ -486,7 +486,7 @@ class TestOutputSettingsSerialization:
             assert 'file_type' not in output_settings['table_settings'], \
                 "file_type should not be duplicated in table_settings"
 
-        print(f"\n=== Output Settings in YAML ===")
+        print("\n=== Output Settings in YAML ===")
         print(yaml.dump(output_settings, default_flow_style=False))
 
     def test_output_settings_parquet_no_table_settings(self, temp_dir: Path):
@@ -525,7 +525,7 @@ class TestOutputSettingsSerialization:
         assert 'table_settings' not in output_settings, \
             "table_settings should be omitted for parquet (no meaningful settings)"
 
-        print(f"\n=== Parquet Output Settings in YAML ===")
+        print("\n=== Parquet Output Settings in YAML ===")
         print(yaml.dump(output_settings, default_flow_style=False))
 
     def test_output_settings_csv_includes_table_settings(self, temp_dir: Path):
@@ -659,7 +659,7 @@ class TestCrossJoinSerialization:
         assert 'select' in cross_join_input['left_select']
         assert 'renames' not in cross_join_input['left_select']
 
-        print(f"\n=== Cross Join Input in YAML ===")
+        print("\n=== Cross Join Input in YAML ===")
         print(yaml.dump(cross_join_input, default_flow_style=False))
 
 
@@ -740,7 +740,7 @@ class TestFuzzyMatchSerialization:
         assert mapping['threshold_score'] == 80.0
         assert mapping['fuzzy_type'] == 'levenshtein'
 
-        print(f"\n=== Fuzzy Match Input in YAML ===")
+        print("\n=== Fuzzy Match Input in YAML ===")
         print(yaml.dump(fuzzy_input, default_flow_style=False))
 
     def test_fuzzy_match_roundtrip(self, temp_dir: Path):
@@ -889,7 +889,7 @@ class TestYamlStructure:
         # Should only have old_name (minimal)
         assert item == {'old_name': 'x'}, f"Expected minimal dict, got: {item}"
 
-        print(f"\n=== Minimal Select Item ===")
+        print("\n=== Minimal Select Item ===")
         print(yaml.dump(item, default_flow_style=False))
 
 
@@ -927,7 +927,7 @@ class TestNodePromiseSerialization:
         assert filter_node['setting_input'] is None, "NodePromise should serialize as null"
         assert filter_node['input_ids'] == [1], "Connections should be preserved"
 
-        print(f"\n=== Filter Node (NodePromise) ===")
+        print("\n=== Filter Node (NodePromise) ===")
         print(yaml.dump(filter_node, default_flow_style=False))
 
     def test_record_count_vs_node_promise(self, temp_dir: Path):
@@ -965,10 +965,10 @@ class TestNodePromiseSerialization:
         record_count_node = next(n for n in data['nodes'] if n['type'] == 'record_count')
         filter_node = next(n for n in data['nodes'] if n['type'] == 'filter')
 
-        print(f"\n=== record_count node (configured, minimal settings) ===")
+        print("\n=== record_count node (configured, minimal settings) ===")
         print(yaml.dump(record_count_node, default_flow_style=False))
 
-        print(f"\n=== filter node (unconfigured NodePromise) ===")
+        print("\n=== filter node (unconfigured NodePromise) ===")
         print(yaml.dump(filter_node, default_flow_style=False))
 
         # record_count should have setting_input (even if minimal/empty)
@@ -1015,7 +1015,7 @@ class TestNodePromiseSerialization:
         assert filter_node.main_input is not None
         assert filter_node.main_input[0].node_id == 1
 
-        print(f"\n=== After roundtrip ===")
+        print("\n=== After roundtrip ===")
         print(f"filter_node.is_setup: {filter_node.is_setup}")
         print(f"filter_node.node_type: {filter_node.node_type}")
         print(f"filter_node.main_input.node_id: {filter_node.main_input[0].node_id}")
@@ -1064,7 +1064,7 @@ class TestNodePromiseSerialization:
         data = yaml.safe_load(content)
 
         # Summary
-        print(f"\n=== Node Summary ===")
+        print("\n=== Node Summary ===")
         for node in data['nodes']:
             has_settings = node['setting_input'] is not None
             print(f"Node {node['id']} ({node['type']}): setting_input={'present' if has_settings else 'null'}")
@@ -1087,7 +1087,7 @@ class TestNodePromiseSerialization:
         # Verify round-trip
         loaded_flow = open_flow(yaml_path)
 
-        print(f"\n=== After roundtrip ===")
+        print("\n=== After roundtrip ===")
         for node_id in [1, 2, 3, 4, 5]:
             node = loaded_flow.get_node(node_id)
             print(f"Node {node_id} ({node.node_type}): is_setup={node.is_setup}")
@@ -1109,14 +1109,8 @@ class TestUserDefinedNodeSerialization:
     @pytest.fixture
     def UserDefinedNode(self):
         """Fixture providing a sample custom node class."""
-        from flowfile_core.flowfile.node_designer.custom_node import (
-            CustomNodeBase,
-            NodeSettings
-        )
-        from flowfile_core.flowfile.node_designer.ui_components import (
-            TextInput,
-            Section
-        )
+        from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase, NodeSettings
+        from flowfile_core.flowfile.node_designer.ui_components import Section, TextInput
 
         class FixedColumn(CustomNodeBase):
             """A custom node that adds a new column with a fixed value."""
@@ -1214,14 +1208,14 @@ class TestUserDefinedNodeSerialization:
         assert 'settings' in custom_node['setting_input']
         assert custom_node['setting_input']['settings'] == custom_node_settings
 
-        print(f"\n=== Custom Node Settings in YAML ===")
+        print("\n=== Custom Node Settings in YAML ===")
         print(yaml.dump(custom_node['setting_input'], default_flow_style=False))
 
     def test_user_defined_node_roundtrip(
         self, temp_dir: Path, UserDefinedNode, custom_node_settings
     ):
         """Verify user-defined node works correctly after round-trip."""
-        from flowfile_core.configs.node_store import add_to_custom_node_store, CUSTOM_NODE_STORE
+        from flowfile_core.configs.node_store import add_to_custom_node_store
 
         add_to_custom_node_store(UserDefinedNode)
 
@@ -1259,7 +1253,7 @@ class TestUserDefinedNodeSerialization:
         assert loaded_node.setting_input.is_user_defined == True
         assert loaded_node.setting_input.settings == custom_node_settings
 
-        print(f"\n=== After roundtrip ===")
+        print("\n=== After roundtrip ===")
         print(f"is_user_defined: {loaded_node.setting_input.is_user_defined}")
         print(f"settings: {loaded_node.setting_input.settings}")
 

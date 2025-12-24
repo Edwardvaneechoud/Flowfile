@@ -1,28 +1,68 @@
 # Comprehensive mapping from SQLAlchemy types to Polars types
-from typing import Dict, Type, Union, cast, TYPE_CHECKING, Any
-from pydantic import SecretStr
+from typing import TYPE_CHECKING, Any, Dict, Optional, Type, Union, cast
+from urllib.parse import quote_plus
 
 import polars as pl
 from polars import DataType as PolarsType
+from pydantic import SecretStr
 from sqlalchemy.sql.sqltypes import (
-    _Binary, ARRAY, BIGINT, BigInteger, BINARY, BLOB, BOOLEAN, Boolean,
-    CHAR, CLOB, Concatenable, DATE, Date, DATETIME, DateTime,
-    DECIMAL, DOUBLE, Double, DOUBLE_PRECISION, Enum, FLOAT, Float,
-    Indexable, INT, INTEGER, Integer, Interval, JSON, LargeBinary,
-    MatchType, NCHAR, NULLTYPE, NullType, NUMERIC, Numeric, NVARCHAR,
-    PickleType, REAL, SchemaType, SMALLINT, SmallInteger, String,
-    STRINGTYPE, TEXT, Text, TIME, Time, TIMESTAMP, TupleType,
-    Unicode, UnicodeText, UUID, Uuid, VARBINARY, VARCHAR
+    ARRAY,
+    BIGINT,
+    BINARY,
+    BLOB,
+    BOOLEAN,
+    CHAR,
+    CLOB,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    DOUBLE_PRECISION,
+    FLOAT,
+    INT,
+    INTEGER,
+    JSON,
+    NCHAR,
+    NULLTYPE,
+    NUMERIC,
+    NVARCHAR,
+    REAL,
+    SMALLINT,
+    STRINGTYPE,
+    TEXT,
+    TIME,
+    TIMESTAMP,
+    UUID,
+    VARBINARY,
+    VARCHAR,
+    BigInteger,
+    Boolean,
+    Concatenable,
+    Date,
+    DateTime,
+    Double,
+    Enum,
+    Float,
+    Indexable,
+    Integer,
+    Interval,
+    LargeBinary,
+    MatchType,
+    NullType,
+    Numeric,
+    PickleType,
+    SchemaType,
+    SmallInteger,
+    String,
+    Text,
+    Time,
+    TupleType,
+    Unicode,
+    UnicodeText,
+    Uuid,
+    _Binary,
 )
-from sqlalchemy.sql.type_api import (
-    ExternalType, TypeDecorator,
-    TypeEngine, UserDefinedType, Variant
-)
-
-
-from typing import Optional
-from urllib.parse import quote_plus
-
+from sqlalchemy.sql.type_api import ExternalType, TypeDecorator, TypeEngine, UserDefinedType, Variant
 
 if TYPE_CHECKING:
     SqlType = Union[

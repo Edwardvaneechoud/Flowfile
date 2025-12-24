@@ -1,10 +1,11 @@
+from functools import lru_cache
+
+import polars as pl
+
 from flowfile_core.flowfile._extensions.real_time_interface import get_realtime_func_results
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.schemas.output_model import InstantFuncResult
 from flowfile_core.utils.arrow_reader import read_top_n
-import pyarrow as pa
-import polars as pl
-from functools import lru_cache
 
 
 @lru_cache(maxsize=16)

@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Union, TYPE_CHECKING, List, TypeVar, Callable, Sequence, Literal
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 import polars as pl
 
-
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
-    from flowfile_frame.expr import Expr, _get_expr_and_repr, col, lit
-    from polars._typing import IntoExprColumn, NullBehavior, ListToStructWidthStrategy
     from datetime import date, datetime, time
+
+    from polars._typing import IntoExprColumn, ListToStructWidthStrategy, NullBehavior
+
+    from flowfile_frame.expr import Expr
 
 
 class ExprListNameSpace:

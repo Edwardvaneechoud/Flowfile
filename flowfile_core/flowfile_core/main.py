@@ -7,20 +7,24 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core import ServerRun
+from flowfile_core.configs.flow_logger import clear_all_flow_logs
+from flowfile_core.configs.settings import (
+    SERVER_HOST,
+    SERVER_PORT,
+    WORKER_HOST,
+    WORKER_PORT,
+    WORKER_URL,
+)
+from flowfile_core.routes.auth import router as auth_router
+from flowfile_core.routes.cloud_connections import router as cloud_connections_router
+from flowfile_core.routes.logs import router as logs_router
+from flowfile_core.routes.public import router as public_router
+from flowfile_core.routes.routes import router
+from flowfile_core.routes.secrets import router as secrets_router
+from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from shared.storage_config import storage
 
-from flowfile_core import ServerRun
-from flowfile_core.configs.settings import (SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL,)
-
-from flowfile_core.routes.auth import router as auth_router
-from flowfile_core.routes.secrets import router as secrets_router
-from flowfile_core.routes.routes import router
-from flowfile_core.routes.public import router as public_router
-from flowfile_core.routes.logs import router as logs_router
-from flowfile_core.routes.cloud_connections import router as cloud_connections_router
-from flowfile_core.routes.user_defined_components import router as user_defined_components_router
-
-from flowfile_core.configs.flow_logger import clear_all_flow_logs
 storage.cleanup_directories()
 
 os.environ["FLOWFILE_MODE"] = "electron"

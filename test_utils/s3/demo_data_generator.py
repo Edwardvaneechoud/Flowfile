@@ -1,17 +1,14 @@
-import logging
 import io
+import logging
 import os
-import tempfile
-import shutil
 import random
+import tempfile
 from datetime import datetime, timedelta
 
 # Third-party libraries
 import boto3
-from botocore.client import Config
 import polars as pl
-import pyarrow as pa
-from pyarrow import parquet as pq
+from botocore.client import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

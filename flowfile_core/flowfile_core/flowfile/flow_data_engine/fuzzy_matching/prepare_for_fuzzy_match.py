@@ -1,7 +1,9 @@
-from flowfile_core.schemas.transform_schema import FuzzyMatchInput, SelectInput, JoinInputs, FuzzyMatchInputManager
-from flowfile_core.flowfile.flow_data_engine.join import verify_join_select_integrity, verify_join_map_integrity
+from typing import TYPE_CHECKING, List, Tuple
+
 import polars as pl
-from typing import TYPE_CHECKING, Tuple, List
+
+from flowfile_core.flowfile.flow_data_engine.join import verify_join_map_integrity, verify_join_select_integrity
+from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager, JoinInputs, SelectInput
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine

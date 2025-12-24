@@ -16,9 +16,9 @@ DO NOT USE THESE IN PRODUCTION CODE - use the actual schemas from flowfile_core.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Set, Any, Literal, Dict, Tuple
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
+from pydantic import BaseModel, Field
 
 # =============================================================================
 # OLD INPUT/OUTPUT SCHEMAS (before table_settings migration)

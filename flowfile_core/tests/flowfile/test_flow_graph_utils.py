@@ -1,14 +1,9 @@
-import pytest
-from pathlib import Path
-from copy import deepcopy
 
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+import pytest
+
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.flowfile.flow_graph_utils import (
-    combine_flow_graphs,
-    _validate_input,
-    _create_node_id_mapping
-)
+from flowfile_core.flowfile.flow_graph_utils import _create_node_id_mapping, _validate_input, combine_flow_graphs
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
 # Helper functions from your existing test suite
@@ -43,7 +38,6 @@ def add_node_promise_on_type(graph: FlowGraph, node_type: str, node_id: int, flo
 
 
 def handle_run_info(run_info):
-    from flowfile_core.flowfile.flow_graph import RunInformation
     if not run_info.success:
         errors = 'errors:'
         for node_step in run_info.node_step_result:

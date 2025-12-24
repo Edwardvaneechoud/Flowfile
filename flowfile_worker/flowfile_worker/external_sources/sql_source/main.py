@@ -1,6 +1,8 @@
-import polars as pl
-from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DatabaseWriteSettings
 from io import BytesIO
+
+import polars as pl
+
+from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DatabaseWriteSettings
 
 
 def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWriteSettings):

@@ -10,21 +10,20 @@ custom nodes, define their UI, and implement their data processing logic.
 # Import the core base class for creating a new node
 from .custom_node import CustomNodeBase, NodeSettings
 
-# Import all UI components so they can be used directly
-from .ui_components import (
-    Section,
-    TextInput,
-    NumericInput,
-    ToggleSwitch,
-    SingleSelect,
-    MultiSelect,
-    ColumnSelector,
-    IncomingColumns,  # Important marker class for dynamic dropdowns
-)
-
 # Import the main `Types` object for filtering in ColumnSelector
 from .data_types import Types
 
+# Import all UI components so they can be used directly
+from .ui_components import (
+    ColumnSelector,
+    IncomingColumns,  # Important marker class for dynamic dropdowns
+    MultiSelect,
+    NumericInput,
+    Section,
+    SingleSelect,
+    TextInput,
+    ToggleSwitch,
+)
 
 # Define the public API of this package
 __all__ = [

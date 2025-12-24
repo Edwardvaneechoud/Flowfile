@@ -1,6 +1,7 @@
+from typing import List
+
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, FlowfileColumn
 from flowfile_core.schemas.analysis_schemas import graphic_walker_schemas as gw_schema
-from typing import List
 
 
 def get_semantic_type(data_type: str) -> str:

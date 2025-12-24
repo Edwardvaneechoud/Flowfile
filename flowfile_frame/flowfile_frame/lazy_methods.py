@@ -1,8 +1,10 @@
-import polars as pl
 from functools import wraps
-from typing import Optional, TypeVar, Type, Callable
-from flowfile_frame.utils import _get_function_source
+from typing import Callable, Optional, TypeVar
+
+import polars as pl
+
 from flowfile_frame.config import logger
+from flowfile_frame.utils import _get_function_source
 
 T = TypeVar('T')
 FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')

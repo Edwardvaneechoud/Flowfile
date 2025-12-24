@@ -1,23 +1,23 @@
 # flowfile/api.py
 
-import uuid
-import time
-import os
-import requests
-import subprocess
-import sys
 import atexit
 import logging
-import webbrowser
-import shutil
+import os
 import platform
-
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+import webbrowser
 from pathlib import Path
-from typing import Optional, Dict, Any, Union, Tuple, List
 from subprocess import Popen
-from flowfile_core.flowfile.flow_graph import FlowGraph
 from tempfile import TemporaryDirectory
-import flowfile as ff
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import requests
+
+from flowfile_core.flowfile.flow_graph import FlowGraph
 
 # Configuration
 FLOWFILE_HOST: str = os.environ.get("FLOWFILE_HOST", "127.0.0.1")
@@ -457,7 +457,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
         if flow_id is not None:
             if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)
-            logger.info(f"Ui available at: http://127.0.0.1:63578/ui#/main/designer")
+            logger.info("Ui available at: http://127.0.0.1:63578/ui#/main/designer")
             return True
         else:
             return False

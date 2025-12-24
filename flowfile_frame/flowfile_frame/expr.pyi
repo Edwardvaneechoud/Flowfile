@@ -2,15 +2,15 @@
 # DO NOT MODIFY THIS FILE MANUALLY
 from __future__ import annotations
 
-from typing import Any, List, Optional, Union,  TypeVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, List, Optional, TypeVar, Union
+
 import polars as pl
-from polars.expr.expr import Expr as PolarsExpr
-from polars.expr.string import ExprStringNameSpace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from io import IOBase
-    from polars import DataFrame, LazyFrame, Series
+
+    from polars import Series
     from polars._typing import *
 
     if sys.version_info >= (3, 11):
@@ -20,9 +20,8 @@ if TYPE_CHECKING:
     T = TypeVar('T')
     P = ParamSpec('P')
     from flowfile_core.schemas import transform_schema
-import flowfile_frame
-from flowfile_frame.selectors import Selector
 from flowfile_frame.expr_name import ExprNameNameSpace
+from flowfile_frame.selectors import Selector
 
 # Define NoneType to handle type hints with None
 NoneType = type(None)

@@ -4,14 +4,12 @@ This module provides functionality to write Polars LazyFrames to various cloud s
 services (S3, Azure ADLS, Google Cloud Storage) in different file formats.
 """
 
-import polars as pl
-from typing import Dict, Any
 from logging import Logger
+from typing import Any, Dict
 
-from flowfile_worker.external_sources.s3_source.models import (
-    CloudStorageWriteSettings,
-    WriteSettings
-)
+import polars as pl
+
+from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings, WriteSettings
 from flowfile_worker.utils import collect_lazy_frame
 
 

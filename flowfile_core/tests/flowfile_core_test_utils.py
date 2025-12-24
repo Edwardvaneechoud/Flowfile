@@ -1,10 +1,11 @@
 # flowfile_core/tests/utils.py
 
-import subprocess
 import platform
-from flowfile_core.secret_manager.secret_manager import store_secret, get_encrypted_secret
-from flowfile_core.database.connection import get_db_context
+import subprocess
+
 from flowfile_core.auth.models import SecretInput
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, store_secret
 
 
 def is_docker_available():
@@ -26,6 +27,7 @@ def ensure_password_is_available():
 
 
 from contextlib import contextmanager
+
 
 @contextmanager
 def generator_func():

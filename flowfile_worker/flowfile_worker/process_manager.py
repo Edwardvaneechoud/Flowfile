@@ -1,5 +1,5 @@
-from threading import Lock
 from multiprocessing import Process
+from threading import Lock
 from typing import Dict
 
 

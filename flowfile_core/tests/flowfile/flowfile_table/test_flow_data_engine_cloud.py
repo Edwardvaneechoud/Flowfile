@@ -1,33 +1,36 @@
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettings,
-                                                         CloudStorageReadSettingsInternal,
-                                                         FullCloudStorageConnection,
-                                                         CloudStorageWriteSettings,
-                                                         CloudStorageWriteSettingsInternal)
-from flowfile_core.schemas.transform_schema import UniqueInput
-from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_cloud_connection
-import pytest
-from typing import Dict, Any, Optional
-from pydantic import SecretStr
-from logging import getLogger
-from datetime import datetime
 from dataclasses import dataclass
+from datetime import datetime
+from logging import getLogger
+from typing import Dict, Optional
+
+import pytest
+from pydantic import SecretStr
+
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.schemas.cloud_storage_schemas import (
+    CloudStorageReadSettings,
+    CloudStorageReadSettingsInternal,
+    CloudStorageWriteSettings,
+    CloudStorageWriteSettingsInternal,
+    FullCloudStorageConnection,
+)
+from flowfile_core.schemas.transform_schema import UniqueInput
 
 logger = getLogger(__name__)
 
 
 try:
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import is_docker_available
 
 
 import os
-import pytest
+
 
 @pytest.fixture
 def s3_env_vars():

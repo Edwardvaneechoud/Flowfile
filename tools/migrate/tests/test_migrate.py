@@ -7,13 +7,13 @@ These tests verify that:
 3. All node types are handled correctly in migration
 """
 
+import json
 import pickle
 import tempfile
-import json
 from pathlib import Path
-from typing import Dict, Any
-import pytest
+from typing import Dict
 
+import pytest
 
 # =============================================================================
 # FIXTURES
@@ -35,10 +35,7 @@ class TestReceivedTableTransformation:
 
     def test_csv_flat_to_nested(self, temp_dir):
         """Test that flat CSV fields become nested in table_settings."""
-        from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation,
-            NodeRead, ReceivedTable
-        )
+        from tools.migrate.legacy_schemas import FlowInformation, FlowSettings, NodeInformation, NodeRead, ReceivedTable
         from tools.migrate.migrate import migrate_flowfile
 
         # OLD format: flat fields
@@ -96,10 +93,7 @@ class TestReceivedTableTransformation:
 
     def test_excel_flat_to_nested(self, temp_dir):
         """Test that flat Excel fields become nested in table_settings."""
-        from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation,
-            NodeRead, ReceivedTable
-        )
+        from tools.migrate.legacy_schemas import FlowInformation, FlowSettings, NodeInformation, NodeRead, ReceivedTable
         from tools.migrate.migrate import migrate_flowfile
 
         # OLD format: flat fields
@@ -154,10 +148,7 @@ class TestReceivedTableTransformation:
 
     def test_parquet_flat_to_nested(self, temp_dir):
         """Test that parquet file type gets table_settings."""
-        from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation,
-            NodeRead, ReceivedTable
-        )
+        from tools.migrate.legacy_schemas import FlowInformation, FlowSettings, NodeInformation, NodeRead, ReceivedTable
         from tools.migrate.migrate import migrate_flowfile
 
         received = ReceivedTable(
@@ -199,8 +190,12 @@ class TestOutputSettingsTransformation:
     def test_csv_output_consolidation(self, temp_dir):
         """Test that separate output_csv_table becomes table_settings."""
         from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation,
-            NodeOutput, OutputSettings, OutputCsvTable
+            FlowInformation,
+            FlowSettings,
+            NodeInformation,
+            NodeOutput,
+            OutputCsvTable,
+            OutputSettings,
         )
         from tools.migrate.migrate import migrate_flowfile
 
@@ -249,8 +244,12 @@ class TestOutputSettingsTransformation:
     def test_excel_output_consolidation(self, temp_dir):
         """Test that separate output_excel_table becomes table_settings."""
         from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation,
-            NodeOutput, OutputSettings, OutputExcelTable
+            FlowInformation,
+            FlowSettings,
+            NodeInformation,
+            NodeOutput,
+            OutputExcelTable,
+            OutputSettings,
         )
         from tools.migrate.migrate import migrate_flowfile
 
@@ -296,9 +295,7 @@ class TestNodeTypeMigration:
 
     def _create_and_migrate(self, temp_dir, node_type: str, setting_input) -> Dict:
         """Helper to create a flow with one node and migrate it."""
-        from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation
-        )
+        from tools.migrate.legacy_schemas import FlowInformation, FlowSettings, NodeInformation
         from tools.migrate.migrate import migrate_flowfile
 
         flow = FlowInformation(
@@ -338,7 +335,7 @@ class TestNodeTypeMigration:
 
     def test_migrate_filter_node(self, temp_dir):
         """Test filter node migration."""
-        from tools.migrate.legacy_schemas import NodeFilter, FilterInput, BasicFilter
+        from tools.migrate.legacy_schemas import BasicFilter, FilterInput, NodeFilter
 
         node = NodeFilter(
             flow_id=1,
@@ -355,7 +352,7 @@ class TestNodeTypeMigration:
 
     def test_migrate_formula_node(self, temp_dir):
         """Test formula node migration."""
-        from tools.migrate.legacy_schemas import NodeFormula, FunctionInput, FieldInput
+        from tools.migrate.legacy_schemas import FieldInput, FunctionInput, NodeFormula
 
         node = NodeFormula(
             flow_id=1,
@@ -372,9 +369,7 @@ class TestNodeTypeMigration:
 
     def test_migrate_join_node(self, temp_dir):
         """Test join node migration."""
-        from tools.migrate.legacy_schemas import (
-            NodeJoin, JoinInput, JoinMap, JoinInputs, SelectInput
-        )
+        from tools.migrate.legacy_schemas import JoinInput, JoinInputs, JoinMap, NodeJoin, SelectInput
 
         node = NodeJoin(
             flow_id=1,
@@ -393,9 +388,7 @@ class TestNodeTypeMigration:
 
     def test_migrate_join_node_with_none_selects(self, temp_dir):
         """Test join node migration when left_select/right_select are None (old format)."""
-        from tools.migrate.legacy_schemas import (
-            NodeJoin, JoinInput, JoinMap
-        )
+        from tools.migrate.legacy_schemas import JoinInput, JoinMap, NodeJoin
 
         # OLD format: left_select and right_select could be None
         node = NodeJoin(
@@ -418,9 +411,7 @@ class TestNodeTypeMigration:
 
     def test_migrate_groupby_node(self, temp_dir):
         """Test group by node migration."""
-        from tools.migrate.legacy_schemas import (
-            NodeGroupBy, GroupByInput, AggColl
-        )
+        from tools.migrate.legacy_schemas import AggColl, GroupByInput, NodeGroupBy
 
         node = NodeGroupBy(
             flow_id=1,
@@ -487,9 +478,7 @@ class TestLegacySchemas:
 
     def test_output_settings_has_separate_tables(self):
         """Verify OLD OutputSettings has separate table fields."""
-        from tools.migrate.legacy_schemas import (
-            OutputSettings, OutputCsvTable, OutputExcelTable
-        )
+        from tools.migrate.legacy_schemas import OutputCsvTable, OutputExcelTable, OutputSettings
 
         os = OutputSettings(
             name='out.csv',
@@ -542,9 +531,16 @@ class TestRoundTrip:
         yaml = pytest.importorskip('yaml')
 
         from tools.migrate.legacy_schemas import (
-            FlowInformation, FlowSettings, NodeInformation,
-            NodeRead, ReceivedTable, NodeSelect, SelectInput,
-            NodeOutput, OutputSettings, OutputCsvTable
+            FlowInformation,
+            FlowSettings,
+            NodeInformation,
+            NodeOutput,
+            NodeRead,
+            NodeSelect,
+            OutputCsvTable,
+            OutputSettings,
+            ReceivedTable,
+            SelectInput,
         )
         from tools.migrate.migrate import migrate_flowfile
 

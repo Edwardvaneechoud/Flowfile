@@ -1,7 +1,8 @@
 
 import polars as pl
-from flowfile_core.utils.fl_executor import process_executor
+
 from flowfile_core.flowfile.flow_data_engine import utils
+from flowfile_core.utils.fl_executor import process_executor
 
 # calculate_schema_threaded = process_executor(wait_on_completion=True, max_workers=1)(utils.calculate_schema)
 write_threaded = process_executor(False, max_workers=1)(utils.write_polars_frame)

@@ -1,13 +1,14 @@
 
 from dataclasses import dataclass
-from typing import Optional, Any, List, Dict, Iterable
+from typing import Any, Dict, Iterable, List, Optional
 
-from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, DataTypeGroup
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
 import polars as pl
+
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import DataTypeGroup, ReadableDataTypeGroup
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.schemas import input_schema
 
 
 @dataclass

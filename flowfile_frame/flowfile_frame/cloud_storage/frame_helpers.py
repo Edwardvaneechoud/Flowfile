@@ -1,9 +1,9 @@
-from typing import Optional, Literal
+from typing import Literal, Optional
 
-from polars._typing import (CsvEncoding)
+from polars._typing import CsvEncoding
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas import input_schema, cloud_storage_schemas
+from flowfile_core.schemas import cloud_storage_schemas, input_schema
 from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
 from flowfile_frame.utils import generate_node_id
 

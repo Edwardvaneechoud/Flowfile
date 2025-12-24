@@ -1,10 +1,12 @@
 
-from flowfile_core.schemas import input_schema, transform_schema
-from typing import Callable, Iterable
 from functools import wraps
-from flowfile_core.schemas.output_model import NodeData
-from flowfile_core.flowfile.setting_generator.setting_generator import SettingGenerator, SettingUpdator
+from typing import Callable, Iterable
+
 from pl_fuzzy_frame_match.models import FuzzyMapping
+
+from flowfile_core.flowfile.setting_generator.setting_generator import SettingGenerator, SettingUpdator
+from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas.output_model import NodeData
 
 setting_generator = SettingGenerator()
 setting_updator = SettingUpdator()

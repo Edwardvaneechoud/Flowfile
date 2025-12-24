@@ -1,9 +1,10 @@
-from faker import Faker
 from functools import partial
 from math import ceil
 from random import randint
+from typing import Any, Dict, Generator, List
+
 import polars as pl
-from typing import List, Dict, Any, Generator
+from faker import Faker
 
 
 def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFrame:

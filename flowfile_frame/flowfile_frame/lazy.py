@@ -1,12 +1,13 @@
 import inspect
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from functools import wraps
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
+
 import polars as pl
-from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
+
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_frame.expr import Expr
+from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
 from flowfile_frame.utils import _get_function_source
-from typing import cast
-from functools import wraps
 
 
 def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFrame", "Expr"]:
@@ -422,8 +423,9 @@ def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Di
     Returns:
         Expr instance wrapping the polars expression
     """
-    from flowfile_frame.expr import Expr
     import warnings
+
+    from flowfile_frame.expr import Expr
 
     # Check for non-serializable functions
     serialization_warnings = _check_for_non_serializable_functions(pl_args, pl_kwargs)

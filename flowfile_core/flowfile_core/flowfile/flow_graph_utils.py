@@ -1,7 +1,8 @@
-from typing import Dict, Tuple, Optional, List, Set, Callable
 from copy import deepcopy
-from flowfile_core.schemas import input_schema, schemas
+from typing import Dict, Optional, Tuple
+
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.schemas import input_schema, schemas
 
 
 def combine_flow_graphs_with_mapping(

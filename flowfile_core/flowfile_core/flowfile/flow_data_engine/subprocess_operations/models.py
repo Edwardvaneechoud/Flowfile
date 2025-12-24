@@ -1,6 +1,7 @@
-from typing import Any, Optional, Literal
-from pydantic import BaseModel
+from typing import Any, Literal, Optional
+
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from pydantic import BaseModel
 
 OperationType = Literal['store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'store_sample']
 

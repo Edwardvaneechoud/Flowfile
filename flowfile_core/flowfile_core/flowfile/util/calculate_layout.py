@@ -1,7 +1,6 @@
 import logging
-import math
 from collections import defaultdict, deque
-from typing import List, Dict, Set, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph

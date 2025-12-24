@@ -1,11 +1,15 @@
-from typing import Dict, Set, List
+from typing import Dict, List, Set
 
-from flowfile_core.flowfile.analytics.graphic_walker import (get_initial_gf_data_from_ff,
-                                                             convert_ff_columns_to_gw_fields)
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.schemas.input_schema import NodeExploreData
-from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput, DataModel, MutField, ViewField
 from flowfile_core.configs import logger
+from flowfile_core.flowfile.analytics.graphic_walker import convert_ff_columns_to_gw_fields, get_initial_gf_data_from_ff
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import (
+    DataModel,
+    GraphicWalkerInput,
+    MutField,
+    ViewField,
+)
+from flowfile_core.schemas.input_schema import NodeExploreData
 
 
 class AnalyticsProcessor:

@@ -28,7 +28,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from tools.migrate.migrate import migrate_flowfile, migrate_directory
+from tools.migrate.migrate import migrate_directory, migrate_flowfile
 
 
 def main():

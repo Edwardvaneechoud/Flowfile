@@ -1,41 +1,32 @@
-import pytest
-from fastapi.testclient import TestClient
-import polars as pl
 import base64
 from io import BytesIO
-from flowfile_worker import main
-from flowfile_worker import models
-from flowfile_worker.secrets import encrypt_secret
-from polars_grouper import graph_solver
-
-from logging import getLogger
-from multiprocessing import Queue
 
 import polars as pl
 import pytest
-from flowfile_worker.external_sources.s3_source.models import (CloudStorageWriteSettings,
-                                                               FullCloudStorageConnection,
-                                                               WriteSettings,
-                                                               )
-from flowfile_worker.funcs import write_to_cloud_storage
-from flowfile_worker.secrets import encrypt_secret
+from fastapi.testclient import TestClient
+from polars_grouper import graph_solver
 
+from flowfile_worker import main, models
+from flowfile_worker.external_sources.s3_source.models import (
+    WriteSettings,
+)
+from flowfile_worker.secrets import encrypt_secret
 
 client = TestClient(main.app)
 
 
 try:
     # noinspection PyUnresolvedReferences
-    from tests.utils import is_docker_available, cloud_storage_connection_settings, find_parent_directory
     from test_utils.s3.fixtures import get_minio_client
+    from tests.utils import cloud_storage_connection_settings, find_parent_directory, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
-    from utils import is_docker_available, cloud_storage_connection_settings, find_parent_directory
-    from test_utils.s3.fixtures import get_minio_client
+    from utils import find_parent_directory, is_docker_available
+
 
 @pytest.fixture
 def pw():
@@ -198,7 +189,7 @@ def test_create_func():
     try:
         result_df = pl.LazyFrame.deserialize(BytesIO(lf_test))
     except:
-        raise Exception(f'Error with deserializing the DataFrame')
+        raise Exception('Error with deserializing the DataFrame')
 
 
 def test_write_output_csv():
@@ -239,7 +230,7 @@ def test_store_sql_result(pw):
     try:
         lf_test = base64.decodebytes(status.results.encode())
     except:
-        raise Exception(f'Error with deserializing the DataFrame')
+        raise Exception('Error with deserializing the DataFrame')
     result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.shape[0] > 0, 'Expected to get some data from the database'
 

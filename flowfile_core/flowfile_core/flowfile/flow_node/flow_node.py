@@ -1,22 +1,33 @@
-from typing import List, Union, Callable, Any, Optional, Generator, Literal
-from flowfile_core.configs import logger
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.utils.arrow_reader import get_read_top_n
-from flowfile_core.schemas import input_schema, schemas
-from flowfile_core.configs.flow_logger import NodeLogger
-
-from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
-from flowfile_core.flowfile.utils import get_hash
-from flowfile_core.configs import node_store
-from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from time import sleep
+from typing import Any, Callable, Generator, List, Literal, Optional, Union
+
+from flowfile_core.configs import logger, node_store
+from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    ExternalDfFetcher, ExternalSampler, clear_task_from_worker, results_exists, get_external_df_result,
-    ExternalDatabaseFetcher, ExternalDatabaseWriter, ExternalCloudWriter)
-from flowfile_core.flowfile.flow_node.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
-                                                     NodeStepStats, NodeResults)
+    ExternalCloudWriter,
+    ExternalDatabaseFetcher,
+    ExternalDatabaseWriter,
+    ExternalDfFetcher,
+    ExternalSampler,
+    clear_task_from_worker,
+    get_external_df_result,
+    results_exists,
+)
+from flowfile_core.flowfile.flow_node.models import (
+    NodeResults,
+    NodeSchemaInformation,
+    NodeStepInputs,
+    NodeStepSettings,
+    NodeStepStats,
+)
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
+from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
+from flowfile_core.flowfile.utils import get_hash
+from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
+from flowfile_core.utils.arrow_reader import get_read_top_n
 
 
 class FlowNode:
@@ -796,7 +807,7 @@ class FlowNode:
                 self.results.resulting_data = get_external_df_result(self.hash)
                 self._cache_progress = None
                 return
-            except Exception as e:
+            except Exception:
                 node_logger.warning('Failed to read the cache, rerunning the code')
         if self.node_type == 'output':
             self.results.resulting_data = self.get_resulting_data()

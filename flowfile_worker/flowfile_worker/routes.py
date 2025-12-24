@@ -1,18 +1,17 @@
-import polars as pl
-import uuid
 import os
-from fastapi import APIRouter, HTTPException, Response, BackgroundTasks
-from typing import Dict
+import uuid
 from base64 import encodebytes
 
-from flowfile_worker import status_dict, CACHE_DIR, PROCESS_MEMORY_USAGE, status_dict_lock
-from flowfile_worker import models
-from flowfile_worker.spawner import start_process, start_fuzzy_process, start_generic_process, process_manager
-from flowfile_worker.create import table_creator_factory_method, FileType
+import polars as pl
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
+
+from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
-from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.external_sources.sql_source.main import read_sql_source
+from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
+from flowfile_worker.external_sources.sql_source.main import read_sql_source
+from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
+from flowfile_worker.spawner import process_manager, start_fuzzy_process, start_generic_process, start_process
 
 router = APIRouter()
 

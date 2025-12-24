@@ -1,11 +1,13 @@
-import pytest
+from typing import Any, List, Literal, Union
+
 import polars as pl
-from typing import List, Any, Union, Literal
+import pytest
+
+from flowfile_core.flowfile.node_designer.data_types import DataType, TypeGroup, Types
 
 # Note: For these imports to work, your project's source directory
 # (e.g., the directory containing `flowfile_core`) should be in your PYTHONPATH.
 from flowfile_core.flowfile.node_designer.ui_components import ColumnSelector
-from flowfile_core.flowfile.node_designer.data_types import DataType, TypeGroup, Types
 
 # Helper lists for expected sorted outputs from TypeGroups
 NUMERIC_TYPES_SORTED = sorted([

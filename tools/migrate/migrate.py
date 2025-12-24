@@ -3,10 +3,9 @@ Migration logic for converting old flowfile pickles to new YAML format.
 """
 
 import pickle
-from dataclasses import fields, is_dataclass, asdict
+from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import sys
+from typing import Any, Dict, List
 
 try:
     import yaml

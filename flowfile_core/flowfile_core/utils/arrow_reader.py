@@ -1,5 +1,7 @@
+from typing import Callable, Iterator, List, Tuple
+
 import pyarrow as pa
-from typing import List, Iterator, Tuple, Callable
+
 from flowfile_core.configs import logger
 
 

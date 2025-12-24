@@ -1,4 +1,4 @@
-from typing import List, Union, TYPE_CHECKING  # Added TYPE_CHECKING
+from typing import List, Union  # Added TYPE_CHECKING
 
 import polars as pl
 
@@ -6,7 +6,6 @@ import polars as pl
 # if TYPE_CHECKING:
 #     Import Expr only for type hints
 from flowfile_frame.expr import Expr
-
 
 # --- Selector Base Classes (Compound, Complement) ---
 

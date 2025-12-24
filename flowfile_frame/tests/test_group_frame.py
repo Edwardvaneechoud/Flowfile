@@ -1,11 +1,10 @@
-import pytest
 import polars as pl
-
+import pytest
 from polars.testing import assert_frame_equal
 
+from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
 from flowfile_frame.group_frame import GroupByFrame
-from flowfile_frame.expr import col
 
 
 class TestGroupByFrame:
@@ -406,7 +405,7 @@ class TestGroupByFrame:
 
     def test_group_by_agg_top_level_functions(self, sales_data):
         """Test using top-level aggregation functions in agg()."""
-        from flowfile_frame.expr import mean, min, max, count, sum
+        from flowfile_frame.expr import count, max, mean, min, sum
 
         # Group by region using top-level functions
         flow_frame = sales_data.group_by("region").agg([

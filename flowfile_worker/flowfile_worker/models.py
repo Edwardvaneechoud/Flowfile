@@ -1,12 +1,11 @@
-from pydantic import BaseModel
-from typing import Optional, Literal, Any
 from base64 import decodebytes
+from typing import Any, Literal, Optional
 
 from pl_fuzzy_frame_match import FuzzyMapping
+from pydantic import BaseModel
 
-from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings
-
+from flowfile_worker.external_sources.sql_source.models import DatabaseWriteSettings
 
 OperationType = Literal[
     'store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'fuzzy', 'store_sample',

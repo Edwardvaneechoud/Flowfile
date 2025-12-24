@@ -4,8 +4,9 @@ def main():
     """
     Display information about FlowFile when run directly as a module.
     """
-    import flowfile
     import argparse
+
+    import flowfile
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument("command", nargs="?", choices=["run"], help="Command to execute")

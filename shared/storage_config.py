@@ -5,7 +5,7 @@ This module can be imported by both core and worker without creating dependencie
 """
 import os
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 DirectoryOptions = Literal["temp_directory", "logs_directory",
                             "system_logs_directory", "database_directory",
@@ -184,8 +184,8 @@ class FlowfileStorage:
 
     def cleanup_directory(self, directory_option: DirectoryOptions, storage_duration_hours: int = 24) -> None:
         """Clean up any directory of the folder"""
-        import time
         import shutil
+        import time
 
         if not hasattr(self, directory_option):
             raise Exception(f"Directory does not exist in {self.base_directory}")

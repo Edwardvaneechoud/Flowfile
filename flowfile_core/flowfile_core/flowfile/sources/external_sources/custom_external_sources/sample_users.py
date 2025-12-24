@@ -1,7 +1,9 @@
-from typing import Dict, Any, Generator
 from time import sleep
-from flowfile_core.schemas.input_schema import SampleUsers
+from typing import Any, Dict, Generator
+
 import requests
+
+from flowfile_core.schemas.input_schema import SampleUsers
 
 
 def getter(data: SampleUsers) -> Generator[Dict[str, Any], None, None]:

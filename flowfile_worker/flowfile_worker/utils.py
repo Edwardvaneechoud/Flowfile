@@ -1,6 +1,7 @@
+from dataclasses import dataclass
+
 import polars as pl
 from polars.exceptions import PanicException
-from dataclasses import dataclass
 
 
 def collect_lazy_frame(lf: pl.LazyFrame) -> pl.DataFrame:

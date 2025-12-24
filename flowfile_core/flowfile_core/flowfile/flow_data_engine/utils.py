@@ -1,13 +1,14 @@
-import polars as pl
-from flowfile_core.configs.settings import AVAILABLE_RAM, WORKER_URL
-from flowfile_core.configs import logger
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import Status
-from flowfile_core.utils.utils import standardize_col_dtype
 import os
-from typing import List, Dict, Iterable, Callable, Any
-import requests
 from base64 import encodebytes
+from typing import Any, Callable, Dict, Iterable, List
+
+import polars as pl
+import requests
+
+from flowfile_core.configs import logger
+from flowfile_core.configs.settings import AVAILABLE_RAM, WORKER_URL
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import ExternalDfFetcher, Status
+from flowfile_core.utils.utils import standardize_col_dtype
 
 
 def get_data_type(vals: Iterable[Any]):
@@ -47,7 +48,7 @@ def write_polars_frame(_df: pl.LazyFrame | pl.DataFrame, path: str, data_type: s
             try:
                 write_method(path)
                 return True
-            except Exception as e:
+            except Exception:
                 pass
         if is_lazy:
             _df = _df.collect()

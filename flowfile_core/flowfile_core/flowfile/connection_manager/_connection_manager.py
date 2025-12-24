@@ -1,4 +1,5 @@
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
 from flowfile_core.flowfile.connection_manager.models import Connection
 
 

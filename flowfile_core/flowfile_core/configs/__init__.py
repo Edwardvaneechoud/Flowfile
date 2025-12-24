@@ -1,8 +1,8 @@
 # flowfile_core/flowfile_core/configs/__init__.py
 import logging
+import os
 import sys
 from pathlib import Path
-import os
 
 os.environ["FLOWFILE_MODE"] = "electron"
 

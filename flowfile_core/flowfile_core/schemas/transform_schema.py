@@ -1,15 +1,19 @@
-from typing import List, Dict, Tuple, Set, Optional, Literal, Callable
-from dataclasses import asdict
-import polars as pl
-from polars import selectors
 from copy import deepcopy
-from pydantic import BaseModel, ConfigDict, model_validator, Field
-from typing import NamedTuple, Union, Any
-from flowfile_core.schemas.yaml_types import (
-    SelectInputYaml, JoinInputsYaml, JoinInputYaml,
-    CrossJoinInputYaml, FuzzyMatchInputYaml
-)
+from dataclasses import asdict
+from typing import Any, Callable, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, Union
+
+import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from polars import selectors
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from flowfile_core.schemas.yaml_types import (
+    CrossJoinInputYaml,
+    FuzzyMatchInputYaml,
+    JoinInputsYaml,
+    JoinInputYaml,
+    SelectInputYaml,
+)
 
 FuzzyMap = FuzzyMapping
 
@@ -710,7 +714,7 @@ class UnpivotInput(BaseModel):
             if self.data_type_selector is not None:
                 try:
                     return getattr(selectors, self.data_type_selector)
-                except Exception as e:
+                except Exception:
                     print(f'Could not find the selector: {self.data_type_selector}')
                     return selectors.all
             return selectors.all

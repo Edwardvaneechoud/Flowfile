@@ -1,5 +1,5 @@
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.schemas.input_schema import ReceivedTable, InputExcelTable
+from flowfile_core.schemas.input_schema import InputExcelTable, ReceivedTable
 
 
 def test_read_excel_table_basic():

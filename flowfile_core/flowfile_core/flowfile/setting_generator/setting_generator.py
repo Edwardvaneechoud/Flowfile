@@ -1,5 +1,6 @@
-from flowfile_core.configs import logger
 from typing import Callable
+
+from flowfile_core.configs import logger
 
 
 class SettingGenerator:

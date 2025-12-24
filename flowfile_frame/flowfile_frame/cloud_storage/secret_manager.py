@@ -1,12 +1,13 @@
 from typing import List
 
-from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
-from flowfile_core.flowfile.database_connection_manager.db_connections import (store_cloud_connection,
-                                                                               get_all_cloud_connections_interface,
-                                                                               delete_cloud_connection)
+from flowfile_core.auth.jwt import create_access_token, get_current_user_sync
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.auth.jwt import  get_current_user_sync, create_access_token
-from asyncio import run
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    delete_cloud_connection,
+    get_all_cloud_connections_interface,
+    store_cloud_connection,
+)
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 
 
 def get_current_user_id() -> int | None:

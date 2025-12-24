@@ -4,32 +4,59 @@ import inspect
 import os
 import sys
 import typing
-from io import IOBase
-from typing import List, Optional, ForwardRef, TypeVar, Any, Iterable, Sequence, Mapping, Collection, Callable, Literal, IO, Union
-from datetime import timedelta
-from pathlib import Path
 from collections.abc import Awaitable
+from datetime import timedelta
+from io import IOBase
+from pathlib import Path
+from typing import (
+    IO,
+    Any,
+    Callable,
+    Collection,
+    ForwardRef,
+    Iterable,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+)
 
 # Third-party imports
 import polars as pl
+from polars import DataFrame, LazyFrame, QueryOptFlags
 from polars._typing import *
 from polars._typing import ParquetMetadata, PlanStage
 from polars._utils.async_ import _GeventDataFrameResult
 from polars.dependencies import polars_cloud as pc
 from polars.io.cloud import CredentialProviderFunction
-from polars.lazyframe.frame import LazyGroupBy
-from polars import LazyFrame, DataFrame, QueryOptFlags
 from polars.io.parquet import ParquetFieldOverwrites
+from polars.lazyframe.frame import LazyGroupBy
 from polars.lazyframe.opt_flags import DEFAULT_QUERY_OPT_FLAGS
-from polars.type_aliases import (Schema, IntoExpr, ClosedInterval, Label, StartBy, RollingInterpolationMethod, IpcCompression, CompatLevel, SyncOnCloseMethod, ExplainFormat, EngineType, SerializationFormat, AsofJoinStrategy)
+from polars.type_aliases import (
+    AsofJoinStrategy,
+    ClosedInterval,
+    CompatLevel,
+    EngineType,
+    ExplainFormat,
+    IntoExpr,
+    IpcCompression,
+    Label,
+    Schema,
+    SerializationFormat,
+    StartBy,
+    SyncOnCloseMethod,
+)
 
 # Local application/library specific imports
 import flowfile_frame
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.schemas import transform_schema
 from flowfile_frame import group_frame
 from flowfile_frame.expr import Expr
-from flowfile_core.schemas import transform_schema
 
 # Conditional imports
 if sys.version_info >= (3, 10):

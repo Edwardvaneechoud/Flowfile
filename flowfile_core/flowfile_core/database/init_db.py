@@ -1,11 +1,13 @@
 # Generate a random secure password and hash it
 import secrets
 import string
-from sqlalchemy.orm import Session
-from flowfile_core.database import models as db_models
-from flowfile_core.database.connection import engine, SessionLocal
 
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+
+from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import SessionLocal, engine
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 db_models.Base.metadata.create_all(bind=engine)

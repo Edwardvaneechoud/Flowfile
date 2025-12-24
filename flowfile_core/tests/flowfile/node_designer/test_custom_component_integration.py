@@ -1,18 +1,11 @@
 import polars as pl
 import pytest
 
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, nodes_list, add_to_custom_node_store
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, add_to_custom_node_store, nodes_list
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.flowfile.node_designer.custom_node import (
-    CustomNodeBase,
-    NodeSettings
-)
-
-from flowfile_core.flowfile.node_designer.ui_components import (
-    TextInput,
-    Section
-)
+from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase, NodeSettings
+from flowfile_core.flowfile.node_designer.ui_components import Section, TextInput
 from flowfile_core.schemas import input_schema, schemas
 
 

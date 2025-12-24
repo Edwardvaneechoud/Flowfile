@@ -1,22 +1,21 @@
-import pytest
-from typing import Dict, Any
+from typing import Any, Dict
+
 import polars as pl
+import pytest
 from polars.testing import assert_frame_equal
+
+from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase, NodeSettings, to_frontend_schema
+
 # Assuming these files are in a structure that allows direct import.
 # You may need to adjust your PYTHONPATH for this to work.
 from flowfile_core.flowfile.node_designer.ui_components import (
-    TextInput,
-    NumericInput,
-    ToggleSwitch,
-    SingleSelect,
+    IncomingColumns,
     MultiSelect,
+    NumericInput,
     Section,
-    IncomingColumns
-)
-from flowfile_core.flowfile.node_designer.custom_node import (
-    CustomNodeBase,
-    NodeSettings,
-    to_frontend_schema
+    SingleSelect,
+    TextInput,
+    ToggleSwitch,
 )
 
 

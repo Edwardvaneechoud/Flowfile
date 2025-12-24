@@ -1,6 +1,7 @@
 
+from typing import Optional
+
 from pydantic import BaseModel, SecretStr
-from typing import Optional, List
 
 
 class Token(BaseModel):

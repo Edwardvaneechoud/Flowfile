@@ -1,26 +1,28 @@
+import os
+import platform
+import shutil
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+from unittest.mock import patch
+
 import pytest
 import requests
-import time
-import shutil
-import os
-import sys
-from pathlib import Path
-from unittest.mock import patch
-from typing import Optional
-import platform
+
+import flowfile as ff
+from flowfile import col, open_graph_in_editor
 
 # Assuming the api module is importable as flowfile.api
 from flowfile.api import (
+    FLOWFILE_BASE_URL,
+    build_server_command,
+    get_auth_token,
     is_flowfile_running,
+    is_poetry_environment,
     start_flowfile_server_process,
     stop_flowfile_server_process,
-    get_auth_token,
-    is_poetry_environment,
-    build_server_command,
-    FLOWFILE_BASE_URL,
 )
-import flowfile as ff
-from flowfile import col, open_graph_in_editor
 
 
 def find_parent_directory(target_dir_name, start_path=None):

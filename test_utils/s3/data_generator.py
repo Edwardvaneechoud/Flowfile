@@ -1,16 +1,15 @@
 
-import logging
 import io
+import logging
 import os
 
 # Third-party libraries
 import boto3
-from botocore.client import Config
 import polars as pl
 import pyarrow as pa
+from botocore.client import Config
 from deltalake import write_deltalake
 from pyiceberg.catalog import load_catalog
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

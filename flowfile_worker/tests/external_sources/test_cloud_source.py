@@ -1,33 +1,30 @@
-import polars as pl
-from logging import getLogger
-import pytest
 from dataclasses import dataclass
-from typing import Optional
+from logging import getLogger
 
-from flowfile_worker.secrets import encrypt_secret
+import polars as pl
+import pytest
 
-from flowfile_worker.external_sources.s3_source.models import (CloudStorageWriteSettings,
-                                                               CloudStorageType,
-                                                               FullCloudStorageConnection,
-                                                               WriteSettings,
-                                                               )
 from flowfile_worker.external_sources.s3_source.main import write_df_to_cloud
-from pydantic import SecretStr
+from flowfile_worker.external_sources.s3_source.models import (
+    CloudStorageWriteSettings,
+    WriteSettings,
+)
 
 logger = getLogger(__name__)
 
 
 try:
     # noinspection PyUnresolvedReferences
-    from tests.utils import is_docker_available, cloud_storage_connection_settings
     from test_utils.s3.fixtures import get_minio_client
+    from tests.utils import cloud_storage_connection_settings, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
-    from utils import (is_docker_available, cloud_storage_connection_settings)
+    from utils import is_docker_available
+
     from test_utils.s3.fixtures import get_minio_client
 
 

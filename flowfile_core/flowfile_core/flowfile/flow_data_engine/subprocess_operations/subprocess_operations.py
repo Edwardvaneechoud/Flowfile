@@ -1,14 +1,13 @@
 # Standard library imports
-from base64 import decodebytes, encodebytes
 import io
 import threading
+from base64 import decodebytes, encodebytes
 from time import sleep
 from typing import Any, List, Literal, Optional
 from uuid import uuid4
 
 import polars as pl
 import requests
-
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
@@ -17,14 +16,14 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     FuzzyJoinInput,
     OperationType,
     PolarsOperation,
-    Status
+    Status,
 )
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import (DatabaseExternalReadSettings,
-                                                                               DatabaseExternalWriteSettings)
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
+    DatabaseExternalReadSettings,
+    DatabaseExternalWriteSettings,
+)
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
-from flowfile_core.schemas.input_schema import (
-    ReceivedTable
-)
+from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
 
 
@@ -629,7 +628,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
         unique_values = (lf.unique().collect(engine="streaming")[:, 0].to_list())
 
         if not unique_values:
-            raise ValueError(f"No unique values found in lazyframe")
+            raise ValueError("No unique values found in lazyframe")
 
         return unique_values
 

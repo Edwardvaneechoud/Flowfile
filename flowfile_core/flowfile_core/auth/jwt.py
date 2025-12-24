@@ -5,13 +5,13 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-from flowfile_core.auth.secrets import get_password, set_password
 
-from flowfile_core.auth.models import User, TokenData
+from flowfile_core.auth.models import TokenData, User
+from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 

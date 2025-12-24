@@ -1,11 +1,11 @@
 # flowfile_worker.configs
 
-import logging
-import platform
 import argparse
+import logging
 import os
-from connectorx import __version__
+import platform
 
+from connectorx import __version__
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s: %(message)s')

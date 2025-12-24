@@ -1,17 +1,13 @@
+import inspect
+import textwrap
 import uuid
-import time
-import os
-import requests
-import subprocess
-from pathlib import Path
+from typing import Any, Iterable, List
+
 import polars as pl
-from typing import Iterable, Any, List, Optional
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import schemas
-from tempfile import TemporaryDirectory
-import inspect
-import textwrap
+
 
 def _is_iterable(obj: Any) -> bool:
     # Avoid treating strings as iterables in this context

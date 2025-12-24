@@ -1,16 +1,14 @@
 import asyncio
-import uvicorn
 import signal
-
 from contextlib import asynccontextmanager
+
+import uvicorn
 from fastapi import FastAPI
 
-from shared.storage_config import storage
-
-from flowfile_worker.routes import router
 from flowfile_worker import mp_context
-from flowfile_worker.configs import logger, FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT
-
+from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
+from flowfile_worker.routes import router
+from shared.storage_config import storage
 
 should_exit = False
 server_instance = None

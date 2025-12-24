@@ -1,5 +1,7 @@
 from typing import List
+
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+
 
 def determine_nodes_to_skip(nodes : List[FlowNode]) -> List[FlowNode]:
     """ Finds nodes to skip on the execution step. """

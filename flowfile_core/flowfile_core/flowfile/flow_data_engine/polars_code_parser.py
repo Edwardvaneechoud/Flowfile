@@ -1,9 +1,10 @@
-import polars as pl
-from typing import Dict, Any, Callable
-import textwrap
 import ast
+import textwrap
 import time
 from io import BytesIO
+from typing import Any, Callable, Dict
+
+import polars as pl
 
 
 def remove_comments_and_docstrings(source: str) -> str:

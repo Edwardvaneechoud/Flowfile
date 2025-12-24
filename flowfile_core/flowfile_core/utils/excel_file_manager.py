@@ -1,7 +1,8 @@
 import os
-import fastexcel
-from typing import List
 from functools import lru_cache
+from typing import List
+
+import fastexcel
 
 from flowfile_core.configs import logger
 

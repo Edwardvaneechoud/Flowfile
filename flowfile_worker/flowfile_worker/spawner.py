@@ -1,10 +1,10 @@
-from flowfile_worker import status_dict
-from time import sleep
 import gc
-from typing import List, Tuple
 from multiprocessing import Process, Queue
+from time import sleep
+from typing import List, Tuple
+
+from flowfile_worker import funcs, models, mp_context, status_dict, status_dict_lock
 from flowfile_worker.process_manager import ProcessManager
-from flowfile_worker import models, mp_context, funcs, status_dict_lock
 
 # Initialize ProcessManager
 process_manager = ProcessManager()

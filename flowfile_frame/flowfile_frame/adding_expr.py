@@ -1,8 +1,10 @@
-import polars as pl
 from functools import wraps
-from typing import Callable, TypeVar, Type
-from flowfile_frame.utils import _get_function_source
+from typing import Callable, Type, TypeVar
+
+import polars as pl
+
 from flowfile_frame.config import logger
+from flowfile_frame.utils import _get_function_source
 
 T = TypeVar('T')
 ExprT = TypeVar('ExprT', bound='Expr')
@@ -29,7 +31,6 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
 
     @wraps(original_method)
     def wrapper(self: Expr, *args, **kwargs):
-        from flowfile_frame.expr import Expr
         # Check if we have a valid underlying expression
         if self.expr is None:
             raise ValueError(
@@ -205,8 +206,8 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                                         # Lambda or unnamed function - not convertible
                                         logger.warning(
                                             f"Warning: Using anonymous functions in {method_name} is not convertable to UI code")
-                                        logger.warning(f"Consider using defined functions (def abc(a, b, c): return ...), "
-                                                       f"In a separate script")
+                                        logger.warning("Consider using defined functions (def abc(a, b, c): return ...), "
+                                                       "In a separate script")
                                         convertable_to_code = False
                                         args_representations.append(repr(arg))
                                 except:

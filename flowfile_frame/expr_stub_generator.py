@@ -4,11 +4,11 @@ Utility to generate comprehensive type stubs for Expr and Column classes.
 This script generates a complete type stub file (.pyi) for the Expr and related classes
 that includes both native methods and any methods dynamically added.
 """
-import os
 import inspect
+import os
 import re
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union, get_type_hints
+from typing import List, Optional, Tuple, Union
 
 
 def format_type_annotation(annotation_obj) -> str:

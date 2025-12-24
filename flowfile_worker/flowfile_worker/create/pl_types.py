@@ -1,6 +1,5 @@
 import polars as pl
 
-
 dtype_to_pl = {
     'int': pl.Int64,
     'integer': pl.Int64,

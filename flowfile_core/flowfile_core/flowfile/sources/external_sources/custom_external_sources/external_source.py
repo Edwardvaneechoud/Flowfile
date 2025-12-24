@@ -1,8 +1,10 @@
-from typing import Any, Dict, Generator, List, Optional, Callable
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
+from typing import Any, Callable, Dict, Generator, List, Optional
+
 import polars as pl
+
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
+from flowfile_core.schemas import input_schema
 
 
 class CustomExternalSourceSettings:

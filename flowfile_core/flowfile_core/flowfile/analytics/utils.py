@@ -1,5 +1,5 @@
-from flowfile_core.schemas.input_schema import NodeExploreData, NodePromise
 from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput
+from flowfile_core.schemas.input_schema import NodeExploreData, NodePromise
 
 
 def create_graphic_walker_node_from_node_promise(node_promise: NodePromise) -> NodeExploreData:

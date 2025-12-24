@@ -15,7 +15,8 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.secret_manager.secret_manager import store_secret, delete_secret as delete_secret_action
+from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
+from flowfile_core.secret_manager.secret_manager import store_secret
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 

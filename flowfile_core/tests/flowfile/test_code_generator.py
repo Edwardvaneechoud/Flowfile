@@ -1,20 +1,22 @@
-import pytest
-from typing import List, Tuple
-import polars as pl
-from polars.testing import assert_frame_equal
 from pathlib import Path
+from typing import List, Tuple
 from uuid import uuid4
 
+import polars as pl
+import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from polars.testing import assert_frame_equal
 
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 try:
     import os
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 except ModuleNotFoundError:
     import os
@@ -22,7 +24,8 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import is_docker_available
+
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 
 
@@ -2211,15 +2214,15 @@ def test_multiple_output_formats(tmp_path):
     verify_if_execute(code)
     try:
         pl.read_csv(str(tmp_path) + os.sep + "output.csv", separator="|")
-    except Exception as e:
+    except Exception:
         raise Exception("Could not read the CSV file that should have been written")
     try:
         pl.read_excel(str(tmp_path) + os.sep + "output.xlsx", sheet_name='Results')
-    except Exception as e:
+    except Exception:
         raise Exception("Could not read the xlsx file that should have been written")
     try:
         pl.read_parquet(str(tmp_path) + os.sep + "output.parquet")
-    except Exception as e:
+    except Exception:
         raise Exception("Could not read the parquet file that should have been written")
 
 

@@ -1,11 +1,15 @@
-from typing import Literal, Optional, TYPE_CHECKING
-from pydantic import BaseModel, SecretStr
-from flowfile_core.schemas.input_schema import (DatabaseConnection,
-                                                NodeDatabaseReader,
-                                                FullDatabaseConnection,
-                                                NodeDatabaseWriter)
 import base64
+from typing import Literal, Optional
+
 import polars as pl
+from pydantic import BaseModel
+
+from flowfile_core.schemas.input_schema import (
+    DatabaseConnection,
+    FullDatabaseConnection,
+    NodeDatabaseReader,
+    NodeDatabaseWriter,
+)
 
 
 class ExtDatabaseConnection(DatabaseConnection):

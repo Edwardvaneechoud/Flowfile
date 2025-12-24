@@ -1,9 +1,10 @@
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Set, Union
-from datetime import datetime
+
 from pydantic import BaseModel
 from typing_extensions import Literal
-import os
 
 
 class FileInfo(BaseModel):
@@ -366,7 +367,7 @@ def get_files_from_directory(
             recursive=recursive
         )
 
-    except (ValueError, PermissionError) as e:
+    except (ValueError, PermissionError):
         # Return None for invalid/inaccessible directories
         return None
     except Exception as e:

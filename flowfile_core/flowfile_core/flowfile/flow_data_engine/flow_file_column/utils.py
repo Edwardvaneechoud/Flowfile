@@ -1,6 +1,5 @@
 import polars as pl
 
-
 dtype_to_pl = {
     'int': pl.Int64,
     'integer': pl.Int64,
@@ -55,7 +54,7 @@ def get_polars_type(dtype: str):
     if 'pl.' in dtype:
         try:
             return safe_eval_pl_type(dtype)
-        except Exception as e:
+        except Exception:
             return pl.String
     pl_datetype = dtype_to_pl.get(dtype.lower())
     if pl_datetype is not None:

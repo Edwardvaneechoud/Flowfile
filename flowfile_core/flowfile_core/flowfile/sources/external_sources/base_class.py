@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Generator, Callable, List, Any, Optional, Dict
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from typing import Any, Callable, Dict, Generator, List, Optional
+
 import polars as pl
+
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
 
 class ExternalDataSource(ABC):

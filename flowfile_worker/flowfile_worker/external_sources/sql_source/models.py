@@ -1,5 +1,7 @@
-from typing import Optional, Literal
+from typing import Literal, Optional
+
 from pydantic import BaseModel, SecretStr
+
 from flowfile_worker.secrets import decrypt_secret
 
 

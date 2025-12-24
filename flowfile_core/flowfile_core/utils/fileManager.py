@@ -1,7 +1,8 @@
 import os
-from flowfile_core.schemas.input_schema import NewDirectory, RemoveItem, RemoveItemsInput
-from typing import Tuple, Optional
+from typing import Optional, Tuple
+
 from flowfile_core.configs import logger
+from flowfile_core.schemas.input_schema import NewDirectory, RemoveItem, RemoveItemsInput
 
 local_database_connection = None
 

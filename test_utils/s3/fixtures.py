@@ -1,12 +1,14 @@
-import os
-import time
-import subprocess
 import logging
+import os
+import shutil
+import subprocess
+import time
 from contextlib import contextmanager
 from typing import Dict, Generator
-import shutil
+
 import boto3
 from botocore.client import Config
+
 from test_utils.s3.data_generator import populate_test_data
 from test_utils.s3.demo_data_generator import create_demo_data
 

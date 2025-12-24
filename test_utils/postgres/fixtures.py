@@ -5,11 +5,11 @@ This module provides utilities to set up, manage, and tear down PostgreSQL
 containers with sample data for testing.
 """
 
-import os
-import time
 import logging
-import subprocess
+import os
 import shutil
+import subprocess
+import time
 from contextlib import contextmanager
 from typing import Dict, Generator, Optional, Tuple
 
@@ -225,7 +225,7 @@ def start_postgres_container(
         logger.warning("Docker not available, skipping PostgreSQL container start")
         return None, False
 
-    logger.info(f"Starting PostgreSQL container with sample data...")
+    logger.info("Starting PostgreSQL container with sample data...")
 
     # Check if container is already running
     if is_container_running(container_name):
@@ -345,7 +345,7 @@ def print_connection_info(
     print(f"Connection string: postgresql://{user}:{password}@{host}:{port}/{db}")
     print("=" * 50)
     print("\nTo stop the container, run:")
-    print(f"poetry run stop_postgres")
+    print("poetry run stop_postgres")
     print("=" * 50 + "\n")
 
 

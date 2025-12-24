@@ -4,14 +4,15 @@ Web interface for Flowfile.
 Extends the flowfile_core FastAPI app to serve the Vue.js frontend
 and includes worker functionality.
 """
+import asyncio
 import os
 import time
-from pathlib import Path
 import webbrowser
-import asyncio
+from pathlib import Path
+
 from fastapi import FastAPI, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 static_dir = Path(__file__).parent / "static"
 
@@ -95,8 +96,8 @@ def include_worker_routes(app: FastAPI):
     """
     try:
         # Import worker modules
+        from flowfile_worker import CACHE_DIR, mp_context
         from flowfile_worker.routes import router as worker_router
-        from flowfile_worker import mp_context, CACHE_DIR
 
         # Add lifecycle event handler for worker cleanup
         @app.on_event("shutdown")
@@ -136,8 +137,9 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     os.environ["FLOWFILE_MODE"] = "electron"
 
     # Import core app
-    from flowfile_core.main import run, app as core_app
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+    from flowfile_core.main import app as core_app
+    from flowfile_core.main import run
     if host != '127.0.0.1':
         raise NotImplementedError("Other then local host is not supported")
     if port != 63578:

@@ -5,12 +5,11 @@ This script generates a complete type stub file (.pyi) for the FlowFrame class
 that includes both native FlowFrame methods and LazyFrame methods that are
 added by the @add_lazyframe_methods decorator, plus module-level functions.
 """
-import os
 import inspect
-import sys
+import os
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, get_type_hints, Union, Collection
-
+import sys
+from typing import Optional, Type, get_type_hints
 
 PASSTHROUGH_METHODS = {
     'collect', 'collect_async', 'profile', 'describe', 'explain',
@@ -153,7 +152,6 @@ def generate_improved_type_stub(
     str
         Path to the generated stub file
     """
-    import polars as pl
     from polars.lazyframe.frame import LazyFrame
 
     lazyframe_returning_methods = set()
@@ -324,7 +322,7 @@ def generate_improved_type_stub(
                 return_type = hints['return']
                 return_type_str = str(return_type)
                 if class_name in return_type_str or f"'{class_name}'" in return_type_str or \
-                   "FlowFrame" in return_type_str or f"'FlowFrame'" in return_type_str:
+                   "FlowFrame" in return_type_str or "'FlowFrame'" in return_type_str:
                     return True
                 if 'GroupByFrame' in return_type_str:
                     return False
@@ -449,7 +447,7 @@ def generate_improved_type_stub(
                     doc_lines = doc.strip().split('\n')
                     content.append(f"    # {doc_lines[0].strip()}")
 
-                content.append(f"    @property")
+                content.append("    @property")
                 return_type_str = "Any"
                 if hasattr(member, 'fget') and member.fget is not None:
                     try:
@@ -563,7 +561,7 @@ def generate_improved_type_stub(
                         doc_lines = doc.strip().split('\n')
                         content.append(f"    # {doc_lines[0].strip()}")
 
-                    content.append(f"    @property")
+                    content.append("    @property")
                     return_type_str = "Any"
                     if hasattr(member, 'fget') and member.fget is not None:
                         try:

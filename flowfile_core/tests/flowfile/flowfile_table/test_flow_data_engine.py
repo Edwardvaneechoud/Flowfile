@@ -1,10 +1,10 @@
+import polars as pl
+import pytest
+from pl_fuzzy_frame_match.models import FuzzyMapping
+
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
 from flowfile_core.flowfile.flow_data_engine.polars_code_parser import remove_comments_and_docstrings
 from flowfile_core.schemas import transform_schema
-import polars as pl
-import pytest
-
-from pl_fuzzy_frame_match.models import FuzzyMapping
 
 
 def create_sample_data():

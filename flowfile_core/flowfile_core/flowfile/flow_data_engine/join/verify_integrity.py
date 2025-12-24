@@ -1,7 +1,8 @@
 
 from typing import List
-from flowfile_core.schemas import transform_schema
+
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.schemas import transform_schema
 
 
 def verify_join_select_integrity(

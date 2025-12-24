@@ -1,9 +1,14 @@
-from flowfile_frame.expr import col, Expr, Column, lit
-from flowfile_frame.selectors import Selector
-from flowfile_frame.utils import _parse_inputs_as_iterable
-from flowfile_core.schemas import transform_schema, input_schema
 from typing import TYPE_CHECKING, Any
-from flowfile_frame.utils import _check_if_convertible_to_code, ensure_inputs_as_iterable, get_pl_expr_from_expr
+
+from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_frame.expr import Column, Expr, col, lit
+from flowfile_frame.selectors import Selector
+from flowfile_frame.utils import (
+    _check_if_convertible_to_code,
+    _parse_inputs_as_iterable,
+    ensure_inputs_as_iterable,
+    get_pl_expr_from_expr,
+)
 
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame

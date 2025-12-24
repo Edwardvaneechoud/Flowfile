@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Union, TYPE_CHECKING, List, Literal, TypeVar
+from builtins import len as built_in_len
+from functools import wraps
+from typing import TYPE_CHECKING, Any, List, Literal, Optional, TypeVar, Union
 
 import polars as pl
 from polars.expr.string import ExprStringNameSpace
 
 from flowfile_core.schemas import transform_schema
-from functools import wraps
-
-from builtins import len as built_in_len
-
+from flowfile_frame.adding_expr import add_expr_methods
 from flowfile_frame.config import logger
 from flowfile_frame.expr_name import ExprNameNameSpace
-from flowfile_frame.adding_expr import add_expr_methods
 from flowfile_frame.list_name_space import ExprListNameSpace
 
 # --- TYPE CHECKING IMPORTS ---
@@ -20,13 +18,7 @@ if TYPE_CHECKING:
     from flowfile_frame.selectors import Selector
     ExprType = TypeVar('ExprType', bound='Expr')
     ColumnType = "Column"  # Use string literal instead of direct class reference
-    from polars._typing import (
-        Ambiguous,
-        IntoExpr,
-        IntoExprColumn,
-        PolarsDataType,
-        PolarsTemporalType,
-        TimeUnit)
+    from polars._typing import IntoExprColumn, PolarsTemporalType
 
 ExprOrStr = Union['Expr', str]
 ExprOrStrList = List[ExprOrStr]
@@ -784,7 +776,7 @@ class Expr:
         if self.expr is not None:
             try:
                 res_expr = self.expr.filter(*processed_predicates)
-            except Exception as e:
+            except Exception:
                 logger.warning("Could not create polars expression for filter(): {e}")
                 pass  # res_expr will remain None
 
@@ -967,7 +959,7 @@ class Expr:
 
                 res_expr = self.expr.over(partition_by=partition_arg, **polars_call_kwargs)
 
-            except Exception as e:
+            except Exception:
 
                 logger.warning("Could not create polars expression for over(): {e}")
                 pass

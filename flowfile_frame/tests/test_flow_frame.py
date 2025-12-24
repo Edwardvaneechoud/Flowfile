@@ -1,22 +1,17 @@
-from flowfile_frame.flow_frame_methods import (read_parquet, from_dict, concat,
-                                               scan_csv_from_cloud_storage,
-                                               scan_parquet_from_cloud_storage,
-                                               scan_json_from_cloud_storage,
-                                               scan_delta)
-from flowfile_frame.flow_frame import FlowFrame
-from flowfile_frame.expr import col, lit, cum_count
-from flowfile_frame import selectors as sc
-from uuid import uuid4
-import os
 import io
-import pytest
+import os
 import tempfile
-import polars as pl
-from polars.testing import assert_frame_equal
-from flowfile_frame.flow_frame_methods import read_csv
-from flowfile_frame.expr import col
-from pl_fuzzy_frame_match.models import FuzzyMapping
+from uuid import uuid4
 
+import polars as pl
+import pytest
+from pl_fuzzy_frame_match.models import FuzzyMapping
+from polars.testing import assert_frame_equal
+
+from flowfile_frame import selectors as sc
+from flowfile_frame.expr import col, cum_count, lit
+from flowfile_frame.flow_frame import FlowFrame
+from flowfile_frame.flow_frame_methods import concat, from_dict, read_csv, read_parquet
 
 try:
     # noinspection PyUnresolvedReferences
@@ -823,7 +818,6 @@ def test_read_csv_integration():
 
 def test_fuzzy_match():
     """Test fuzzy matching operations."""
-    from flowfile_core.schemas.input_schema import MinimalFieldInfo, RawData
     left_data = FlowFrame({"id": [1, 2, 3, 4, 5], "street": ["123 Main St", "456 Elm St", "789 Maple Ave", "101 Oak St", "202 Pine St"]})
     right_data = FlowFrame({"id": [1, 2, 3], "street": ["123 Main Street", "456 Elm Street", "789 Maple Avenue"]})
 

@@ -38,7 +38,7 @@ def get_file(file_path, mimetype):
 
 
 def is_media(filepath):
-    found_media = re.search("\.mp4$|\.mp3$", filepath, re.IGNORECASE)
+    found_media = re.search(r"\.mp4$|\.mp3$", filepath, re.IGNORECASE)
     if found_media:
         extension = found_media[0].lower()[1:]
         if found_media in video_types:
@@ -48,6 +48,6 @@ def is_media(filepath):
 
 
 def get_file_extension(fname):
-    found_extension = re.search("\.[A-Za-z0-9]*$", fname, re.IGNORECASE)
+    found_extension = re.search(r"\.[A-Za-z0-9]*$", fname, re.IGNORECASE)
     if found_extension:
         return found_extension[0][1:].lower()
