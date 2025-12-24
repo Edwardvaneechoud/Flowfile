@@ -13,6 +13,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
+from flowfile_core.schemas.data_types import DataType
 
 import pytest
 from pathlib import Path
@@ -326,7 +327,6 @@ def test_add_formula_no_type():
                   {'name': 'courtney'}]
     add_manual_input(graph, data=input_data)
     add_node_promise_on_type(graph, "formula", 2)
-    breakpoint()
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     formula_input = input_schema.NodeFormula(
         flow_id=graph.flow_id,
@@ -340,7 +340,6 @@ def test_add_formula_no_type():
     assert graph.get_node(2).setting_input.function.field.data_type == "Auto"
     graph.run_graph()
     resulting_data = graph.get_node(2).get_resulting_data()
-    resulting_data.to_dict()
     expected_data = FlowDataEngine({
                 'name': ['eduward', 'edward', 'courtney'],
                 'output_field': ['name = eduward', 'name = edward', 'name = courtney']
@@ -348,32 +347,29 @@ def test_add_formula_no_type():
     resulting_data.assert_equal(expected_data)
 
 
-def test_add_formula_error():
+def test_add_formula_with_type():
     graph = create_graph()
-    input_data = [{'name': 'eduward'},
-                  {'name': 'edward'},
-                  {'name': 'courtney'}]
+    input_data = [{'val': 2},
+                  {'val': 4},
+                  {'val': 1}]
     add_manual_input(graph, data=input_data)
     add_node_promise_on_type(graph, "formula", 2)
-    breakpoint()
     add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
     formula_input = input_schema.NodeFormula(
         flow_id=graph.flow_id,
         node_id=2,
-        function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="output_field"),
-                                                function="'name = ' + 1")
+        function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="output_field", data_type=
+                                                                                  str(DataType.Float64)),
+                                                function="1 + [val]")
     )
     valid, result = graph.add_formula(formula_input)
     assert valid
     assert result == ""
-    assert graph.get_node(2).setting_input.function.field.data_type == "Auto"
+    assert graph.get_node(2).setting_input.function.field.data_type == DataType.Float64
     graph.run_graph()
     resulting_data = graph.get_node(2).get_resulting_data()
     resulting_data.to_dict()
-    expected_data = FlowDataEngine({
-                'name': ['eduward', 'edward', 'courtney'],
-                'output_field': ['name = eduward', 'name = edward', 'name = courtney']
-             })
+    expected_data = FlowDataEngine({'val': [2, 4, 1], 'output_field': [3.0, 5.0, 2.0]})
     resulting_data.assert_equal(expected_data)
 
 

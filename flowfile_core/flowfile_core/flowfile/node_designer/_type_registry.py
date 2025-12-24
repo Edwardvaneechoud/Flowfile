@@ -9,7 +9,7 @@ from typing import Type, List, Dict, Set, Any, Union
 import polars as pl
 
 # Import public types
-from flowfile_core.flowfile.node_designer.data_types import TypeGroup, DataType
+from flowfile_core.schemas.data_types import TypeGroup, DataType
 
 
 @dataclass(frozen=True)

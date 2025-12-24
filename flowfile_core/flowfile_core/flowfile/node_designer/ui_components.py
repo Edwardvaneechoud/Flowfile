@@ -6,7 +6,7 @@ from pydantic import Field, BaseModel, computed_field
 
 from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec
 # Public API import
-from flowfile_core.flowfile.node_designer.data_types import DataType, TypeSpec
+from flowfile_core.schemas.data_types import DataType, TypeSpec
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 

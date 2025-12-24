@@ -11,6 +11,8 @@ from flowfile_core.schemas.yaml_types import (
 )
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
+from flowfile_core.schemas.data_types import DataType
+
 FuzzyMap = FuzzyMapping
 
 AUTO_DATA_TYPE = "Auto"
@@ -147,7 +149,7 @@ class SelectInput(BaseModel):
 class FieldInput(BaseModel):
     """Represents a single field with its name and data type, typically for defining an output column."""
     name: str
-    data_type: Optional[str] = AUTO_DATA_TYPE
+    data_type: Optional[DataType | Literal["Auto"] | None] = AUTO_DATA_TYPE
 
 
 class FunctionInput(BaseModel):
