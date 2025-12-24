@@ -28,7 +28,7 @@ DataTypeStr = Literal[
     "Float32", "Float64", "Decimal",
     "String",
     "Date", "Datetime", "Time", "Duration",
-    "Boolean", "Binary", "List", "Struct", "Array", "Integer"
+    "Boolean", "Binary", "List", "Struct", "Array", "Integer", "Double", "Utf8"
 ]
 
 
