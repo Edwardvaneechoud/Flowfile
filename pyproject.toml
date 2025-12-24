@@ -86,6 +86,7 @@ pandas = "^2.3.1"
 mkdocstrings = "^0.30.0"
 mkdocstrings-python = "^1.16.12"
 griffe-pydantic = "^1.1.6"
+ruff = "^0.8.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -96,3 +97,58 @@ markers = [
     "worker: Tests for the flowfile_worker package",
     "core: Tests for the flowfile_core package"
 ]
+
+# Ruff configuration - starting with minimal rules
+[tool.ruff]
+# Target Python 3.10 (minimum supported version)
+target-version = "py310"
+
+# Line length - 120 is reasonable for modern screens
+line-length = 120
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+    "node_modules",
+]
+
+[tool.ruff.lint]
+# Start with a minimal set of rules:
+# F: Pyflakes - catches real bugs (unused imports, undefined names)
+# E: pycodestyle errors - basic syntax issues
+# W: pycodestyle warnings - style warnings
+# I: isort - import sorting (auto-fixable)
+select = ["F", "E", "W", "I"]
+
+# Ignore specific rules that may be too noisy initially
+ignore = [
+    "E501",  # Line too long - let formatter handle this
+    "F403",  # Star imports - common pattern in __init__.py files
+    "F405",  # Names from star imports - related to F403
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+# Group imports: standard library, third-party, local
+known-first-party = ["flowfile", "flowfile_core", "flowfile_worker", "flowfile_frame", "shared", "test_utils", "tools", "build_backends"]
+
+[tool.ruff.format]
+# Use double quotes for strings (Python convention)
+quote-style = "double"
+
+# Indent with spaces
+indent-style = "space"
+
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+
+# Auto-detect line ending
+line-ending = "auto"
