@@ -90,16 +90,15 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
         kwargs_repr = ", ".join(kwargs_representations)
 
         if args_repr and kwargs_repr:
-            params_repr = f"{args_repr}, {kwargs_repr}"
+            pass
         elif args_repr:
-            params_repr = args_repr
+            pass
         elif kwargs_repr:
-            params_repr = kwargs_repr
+            pass
         else:
-            params_repr = ""
+            pass
 
         # Create the repr string for this method call
-        new_repr = f"{self._repr_str}.{method_name}({params_repr})"
 
         # Methods that typically change the aggregation status or complexity
         agg_methods = {
@@ -241,15 +240,14 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                         kwargs_repr = ", ".join(kwargs_representations)
 
                         if args_repr and kwargs_repr:
-                            params_repr = f"{args_repr}, {kwargs_repr}"
+                            pass
                         elif args_repr:
-                            params_repr = args_repr
+                            pass
                         elif kwargs_repr:
-                            params_repr = kwargs_repr
+                            pass
                         else:
-                            params_repr = ""
+                            pass
                         # Create a representation string
-                        new_repr = f"{self._repr_str}.{method_name}({params_repr})"
                         # self._repr_str = new_repr
                         # Return a new expression with the convertable_to_code flag set appropriately
                         result = self._create_next_expr(

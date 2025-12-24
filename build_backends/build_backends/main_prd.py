@@ -22,7 +22,7 @@ def wait_for_endpoint(url, timeout=60):
 def shutdown_service():
     """Shutdown the service gracefully using the shutdown endpoint."""
     try:
-        response = requests.post(
+        requests.post(
             'http://0.0.0.0:63578/shutdown',
             headers={'accept': 'application/json'},
             data=''
