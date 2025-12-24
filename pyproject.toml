@@ -106,7 +106,7 @@ target-version = "py310"
 # Line length - 120 is reasonable for modern screens
 line-length = 120
 
-# Exclude common directories
+# Exclude common directories and test files
 exclude = [
     ".git",
     ".venv",
@@ -115,6 +115,12 @@ exclude = [
     "dist",
     "*.egg-info",
     "node_modules",
+    "tests",
+    "**/tests",
+    "test_*.py",
+    "*_test.py",
+    "conftest.py",
+    "test_utils",
 ]
 
 [tool.ruff.lint]
