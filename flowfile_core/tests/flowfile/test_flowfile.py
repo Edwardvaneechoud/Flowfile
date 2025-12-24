@@ -6,13 +6,11 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.configs.flow_logger import FlowLogger
 from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               store_database_connection,
-                                                                               store_cloud_connection,
-                                                                               delete_cloud_connection,
-                                                                               get_all_cloud_connections_interface)
+                                                                               store_database_connection)
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
+from flowfile_core.types import DataType
 
 import pytest
 from pathlib import Path
@@ -317,6 +315,59 @@ def test_adding_graph_solver():
     input_data = graph.get_node(1).get_resulting_data()
     expected_data = input_data.add_new_values([1, 1, 2], 'g')
     output_data.assert_equal(expected_data)
+
+
+def test_add_formula_no_type():
+    graph = create_graph()
+    input_data = [{'name': 'eduward'},
+                  {'name': 'edward'},
+                  {'name': 'courtney'}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, "formula", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    formula_input = input_schema.NodeFormula(
+        flow_id=graph.flow_id,
+        node_id=2,
+        function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="output_field"),
+                                                function="'name = ' + [name]")
+    )
+    valid, result = graph.add_formula(formula_input)
+    assert valid
+    assert result == ""
+    assert graph.get_node(2).setting_input.function.field.data_type == "Auto"
+    graph.run_graph()
+    resulting_data = graph.get_node(2).get_resulting_data()
+    expected_data = FlowDataEngine({
+                'name': ['eduward', 'edward', 'courtney'],
+                'output_field': ['name = eduward', 'name = edward', 'name = courtney']
+             })
+    resulting_data.assert_equal(expected_data)
+
+
+def test_add_formula_with_type():
+    graph = create_graph()
+    input_data = [{'val': 2},
+                  {'val': 4},
+                  {'val': 1}]
+    add_manual_input(graph, data=input_data)
+    add_node_promise_on_type(graph, "formula", 2)
+    add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    formula_input = input_schema.NodeFormula(
+        flow_id=graph.flow_id,
+        node_id=2,
+        function=transform_schema.FunctionInput(field=transform_schema.FieldInput(name="output_field", data_type=
+                                                                                  str(DataType.Float64)),
+                                                function="1 + [val]")
+    )
+    valid, result = graph.add_formula(formula_input)
+    assert valid
+    assert result == ""
+    assert graph.get_node(2).setting_input.function.field.data_type == DataType.Float64
+    graph.run_graph()
+    resulting_data = graph.get_node(2).get_resulting_data()
+    resulting_data.to_dict()
+    expected_data = FlowDataEngine({'val': [2, 4, 1], 'output_field': [3.0, 5.0, 2.0]})
+    resulting_data.assert_equal(expected_data)
 
 
 def test_add_fuzzy_match():

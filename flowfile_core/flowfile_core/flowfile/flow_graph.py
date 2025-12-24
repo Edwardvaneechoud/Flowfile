@@ -171,7 +171,7 @@ def get_cloud_connection_settings(connection_name: str,
         HTTPException: If the connection settings cannot be found.
     """
     cloud_connection_settings = get_local_cloud_connection(connection_name, user_id)
-    if cloud_connection_settings is None and auth_mode in ("env_vars", "auto"):
+    if cloud_connection_settings is None and auth_mode in ("env_vars", transform_schema.AUTO_DATA_TYPE):
         # If the auth mode is aws-cli, we do not need connection settings
         cloud_connection_settings = FullCloudStorageConnection(storage_type="s3", auth_method="env_vars")
     elif cloud_connection_settings is None and auth_mode == "aws-cli":
@@ -752,11 +752,11 @@ class FlowGraph:
         """
 
         error = ""
-        if function_settings.function.field.data_type not in (None, "Auto"):
+        if function_settings.function.field.data_type not in (None, transform_schema.AUTO_DATA_TYPE):
             output_type = cast_str_to_polars_type(function_settings.function.field.data_type)
         else:
             output_type = None
-        if output_type not in (None, "Auto"):
+        if output_type not in (None, transform_schema.AUTO_DATA_TYPE):
             new_col = [FlowfileColumn.from_input(column_name=function_settings.function.field.name,
                                                  data_type=str(output_type))]
         else:
@@ -774,6 +774,7 @@ class FlowGraph:
                            setting_input=function_settings,
                            input_node_ids=[function_settings.depending_on_id]
                            )
+        # TODO: Add validation here
         if error != "":
             node = self.get_node(function_settings.node_id)
             node.results.errors = error

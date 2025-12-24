@@ -611,7 +611,6 @@ def test_execution_complex_flow_local_development(complex_elaborate_flow: FlowGr
 
 def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph):
     main_path = find_parent_directory('Flowfile')
-    flow_path = main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"tmp"/"complex_elaborate_flow.yaml"
     complex_elaborate_flow.flow_settings.execution_mode = "Performance"
     complex_elaborate_flow.save_flow(main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"tmp"/"complex_elaborate_flow.yaml")
     from flowfile_core.flowfile.handler import FlowfileHandler
@@ -619,7 +618,6 @@ def test_save_complex_flow_yaml(complex_elaborate_flow: FlowGraph):
     flow_id = handler.import_flow(flow_path=main_path/"flowfile_core"/"tests"/"support_files"/"flows"/"tmp"/"complex_elaborate_flow.yaml")
     flow = handler.get_flow(flow_id)
     flow.run_graph()
-
 
 
 def test_store_flow(complex_elaborate_flow: FlowGraph):
