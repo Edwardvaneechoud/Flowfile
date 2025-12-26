@@ -101,7 +101,13 @@ The desktop version offers the best experience with a native interface and integ
 **Option A: Download Pre-built Application** 
 - Download the latest release from [GitHub Releases](https://github.com/Edwardvaneechoud/Flowfile/releases)
 - Run the installer for your platform (Windows, macOS, or Linux)
-  - Note: You may see security warnings since the installer isn't signed. On Windows, click "More info" then "Run anyway". On macOS, right-click the app, select "Open", then confirm. These warnings appear because the app isn't signed with a developer certificate.
+> **Note:** You may see security warnings since the app isn't signed with a developer certificate yet.
+> - **Windows:** Click "More info" → "Run anyway"
+> - **macOS:** If you see "app is damaged" error, run this in Terminal after installing:
+>   ```bash
+>   find /Applications/Flowfile.app -exec xattr -c {} \;
+>   ```
+>   Then open the app normally. This clears the quarantine flag that macOS sets on downloaded apps.
 
 **Option B: Build from Source:**
 ```bash
