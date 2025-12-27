@@ -10,6 +10,7 @@ import type {
 import { NodeApi, ExpressionsApi } from '../services/api';
 import { useFlowStore } from './flow-store';
 import { useResultsStore } from './results-store';
+import { useEditorStore } from './editor-store';
 
 export const useNodeStore = defineStore('node', {
   state: () => ({
@@ -28,6 +29,64 @@ export const useNodeStore = defineStore('node', {
   getters: {
     currentNodeId: (state) => state.nodeId,
     currentNodeData: (state) => state.nodeData,
+
+    // Backward compatibility getters that proxy to other stores
+    node_id: (state) => state.nodeId,
+    is_loaded: (state) => state.isLoaded,
+    flow_id(): number {
+      return useFlowStore().flowId;
+    },
+    vueFlowInstance() {
+      return useFlowStore().vueFlowInstance;
+    },
+    isRunning(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.isRunning || false;
+    },
+    isDrawerOpen(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.isDrawerOpen || false;
+    },
+    activeDrawerComponent() {
+      const editorStore = useEditorStore();
+      return editorStore?.activeDrawerComponent;
+    },
+    drawerProps() {
+      const editorStore = useEditorStore();
+      return editorStore?.drawerProps || {};
+    },
+    showCodeGenerator(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.showCodeGenerator || false;
+    },
+    showFlowResult(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.showFlowResult || false;
+    },
+    isShowingLogViewer(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.isShowingLogViewer || false;
+    },
+    hideLogViewerForThisRun(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.hideLogViewerForThisRun || false;
+    },
+    displayLogViewer(): boolean {
+      const editorStore = useEditorStore();
+      return editorStore?.displayLogViewer !== undefined ? editorStore.displayLogViewer : true;
+    },
+    inputCode(): string {
+      const editorStore = useEditorStore();
+      return editorStore?.inputCode || '';
+    },
+    currentRunResult() {
+      const resultsStore = useResultsStore();
+      return resultsStore?.currentRunResult;
+    },
+    runResults() {
+      const resultsStore = useResultsStore();
+      return resultsStore?.runResults || {};
+    },
   },
 
   actions: {
@@ -197,7 +256,6 @@ export const useNodeStore = defineStore('node', {
     // ========== Node Settings Updates ==========
     async updateSettingsDirectly(inputData: any): Promise<any> {
       const flowStore = useFlowStore();
-      const resultsStore = useResultsStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.node_id)) as Node;
@@ -320,6 +378,147 @@ export const useNodeStore = defineStore('node', {
         return flowStore.vueFlowInstance?.findNode(String(this.nodeId));
       }
       return null;
+    },
+
+    // ========== Backward Compatibility Actions (Proxy to other stores) ==========
+    setFlowId(flowId: number) {
+      const flowStore = useFlowStore();
+      flowStore.setFlowId(flowId);
+    },
+
+    setVueFlowInstance(vueFlowInstance: any) {
+      const flowStore = useFlowStore();
+      flowStore.setVueFlowInstance(vueFlowInstance);
+    },
+
+    getVueFlowInstance() {
+      const flowStore = useFlowStore();
+      return flowStore.getVueFlowInstance();
+    },
+
+    setNodeResult(nodeId: number, result: any) {
+      const flowStore = useFlowStore();
+      const resultsStore = useResultsStore();
+      resultsStore.setNodeResult(flowStore.flowId, nodeId, result);
+    },
+
+    getNodeResult(nodeId: number) {
+      const flowStore = useFlowStore();
+      const resultsStore = useResultsStore();
+      return resultsStore.getNodeResult(flowStore.flowId, nodeId);
+    },
+
+    resetNodeResult() {
+      const resultsStore = useResultsStore();
+      resultsStore.resetNodeResult();
+    },
+
+    clearFlowResults(flowId: number) {
+      const resultsStore = useResultsStore();
+      resultsStore.clearFlowResults(flowId);
+    },
+
+    setNodeValidation(nodeId: number | string, nodeValidationInput: any) {
+      const flowStore = useFlowStore();
+      const resultsStore = useResultsStore();
+      resultsStore.setNodeValidation(flowStore.flowId, nodeId, nodeValidationInput);
+    },
+
+    resetNodeValidation() {
+      const resultsStore = useResultsStore();
+      resultsStore.resetNodeValidation();
+    },
+
+    getNodeValidation(nodeId: number) {
+      const flowStore = useFlowStore();
+      const resultsStore = useResultsStore();
+      return resultsStore.getNodeValidation(flowStore.flowId, nodeId);
+    },
+
+    insertRunResult(runResult: any, showResult: boolean = true) {
+      const resultsStore = useResultsStore();
+      resultsStore.insertRunResult(runResult, showResult);
+    },
+
+    resetRunResults() {
+      const resultsStore = useResultsStore();
+      resultsStore.resetRunResults();
+    },
+
+    getRunResult(flowId: number) {
+      const resultsStore = useResultsStore();
+      return resultsStore.getRunResult(flowId);
+    },
+
+    openDrawer(component: any, nodeTitleInfo: any, props: Record<string, any> = {}) {
+      const editorStore = useEditorStore();
+      editorStore.openDrawer(component, nodeTitleInfo, props);
+    },
+
+    closeDrawer() {
+      const editorStore = useEditorStore();
+      editorStore.closeDrawer();
+      this.nodeId = -1;
+    },
+
+    toggleDrawer() {
+      const editorStore = useEditorStore();
+      editorStore.toggleDrawer();
+    },
+
+    pushNodeData() {
+      const editorStore = useEditorStore();
+      editorStore.pushNodeData();
+    },
+
+    setCloseFunction(f: () => void) {
+      const editorStore = useEditorStore();
+      editorStore.setCloseFunction(f);
+    },
+
+    executeDrawCloseFunction() {
+      const editorStore = useEditorStore();
+      return editorStore.executeDrawCloseFunction();
+    },
+
+    toggleCodeGenerator() {
+      const editorStore = useEditorStore();
+      editorStore.toggleCodeGenerator();
+    },
+
+    setCodeGeneratorVisibility(visible: boolean) {
+      const editorStore = useEditorStore();
+      editorStore.setCodeGeneratorVisibility(visible);
+    },
+
+    showLogViewer() {
+      const editorStore = useEditorStore();
+      editorStore.showLogViewer();
+    },
+
+    hideLogViewer() {
+      const editorStore = useEditorStore();
+      editorStore.hideLogViewer();
+    },
+
+    toggleLogViewer() {
+      const editorStore = useEditorStore();
+      editorStore.toggleLogViewer();
+    },
+
+    setInputCode(newCode: string) {
+      const editorStore = useEditorStore();
+      editorStore.setInputCode(newCode);
+    },
+
+    setInitialEditorData(editorDataString: string) {
+      const editorStore = useEditorStore();
+      editorStore.setInitialEditorData(editorDataString);
+    },
+
+    getInitialEditorData() {
+      const editorStore = useEditorStore();
+      return editorStore.getInitialEditorData();
     },
   },
 });

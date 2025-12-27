@@ -33,6 +33,7 @@ export { useResultsStore } from './results-store';
 export { useEditorStore } from './editor-store';
 
 // Re-export helper function for backward compatibility
+import { NodeApi as NodeApiService } from '../services/api';
 export { NodeApi } from '../services/api';
 export const getDownstreamNodeIds = (flowId: number, nodeId: number) =>
-  NodeApi.getDownstreamNodeIds(flowId, nodeId);
+  NodeApiService.getDownstreamNodeIds(flowId, nodeId);

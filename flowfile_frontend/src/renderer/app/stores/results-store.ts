@@ -7,7 +7,6 @@ import type {
   NodeValidation,
   NodeValidationInput,
 } from '../features/designer/baseNode/nodeInterfaces';
-import { useFlowStore } from './flow-store';
 
 export const useResultsStore = defineStore('results', {
   state: () => ({

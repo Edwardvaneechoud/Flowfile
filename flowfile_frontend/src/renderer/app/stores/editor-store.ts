@@ -3,7 +3,6 @@ import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
 import type { Component } from 'vue';
 import type { NodeTitleInfo } from '../features/designer/baseNode/nodeInterfaces';
-import { useResultsStore } from './results-store';
 
 export const useEditorStore = defineStore('editor', {
   state: () => ({
