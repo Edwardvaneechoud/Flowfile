@@ -1,4 +1,5 @@
 // Node Store - Manages node data, validation, and node-level state
+// IMPORTANT: This store includes backward compatibility proxies to other stores
 import { defineStore } from 'pinia';
 import type { Node } from '@vue-flow/core';
 import type {
@@ -30,9 +31,11 @@ export const useNodeStore = defineStore('node', {
     currentNodeId: (state) => state.nodeId,
     currentNodeData: (state) => state.nodeData,
 
-    // Backward compatibility getters that proxy to other stores
+    // Backward compatibility: read-only getters (use snake_case for legacy)
     node_id: (state) => state.nodeId,
     is_loaded: (state) => state.isLoaded,
+
+    // Proxy getters to other stores
     flow_id(): number {
       return useFlowStore().flowId;
     },
@@ -40,52 +43,41 @@ export const useNodeStore = defineStore('node', {
       return useFlowStore().vueFlowInstance;
     },
     isRunning(): boolean {
-      const editorStore = useEditorStore();
-      return editorStore?.isRunning || false;
+      return useEditorStore()?.isRunning || false;
     },
     isDrawerOpen(): boolean {
-      const editorStore = useEditorStore();
-      return editorStore?.isDrawerOpen || false;
+      return useEditorStore()?.isDrawerOpen || false;
     },
     activeDrawerComponent() {
-      const editorStore = useEditorStore();
-      return editorStore?.activeDrawerComponent;
+      return useEditorStore()?.activeDrawerComponent;
     },
     drawerProps() {
-      const editorStore = useEditorStore();
-      return editorStore?.drawerProps || {};
+      return useEditorStore()?.drawerProps || {};
     },
     showCodeGenerator(): boolean {
-      const editorStore = useEditorStore();
-      return editorStore?.showCodeGenerator || false;
+      return useEditorStore()?.showCodeGenerator || false;
     },
     showFlowResult(): boolean {
-      const editorStore = useEditorStore();
-      return editorStore?.showFlowResult || false;
+      return useEditorStore()?.showFlowResult || false;
     },
     isShowingLogViewer(): boolean {
-      const editorStore = useEditorStore();
-      return editorStore?.isShowingLogViewer || false;
+      return useEditorStore()?.isShowingLogViewer || false;
     },
     hideLogViewerForThisRun(): boolean {
-      const editorStore = useEditorStore();
-      return editorStore?.hideLogViewerForThisRun || false;
+      return useEditorStore()?.hideLogViewerForThisRun || false;
     },
     displayLogViewer(): boolean {
       const editorStore = useEditorStore();
       return editorStore?.displayLogViewer !== undefined ? editorStore.displayLogViewer : true;
     },
     inputCode(): string {
-      const editorStore = useEditorStore();
-      return editorStore?.inputCode || '';
+      return useEditorStore()?.inputCode || '';
     },
     currentRunResult() {
-      const resultsStore = useResultsStore();
-      return resultsStore?.currentRunResult;
+      return useResultsStore()?.currentRunResult;
     },
     runResults() {
-      const resultsStore = useResultsStore();
-      return resultsStore?.runResults || {};
+      return useResultsStore()?.runResults || {};
     },
   },
 
