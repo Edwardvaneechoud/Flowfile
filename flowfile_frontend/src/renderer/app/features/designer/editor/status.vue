@@ -52,11 +52,13 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
 import { useItemStore } from "./../components/Canvas/DraggableItem/stateStore";
 import { View, Minus } from "@element-plus/icons-vue";
 import PopOver from "../editor/PopOver.vue";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const draggableItemStore = useItemStore();
 const lastStatusChange = ref(new Date());
 
@@ -102,9 +104,9 @@ const tooltipContent = computed(() => {
 const buttonText = computed(() => (showFlowResult.value ? "Hide Results" : "Show Results"));
 
 const toggleResults = () => {
-  nodeStore.showFlowResult = !nodeStore.showFlowResult;
-  nodeStore.isShowingLogViewer = nodeStore.showFlowResult;
-  if (nodeStore.isShowingLogViewer) {
+  editorStore.showFlowResult = !editorStore.showFlowResult;
+  editorStore.isShowingLogViewer = editorStore.showFlowResult;
+  if (editorStore.isShowingLogViewer) {
     draggableItemStore.bringToFront("logViewer");
     draggableItemStore.bringToFront("flowresults");
   }

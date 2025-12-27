@@ -3,6 +3,8 @@ import { ref, onUnmounted, Ref } from "vue";
 import axios from "axios";
 import { ElNotification } from "element-plus";
 import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
+import { useResultsStore } from "../../../stores/results-store";
 import { updateRunStatus, getFlowSettings, FlowSettings } from "../nodes/nodeLogic";
 import { VueFlowStore } from "@vue-flow/core";
 import { RunInformation } from "../baseNode/nodeInterfaces";
@@ -77,6 +79,8 @@ export function useFlowExecution(
   } = {}
 ) {
   const nodeStore = useNodeStore();
+  const editorStore = useEditorStore();
+  const resultsStore = useResultsStore();
   const state = FlowExecutionState.getInstance();
   const localPollingInterval = ref<number | null>(null);
   const isExecuting = ref(false);
@@ -188,7 +192,7 @@ export function useFlowExecution(
       if (response.status === 200) {
         stopPolling(pollingKeySuffix);
         unFreezeFlow();
-        nodeStore.isRunning = false;
+        editorStore.isRunning = false;
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
         console.log("response data" , response.data);
@@ -205,16 +209,16 @@ export function useFlowExecution(
       } else if (response.status === 404) {
         stopPolling(pollingKeySuffix);
         unFreezeFlow();
-        nodeStore.isRunning = false;
+        editorStore.isRunning = false;
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
-        nodeStore.runResults = {};
+        resultsStore.resetRunResults();
       }
     } catch (error) {
       console.error("Error checking run status:", error);
       stopPolling(pollingKeySuffix);
       unFreezeFlow();
-      nodeStore.isRunning = false;
+      editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(pollingKeySuffix), false);
     }
@@ -237,8 +241,8 @@ export function useFlowExecution(
     freezeFlow();
     nodeStore.resetNodeResult();
     isExecuting.value = true;
-    nodeStore.isRunning = true;
-    nodeStore.hideLogViewerForThisRun = false
+    editorStore.isRunning = true;
+    editorStore.hideLogViewerForThisRun = false
     state.setExecutionState(getPollingKey(), true);
 
     const executionLocationText = flowSettings.execution_location === "local" ? "Local" : "Remote";
@@ -264,7 +268,7 @@ export function useFlowExecution(
     } catch (error) {
       console.error("Error starting run:", error);
       unFreezeFlow();
-      nodeStore.isRunning = false;
+      editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(), false);
       showNotification("Error", "Failed to start the flow", "error");
@@ -284,7 +288,7 @@ export function useFlowExecution(
     freezeFlow();
     nodeStore.resetNodeResult();
     isExecuting.value = true;
-    nodeStore.isRunning = true;
+    editorStore.isRunning = true;
     state.setExecutionState(getPollingKey(pollingKeySuffix), true);
 
     showNotification(
@@ -311,7 +315,7 @@ export function useFlowExecution(
     } catch (error: any) {
       console.error("Error triggering node fetch:", error);
       unFreezeFlow();
-      nodeStore.isRunning = false;
+      editorStore.isRunning = false;
       isExecuting.value = false;
       state.setExecutionState(getPollingKey(pollingKeySuffix), false);
       
@@ -330,7 +334,7 @@ export function useFlowExecution(
       });
       showNotification("Cancelling", "The operation is being cancelled");
       unFreezeFlow();
-      nodeStore.isRunning = false;
+      editorStore.isRunning = false;
       isExecuting.value = false;
       
       // Stop all polling for this flow

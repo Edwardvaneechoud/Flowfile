@@ -15,6 +15,7 @@ import useDragAndDrop from "./useDnD";
 import CodeGenerator from "./codeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../../../stores/column-store";
+import { useEditorStore } from "../../../../stores/editor-store";
 import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
 import {
   getFlowData,
@@ -36,6 +37,7 @@ import { applyStandardLayout } from "./editorLayoutInterface";
 const itemStore = useItemStore();
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const rawCustomNode = markRaw(CustomNode);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
@@ -96,8 +98,8 @@ interface EdgeChange {
 
 const handleCanvasClick = (event: any | PointerEvent) => {
   showTablePreview.value = false;
-  nodeStore.node_id = -1;
-  nodeStore.activeDrawerComponent = null;
+  nodeStore.nodeId = -1;
+  editorStore.activeDrawerComponent = null;
   nodeStore.hideLogViewer();
   clickedPosition.value = {
     x: event.x,
@@ -106,8 +108,8 @@ const handleCanvasClick = (event: any | PointerEvent) => {
 };
 
 const handleNodeSettingsClose = (event: any | PointerEvent) => {
-  nodeStore.node_id = -1;
-  nodeStore.activeDrawerComponent = null;
+  nodeStore.nodeId = -1;
+  editorStore.activeDrawerComponent = null;
   clickedPosition.value = {
     x: event.x,
     y: event.y,
@@ -163,7 +165,7 @@ const nodeClick = (mouseEvent: any) => {
   showTablePreview.value = true;
 
   nextTick().then(() => {
-    nodeStore.node_id = parseInt(mouseEvent.node.id);
+    nodeStore.nodeId = parseInt(mouseEvent.node.id);
     itemStore.bringToFront("tablePreview");
     itemStore.bringToFront("nodeSettings");
 
@@ -265,7 +267,7 @@ const handleResetLayoutGraph = async () => {
 };
 
 const hideLogViewer = () => {
-  nodeStore.hideLogViewerForThisRun = true;
+  editorStore.hideLogViewerForThisRun = true;
   nodeStore.hideLogViewer();
 };
 

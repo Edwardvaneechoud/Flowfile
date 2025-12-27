@@ -1,6 +1,6 @@
 /* main.css */
 
-/* Existing imports */
+/* Import design tokens and component styles */
 @import './base/_variables.css';
 @import './components/_listbox.css';
 @import './components/_buttons.css';
@@ -8,27 +8,13 @@
 @import './components/_styled-table.css';
 @import './utils/_spacing.css';
 
-/* New imports for Secret Manager */
+/* Secret Manager components */
 @import './components/_cards.css';
 @import './components/_forms.css';
 @import './components/_modals.css';
 @import './utils/_layout.css';
 
-
-/* styles/base/_variables.css */
-:root {
-  /* Fonts */
-  --font-family-base: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
-  
-  /* Colors */
-  --primary-blue: #081b30;
-  --primary-blue-hover: #0d2640;
-  --primary-blue-light: #00040a;
-  --light-blue: #2C74B3;
-  --hover-blue: #f0f7ff;
-  --border-color: #e0e0e0;
-}
-
+/* ========== Element Plus Theme Overrides ========== */
 /* General Element Plus styling */
 [class^="el-"] {
   font-family: var(--font-family-base) !important;
@@ -44,6 +30,7 @@
   font-family: element-icons !important;
 }
 
+/* Primary button styling */
 .el-button--primary {
   background-color: var(--primary-blue) !important;
   border-color: var(--primary-blue) !important;
@@ -54,11 +41,13 @@
   border-color: var(--primary-blue-hover) !important;
 }
 
+/* Select dropdown styling */
 .el-select-dropdown__item.selected {
   background-color: var(--hover-blue) !important;
   color: var(--primary-blue) !important;
 }
 
+/* Input focus styling */
 .el-input:focus {
   border-color: var(--light-blue) !important;
 }
