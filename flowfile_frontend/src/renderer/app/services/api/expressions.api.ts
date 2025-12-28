@@ -1,13 +1,4 @@
-// Expressions API Service - Handles expression documentation requests
-import axios from '../axios-setup';
-import type { ExpressionsOverview } from '../../features/designer/baseNode/nodeInterfaces';
+// DEPRECATED: Import from '@/api' or '../../api' instead
+// This file is kept for backward compatibility during migration
 
-export class ExpressionsApi {
-  /**
-   * Fetch all available expressions overview/documentation
-   */
-  static async getExpressionsOverview(): Promise<ExpressionsOverview[]> {
-    const response = await axios.get<ExpressionsOverview[]>('/editor/expression_doc');
-    return response.data;
-  }
-}
+export { ExpressionsApi } from '../../api/expressions.api'

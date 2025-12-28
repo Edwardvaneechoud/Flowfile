@@ -1,3 +1,4 @@
-// API Services - Central export point for all API services
-export { NodeApi } from './node.api';
-export { ExpressionsApi } from './expressions.api';
+// DEPRECATED: Import from '@/api' or '../../api' instead
+// This file is kept for backward compatibility during migration
+
+export * from '../../api'

@@ -15,7 +15,15 @@
     "types": ["vite/client"],
     "allowJs": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./src/renderer/app/*"],
+      "@/api": ["./src/renderer/app/api"],
+      "@/api/*": ["./src/renderer/app/api/*"],
+      "@/types": ["./src/renderer/app/types"],
+      "@/types/*": ["./src/renderer/app/types/*"],
+      "@/stores": ["./src/renderer/app/stores"],
+      "@/stores/*": ["./src/renderer/app/stores/*"],
+      "@/composables": ["./src/renderer/app/composables"],
+      "@/composables/*": ["./src/renderer/app/composables/*"]
     },
     "typeRoots": ["./node_modules/@types", "./types"]
   },
