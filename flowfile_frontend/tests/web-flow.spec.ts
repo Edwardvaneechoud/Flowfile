@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, APIRequestContext } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -26,7 +26,38 @@ const COMPLEX_FLOW_NODE_TYPES = [
   'record_count', 'explore_data', 'union', 'output'
 ];
 
+// Helper to get auth token
+async function getAuthToken(request: APIRequestContext): Promise<string> {
+  const tokenResponse = await request.post(`${API_URL}/auth/token`);
+  if (!tokenResponse.ok()) {
+    throw new Error(`Failed to get auth token: ${tokenResponse.status()}`);
+  }
+  const tokenData = await tokenResponse.json();
+  return tokenData.access_token;
+}
+
+// Helper to make authenticated requests
+async function authGet(request: APIRequestContext, url: string, token: string) {
+  return request.get(url, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+}
+
+async function authPost(request: APIRequestContext, url: string, token: string, data?: any) {
+  return request.post(url, {
+    headers: { 'Authorization': `Bearer ${token}` },
+    data
+  });
+}
+
 test.describe('Web Flow E2E Tests', () => {
+  let authToken: string;
+
+  test.beforeAll(async ({ request }) => {
+    // Get auth token once for all tests in this suite
+    authToken = await getAuthToken(request);
+  });
+
   test.beforeEach(async ({ page }) => {
     // Navigate to the app
     await page.goto(BASE_URL);
@@ -41,9 +72,9 @@ test.describe('Web Flow E2E Tests', () => {
     await expect(body).toBeVisible();
   });
 
-  test('should fetch node_list from API', async ({ page }) => {
-    // Directly test the API
-    const response = await page.request.get(`${API_URL}/node_list`);
+  test('should fetch node_list from API', async ({ request }) => {
+    // Directly test the API with auth
+    const response = await authGet(request, `${API_URL}/node_list`, authToken);
 
     expect(response.ok()).toBe(true);
 
@@ -62,8 +93,8 @@ test.describe('Web Flow E2E Tests', () => {
     }
   });
 
-  test('should have correct custom_node values for known nodes', async ({ page }) => {
-    const response = await page.request.get(`${API_URL}/node_list`);
+  test('should have correct custom_node values for known nodes', async ({ request }) => {
+    const response = await authGet(request, `${API_URL}/node_list`, authToken);
     const nodeList = await response.json();
 
     // These nodes should have dedicated components (custom_node = false)
@@ -85,11 +116,9 @@ test.describe('Web Flow E2E Tests', () => {
     }
   });
 
-  test('should create a new flow via API', async ({ page }) => {
+  test('should create a new flow via API', async ({ request }) => {
     // Create a new flow
-    const createResponse = await page.request.post(`${API_URL}/add_flow`, {
-      data: { name: 'E2E Test Flow' }
-    });
+    const createResponse = await authPost(request, `${API_URL}/add_flow`, authToken, { name: 'E2E Test Flow' });
 
     expect(createResponse.ok()).toBe(true);
 
@@ -102,53 +131,45 @@ test.describe('Web Flow E2E Tests', () => {
     console.log(`Created flow with ID: ${flowId}`);
   });
 
-  test('should add nodes to a flow via API', async ({ page }) => {
+  test('should add nodes to a flow via API', async ({ request }) => {
     // Create a new flow first
-    const createResponse = await page.request.post(`${API_URL}/add_flow`, {
-      data: { name: 'Node Test Flow' }
-    });
+    const createResponse = await authPost(request, `${API_URL}/add_flow`, authToken, { name: 'Node Test Flow' });
     const flowData = await createResponse.json();
     const flowId = flowData.flow_id || flowData;
 
     // Add a manual_input node
-    const addNodeResponse = await page.request.post(`${API_URL}/add_node`, {
-      data: {
-        flow_id: flowId,
-        node_type: 'manual_input',
-        pos_x: 100,
-        pos_y: 100
-      }
+    const addNodeResponse = await authPost(request, `${API_URL}/add_node`, authToken, {
+      flow_id: flowId,
+      node_type: 'manual_input',
+      pos_x: 100,
+      pos_y: 100
     });
 
     expect(addNodeResponse.ok()).toBe(true);
     console.log('✓ Added manual_input node');
 
     // Add a filter node
-    const addFilterResponse = await page.request.post(`${API_URL}/add_node`, {
-      data: {
-        flow_id: flowId,
-        node_type: 'filter',
-        pos_x: 300,
-        pos_y: 100
-      }
+    const addFilterResponse = await authPost(request, `${API_URL}/add_node`, authToken, {
+      flow_id: flowId,
+      node_type: 'filter',
+      pos_x: 300,
+      pos_y: 100
     });
 
     expect(addFilterResponse.ok()).toBe(true);
     console.log('✓ Added filter node');
 
     // Add a custom_node type (if available)
-    const nodeListResponse = await page.request.get(`${API_URL}/node_list`);
+    const nodeListResponse = await authGet(request, `${API_URL}/node_list`, authToken);
     const nodeList = await nodeListResponse.json();
     const customNode = nodeList.find((n: any) => n.custom_node === true);
 
     if (customNode) {
-      const addCustomResponse = await page.request.post(`${API_URL}/add_node`, {
-        data: {
-          flow_id: flowId,
-          node_type: customNode.item,
-          pos_x: 500,
-          pos_y: 100
-        }
+      const addCustomResponse = await authPost(request, `${API_URL}/add_node`, authToken, {
+        flow_id: flowId,
+        node_type: customNode.item,
+        pos_x: 500,
+        pos_y: 100
       });
 
       expect(addCustomResponse.ok()).toBe(true);
@@ -156,7 +177,7 @@ test.describe('Web Flow E2E Tests', () => {
     }
   });
 
-  test('should load flow in designer without component errors', async ({ page }) => {
+  test('should load flow in designer without component errors', async ({ page, request }) => {
     // Track console errors
     const errors: string[] = [];
     page.on('console', msg => {
@@ -166,22 +187,14 @@ test.describe('Web Flow E2E Tests', () => {
     });
 
     // Create a flow with nodes
-    const createResponse = await page.request.post(`${API_URL}/add_flow`, {
-      data: { name: 'Designer Test Flow' }
-    });
+    const createResponse = await authPost(request, `${API_URL}/add_flow`, authToken, { name: 'Designer Test Flow' });
     const flowData = await createResponse.json();
     const flowId = flowData.flow_id || flowData;
 
     // Add some nodes
-    await page.request.post(`${API_URL}/add_node`, {
-      data: { flow_id: flowId, node_type: 'manual_input', pos_x: 100, pos_y: 100 }
-    });
-    await page.request.post(`${API_URL}/add_node`, {
-      data: { flow_id: flowId, node_type: 'filter', pos_x: 300, pos_y: 100 }
-    });
-    await page.request.post(`${API_URL}/add_node`, {
-      data: { flow_id: flowId, node_type: 'select', pos_x: 500, pos_y: 100 }
-    });
+    await authPost(request, `${API_URL}/add_node`, authToken, { flow_id: flowId, node_type: 'manual_input', pos_x: 100, pos_y: 100 });
+    await authPost(request, `${API_URL}/add_node`, authToken, { flow_id: flowId, node_type: 'filter', pos_x: 300, pos_y: 100 });
+    await authPost(request, `${API_URL}/add_node`, authToken, { flow_id: flowId, node_type: 'select', pos_x: 500, pos_y: 100 });
 
     // Navigate to the designer
     await page.goto(`${BASE_URL}/#/designer/${flowId}`);
@@ -206,9 +219,10 @@ test.describe('Web Flow E2E Tests', () => {
 });
 
 test.describe('API Health Checks', () => {
-  test('backend API should be reachable', async ({ page }) => {
+  test('backend API should be reachable', async ({ request }) => {
     try {
-      const response = await page.request.get(`${API_URL}/health`, {
+      // Try to get a token - if this works, the API is up
+      const response = await request.post(`${API_URL}/auth/token`, {
         timeout: 5000
       });
       expect(response.ok()).toBe(true);
@@ -232,15 +246,24 @@ test.describe('API Health Checks', () => {
 });
 
 test.describe('Complex Flow E2E Tests', () => {
+  let authToken: string;
+
+  test.beforeAll(async ({ request }) => {
+    // Get auth token once for all tests in this suite
+    authToken = await getAuthToken(request);
+  });
+
   test('should have complex flow fixture available', async () => {
     expect(fs.existsSync(COMPLEX_FLOW_FIXTURE)).toBe(true);
     console.log(`✓ Complex flow fixture found at: ${COMPLEX_FLOW_FIXTURE}`);
   });
 
-  test('should import complex flow from YAML fixture', async ({ page }) => {
+  test('should import complex flow from YAML fixture', async ({ request }) => {
     // Import the complex flow using the API
-    const importResponse = await page.request.get(
-      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`
+    const importResponse = await authGet(
+      request,
+      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`,
+      authToken
     );
 
     expect(importResponse.ok()).toBe(true);
@@ -250,7 +273,7 @@ test.describe('Complex Flow E2E Tests', () => {
     console.log(`✓ Imported complex flow with ID: ${flowId}`);
 
     // Get flow data to verify nodes were imported
-    const flowDataResponse = await page.request.get(`${API_URL}/flow_data?flow_id=${flowId}`);
+    const flowDataResponse = await authGet(request, `${API_URL}/flow_data?flow_id=${flowId}`, authToken);
     expect(flowDataResponse.ok()).toBe(true);
 
     const flowData = await flowDataResponse.json();
@@ -264,7 +287,7 @@ test.describe('Complex Flow E2E Tests', () => {
     console.log(`Node types in flow: ${Array.from(nodeTypes).join(', ')}`);
   });
 
-  test('should load complex flow in designer without component errors', async ({ page }) => {
+  test('should load complex flow in designer without component errors', async ({ page, request }) => {
     // Track console errors
     const errors: string[] = [];
     const loadedComponents: string[] = [];
@@ -280,8 +303,10 @@ test.describe('Complex Flow E2E Tests', () => {
     });
 
     // Import the complex flow
-    const importResponse = await page.request.get(
-      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`
+    const importResponse = await authGet(
+      request,
+      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`,
+      authToken
     );
     expect(importResponse.ok()).toBe(true);
 
@@ -319,9 +344,9 @@ test.describe('Complex Flow E2E Tests', () => {
     console.log('\n✓ All components loaded successfully without errors');
   });
 
-  test('should verify all node types have correct custom_node mapping', async ({ page }) => {
+  test('should verify all node types have correct custom_node mapping', async ({ request }) => {
     // Get node list from API
-    const response = await page.request.get(`${API_URL}/node_list`);
+    const response = await authGet(request, `${API_URL}/node_list`, authToken);
     expect(response.ok()).toBe(true);
 
     const nodeList = await response.json();
@@ -350,10 +375,12 @@ test.describe('Complex Flow E2E Tests', () => {
     console.log('\n✓ Core node types have correct custom_node mappings');
   });
 
-  test('should render all nodes in complex flow without visual errors', async ({ page }) => {
+  test('should render all nodes in complex flow without visual errors', async ({ page, request }) => {
     // Import the complex flow
-    const importResponse = await page.request.get(
-      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`
+    const importResponse = await authGet(
+      request,
+      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`,
+      authToken
     );
     expect(importResponse.ok()).toBe(true);
 
