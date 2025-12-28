@@ -272,8 +272,8 @@ test.describe('Complex Flow E2E Tests', () => {
     expect(typeof flowId).toBe('number');
     console.log(`✓ Imported complex flow with ID: ${flowId}`);
 
-    // Get flow data to verify nodes were imported
-    const flowDataResponse = await authGet(request, `${API_URL}/flow_data?flow_id=${flowId}`, authToken);
+    // Get flow data to verify nodes were imported (using v2 API for Vue Flow format)
+    const flowDataResponse = await authGet(request, `${API_URL}/flow_data/v2?flow_id=${flowId}`, authToken);
     expect(flowDataResponse.ok()).toBe(true);
 
     const flowData = await flowDataResponse.json();
@@ -283,7 +283,7 @@ test.describe('Complex Flow E2E Tests', () => {
     console.log(`✓ Flow contains ${flowData.nodes.length} nodes`);
 
     // Verify node types
-    const nodeTypes = new Set(flowData.nodes.map((n: any) => n.node_type || n.type));
+    const nodeTypes = new Set(flowData.nodes.map((n: any) => n.type));
     console.log(`Node types in flow: ${Array.from(nodeTypes).join(', ')}`);
   });
 
