@@ -83,7 +83,7 @@ export async function getNodeTemplateByItem(item: string): Promise<NodeTemplate 
     const allNodes = response.data as NodeTemplate[]
     return allNodes.find(node => node.item === item)
   } catch (error) {
-    console.error(`Failed to get node template for item ${item}:`, error)
+    console.error("Failed to get node template for item:", item, error)
     return undefined
   }
 }
