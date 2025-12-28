@@ -4,8 +4,8 @@
 import { ref, Ref } from 'vue'
 import axios from 'axios'
 import { FlowApi } from '../../../api/flow.api'
-import type { NodeData, RunInformation } from '../../../types/node.types'
-import type { FlowSettings, LocalFileInfo } from '../../../types/flow.types'
+import type { NodeData } from '../../../types/node.types'
+import type { FlowSettings, LocalFileInfo, RunInformation } from '../../../types/flow.types'
 import { AxiosResponse } from 'axios'
 
 // Re-export types for backward compatibility

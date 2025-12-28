@@ -48,20 +48,13 @@ async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
     return cachePromise
   }
 
-  cachePromise = FlowApi.getAllFlows()
-    .then(() => {
-      // Fetch node list from API
-      return fetch('/node_list').then(r => r.json())
-    })
-    .catch(async () => {
-      // Fallback: import from the existing module
-      const { default: axios } = await import('axios')
-      const response = await axios.get('/node_list')
-      return response.data as NodeTemplate[]
-    })
-    .then(allNodes => {
+  const { default: axios } = await import('axios')
+
+  cachePromise = axios.get('/node_list')
+    .then(response => {
+      const allNodes = response.data as NodeTemplate[]
       nodeTemplatesCache = allNodes
-      return nodeTemplatesCache
+      return nodeTemplatesCache as NodeTemplate[]
     })
     .catch(error => {
       console.error("Failed to fetch node templates:", error)
