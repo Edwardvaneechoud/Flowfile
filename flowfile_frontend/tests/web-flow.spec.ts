@@ -12,7 +12,7 @@ import * as fs from 'fs';
  * 3. Run tests: npx playwright test tests/web-flow.spec.ts
  */
 
-const BASE_URL = process.env.TEST_URL || 'http://localhost:5173';
+const BASE_URL = process.env.TEST_URL || 'http://localhost:8080';
 const API_URL = process.env.API_URL || 'http://localhost:63578';
 
 // Path to the complex flow fixture
