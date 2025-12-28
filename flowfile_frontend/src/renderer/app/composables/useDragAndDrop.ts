@@ -9,6 +9,20 @@ import { FlowApi } from "../api"
 // This creates a map of all node components that can be dynamically loaded
 const nodeModules = import.meta.glob('../features/designer/nodes/elements/**/*.vue')
 
+// Validate that parsed JSON data is a valid NodeTemplate
+// This prevents unvalidated dynamic method calls from untrusted data
+function isValidNodeTemplate(data: unknown): data is NodeTemplate {
+  if (typeof data !== 'object' || data === null) return false
+  const obj = data as Record<string, unknown>
+  return (
+    typeof obj.name === 'string' &&
+    typeof obj.item === 'string' &&
+    typeof obj.input === 'number' &&
+    typeof obj.output === 'number' &&
+    typeof obj.custom_node === 'boolean'
+  )
+}
+
 let id = 0
 
 function getId(): number {
@@ -339,9 +353,24 @@ export default function useDragAndDrop() {
     })
     if (!event.dataTransfer) return
 
-    const nodeData: NodeTemplate = JSON.parse(
-      event.dataTransfer.getData("application/vueflow"),
-    )
+    // Parse and validate the drag data to prevent unvalidated dynamic method calls
+    const rawData = event.dataTransfer.getData("application/vueflow")
+    if (!rawData) return
+
+    let parsedData: unknown
+    try {
+      parsedData = JSON.parse(rawData)
+    } catch {
+      console.error("Invalid JSON in drag data")
+      return
+    }
+
+    if (!isValidNodeTemplate(parsedData)) {
+      console.error("Invalid node template data in drag event")
+      return
+    }
+
+    const nodeData: NodeTemplate = parsedData
     const nodeId = getId()
 
     getComponent(nodeData)
