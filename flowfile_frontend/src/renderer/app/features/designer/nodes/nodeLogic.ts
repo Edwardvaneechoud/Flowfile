@@ -50,7 +50,6 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
 
 
 export async function createFlow(flowPath: string|null = null, name: string|null = null): Promise<number> {
-  console.log('Creating flow', flowPath, name)
   const response = await axios.post(
     '/editor/create_flow',
     {},
@@ -182,12 +181,11 @@ export const getRunStatus = async (flowId: number): Promise<AxiosResponse<RunInf
 
 export const updateRunStatus = async (
   flowId: number,
-  nodeStore: { insertRunResult: (result: RunInformation, showRunResults: boolean) => void },
-  showRunResults: boolean = true
+  nodeStore: { insertRunResult: (result: RunInformation) => void }
 ): Promise<AxiosResponse<RunInformation>> => {
   const response = await getRunStatus(flowId);
   if (isResponseSuccessful(response.status)) {
-    nodeStore.insertRunResult(response.data, showRunResults);
+    nodeStore.insertRunResult(response.data);
   }
 
   return response;

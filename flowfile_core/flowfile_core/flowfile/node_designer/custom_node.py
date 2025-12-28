@@ -2,7 +2,7 @@
 
 import polars as pl
 from pydantic import BaseModel
-from typing import Any, Dict, Optional, TypeVar, Callable
+from typing import Any, Dict, Optional, TypeVar
 from flowfile_core.flowfile.node_designer.ui_components import FlowfileInComponent, IncomingColumns, Section
 from flowfile_core.schemas.schemas import NodeTemplate, NodeTypeLiteral, TransformTypeLiteral
 

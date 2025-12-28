@@ -130,13 +130,14 @@ class NodeStepInputs:
     main_inputs: List["FlowNode"] = None
 
     @property
-    def input_ids(self) -> List[int] | None:
+    def input_ids(self) -> List[int]:
         """
         Gets the IDs of all connected input nodes.
         :return: A list of integer node IDs.
         """
         if self.main_inputs is not None:
             return [node_input.node_information.id for node_input in self.get_all_inputs()]
+        return []
 
     def get_all_inputs(self) -> List["FlowNode"]:
         """

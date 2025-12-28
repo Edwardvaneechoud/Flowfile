@@ -14,6 +14,67 @@ export interface SelectInput {
   original_position: number
 }
 
+export interface InputCsvTable {
+  file_type: 'csv'
+  reference?: string
+  starting_from_line: number
+  delimiter: string
+  has_headers: boolean
+  encoding: string
+  row_delimiter: string
+  quote_char: string
+  infer_schema_length: number
+  truncate_ragged_lines: boolean
+  ignore_errors: boolean
+}
+
+export interface InputJsonTable {
+  file_type: 'json'
+  reference?: string
+  starting_from_line: number
+  delimiter: string
+  has_headers: boolean
+  encoding: string
+  row_delimiter: string
+  quote_char: string
+  infer_schema_length: number
+  truncate_ragged_lines: boolean
+  ignore_errors: boolean
+}
+
+export interface InputParquetTable {
+  file_type: 'parquet'
+}
+
+export interface InputExcelTable {
+  file_type: 'excel'
+  sheet_name?: string
+  start_row: number
+  start_column: number
+  end_row: number
+  end_column: number
+  has_headers: boolean
+  type_inference: boolean
+}
+
+export type InputTableSettings =
+  | InputCsvTable
+  | InputJsonTable
+  | InputParquetTable
+  | InputExcelTable
+
+export function isInputCsvTable(settings: InputTableSettings): settings is InputCsvTable {
+  return settings.file_type === 'csv'
+}
+
+export function isInputExcelTable(settings: InputTableSettings): settings is InputExcelTable {
+  return settings.file_type === 'excel'
+}
+
+export function isInputParquetTable(settings: InputTableSettings): settings is InputParquetTable {
+  return settings.file_type === 'parquet'
+}
+
 export const createSelectInputFromName = (columnName: string, keep: boolean = true): SelectInput => {
   return {
     old_name: columnName,
@@ -135,31 +196,19 @@ export interface NodeExternalSource extends NodeBase {
   source_settings: SampleUsers
 }
 
-interface ReceivedTable {
+export interface ReceivedTable {
   id?: number
-  name: string
+  name?: string
   path: string
+  directory?: string
   analysis_file_available?: boolean
   status?: string
-  file_type?: string
+  fields?: MinimalFieldInput[]
+  abs_file_path?: string
+  file_type: 'csv' | 'json' | 'parquet' | 'excel'
+  table_settings: InputTableSettings
 }
 
-export interface ReceivedCsvTable extends ReceivedTable {
-  reference: string
-  starting_from_line: number
-  delimiter: string
-  has_headers: boolean
-  encoding: string
-  row_delimiter: string
-  quote_char: string
-  infer_schema_length: number
-  truncate_ragged_lines: boolean
-  ignore_errors: boolean
-}
-
-export interface ReceivedParquetTable extends ReceivedTable {
-  file_type: string
-}
 
 interface OutputTableBase {
   name: string
@@ -184,19 +233,14 @@ export interface OutputExcelTable{
   file_type: string
 }
 
-export interface ReceivedExcelTable extends ReceivedTable {
-  sheet_name: string
-  start_row: number
-  start_column: number
-  end_row: number // 0 can indicate reading until the last row
-  end_column: number // 0 can indicate reading until the last column
-  has_headers: boolean
-  type_inference: boolean
+export interface NodeRead extends NodeBase {
+  received_file: ReceivedTable
 }
 
-export interface NodeRead extends NodeBase {
-  received_file: ReceivedCsvTable | ReceivedParquetTable | ReceivedExcelTable
-}
+export type OutputTableSettings = 
+  | OutputCsvTable 
+  | OutputParquetTable 
+  | OutputExcelTable
 
 
 export interface OutputSettings {
@@ -205,9 +249,19 @@ export interface OutputSettings {
   file_type: 'parquet' | 'csv' | 'excel'
   fields?: string[]
   write_mode: 'overwrite' | 'append' | 'error'
-  output_csv_table: OutputCsvTable
-  output_parquet_table: OutputParquetTable
-  output_excel_table: OutputExcelTable
+  table_settings: OutputTableSettings
+}
+
+export function isOutputCsvTable(settings: OutputTableSettings): settings is OutputCsvTable {
+  return settings.file_type === 'csv'
+}
+
+export function isOutputParquetTable(settings: OutputTableSettings): settings is OutputParquetTable {
+  return settings.file_type === 'parquet'
+}
+
+export function isOutputExcelTable(settings: OutputTableSettings): settings is OutputExcelTable {
+  return settings.file_type === 'excel'
 }
 
 export interface NodeOutput extends NodeBase {
@@ -435,3 +489,4 @@ export interface NodeCloudStorageReader extends NodeBase {
 export interface NodeCloudStorageWriter extends NodeBase {
   cloud_storage_settings: CloudStorageWriteSettings
 }
+

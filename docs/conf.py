@@ -22,7 +22,6 @@ extensions = [
     'autoapi.extension',      # API documentation
 ]
 
-# AutoAPI settings
 autoapi_type = 'python'
 autoapi_dirs = [
     '../flowfile_core',

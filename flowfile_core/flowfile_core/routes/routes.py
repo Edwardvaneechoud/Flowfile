@@ -266,8 +266,6 @@ def get_run_status(flow_id: int, response: Response):
     flow = flow_file_handler.get_flow(flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-    if flow.latest_run_info is None:
-        raise HTTPException(status_code=404, detail="No run information available")
     if flow.flow_settings.is_running:
         response.status_code = status.HTTP_202_ACCEPTED
     else:
@@ -474,14 +472,14 @@ def create_flow(flow_path: str = None, name: str = None):
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
     elif flow_path is not None and name is not None:
-        if name not in flow_path and flow_path.endswith(".flowfile"):
+        if name not in flow_path and (flow_path.endswith(".yaml") or flow_path.endswith(".yml")):
             raise HTTPException(422, 'The name must be part of the flow path when a full path is provided')
-        elif name in flow_path and not flow_path.endswith(".flowfile"):
-            flow_path = str(Path(flow_path) / (name + ".flowfile"))
-        elif name not in flow_path and name.endswith(".flowfile"):
+        elif name in flow_path and not (flow_path.endswith(".yaml") or flow_path.endswith(".yml")):
+            flow_path = str(Path(flow_path) / (name + ".yaml"))
+        elif name not in flow_path and (name.endswith(".yaml") or name.endswith(".yml")):
             flow_path = str(Path(flow_path) / name)
-        elif name not in flow_path and not name.endswith(".flowfile"):
-            flow_path = str(Path(flow_path) / (name + ".flowfile"))
+        elif name not in flow_path and not (name.endswith(".yaml") or name.endswith(".yml")):
+            flow_path = str(Path(flow_path) / (name + ".yaml"))
     if flow_path is not None:
         flow_path_ref = Path(flow_path)
         if not flow_path_ref.parent.exists():
@@ -600,7 +598,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
-    """Imports a flow from a saved `.flowfile` and registers it as a new session."""
+    """Imports a flow from a saved `.yaml` and registers it as a new session."""
     flow_path = Path(flow_path)
     if not flow_path.exists():
         raise HTTPException(404, 'File not found')
@@ -609,7 +607,7 @@ def import_saved_flow(flow_path: str) -> int:
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
-    """Saves the current state of a flow to a `.flowfile`."""
+    """Saves the current state of a flow to a `.yaml`."""
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 

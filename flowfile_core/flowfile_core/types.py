@@ -18,8 +18,18 @@ Usage:
 """
 
 from enum import Enum
-from typing import List, Union
+from typing import List, Literal, Union
 import polars as pl
+
+
+DataTypeStr = Literal[
+    "Int8", "Int16", "Int32", "Int64",
+    "UInt8", "UInt16", "UInt32", "UInt64",
+    "Float32", "Float64", "Decimal",
+    "String",
+    "Date", "Datetime", "Time", "Duration",
+    "Boolean", "Binary", "List", "Struct", "Array", "Integer", "Double", "Utf8"
+]
 
 
 class TypeGroup(str, Enum):

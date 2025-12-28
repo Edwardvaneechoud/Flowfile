@@ -1,54 +1,127 @@
-/* styles/base/_variables.css - Refined version */
+/* styles/base/_variables.css - Design Token System */
 :root {
-
+  /* ========== Typography Tokens ========== */
   --font-family-base: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
 
-  --color-primary: #176598;
-  --color-primary-dark: #05314f;
-  --color-background: #fff;
-  --color-text: #333;
-  --color-border: #ddd;
-  --color-hover: #f5f5f5;
-  --color-selected: #e0f7fa;
-  --color-selected-text: #0c254a;
-  
-  /* Essential new colors */
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.4;
+
+  /* ========== Brand Color Tokens ========== */
+  /* Primary brand colors */
+  --primary-blue: #081b30;
+  --primary-blue-hover: #0d2640;
+  --primary-blue-light: #00040a;
+  --light-blue: #2C74B3;
+
+  /* Legacy color tokens (mapped to brand colors for backward compatibility) */
+  --color-primary: var(--light-blue);
+  --color-primary-dark: var(--primary-blue);
+
+  /* ========== Semantic Color Tokens ========== */
+  /* Background colors */
+  --color-background-primary: #ffffff;
+  --color-background-secondary: #f5f5f5;
+  --color-background-hover: #f0f7ff;
+  --color-background-selected: #e0f7fa;
+
+  /* Legacy mappings */
+  --color-background: var(--color-background-primary);
+  --color-hover: var(--color-background-secondary);
+  --hover-blue: var(--color-background-hover);
+  --color-selected: var(--color-background-selected);
+
+  /* Text colors */
+  --color-text-primary: #333333;
+  --color-text-secondary: #666666;
+  --color-text-selected: #0c254a;
+
+  /* Legacy mappings */
+  --color-text: var(--color-text-primary);
+  --color-selected-text: var(--color-text-selected);
+
+  /* Border colors */
+  --color-border-primary: #e0e0e0;
+  --color-border-secondary: #dddddd;
+
+  /* Legacy mappings */
+  --border-color: var(--color-border-primary);
+  --color-border: var(--color-border-secondary);
+
+  /* Status colors */
   --color-success: #2f855a;
   --color-danger: #e53e3e;
+  --color-warning: #dd6b20;
   --color-info: #3182ce;
+
+  /* Gray scale */
+  --color-gray-50: #f9fafb;
   --color-gray-100: #f7fafc;
+  --color-gray-200: #edf2f7;
   --color-gray-300: #e2e8f0;
+  --color-gray-400: #cbd5e0;
   --color-gray-500: #a0aec0;
+  --color-gray-600: #718096;
   --color-gray-700: #4a5568;
-  
-  /* Spacing - keeping your existing ones */
+  --color-gray-800: #2d3748;
+  --color-gray-900: #1a202c;
+
+  /* ========== Spacing Tokens ========== */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 12px;
   --spacing-lg: 16px;
   --spacing-xl: 24px;
-  
-  /* Shadow - simplified */
+  --spacing-2xl: 32px;
+  --spacing-3xl: 48px;
+
+  /* ========== Shadow Tokens ========== */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-default: 0 1px 3px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07);
-  
-  /* Border Radius - keeping your existing ones */
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+
+  /* ========== Border Radius Tokens ========== */
   --border-radius-sm: 4px;
   --border-radius-md: 8px;
-  
-  /* Typography - adjusted for smaller sizes */
-  --font-size-xs: 10px;
-  --font-size-sm: 11px;
-  --font-size-md: 13px;
-  --font-size-lg: 15px;
-  --font-weight-normal: 400;
-  --font-weight-medium: 500;
-  --font-weight-semibold: 600;
-  
-  /* Line heights - compact */
-  --line-height-tight: 1.2;
-  --line-height-normal: 1.4;
-  
-  /* Animation - simplified */
+  --border-radius-lg: 12px;
+  --border-radius-full: 9999px;
+
+  /* ========== Animation Tokens ========== */
   --transition-fast: 150ms;
+  --transition-base: 200ms;
+  --transition-slow: 300ms;
+  --transition-timing: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ========== Z-Index Tokens ========== */
+  --z-index-dropdown: 1000;
+  --z-index-modal: 1050;
+  --z-index-tooltip: 1100;
+  --z-index-notification: 1200;
+}
+
+/* ========== Dark Theme (Future Support) ========== */
+[data-theme="dark"] {
+  --color-background-primary: #1a1a1a;
+  --color-background-secondary: #2d2d2d;
+  --color-background-hover: #374151;
+  --color-background-selected: #1f2937;
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #d1d5db;
+  --color-text-selected: #93c5fd;
+
+  --color-border-primary: #374151;
+  --color-border-secondary: #4b5563;
+
+  /* Brand colors remain the same in dark mode */
 }

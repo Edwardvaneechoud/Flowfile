@@ -12,12 +12,22 @@
         </div>
       </div>
     </div>
-    <div v-if="isCsvFile || isExcelFile || isParquetFile">
+    <div v-if="receivedTable">
       <div class="listbox-wrapper">
         <div class="listbox-subtitle">File Specs</div>
-        <ExcelTableConfig v-if="isExcelFile" v-model="receivedExcelTable" />
-        <CsvTableConfig v-if="isCsvFile" v-model="receivedCsvTable" />
-        <ParquetTableConfig v-if="isParquetFile" v-model="receivedParquetTable" />
+        <ExcelTableConfig
+          v-if="isInputExcelTable(receivedTable.table_settings)"
+          v-model="receivedTable.table_settings"
+          :path="receivedTable.path"
+        />
+        <CsvTableConfig
+          v-if="isInputCsvTable(receivedTable.table_settings)"
+          v-model="receivedTable.table_settings"
+        />
+        <ParquetTableConfig
+          v-if="isInputParquetTable(receivedTable.table_settings)"
+          v-model="receivedTable.table_settings"
+        />
       </div>
     </div>
 
@@ -39,10 +49,14 @@ import ExcelTableConfig from "./readExcel.vue";
 import CsvTableConfig from "./readCsv.vue";
 import ParquetTableConfig from "./readParquet.vue";
 import {
-  ReceivedExcelTable,
-  ReceivedCsvTable,
-  ReceivedParquetTable,
+  ReceivedTable,
   NodeRead,
+  isInputCsvTable,
+  isInputExcelTable,
+  isInputParquetTable,
+  InputCsvTable,
+  InputExcelTable,
+  InputParquetTable,
 } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
 import FileBrowser from "../../../components/fileBrowser/fileBrowser.vue";
@@ -50,59 +64,56 @@ import { FileInfo } from "../../../components/fileBrowser/types";
 
 const nodeStore = useNodeStore();
 const selectedFile = ref<FileInfo | null>(null);
-const isExcelFile = ref(false);
-const isCsvFile = ref(false);
-const isParquetFile = ref(false);
 const nodeRead = ref<null | NodeRead>(null);
+const receivedTable = ref<ReceivedTable | null>(null);
 const dataLoaded = ref(false);
-const selectedPath = ref("");
 const modalVisibleForOpen = ref(false);
 
-// Computed property to safely handle file name display
 const getDisplayFileName = computed(() => {
   if (selectedFile.value?.name) {
     return selectedFile.value.name;
   }
-  if (nodeRead.value?.received_file?.name) {
-    return nodeRead.value.received_file.name;
+  if (receivedTable.value?.name) {
+    return receivedTable.value.name;
   }
   return "Choose a file...";
 });
 
-const receivedExcelTable = ref<ReceivedExcelTable>({
-  name: "",
-  path: "",
-  file_type: "excel",
-  sheet_name: "",
-  start_row: 0,
-  start_column: 0,
-  end_row: 0,
-  end_column: 0,
-  has_headers: true,
-  type_inference: false,
-});
+// Default table settings factories
+function createDefaultCsvSettings(): InputCsvTable {
+  return {
+    file_type: "csv",
+    reference: "",
+    starting_from_line: 0,
+    delimiter: ",",
+    has_headers: true,
+    encoding: "utf-8",
+    row_delimiter: "\n",
+    quote_char: '"',
+    infer_schema_length: 1000,
+    truncate_ragged_lines: false,
+    ignore_errors: false,
+  };
+}
 
-const receivedCsvTable = ref<ReceivedCsvTable>({
-  name: "",
-  path: "",
-  file_type: "csv",
-  reference: "",
-  starting_from_line: 0,
-  delimiter: ",",
-  has_headers: true,
-  encoding: "utf-8",
-  row_delimiter: "",
-  quote_char: "",
-  infer_schema_length: 1000,
-  truncate_ragged_lines: false,
-  ignore_errors: false,
-});
+function createDefaultExcelSettings(): InputExcelTable {
+  return {
+    file_type: "excel",
+    sheet_name: "",
+    start_row: 0,
+    start_column: 0,
+    end_row: 0,
+    end_column: 0,
+    has_headers: true,
+    type_inference: false,
+  };
+}
 
-const receivedParquetTable = ref<ReceivedParquetTable>({
-  name: "",
-  path: "",
-  file_type: "parquet",
-});
+function createDefaultParquetSettings(): InputParquetTable {
+  return {
+    file_type: "parquet",
+  };
+}
 
 const handleFileChange = (fileInfo: FileInfo) => {
   try {
@@ -111,42 +122,42 @@ const handleFileChange = (fileInfo: FileInfo) => {
       return;
     }
 
-    const fileType = fileInfo.name.split(".").pop()?.toLowerCase();
-    if (!fileType) {
+    const ext = fileInfo.name.split(".").pop()?.toLowerCase();
+    if (!ext) {
       console.warn("No file type detected");
       return;
     }
 
-    // Reset all file type flags
-    isExcelFile.value = false;
-    isCsvFile.value = false;
-    isParquetFile.value = false;
+    let fileType: "csv" | "excel" | "parquet";
+    let tableSettings: InputCsvTable | InputExcelTable | InputParquetTable;
 
-    // Set appropriate flag based on file type
-    switch (fileType) {
+    switch (ext) {
       case "xlsx":
-        isExcelFile.value = true;
-        receivedExcelTable.value.path = fileInfo.path;
-        receivedExcelTable.value.name = fileInfo.name;
+        fileType = "excel";
+        tableSettings = createDefaultExcelSettings();
         break;
       case "csv":
       case "txt":
-        isCsvFile.value = true;
-        receivedCsvTable.value.path = fileInfo.path;
-        receivedCsvTable.value.name = fileInfo.name;
+        fileType = "csv";
+        tableSettings = createDefaultCsvSettings();
         break;
       case "parquet":
-        isParquetFile.value = true;
-        receivedParquetTable.value.path = fileInfo.path;
-        receivedParquetTable.value.name = fileInfo.name;
+        fileType = "parquet";
+        tableSettings = createDefaultParquetSettings();
         break;
       default:
-        console.warn("Unsupported file type:", fileType);
+        console.warn("Unsupported file type:", ext);
         return;
     }
 
+    receivedTable.value = {
+      name: fileInfo.name,
+      path: fileInfo.path,
+      file_type: fileType,
+      table_settings: tableSettings,
+    };
+
     selectedFile.value = fileInfo;
-    selectedPath.value = fileInfo.path;
     modalVisibleForOpen.value = false;
   } catch (error) {
     console.error("Error handling file change:", error);
@@ -166,29 +177,7 @@ const loadNodeData = async (nodeId: number) => {
     nodeRead.value = nodeResult.setting_input;
 
     if (nodeResult.setting_input?.is_setup && nodeResult.setting_input.received_file) {
-      const { file_type } = nodeResult.setting_input.received_file;
-
-      // Reset all flags
-      isExcelFile.value = false;
-      isCsvFile.value = false;
-      isParquetFile.value = false;
-
-      switch (file_type) {
-        case "excel":
-          isExcelFile.value = true;
-          receivedExcelTable.value = nodeResult.setting_input.received_file;
-          break;
-        case "csv":
-          isCsvFile.value = true;
-          receivedCsvTable.value = nodeResult.setting_input.received_file;
-          break;
-        case "parquet":
-          isParquetFile.value = true;
-          receivedParquetTable.value = nodeResult.setting_input.received_file;
-          break;
-      }
-
-      selectedPath.value = nodeResult.setting_input.received_file.path;
+      receivedTable.value = nodeResult.setting_input.received_file;
     }
 
     dataLoaded.value = true;
@@ -202,24 +191,14 @@ const pushNodeData = async () => {
   try {
     dataLoaded.value = false;
 
-    if (!nodeRead.value) {
+    if (!nodeRead.value || !receivedTable.value) {
       console.warn("No node read value available");
       dataLoaded.value = true;
       return;
     }
 
     nodeRead.value.is_setup = true;
-
-    if (isExcelFile.value) {
-      // nodeRead.value.cache_results = true;
-      nodeRead.value.received_file = receivedExcelTable.value;
-    } else if (isCsvFile.value) {
-      // nodeRead.value.cache_results = true;
-      nodeRead.value.received_file = receivedCsvTable.value;
-    } else if (isParquetFile.value) {
-      nodeRead.value.cache_results = false;
-      nodeRead.value.received_file = receivedParquetTable.value;
-    }
+    nodeRead.value.received_file = receivedTable.value;
 
     await nodeStore.updateSettings(nodeRead);
   } catch (error) {

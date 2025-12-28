@@ -9,6 +9,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue";
 import { useNodeStore } from "../../../../stores/column-store";
+import { useEditorStore } from "../../../../stores/editor-store";
 import NodeTitle from "../../baseNode/nodeTitle.vue";
 
 interface DrawerComponentInstance {
@@ -17,6 +18,7 @@ interface DrawerComponentInstance {
 }
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const drawerComponentInstance = ref<DrawerComponentInstance | null>(null);
 const nodeTitle = ref<string>("");
 const nodeIntro = ref<string>("");
@@ -68,7 +70,7 @@ watch(
 
     // Handle node deselection
     if (newNodeId === -1) {
-      nodeStore.isDrawerOpen = false;
+      editorStore.isDrawerOpen = false;
       return;
     }
 

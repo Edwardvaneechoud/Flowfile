@@ -91,9 +91,11 @@ def test_import_second_flow():
     assert handler.flowfile_flows[1].flow_id == second_graph_id, "Second flow should be imported"
     assert handler.flowfile_flows[0].flow_id != handler.flowfile_flows[1].flow_id, "Flows should have different ids"
     assert handler.get_flow(first_graph_id).flow_settings.name == 'read_csv', "First flow should be named read_csv"
-    assert (handler.get_flow(first_graph_id).flow_settings.path == "flowfile_core/tests/support_files/flows/read_csv.flowfile"), "Path should be correct"
+    assert (handler.get_flow(first_graph_id).flow_settings.path ==
+            str(Path("flowfile_core/tests/support_files/flows/read_csv.flowfile").resolve())), "Path should be correct"
     assert handler.get_flow(second_graph_id).flow_settings.name == 'text_to_rows', "Second flow should be named text_to_rows"
-    assert (handler.get_flow(second_graph_id).flow_settings.path == "flowfile_core/tests/support_files/flows/text_to_rows.flowfile"), "Path should be correct"
+    assert (handler.get_flow(second_graph_id).flow_settings.path ==
+            str(Path("flowfile_core/tests/support_files/flows/text_to_rows.flowfile").resolve())), "Path should be correct"
 
 
 def test_get_flow():
@@ -104,9 +106,9 @@ def test_get_flow():
 
 def test_add_flow():
     handler = create_flowfile_handler()
-    first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/new_flow.flowfile')
+    first_id = handler.add_flow('new_flow', 'flowfile_core/tests/support_files/flows/tmp/new_flow.yaml')
     sleep(1)
-    second_id = handler.add_flow('second_flow', 'flowfile_core/tests/support_files/flows/second_flow.flowfile')
+    second_id = handler.add_flow('second_flow', 'flowfile_core/tests/support_files/flows/tmp/second_flow.yaml')
     assert len(handler.flowfile_flows) == 2, "Two flows should be added"
     assert handler.flowfile_flows[0].flow_settings.name == 'new_flow', "First flow should be named new_flow"
     assert handler.flowfile_flows[1].flow_settings.name == 'second_flow', "Second flow should be named second_flow"

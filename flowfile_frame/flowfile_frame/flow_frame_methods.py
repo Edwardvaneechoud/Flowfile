@@ -186,15 +186,17 @@ def read_csv(
             file_type='csv',
             path=current_source_path_for_native,
             name=Path(current_source_path_for_native).name,
-            delimiter=separator,
-            has_headers=has_header,
-            encoding=encoding,
-            starting_from_line=skip_rows,
-            quote_char=quote_char if quote_char is not None else '"',
-            infer_schema_length=actual_infer_schema_length if actual_infer_schema_length is not None else 10000,
-            truncate_ragged_lines=truncate_ragged_lines,
-            ignore_errors=ignore_errors,
-            row_delimiter=eol_char
+            table_settings=input_schema.InputCsvTable(
+                delimiter=separator,
+                has_headers=has_header,
+                encoding=encoding,
+                starting_from_line=skip_rows,
+                quote_char=quote_char if quote_char is not None else '"',
+                infer_schema_length=actual_infer_schema_length if actual_infer_schema_length is not None else 10000,
+                truncate_ragged_lines=truncate_ragged_lines,
+                ignore_errors=ignore_errors,
+                row_delimiter=eol_char
+            )
         )
         if convert_to_absolute_path:
             try:
@@ -407,6 +409,7 @@ def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = Non
         file_type='parquet',
         path=source,
         name=Path(source).name,
+        table_settings=input_schema.InputParquetTable()
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path

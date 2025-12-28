@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Flowfile"
-version = "0.4.1"
+version = "0.5.1"
 description = "Project combining flowfile core (backend) and flowfile_worker (compute offloader) and flowfile_frame (api)"
 readme = "readme-pypi.md"
 authors = ["Edward van Eechoud <evaneechoud@gmail.com>"]
@@ -12,6 +12,7 @@ packages = [
     { include = "shared" },
     { include = "test_utils" },
     { include = "flowfile", from = "flowfile"},
+    { include = "tools" },
 ]
 include = [
     { path = "flowfile/flowfile/web/static/**/*", format = "sdist" },
@@ -71,7 +72,7 @@ stop_postgres = "test_utils.postgres.commands:stop_postgres"
 flowfile = "flowfile.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
-
+flowfile-migrate = "tools.migrate.__main__:main"
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"

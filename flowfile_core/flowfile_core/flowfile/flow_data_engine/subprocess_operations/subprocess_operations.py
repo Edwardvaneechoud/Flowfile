@@ -23,14 +23,9 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.models import (D
                                                                                DatabaseExternalWriteSettings)
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
 from flowfile_core.schemas.input_schema import (
-    ReceivedCsvTable,
-    ReceivedExcelTable,
-    ReceivedJsonTable,
-    ReceivedParquetTable
+    ReceivedTable
 )
 from flowfile_core.utils.arrow_reader import read
-
-ReceivedTableCollection = ReceivedCsvTable | ReceivedParquetTable | ReceivedJsonTable | ReceivedExcelTable
 
 
 def trigger_df_operation(flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = 'store') -> Status:
@@ -74,7 +69,7 @@ def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
     return Status(**v.json())
 
 
-def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTableCollection,
+def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTable,
                              file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
     f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.model_dump_json(),
                       params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
@@ -194,87 +189,161 @@ def cancel_task(file_ref: str) -> bool:
 
 
 class BaseFetcher:
-    result: Optional[Any] = None
-    started: bool = False
-    running: bool = False
-    error_code: int = 0
-    error_description: Optional[str] = None
-    file_ref: Optional[str] = None
+    """
+    Thread-safe fetcher for polling worker status and retrieving results.
+    """
 
     def __init__(self, file_ref: str = None):
         self.file_ref = file_ref if file_ref else str(uuid4())
-        self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self._fetch_cached_df)
-        self.result = None
-        self.error_description = None
-        self.running = False
-        self.started = False
-        self.condition = threading.Condition()
-        self.error_code = 0
+
+        # Thread synchronization
+        self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._stop_event = threading.Event()
+        self._thread = None
+
+        # State variables - use properties for thread-safe access
+        self._result: Optional[Any] = None
+        self._started: bool = False
+        self._running: bool = False
+        self._error_code: int = 0
+        self._error_description: Optional[str] = None
+
+    # Public properties for compatibility with subclasses
+    @property
+    def result(self) -> Optional[Any]:
+        with self._lock:
+            return self._result
+
+    @property
+    def started(self) -> bool:
+        with self._lock:
+            return self._started
+
+    @property
+    def running(self) -> bool:
+        with self._lock:
+            return self._running
+
+    @running.setter
+    def running(self, value: bool):
+        """Allow subclasses to set running status and auto-start if needed."""
+        with self._lock:
+            self._running = value
+            # If subclass sets running=True, auto-start the thread
+            if value and not self._started:
+                self._start_thread()
+
+    @property
+    def error_code(self) -> int:
+        with self._lock:
+            return self._error_code
+
+    @property
+    def error_description(self) -> Optional[str]:
+        with self._lock:
+            return self._error_description
+
+    def _start_thread(self):
+        """Internal method to start thread (must be called under lock)."""
+        if not self._started:
+            self._thread = threading.Thread(target=self._fetch_cached_df, daemon=True)
+            self._thread.start()
+            self._started = True
 
     def _fetch_cached_df(self):
-        with self.condition:
-            if self.running:
-                logger.info('Already running the fetching')
-                return
+        """Background thread that polls for results."""
+        sleep_time = 0.5
 
-            sleep_time = .5
-            self.running = True
-            while not self.stop_event.is_set():
+        # Don't check _running here - subclasses already set it
+        try:
+            while not self._stop_event.is_set():
                 try:
-                    r = requests.get(f'{WORKER_URL}/status/{self.file_ref}')
+                    r = requests.get(f'{WORKER_URL}/status/{self.file_ref}', timeout=10)
+
                     if r.status_code == 200:
                         status = Status(**r.json())
+
                         if status.status == 'Completed':
                             self._handle_completion(status)
                             return
                         elif status.status == 'Error':
                             self._handle_error(1, status.error_message)
-                            break
+                            return
                         elif status.status == 'Unknown Error':
-                            self._handle_error(-1,
-                                               'There was an unknown error with the process, '
-                                               'and the process got killed by the server')
-                            break
+                            self._handle_error(
+                                -1,
+                                'There was an unknown error with the process, '
+                                'and the process got killed by the server'
+                            )
+                            return
                     else:
-                        self._handle_error(2, r.text)
-                        break
+                        self._handle_error(2, f"HTTP {r.status_code}: {r.text}")
+                        return
+
                 except requests.RequestException as e:
                     self._handle_error(2, f"Request failed: {e}")
+                    return
+
+                # Sleep without holding the lock
+                if not self._stop_event.wait(timeout=sleep_time):
+                    continue
+                else:
                     break
 
-                sleep(sleep_time)
-
+            # Only reached if stop_event was set
             self._handle_cancellation()
 
-    def _handle_completion(self, status):
-        self.running = False
-        self.condition.notify_all()
-        if status.result_type == 'polars':
-            self.result = get_df_result(status.results)
-        else:
-            self.result = status.results
+        except Exception as e:
+            # Catch any unexpected errors
+            logger.exception("Unexpected error in fetch thread")
+            self._handle_error(-1, f"Unexpected error: {e}")
 
-    def _handle_error(self, code, description):
-        self.error_code = code
-        self.error_description = description
-        self.running = False
-        self.condition.notify_all()
+    def _handle_completion(self, status):
+        """Handle successful completion. Must be called from fetch thread."""
+        with self._condition:
+            try:
+                if status.result_type == 'polars':
+                    self._result = get_df_result(status.results)
+                else:
+                    self._result = status.results
+            except Exception as e:
+                logger.exception("Error processing result")
+                self._error_code = -1
+                self._error_description = f"Error processing result: {e}"
+            finally:
+                self._running = False
+                self._condition.notify_all()
+
+    def _handle_error(self, code: int, description: str):
+        """Handle error state. Must be called from fetch thread."""
+        with self._condition:
+            self._error_code = code
+            self._error_description = description
+            self._running = False
+            self._condition.notify_all()
 
     def _handle_cancellation(self):
-        logger.warning("Fetch operation cancelled")
-        if self.error_description is not None:
-            logger.warning(self.error_description)
-        self.running = False
-        self.condition.notify_all()
+        """Handle cancellation. Must be called from fetch thread."""
+        with self._condition:
+            if self._error_description is None:
+                self._error_description = "Task cancelled"
+            logger.warning(f"Fetch operation cancelled: {self._error_description}")
+            self._running = False
+            self._condition.notify_all()
 
     def start(self):
-        if self.running:
-            logger.info('Already running the fetching')
-            return
-        if not self.started:
-            self.thread.start()
-            self.started = True
+        """Start the background fetch thread."""
+        with self._lock:
+            if self._started:
+                logger.info('Fetcher already started')
+                return
+            if self._running:
+                logger.info('Already running the fetching')
+                return
+
+            self._running = True
+            self._start_thread()
 
     def cancel(self):
         """
@@ -282,30 +351,67 @@ class BaseFetcher:
         Also cleans up any resources being used.
         """
         logger.warning('Cancelling the operation')
+
+        # Cancel on the worker side
         try:
             cancel_task(self.file_ref)
         except Exception as e:
             logger.error(f'Failed to cancel task on worker: {str(e)}')
 
-        # Then stop the local monitoring thread
-        self.stop_event.set()
-        self.thread.join()
+        # Signal the thread to stop
+        self._stop_event.set()
 
-        # Update local state
-        with self.condition:
-            self.running = False
-            self.error_description = "Task cancelled by user"
-            self.condition.notify_all()
+        # Wait for thread to finish
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                logger.warning("Fetch thread did not stop within timeout")
 
     def get_result(self) -> Optional[Any]:
-        if not self.started:
-            self.start()
-        with self.condition:
-            while self.running and self.result is None:
-                self.condition.wait()  # Wait until notified
-        if self.error_description is not None:
-            raise Exception(self.error_description)
-        return self.result
+        """
+        Get the result, blocking until it's available.
+
+        Returns:
+            The fetched result.
+
+        Raises:
+            Exception: If an error occurred during fetching.
+        """
+        # Start if not already started (for manual usage)
+        with self._lock:
+            if not self._started:
+                if not self._running:
+                    self._running = True
+                self._start_thread()
+
+        # Wait for completion
+        with self._condition:
+            while self._running:
+                self._condition.wait()
+
+        # Check for errors
+        with self._lock:
+            if self._error_description is not None:
+                raise Exception(self._error_description)
+            return self._result
+
+    @property
+    def is_running(self) -> bool:
+        """Check if the fetcher is currently running."""
+        with self._lock:
+            return self._running
+
+    @property
+    def has_error(self) -> bool:
+        """Check if the fetcher encountered an error."""
+        with self._lock:
+            return self._error_description is not None
+
+    @property
+    def error_info(self) -> tuple[int, Optional[str]]:
+        """Get error code and description."""
+        with self._lock:
+            return self._error_code, self._error_description
 
 
 class ExternalDfFetcher(BaseFetcher):
@@ -354,7 +460,7 @@ class ExternalFuzzyMatchFetcher(BaseFetcher):
 
 
 class ExternalCreateFetcher(BaseFetcher):
-    def __init__(self, received_table: ReceivedTableCollection, node_id: int, flow_id: int,
+    def __init__(self, received_table: ReceivedTable, node_id: int, flow_id: int,
                  file_type: str = 'csv', wait_on_completion: bool = True):
         r = trigger_create_operation(received_table=received_table, file_type=file_type,
                                      node_id=node_id, flow_id=flow_id)

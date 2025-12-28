@@ -5,11 +5,11 @@ This module should not be imported directly by users.
 """
 
 from dataclasses import dataclass
-from typing import Type, List, Dict, Set, Any, Union
+from typing import Type, List, Dict, Set, Any
 import polars as pl
 
 # Import public types
-from flowfile_core.flowfile.node_designer.data_types import TypeGroup, DataType
+from flowfile_core.types import TypeGroup, DataType
 
 
 @dataclass(frozen=True)
