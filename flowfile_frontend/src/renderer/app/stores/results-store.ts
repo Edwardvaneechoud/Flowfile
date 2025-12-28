@@ -85,7 +85,7 @@ export const useResultsStore = defineStore('results', {
     },
 
     // ========== Run Results Management ==========
-    insertRunResult(runResult: RunInformation, showResult: boolean = true): void {
+    insertRunResult(runResult: RunInformation): void {
       this.currentRunResult = runResult;
       this.runResults[runResult.flow_id] = runResult;
       this.initializeResultCache(runResult.flow_id);
@@ -95,16 +95,6 @@ export const useResultsStore = defineStore('results', {
       });
 
       this.resultVersion++;
-
-      // Update editor store for log viewer visibility
-      if (typeof window !== 'undefined') {
-        // Dynamically import to avoid circular dependency
-        import('./editor-store').then(({ useEditorStore }) => {
-          const editorStore = useEditorStore();
-          editorStore.setShowFlowResult(showResult);
-          editorStore.updateLogViewerVisibility(showResult);
-        });
-      }
     },
 
     resetRunResults(): void {

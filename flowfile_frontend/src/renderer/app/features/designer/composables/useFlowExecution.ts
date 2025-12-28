@@ -195,12 +195,17 @@ export function useFlowExecution(
         editorStore.isRunning = false;
         isExecuting.value = false;
         state.setExecutionState(getPollingKey(pollingKeySuffix), false);
+
+        // Update log viewer visibility after successful run
+        editorStore.setShowFlowResult(true);
+        editorStore.updateLogViewerVisibility(true);
+
         console.log("response data" , response.data);
         const notificationConfig = createNotificationConfig(response.data);
         if (customSuccessMessage && response.data.success) {
           notificationConfig.message = customSuccessMessage;
         }
-        
+
         showNotification(
           notificationConfig.title,
           notificationConfig.message,

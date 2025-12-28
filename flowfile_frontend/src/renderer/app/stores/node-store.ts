@@ -32,50 +32,66 @@ export const useNodeStore = defineStore('node', {
     currentNodeData: (state) => state.nodeData,
 
     // Backward compatibility: read-only getters (use snake_case for legacy)
+    /** @deprecated Use `nodeId` (camelCase) instead. This getter is read-only. */
     node_id: (state) => state.nodeId,
+    /** @deprecated Use `isLoaded` (camelCase) instead. This getter is read-only. */
     is_loaded: (state) => state.isLoaded,
 
     // Proxy getters to other stores
+    /** @deprecated Use `useFlowStore().flowId` directly. This getter is read-only. */
     flow_id(): number {
       return useFlowStore().flowId;
     },
+    /** @deprecated Use `useFlowStore().vueFlowInstance` directly. This getter is read-only. */
     vueFlowInstance() {
       return useFlowStore().vueFlowInstance;
     },
+    /** @deprecated Use `useEditorStore().isRunning` directly. This getter is read-only. */
     isRunning(): boolean {
       return useEditorStore()?.isRunning || false;
     },
+    /** @deprecated Use `useEditorStore().isDrawerOpen` directly. This getter is read-only. */
     isDrawerOpen(): boolean {
       return useEditorStore()?.isDrawerOpen || false;
     },
+    /** @deprecated Use `useEditorStore().activeDrawerComponent` directly. This getter is read-only. */
     activeDrawerComponent() {
       return useEditorStore()?.activeDrawerComponent;
     },
+    /** @deprecated Use `useEditorStore().drawerProps` directly. This getter is read-only. */
     drawerProps() {
       return useEditorStore()?.drawerProps || {};
     },
+    /** @deprecated Use `useEditorStore().showCodeGenerator` directly. This getter is read-only. */
     showCodeGenerator(): boolean {
       return useEditorStore()?.showCodeGenerator || false;
     },
+    /** @deprecated Use `useEditorStore().showFlowResult` directly. This getter is read-only. */
     showFlowResult(): boolean {
       return useEditorStore()?.showFlowResult || false;
     },
+    /** @deprecated Use `useEditorStore().isShowingLogViewer` directly. This getter is read-only. */
     isShowingLogViewer(): boolean {
       return useEditorStore()?.isShowingLogViewer || false;
     },
+    /** @deprecated Use `useEditorStore().hideLogViewerForThisRun` directly. This getter is read-only. */
     hideLogViewerForThisRun(): boolean {
       return useEditorStore()?.hideLogViewerForThisRun || false;
     },
+    /** @deprecated Use `useEditorStore().displayLogViewer` directly. This getter is read-only. */
     displayLogViewer(): boolean {
       const editorStore = useEditorStore();
       return editorStore?.displayLogViewer !== undefined ? editorStore.displayLogViewer : true;
     },
+    /** @deprecated Use `useEditorStore().inputCode` directly. This getter is read-only. */
     inputCode(): string {
       return useEditorStore()?.inputCode || '';
     },
+    /** @deprecated Use `useResultsStore().currentRunResult` directly. This getter is read-only. */
     currentRunResult() {
       return useResultsStore()?.currentRunResult;
     },
+    /** @deprecated Use `useResultsStore().runResults` directly. This getter is read-only. */
     runResults() {
       return useResultsStore()?.runResults || {};
     },
@@ -373,141 +389,168 @@ export const useNodeStore = defineStore('node', {
     },
 
     // ========== Backward Compatibility Actions (Proxy to other stores) ==========
+    /** @deprecated Use `useFlowStore().setFlowId()` directly instead. */
     setFlowId(flowId: number) {
       const flowStore = useFlowStore();
       flowStore.setFlowId(flowId);
     },
 
+    /** @deprecated Use `useFlowStore().setVueFlowInstance()` directly instead. */
     setVueFlowInstance(vueFlowInstance: any) {
       const flowStore = useFlowStore();
       flowStore.setVueFlowInstance(vueFlowInstance);
     },
 
+    /** @deprecated Use `useFlowStore().getVueFlowInstance()` directly instead. */
     getVueFlowInstance() {
       const flowStore = useFlowStore();
       return flowStore.getVueFlowInstance();
     },
 
+    /** @deprecated Use `useResultsStore().setNodeResult()` directly instead. */
     setNodeResult(nodeId: number, result: any) {
       const flowStore = useFlowStore();
       const resultsStore = useResultsStore();
       resultsStore.setNodeResult(flowStore.flowId, nodeId, result);
     },
 
+    /** @deprecated Use `useResultsStore().getNodeResult()` directly instead. */
     getNodeResult(nodeId: number) {
       const flowStore = useFlowStore();
       const resultsStore = useResultsStore();
       return resultsStore.getNodeResult(flowStore.flowId, nodeId);
     },
 
+    /** @deprecated Use `useResultsStore().resetNodeResult()` directly instead. */
     resetNodeResult() {
       const resultsStore = useResultsStore();
       resultsStore.resetNodeResult();
     },
 
+    /** @deprecated Use `useResultsStore().clearFlowResults()` directly instead. */
     clearFlowResults(flowId: number) {
       const resultsStore = useResultsStore();
       resultsStore.clearFlowResults(flowId);
     },
 
+    /** @deprecated Use `useResultsStore().setNodeValidation()` directly instead. */
     setNodeValidation(nodeId: number | string, nodeValidationInput: any) {
       const flowStore = useFlowStore();
       const resultsStore = useResultsStore();
       resultsStore.setNodeValidation(flowStore.flowId, nodeId, nodeValidationInput);
     },
 
+    /** @deprecated Use `useResultsStore().resetNodeValidation()` directly instead. */
     resetNodeValidation() {
       const resultsStore = useResultsStore();
       resultsStore.resetNodeValidation();
     },
 
+    /** @deprecated Use `useResultsStore().getNodeValidation()` directly instead. */
     getNodeValidation(nodeId: number) {
       const flowStore = useFlowStore();
       const resultsStore = useResultsStore();
       return resultsStore.getNodeValidation(flowStore.flowId, nodeId);
     },
 
-    insertRunResult(runResult: any, showResult: boolean = true) {
+    /** @deprecated Use `useResultsStore().insertRunResult()` directly instead. */
+    insertRunResult(runResult: any) {
       const resultsStore = useResultsStore();
-      resultsStore.insertRunResult(runResult, showResult);
+      resultsStore.insertRunResult(runResult);
     },
 
+    /** @deprecated Use `useResultsStore().resetRunResults()` directly instead. */
     resetRunResults() {
       const resultsStore = useResultsStore();
       resultsStore.resetRunResults();
     },
 
+    /** @deprecated Use `useResultsStore().getRunResult()` directly instead. */
     getRunResult(flowId: number) {
       const resultsStore = useResultsStore();
       return resultsStore.getRunResult(flowId);
     },
 
+    /** @deprecated Use `useEditorStore().openDrawer()` directly instead. */
     openDrawer(component: any, nodeTitleInfo: any, props: Record<string, any> = {}) {
       const editorStore = useEditorStore();
       editorStore.openDrawer(component, nodeTitleInfo, props);
     },
 
+    /** @deprecated Use `useEditorStore().closeDrawer()` directly instead. */
     closeDrawer() {
       const editorStore = useEditorStore();
       editorStore.closeDrawer();
       this.nodeId = -1;
     },
 
+    /** @deprecated Use `useEditorStore().toggleDrawer()` directly instead. */
     toggleDrawer() {
       const editorStore = useEditorStore();
       editorStore.toggleDrawer();
     },
 
+    /** @deprecated Use `useEditorStore().pushNodeData()` directly instead. */
     pushNodeData() {
       const editorStore = useEditorStore();
       editorStore.pushNodeData();
     },
 
+    /** @deprecated Use `useEditorStore().setCloseFunction()` directly instead. */
     setCloseFunction(f: () => void) {
       const editorStore = useEditorStore();
       editorStore.setCloseFunction(f);
     },
 
+    /** @deprecated Use `useEditorStore().executeDrawCloseFunction()` directly instead. */
     executeDrawCloseFunction() {
       const editorStore = useEditorStore();
       return editorStore.executeDrawCloseFunction();
     },
 
+    /** @deprecated Use `useEditorStore().toggleCodeGenerator()` directly instead. */
     toggleCodeGenerator() {
       const editorStore = useEditorStore();
       editorStore.toggleCodeGenerator();
     },
 
+    /** @deprecated Use `useEditorStore().setCodeGeneratorVisibility()` directly instead. */
     setCodeGeneratorVisibility(visible: boolean) {
       const editorStore = useEditorStore();
       editorStore.setCodeGeneratorVisibility(visible);
     },
 
+    /** @deprecated Use `useEditorStore().showLogViewer()` directly instead. */
     showLogViewer() {
       const editorStore = useEditorStore();
       editorStore.showLogViewer();
     },
 
+    /** @deprecated Use `useEditorStore().hideLogViewer()` directly instead. */
     hideLogViewer() {
       const editorStore = useEditorStore();
       editorStore.hideLogViewer();
     },
 
+    /** @deprecated Use `useEditorStore().toggleLogViewer()` directly instead. */
     toggleLogViewer() {
       const editorStore = useEditorStore();
       editorStore.toggleLogViewer();
     },
 
+    /** @deprecated Use `useEditorStore().setInputCode()` directly instead. */
     setInputCode(newCode: string) {
       const editorStore = useEditorStore();
       editorStore.setInputCode(newCode);
     },
 
+    /** @deprecated Use `useEditorStore().setInitialEditorData()` directly instead. */
     setInitialEditorData(editorDataString: string) {
       const editorStore = useEditorStore();
       editorStore.setInitialEditorData(editorDataString);
     },
 
+    /** @deprecated Use `useEditorStore().getInitialEditorData()` directly instead. */
     getInitialEditorData() {
       const editorStore = useEditorStore();
       return editorStore.getInitialEditorData();
