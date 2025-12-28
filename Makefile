@@ -171,5 +171,14 @@ clean_test:
 	$(RMRF) $(ELECTRON_DIR)/test-results/ $(ELECTRON_DIR)/playwright-report/
 	@echo "Test artifacts cleaned."
 
+# Electron E2E Testing (requires built app)
+build_for_electron_test: install_python_deps build_python_services build_electron_app
+	@echo "Electron app built successfully for E2E testing."
+
+test_e2e_electron: build_for_electron_test
+	@echo "Running Electron E2E tests..."
+	$(CD) "$(ELECTRON_DIR)" && npx playwright test tests/app.spec.ts tests/complex-flow.spec.ts --reporter=html
+	@echo "Electron E2E tests completed."
+
 # Phony targets
-.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test
+.PHONY: all update_lock force_lock install_python_deps build_python_services build_electron_app build_electron_win build_electron_mac build_electron_linux clean generate_key force_key install_e2e test_e2e test_e2e_dev stop_servers clean_test build_for_electron_test test_e2e_electron

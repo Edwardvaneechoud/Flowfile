@@ -50,6 +50,20 @@ async function authPost(request: APIRequestContext, url: string, token: string, 
   });
 }
 
+// Helper to inject auth token into browser's localStorage
+async function injectAuthToken(page: any, token: string) {
+  // First navigate to the base URL to establish the origin
+  await page.goto(BASE_URL);
+  await page.waitForLoadState('networkidle');
+
+  // Inject the auth token into localStorage
+  const expirationTime = Date.now() + (60 * 60 * 1000); // 1 hour from now
+  await page.evaluate(({ token, expiration }: { token: string; expiration: number }) => {
+    localStorage.setItem('auth_token', token);
+    localStorage.setItem('auth_token_expiration', expiration.toString());
+  }, { token, expiration: expirationTime });
+}
+
 test.describe('Web Flow E2E Tests', () => {
   let authToken: string;
 
@@ -190,6 +204,9 @@ test.describe('Web Flow E2E Tests', () => {
     await authPost(request, `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=2&node_type=filter&pos_x=300&pos_y=100`, authToken);
     await authPost(request, `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=3&node_type=select&pos_x=500&pos_y=100`, authToken);
 
+    // Inject auth token into the browser before navigating to designer
+    await injectAuthToken(page, authToken);
+
     // Navigate to the designer
     await page.goto(`${BASE_URL}/#/designer/${flowId}`);
 
@@ -314,6 +331,9 @@ test.describe('Complex Flow E2E Tests', () => {
     const flowId = await importResponse.json();
     console.log(`Imported flow ID: ${flowId}`);
 
+    // Inject auth token into the browser before navigating to designer
+    await injectAuthToken(page, authToken);
+
     // Navigate to the designer
     await page.goto(`${BASE_URL}/#/designer/${flowId}`);
 
@@ -387,18 +407,31 @@ test.describe('Complex Flow E2E Tests', () => {
 
     const flowId = await importResponse.json();
 
-    // Navigate to the designer
+    // Inject auth token into the browser before navigating to designer
+    await injectAuthToken(page, authToken);
+
+    // Navigate to the designer with the imported flow
     await page.goto(`${BASE_URL}/#/designer/${flowId}`);
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(3000);
 
     // Check that Vue Flow canvas is visible
     const canvas = page.locator('.vue-flow');
     await expect(canvas).toBeVisible({ timeout: 10000 });
     console.log('✓ Vue Flow canvas is visible');
 
-    // Check that nodes are rendered
+    // Wait for nodes to render - they load asynchronously after the flow data is fetched
     const nodes = page.locator('.vue-flow__node');
+
+    // Use a more robust wait - wait for at least one node to appear
+    try {
+      await expect(nodes.first()).toBeVisible({ timeout: 15000 });
+    } catch (e) {
+      // If no nodes appear, log the page state for debugging
+      console.log('No nodes appeared within timeout. Checking page state...');
+      const html = await page.content();
+      console.log('Page contains vue-flow:', html.includes('vue-flow'));
+    }
+
     const nodeCount = await nodes.count();
     console.log(`✓ Rendered ${nodeCount} nodes in the designer`);
 
