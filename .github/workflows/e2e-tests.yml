@@ -1,0 +1,128 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flowfile_frontend/**'
+      - 'flowfile_core/**'
+      - '.github/workflows/e2e-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'flowfile_frontend/**'
+      - 'flowfile_core/**'
+      - '.github/workflows/e2e-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Setup Python for backend
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Setup Node.js for frontend
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: flowfile_frontend/package-lock.json
+
+      # Install Poetry
+      - name: Install Poetry
+        run: |
+          pip install poetry
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      # Cache Poetry dependencies
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-
+
+      # Install backend dependencies
+      - name: Install backend dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      # Install frontend dependencies
+      - name: Install frontend dependencies
+        working-directory: flowfile_frontend
+        run: npm ci
+
+      # Install Playwright browsers
+      - name: Install Playwright browsers
+        working-directory: flowfile_frontend
+        run: npx playwright install --with-deps chromium
+
+      # Build frontend for production
+      - name: Build frontend
+        working-directory: flowfile_frontend
+        run: npm run build:web
+
+      # Start backend server in background
+      - name: Start backend server
+        run: |
+          poetry run flowfile_core &
+          echo "Waiting for backend to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:63578/auth/token -X POST > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Attempt $i: Backend not ready yet..."
+            sleep 2
+          done
+
+      # Start frontend preview server in background
+      - name: Start frontend preview server
+        working-directory: flowfile_frontend
+        run: |
+          npm run preview:web &
+          echo "Waiting for frontend to start..."
+          for i in {1..15}; do
+            if curl -s http://localhost:4173 > /dev/null 2>&1; then
+              echo "Frontend is ready!"
+              break
+            fi
+            echo "Attempt $i: Frontend not ready yet..."
+            sleep 2
+          done
+
+      # Run E2E tests
+      - name: Run E2E tests
+        working-directory: flowfile_frontend
+        env:
+          TEST_URL: http://localhost:4173
+          API_URL: http://localhost:63578
+        run: npx playwright test tests/web-flow.spec.ts --reporter=html
+
+      # Upload test results on failure
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: flowfile_frontend/playwright-report/
+          retention-days: 7
+
+      # Upload test results always (for debugging)
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: flowfile_frontend/test-results/
+          retention-days: 7
