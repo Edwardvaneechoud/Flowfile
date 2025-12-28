@@ -139,6 +139,7 @@ import FileBrowser from "../fileBrowser/fileBrowser.vue";
 import { FileInfo } from "../fileBrowser/types";
 import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../fileBrowser/constants";
 import { useNodeStore } from "../../../../stores/column-store";
+import { useEditorStore } from "../../../../stores/editor-store";
 import {
   createFlow,
   getFlowSettings,
@@ -150,6 +151,7 @@ import {
 } from "../../nodes/nodeLogic";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -209,24 +211,24 @@ const loadFlowSettings = async () => {
   if (!flowSettings.value) return;
 
   flowSettings.value.execution_mode = flowSettings.value.execution_mode || "Development";
-  nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+  editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
 
   if (!runButton.value) return;
 
   if (flowSettings.value.is_running) {
-    nodeStore.isRunning = true;
+    editorStore.isRunning = true;
     runButton.value.startPolling(runButton.value.checkRunStatus);
   } else {
-    nodeStore.isRunning = false;
+    editorStore.isRunning = false;
     runButton.value.stopPolling();
-    updateRunStatus(nodeStore.flow_id, nodeStore, false);
+    updateRunStatus(nodeStore.flow_id, nodeStore);
   }
 };
 
 const pushFlowSettings = async () => {
   if (flowSettings.value) {
     await updateFlowSettings(flowSettings.value);
-    nodeStore.displayLogViewer = flowSettings.value.show_detailed_progress;
+    editorStore.displayLogViewer = flowSettings.value.show_detailed_progress;
   }
 };
 
@@ -311,7 +313,7 @@ const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
   const createdFlowId = await createFlow(flowPath);
 
   modalVisibleForCreate.value = false;
-  nodeStore.flow_id = createdFlowId;
+  nodeStore.setFlowId(createdFlowId);
 
   emit("refreshFlow");
 };
@@ -324,7 +326,7 @@ const handleQuickCreateAction = async () => {
     const createdFlowId = await createFlow(null, fileName);
     modalVisibleForQuickCreate.value = false;
     quickCreateName.value = ""; // Reset the input
-    nodeStore.flow_id = createdFlowId;
+    nodeStore.setFlowId(createdFlowId);
 
     emit("refreshFlow");
   } catch (error) {

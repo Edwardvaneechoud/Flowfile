@@ -181,12 +181,11 @@ export const getRunStatus = async (flowId: number): Promise<AxiosResponse<RunInf
 
 export const updateRunStatus = async (
   flowId: number,
-  nodeStore: { insertRunResult: (result: RunInformation, showRunResults: boolean) => void },
-  showRunResults: boolean = true
+  nodeStore: { insertRunResult: (result: RunInformation) => void }
 ): Promise<AxiosResponse<RunInformation>> => {
   const response = await getRunStatus(flowId);
   if (isResponseSuccessful(response.status)) {
-    nodeStore.insertRunResult(response.data, showRunResults);
+    nodeStore.insertRunResult(response.data);
   }
 
   return response;
