@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+import * as path from 'path';
+import * as fs from 'fs';
 
 /**
  * Web-based E2E tests for flow handling
@@ -12,6 +14,17 @@ import { test, expect } from '@playwright/test';
 
 const BASE_URL = process.env.TEST_URL || 'http://localhost:5173';
 const API_URL = process.env.API_URL || 'http://localhost:63578';
+
+// Path to the complex flow fixture
+const COMPLEX_FLOW_FIXTURE = path.resolve(__dirname, 'fixtures/complex-flow.yaml');
+
+// All node types in the complex flow fixture
+const COMPLEX_FLOW_NODE_TYPES = [
+  'manual_input', 'filter', 'formula', 'select', 'sort', 'record_id',
+  'sample', 'unique', 'group_by', 'pivot', 'unpivot', 'text_to_rows',
+  'graph_solver', 'polars_code', 'join', 'cross_join', 'fuzzy_match',
+  'record_count', 'explore_data', 'union', 'output'
+];
 
 test.describe('Web Flow E2E Tests', () => {
   test.beforeEach(async ({ page }) => {
@@ -215,5 +228,152 @@ test.describe('API Health Checks', () => {
       console.error('Frontend not reachable. Make sure to start it with: npm run dev:web');
       throw error;
     }
+  });
+});
+
+test.describe('Complex Flow E2E Tests', () => {
+  test('should have complex flow fixture available', async () => {
+    expect(fs.existsSync(COMPLEX_FLOW_FIXTURE)).toBe(true);
+    console.log(`✓ Complex flow fixture found at: ${COMPLEX_FLOW_FIXTURE}`);
+  });
+
+  test('should import complex flow from YAML fixture', async ({ page }) => {
+    // Import the complex flow using the API
+    const importResponse = await page.request.get(
+      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`
+    );
+
+    expect(importResponse.ok()).toBe(true);
+
+    const flowId = await importResponse.json();
+    expect(typeof flowId).toBe('number');
+    console.log(`✓ Imported complex flow with ID: ${flowId}`);
+
+    // Get flow data to verify nodes were imported
+    const flowDataResponse = await page.request.get(`${API_URL}/flow_data?flow_id=${flowId}`);
+    expect(flowDataResponse.ok()).toBe(true);
+
+    const flowData = await flowDataResponse.json();
+    expect(flowData.nodes).toBeDefined();
+    expect(flowData.nodes.length).toBeGreaterThan(0);
+
+    console.log(`✓ Flow contains ${flowData.nodes.length} nodes`);
+
+    // Verify node types
+    const nodeTypes = new Set(flowData.nodes.map((n: any) => n.node_type || n.type));
+    console.log(`Node types in flow: ${Array.from(nodeTypes).join(', ')}`);
+  });
+
+  test('should load complex flow in designer without component errors', async ({ page }) => {
+    // Track console errors
+    const errors: string[] = [];
+    const loadedComponents: string[] = [];
+
+    page.on('console', msg => {
+      const text = msg.text();
+      if (msg.type() === 'error') {
+        errors.push(text);
+      }
+      if (text.includes('Loading component:')) {
+        loadedComponents.push(text);
+      }
+    });
+
+    // Import the complex flow
+    const importResponse = await page.request.get(
+      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`
+    );
+    expect(importResponse.ok()).toBe(true);
+
+    const flowId = await importResponse.json();
+    console.log(`Imported flow ID: ${flowId}`);
+
+    // Navigate to the designer
+    await page.goto(`${BASE_URL}/#/designer/${flowId}`);
+
+    // Wait for the page to load
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(5000); // Give extra time for all components to load
+
+    // Log loaded components
+    console.log(`\nLoaded ${loadedComponents.length} components:`);
+    for (const comp of loadedComponents) {
+      console.log(`  ${comp}`);
+    }
+
+    // Check for component loading errors
+    const componentErrors = errors.filter(e =>
+      e.includes('Component not found') ||
+      e.includes('Failed to load component') ||
+      e.includes('Invalid module name')
+    );
+
+    if (componentErrors.length > 0) {
+      console.error('\nComponent errors found:');
+      for (const err of componentErrors) {
+        console.error(`  ${err}`);
+      }
+    }
+
+    expect(componentErrors).toHaveLength(0);
+    console.log('\n✓ All components loaded successfully without errors');
+  });
+
+  test('should verify all node types have correct custom_node mapping', async ({ page }) => {
+    // Get node list from API
+    const response = await page.request.get(`${API_URL}/node_list`);
+    expect(response.ok()).toBe(true);
+
+    const nodeList = await response.json();
+    const nodeMap = new Map(nodeList.map((n: any) => [n.item, n]));
+
+    console.log('\nNode type mappings for complex flow:');
+    for (const nodeType of COMPLEX_FLOW_NODE_TYPES) {
+      const node = nodeMap.get(nodeType);
+      if (node) {
+        const componentType = node.custom_node ? 'CustomNode' : 'Dedicated';
+        console.log(`  ${nodeType}: ${componentType}`);
+      } else {
+        console.log(`  ${nodeType}: NOT FOUND in node_list`);
+      }
+    }
+
+    // Verify some known node types
+    const filterNode = nodeMap.get('filter');
+    const manualInputNode = nodeMap.get('manual_input');
+    const outputNode = nodeMap.get('output');
+
+    expect(filterNode?.custom_node).toBe(false);
+    expect(manualInputNode?.custom_node).toBe(false);
+    expect(outputNode?.custom_node).toBe(false);
+
+    console.log('\n✓ Core node types have correct custom_node mappings');
+  });
+
+  test('should render all nodes in complex flow without visual errors', async ({ page }) => {
+    // Import the complex flow
+    const importResponse = await page.request.get(
+      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`
+    );
+    expect(importResponse.ok()).toBe(true);
+
+    const flowId = await importResponse.json();
+
+    // Navigate to the designer
+    await page.goto(`${BASE_URL}/#/designer/${flowId}`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(3000);
+
+    // Check that Vue Flow canvas is visible
+    const canvas = page.locator('.vue-flow');
+    await expect(canvas).toBeVisible({ timeout: 10000 });
+    console.log('✓ Vue Flow canvas is visible');
+
+    // Check that nodes are rendered
+    const nodes = page.locator('.vue-flow__node');
+    const nodeCount = await nodes.count();
+    console.log(`✓ Rendered ${nodeCount} nodes in the designer`);
+
+    expect(nodeCount).toBeGreaterThan(0);
   });
 });
