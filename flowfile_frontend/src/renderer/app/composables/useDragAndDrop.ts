@@ -5,9 +5,9 @@ import { ref, watch, markRaw, nextTick } from "vue"
 import type { NodeTemplate, NodeInput, VueFlowInput, NodeCopyInput, NodePromise } from "../types"
 import { FlowApi } from "../api"
 
-// Dynamic component imports - these still need to reference the existing component locations
-// until we move them in Phase 4
-const getComponentModules = () => import.meta.glob('../features/designer/nodes/*.vue')
+// Dynamic component imports using import.meta.glob for Vite compatibility
+// This creates a map of all node components that can be dynamically loaded
+const nodeModules = import.meta.glob('../features/designer/nodes/*.vue')
 
 let id = 0
 
@@ -101,8 +101,17 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
   const formattedItemName = toTitleCase(nodeTemplate.item)
   console.log(`Loading component: ${formattedItemName}`)
 
-  const componentPromise = import(`../features/designer/nodes/${formattedItemName}.vue`)
-    .then(module => {
+  const modulePath = `../features/designer/nodes/${formattedItemName}.vue`
+  const moduleLoader = nodeModules[modulePath]
+
+  if (!moduleLoader) {
+    const error = new Error(`Component not found: ${formattedItemName}`)
+    console.error(`Failed to load component for ${formattedItemName}:`, error)
+    throw error
+  }
+
+  const componentPromise = moduleLoader()
+    .then((module: any) => {
       const component = markRaw(module.default)
       return component
     })
@@ -120,8 +129,17 @@ async function getComponentRaw(item: string): Promise<any> {
   const formattedItemName = toTitleCase(item)
   console.log(`Loading component: ${formattedItemName}`)
 
-  return import(`../features/designer/nodes/${formattedItemName}.vue`)
-    .then(module => markRaw(module.default))
+  const modulePath = `../features/designer/nodes/${formattedItemName}.vue`
+  const moduleLoader = nodeModules[modulePath]
+
+  if (!moduleLoader) {
+    const error = new Error(`Component not found: ${formattedItemName}`)
+    console.error(`Failed to load component for ${formattedItemName}:`, error)
+    throw error
+  }
+
+  return moduleLoader()
+    .then((module: any) => markRaw(module.default))
     .catch(error => {
       console.error(`Failed to load component for ${formattedItemName}:`, error)
       throw error

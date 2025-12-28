@@ -5,6 +5,9 @@ import axios from "axios"
 import type { NodeTemplate } from "../types"
 import { ENV } from "../../config/environment"
 
+// Dynamic component imports using import.meta.glob for Vite compatibility
+const nodeModules = import.meta.glob('../features/designer/nodes/*.vue')
+
 // Utility function to convert snake_case to TitleCase
 function toTitleCase(str: string): string {
   return str
@@ -124,9 +127,18 @@ export async function getComponent(node: NodeTemplate | string): Promise<DefineC
   const formattedItemName = toTitleCase(nodeTemplate.item)
   console.log(`Loading component: ${formattedItemName}`)
 
+  const modulePath = `../features/designer/nodes/${formattedItemName}.vue`
+  const moduleLoader = nodeModules[modulePath]
+
+  if (!moduleLoader) {
+    const error = new Error(`Component not found: ${formattedItemName}`)
+    console.error(`Failed to load component for ${formattedItemName}:`, error)
+    throw error
+  }
+
   // Create and cache the component promise
-  const componentPromise = import(`../features/designer/nodes/${formattedItemName}.vue`)
-    .then(module => {
+  const componentPromise = moduleLoader()
+    .then((module: any) => {
       const component = markRaw(module.default)
       return component
     })
