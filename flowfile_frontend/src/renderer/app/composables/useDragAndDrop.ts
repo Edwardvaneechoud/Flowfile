@@ -140,17 +140,24 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
     throw new Error(`Invalid module name: ${formattedItemName}`)
   }
 
-  const moduleLoader = nodeModules[modulePath]
-
-  if (!moduleLoader || typeof moduleLoader !== 'function') {
+  // Use Object.hasOwn to safely check module exists (prevents prototype pollution)
+  if (!Object.hasOwn(nodeModules, modulePath)) {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
     console.error("Failed to load component:", formattedItemName, error)
     console.log('Available modules:', Object.keys(nodeModules))
     throw error
   }
 
-  const validatedLoader = moduleLoader
-  const componentPromise = validatedLoader()
+  // Safe to access after hasOwn check
+  const moduleLoader = nodeModules[modulePath]
+
+  if (typeof moduleLoader !== 'function') {
+    const error = new Error(`Invalid module loader for: ${formattedItemName}`)
+    console.error("Failed to load component:", formattedItemName, error)
+    throw error
+  }
+
+  const componentPromise = moduleLoader()
     .then((module: any) => {
       const component = markRaw(module.default)
       return component
@@ -188,17 +195,24 @@ async function getComponentRaw(item: string): Promise<any> {
     throw new Error(`Invalid module name: ${formattedItemName}`)
   }
 
-  const moduleLoader = nodeModules[modulePath]
-
-  if (!moduleLoader || typeof moduleLoader !== 'function') {
+  // Use Object.hasOwn to safely check module exists (prevents prototype pollution)
+  if (!Object.hasOwn(nodeModules, modulePath)) {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
     console.error("Failed to load component:", formattedItemName, error)
     console.log('Available modules:', Object.keys(nodeModules))
     throw error
   }
 
-  const validatedLoader = moduleLoader
-  return validatedLoader()
+  // Safe to access after hasOwn check
+  const moduleLoader = nodeModules[modulePath]
+
+  if (typeof moduleLoader !== 'function') {
+    const error = new Error(`Invalid module loader for: ${formattedItemName}`)
+    console.error("Failed to load component:", formattedItemName, error)
+    throw error
+  }
+
+  return moduleLoader()
     .then((module: any) => markRaw(module.default))
     .catch(error => {
       console.error("Failed to load component:", formattedItemName, error)
