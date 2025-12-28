@@ -113,25 +113,20 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 
   const formattedItemName = toTitleCase(nodeTemplate.item)
   const dirName = toCamelCase(nodeTemplate.item)
-  console.log("Loading component:", formattedItemName, "from", dirName)
 
-  // Validate module names to prevent path traversal
-  if (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName)) {
+  // Use CustomNode for nodes marked as custom_node, otherwise use specific component
+  const modulePath = nodeTemplate.custom_node
+    ? '../features/designer/nodes/elements/customNode/CustomNode.vue'
+    : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
+
+  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node)
+
+  // Validate module names to prevent path traversal (only needed for non-custom nodes)
+  if (!nodeTemplate.custom_node && (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName))) {
     throw new Error(`Invalid module name: ${formattedItemName}`)
   }
 
-  // Try to load specific component, fall back to CustomNode if not found
-  const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
-  const fallbackPath = '../features/designer/nodes/elements/customNode/CustomNode.vue'
-
-  let moduleLoader = nodeModules[modulePath]
-  let usingFallback = false
-
-  if (!moduleLoader || typeof moduleLoader !== 'function') {
-    console.log("Specific component not found, using CustomNode fallback for:", formattedItemName)
-    moduleLoader = nodeModules[fallbackPath]
-    usingFallback = true
-  }
+  const moduleLoader = nodeModules[modulePath]
 
   if (!moduleLoader || typeof moduleLoader !== 'function') {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
@@ -157,25 +152,29 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 }
 
 async function getComponentRaw(item: string): Promise<any> {
-  const formattedItemName = toTitleCase(item)
-  const dirName = toCamelCase(item)
-  console.log("Loading component:", formattedItemName, "from", dirName)
+  // Fetch NodeTemplate to check custom_node property
+  const nodeTemplate = await getNodeTemplateByItem(item)
 
-  // Validate module names to prevent path traversal
-  if (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName)) {
+  if (!nodeTemplate) {
+    throw new Error(`Node template not found for item: ${item}`)
+  }
+
+  const formattedItemName = toTitleCase(nodeTemplate.item)
+  const dirName = toCamelCase(nodeTemplate.item)
+
+  // Use CustomNode for nodes marked as custom_node, otherwise use specific component
+  const modulePath = nodeTemplate.custom_node
+    ? '../features/designer/nodes/elements/customNode/CustomNode.vue'
+    : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
+
+  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node)
+
+  // Validate module names to prevent path traversal (only needed for non-custom nodes)
+  if (!nodeTemplate.custom_node && (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName))) {
     throw new Error(`Invalid module name: ${formattedItemName}`)
   }
 
-  // Try to load specific component, fall back to CustomNode if not found
-  const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
-  const fallbackPath = '../features/designer/nodes/elements/customNode/CustomNode.vue'
-
-  let moduleLoader = nodeModules[modulePath]
-
-  if (!moduleLoader || typeof moduleLoader !== 'function') {
-    console.log("Specific component not found, using CustomNode fallback for:", formattedItemName)
-    moduleLoader = nodeModules[fallbackPath]
-  }
+  const moduleLoader = nodeModules[modulePath]
 
   if (!moduleLoader || typeof moduleLoader !== 'function') {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
