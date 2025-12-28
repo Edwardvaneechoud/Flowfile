@@ -37,6 +37,11 @@ function toCamelCase(str: string): string {
     .join('')
 }
 
+// Validate that a string only contains safe characters for module paths
+function isValidModuleName(name: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9]*$/.test(name)
+}
+
 // Cache for node templates - persists for the entire session
 let nodeTemplatesCache: NodeTemplate[] | null = null
 let cachePromise: Promise<NodeTemplate[]> | null = null
@@ -110,22 +115,23 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
   const dirName = toCamelCase(nodeTemplate.item)
   console.log("Loading component:", formattedItemName, "from", dirName)
 
+  // Validate module names to prevent path traversal
+  if (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName)) {
+    throw new Error(`Invalid module name: ${formattedItemName}`)
+  }
+
   const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
   const moduleLoader = nodeModules[modulePath]
 
-  if (!moduleLoader) {
+  if (!moduleLoader || typeof moduleLoader !== 'function') {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
     console.error("Failed to load component:", formattedItemName, error)
     console.log('Available modules:', Object.keys(nodeModules))
     throw error
   }
 
-  // Validate moduleLoader is a function before calling
-  if (typeof moduleLoader !== 'function') {
-    throw new Error(`Invalid module loader for: ${formattedItemName}`)
-  }
-
-  const componentPromise = moduleLoader()
+  const validatedLoader = moduleLoader
+  const componentPromise = validatedLoader()
     .then((module: any) => {
       const component = markRaw(module.default)
       return component
@@ -145,22 +151,23 @@ async function getComponentRaw(item: string): Promise<any> {
   const dirName = toCamelCase(item)
   console.log("Loading component:", formattedItemName, "from", dirName)
 
+  // Validate module names to prevent path traversal
+  if (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName)) {
+    throw new Error(`Invalid module name: ${formattedItemName}`)
+  }
+
   const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
   const moduleLoader = nodeModules[modulePath]
 
-  if (!moduleLoader) {
+  if (!moduleLoader || typeof moduleLoader !== 'function') {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
     console.error("Failed to load component:", formattedItemName, error)
     console.log('Available modules:', Object.keys(nodeModules))
     throw error
   }
 
-  // Validate moduleLoader is a function before calling
-  if (typeof moduleLoader !== 'function') {
-    throw new Error(`Invalid module loader for: ${formattedItemName}`)
-  }
-
-  return moduleLoader()
+  const validatedLoader = moduleLoader
+  return validatedLoader()
     .then((module: any) => markRaw(module.default))
     .catch(error => {
       console.error("Failed to load component:", formattedItemName, error)
