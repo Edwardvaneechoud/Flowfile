@@ -7,7 +7,7 @@ import { FlowApi } from "../api"
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
-const nodeModules = import.meta.glob('../features/designer/nodes/*.vue')
+const nodeModules = import.meta.glob('../features/designer/nodes/elements/**/*.vue')
 
 let id = 0
 
@@ -25,6 +25,14 @@ const state = {
 function toTitleCase(str: string): string {
   return str
     .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('')
+}
+
+// Utility function to convert snake_case to camelCase
+function toCamelCase(str: string): string {
+  const parts = str.split('_')
+  return parts[0].toLowerCase() + parts.slice(1)
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join('')
 }
@@ -99,14 +107,16 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
   }
 
   const formattedItemName = toTitleCase(nodeTemplate.item)
-  console.log(`Loading component: ${formattedItemName}`)
+  const dirName = toCamelCase(nodeTemplate.item)
+  console.log(`Loading component: ${formattedItemName} from ${dirName}`)
 
-  const modulePath = `../features/designer/nodes/${formattedItemName}.vue`
+  const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
   const moduleLoader = nodeModules[modulePath]
 
   if (!moduleLoader) {
-    const error = new Error(`Component not found: ${formattedItemName}`)
+    const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
     console.error(`Failed to load component for ${formattedItemName}:`, error)
+    console.log('Available modules:', Object.keys(nodeModules))
     throw error
   }
 
@@ -127,14 +137,16 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 
 async function getComponentRaw(item: string): Promise<any> {
   const formattedItemName = toTitleCase(item)
-  console.log(`Loading component: ${formattedItemName}`)
+  const dirName = toCamelCase(item)
+  console.log(`Loading component: ${formattedItemName} from ${dirName}`)
 
-  const modulePath = `../features/designer/nodes/${formattedItemName}.vue`
+  const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
   const moduleLoader = nodeModules[modulePath]
 
   if (!moduleLoader) {
-    const error = new Error(`Component not found: ${formattedItemName}`)
+    const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
     console.error(`Failed to load component for ${formattedItemName}:`, error)
+    console.log('Available modules:', Object.keys(nodeModules))
     throw error
   }
 
