@@ -108,16 +108,21 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 
   const formattedItemName = toTitleCase(nodeTemplate.item)
   const dirName = toCamelCase(nodeTemplate.item)
-  console.log(`Loading component: ${formattedItemName} from ${dirName}`)
+  console.log("Loading component:", formattedItemName, "from", dirName)
 
   const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
   const moduleLoader = nodeModules[modulePath]
 
   if (!moduleLoader) {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
-    console.error(`Failed to load component for ${formattedItemName}:`, error)
+    console.error("Failed to load component:", formattedItemName, error)
     console.log('Available modules:', Object.keys(nodeModules))
     throw error
+  }
+
+  // Validate moduleLoader is a function before calling
+  if (typeof moduleLoader !== 'function') {
+    throw new Error(`Invalid module loader for: ${formattedItemName}`)
   }
 
   const componentPromise = moduleLoader()
@@ -126,7 +131,7 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
       return component
     })
     .catch(error => {
-      console.error(`Failed to load component for ${formattedItemName}:`, error)
+      console.error("Failed to load component:", formattedItemName, error)
       componentCache.delete(nodeItem)
       throw error
     })
@@ -138,22 +143,27 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 async function getComponentRaw(item: string): Promise<any> {
   const formattedItemName = toTitleCase(item)
   const dirName = toCamelCase(item)
-  console.log(`Loading component: ${formattedItemName} from ${dirName}`)
+  console.log("Loading component:", formattedItemName, "from", dirName)
 
   const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
   const moduleLoader = nodeModules[modulePath]
 
   if (!moduleLoader) {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
-    console.error(`Failed to load component for ${formattedItemName}:`, error)
+    console.error("Failed to load component:", formattedItemName, error)
     console.log('Available modules:', Object.keys(nodeModules))
     throw error
+  }
+
+  // Validate moduleLoader is a function before calling
+  if (typeof moduleLoader !== 'function') {
+    throw new Error(`Invalid module loader for: ${formattedItemName}`)
   }
 
   return moduleLoader()
     .then((module: any) => markRaw(module.default))
     .catch(error => {
-      console.error(`Failed to load component for ${formattedItemName}:`, error)
+      console.error("Failed to load component:", formattedItemName, error)
       throw error
     })
 }
@@ -350,7 +360,7 @@ export default function useDragAndDrop() {
         addNodes(newNode)
       })
       .catch((error) => {
-        console.error(`Error importing component for ${nodeData.item}`, error)
+        console.error("Error importing component for:", nodeData.item, error)
       })
   }
 
