@@ -50,10 +50,12 @@ async function authPost(request: APIRequestContext, url: string, token: string, 
   });
 }
 
-// Helper to inject auth token into browser's localStorage
-async function injectAuthToken(page: any, token: string) {
-  // First navigate to the base URL to establish the origin
-  await page.goto(BASE_URL);
+// Helper to inject auth token and navigate to a page with proper auth
+// The issue: Vue Router hash routes don't reload the page, so AuthService
+// doesn't reinitialize. We must inject the token then reload to pick it up.
+async function navigateWithAuth(page: any, token: string, targetUrl: string) {
+  // Navigate directly to the target URL first
+  await page.goto(targetUrl);
   await page.waitForLoadState('networkidle');
 
   // Inject the auth token into localStorage
@@ -62,6 +64,10 @@ async function injectAuthToken(page: any, token: string) {
     localStorage.setItem('auth_token', token);
     localStorage.setItem('auth_token_expiration', expiration.toString());
   }, { token, expiration: expirationTime });
+
+  // Force reload so AuthService reads the token from localStorage on init
+  await page.reload();
+  await page.waitForLoadState('networkidle');
 }
 
 test.describe('Web Flow E2E Tests', () => {
@@ -204,15 +210,11 @@ test.describe('Web Flow E2E Tests', () => {
     await authPost(request, `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=2&node_type=filter&pos_x=300&pos_y=100`, authToken);
     await authPost(request, `${API_URL}/editor/add_node/?flow_id=${flowId}&node_id=3&node_type=select&pos_x=500&pos_y=100`, authToken);
 
-    // Inject auth token into the browser before navigating to designer
-    await injectAuthToken(page, authToken);
+    // Navigate to designer with auth token properly set
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
 
-    // Navigate to the designer
-    await page.goto(`${BASE_URL}/#/designer/${flowId}`);
-
-    // Wait for the page to load
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(3000); // Give time for components to load
+    // Wait for components to load
+    await page.waitForTimeout(3000);
 
     // Check for component loading errors
     const componentErrors = errors.filter(e =>
@@ -331,15 +333,11 @@ test.describe('Complex Flow E2E Tests', () => {
     const flowId = await importResponse.json();
     console.log(`Imported flow ID: ${flowId}`);
 
-    // Inject auth token into the browser before navigating to designer
-    await injectAuthToken(page, authToken);
+    // Navigate to designer with auth token properly set
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
 
-    // Navigate to the designer
-    await page.goto(`${BASE_URL}/#/designer/${flowId}`);
-
-    // Wait for the page to load
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(5000); // Give extra time for all components to load
+    // Wait for components to load
+    await page.waitForTimeout(5000);
 
     // Log loaded components
     console.log(`\nLoaded ${loadedComponents.length} components:`);
@@ -407,12 +405,8 @@ test.describe('Complex Flow E2E Tests', () => {
 
     const flowId = await importResponse.json();
 
-    // Inject auth token into the browser before navigating to designer
-    await injectAuthToken(page, authToken);
-
-    // Navigate to the designer with the imported flow
-    await page.goto(`${BASE_URL}/#/designer/${flowId}`);
-    await page.waitForLoadState('networkidle');
+    // Navigate to designer with auth token properly set
+    await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
 
     // Check that Vue Flow canvas is visible
     const canvas = page.locator('.vue-flow');
