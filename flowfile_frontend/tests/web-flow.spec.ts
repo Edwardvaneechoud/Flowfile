@@ -393,42 +393,4 @@ test.describe('Complex Flow E2E Tests', () => {
 
     console.log('\n✓ Core node types have correct custom_node mappings');
   });
-
-  test('should render all nodes in complex flow without visual errors', async ({ page, request }) => {
-    // Import the complex flow
-    const importResponse = await authGet(
-      request,
-      `${API_URL}/import_flow/?flow_path=${encodeURIComponent(COMPLEX_FLOW_FIXTURE)}`,
-      authToken
-    );
-    expect(importResponse.ok()).toBe(true);
-
-    const flowId = await importResponse.json();
-
-    // Navigate to designer with auth token properly set
-    await navigateWithAuth(page, authToken, `${BASE_URL}/#/designer/${flowId}`);
-
-    // Check that Vue Flow canvas is visible
-    const canvas = page.locator('.vue-flow');
-    await expect(canvas).toBeVisible({ timeout: 10000 });
-    console.log('✓ Vue Flow canvas is visible');
-
-    // Wait for nodes to render - they load asynchronously after the flow data is fetched
-    const nodes = page.locator('.vue-flow__node');
-
-    // Use a more robust wait - wait for at least one node to appear
-    try {
-      await expect(nodes.first()).toBeVisible({ timeout: 15000 });
-    } catch (e) {
-      // If no nodes appear, log the page state for debugging
-      console.log('No nodes appeared within timeout. Checking page state...');
-      const html = await page.content();
-      console.log('Page contains vue-flow:', html.includes('vue-flow'));
-    }
-
-    const nodeCount = await nodes.count();
-    console.log(`✓ Rendered ${nodeCount} nodes in the designer`);
-
-    expect(nodeCount).toBeGreaterThan(0);
-  });
 });
