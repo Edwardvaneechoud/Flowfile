@@ -221,7 +221,7 @@ const loadFlowSettings = async () => {
   } else {
     editorStore.isRunning = false;
     runButton.value.stopPolling();
-    updateRunStatus(nodeStore.flow_id, nodeStore, false);
+    updateRunStatus(nodeStore.flow_id, nodeStore);
   }
 };
 
