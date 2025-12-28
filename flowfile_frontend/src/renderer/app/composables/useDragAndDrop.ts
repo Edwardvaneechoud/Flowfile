@@ -120,8 +120,18 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
     throw new Error(`Invalid module name: ${formattedItemName}`)
   }
 
+  // Try to load specific component, fall back to CustomNode if not found
   const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
-  const moduleLoader = nodeModules[modulePath]
+  const fallbackPath = '../features/designer/nodes/elements/customNode/CustomNode.vue'
+
+  let moduleLoader = nodeModules[modulePath]
+  let usingFallback = false
+
+  if (!moduleLoader || typeof moduleLoader !== 'function') {
+    console.log("Specific component not found, using CustomNode fallback for:", formattedItemName)
+    moduleLoader = nodeModules[fallbackPath]
+    usingFallback = true
+  }
 
   if (!moduleLoader || typeof moduleLoader !== 'function') {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
@@ -156,8 +166,16 @@ async function getComponentRaw(item: string): Promise<any> {
     throw new Error(`Invalid module name: ${formattedItemName}`)
   }
 
+  // Try to load specific component, fall back to CustomNode if not found
   const modulePath = `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
-  const moduleLoader = nodeModules[modulePath]
+  const fallbackPath = '../features/designer/nodes/elements/customNode/CustomNode.vue'
+
+  let moduleLoader = nodeModules[modulePath]
+
+  if (!moduleLoader || typeof moduleLoader !== 'function') {
+    console.log("Specific component not found, using CustomNode fallback for:", formattedItemName)
+    moduleLoader = nodeModules[fallbackPath]
+  }
 
   if (!moduleLoader || typeof moduleLoader !== 'function') {
     const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
