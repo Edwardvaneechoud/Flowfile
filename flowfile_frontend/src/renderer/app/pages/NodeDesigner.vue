@@ -524,15 +524,57 @@ const processCode = ref(`def process(self, *inputs: pl.LazyFrame) -> pl.LazyFram
 
 // Dynamic autocompletion based on schema
 function schemaCompletions(context: CompletionContext): CompletionResult | null {
-  // Match patterns like "self.settings_schema." or "self.settings_schema.section_name."
   const beforeCursor = context.state.doc.sliceString(0, context.pos);
 
-  // Check for "self.settings_schema."
+  // Check for ".value" completion after a component field: self.settings_schema.section.field.
+  for (const section of sections.value) {
+    const sectionName = section.name || toSnakeCase(section.title || "section");
+    for (const comp of section.components) {
+      const fieldName = toSnakeCase(comp.field_name);
+      const valueMatch = beforeCursor.match(new RegExp(`self\\.settings_schema\\.${sectionName}\\.${fieldName}\\.(\\w*)$`));
+      if (valueMatch) {
+        const typed = valueMatch[1];
+        return {
+          from: context.pos - typed.length,
+          options: [
+            { label: "value", type: "property", info: "Get the setting value", detail: comp.component_type },
+          ],
+          validFor: /^\w*$/,
+        };
+      }
+    }
+  }
+
+  // Check for component field completion: self.settings_schema.section_name.
+  for (const section of sections.value) {
+    const sectionName = section.name || toSnakeCase(section.title || "section");
+    const sectionMatch = beforeCursor.match(new RegExp(`self\\.settings_schema\\.${sectionName}\\.(\\w*)$`));
+
+    if (sectionMatch) {
+      const typed = sectionMatch[1];
+      const componentOptions = section.components.map(comp => {
+        const fieldName = toSnakeCase(comp.field_name);
+        return {
+          label: fieldName,
+          type: "property",
+          info: `${comp.component_type}: ${comp.label}`,
+          detail: comp.component_type,
+        };
+      });
+
+      return {
+        from: context.pos - typed.length,
+        options: componentOptions,
+        validFor: /^\w*$/,
+      };
+    }
+  }
+
+  // Check for section completion: self.settings_schema.
   const settingsMatch = beforeCursor.match(/self\.settings_schema\.(\w*)$/);
   if (settingsMatch) {
     const typed = settingsMatch[1];
     const sectionOptions = sections.value.map(section => {
-      // Use the sanitized variable name directly
       const sectionName = section.name || toSnakeCase(section.title || "section");
       const sectionTitle = section.title || section.name || "Section";
       return {
@@ -550,31 +592,17 @@ function schemaCompletions(context: CompletionContext): CompletionResult | null 
     };
   }
 
-  // Check for "self.settings_schema.section_name."
-  for (const section of sections.value) {
-    // Use the sanitized variable name directly
-    const sectionName = section.name || toSnakeCase(section.title || "section");
-    const sectionMatch = beforeCursor.match(new RegExp(`self\\.settings_schema\\.${sectionName}\\.([\\w]*)$`));
-
-    if (sectionMatch) {
-      const typed = sectionMatch[1];
-      const componentOptions = section.components.map(comp => {
-        const fieldName = toSnakeCase(comp.field_name);
-        return {
-          label: fieldName,
-          type: "property",
-          info: `${comp.component_type}: ${comp.label}`,
-          detail: comp.component_type,
-          apply: fieldName + ".value",
-        };
-      });
-
-      return {
-        from: context.pos - typed.length,
-        options: componentOptions,
-        validFor: /^\w*$/,
-      };
-    }
+  // Check for "self." - suggest settings_schema
+  const selfDotMatch = beforeCursor.match(/self\.(\w*)$/);
+  if (selfDotMatch) {
+    const typed = selfDotMatch[1];
+    return {
+      from: context.pos - typed.length,
+      options: [
+        { label: "settings_schema", type: "property", info: "Access node settings" },
+      ],
+      validFor: /^\w*$/,
+    };
   }
 
   // Common Polars completions
@@ -582,8 +610,8 @@ function schemaCompletions(context: CompletionContext): CompletionResult | null 
   if (!wordMatch && !context.explicit) return null;
 
   const polarsCompletions = [
-    // Settings access
-    { label: "self.settings_schema", type: "property", info: "Access node settings", apply: "self.settings_schema." },
+    // Settings access - only suggest "self" at word boundary
+    { label: "self", type: "keyword", info: "Access node instance" },
 
     // Input dataframes
     { label: "inputs[0]", type: "variable", info: "First input LazyFrame" },
