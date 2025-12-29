@@ -118,7 +118,7 @@
           <div class="sections-area">
             <div class="sections-header">
               <h4>UI Sections</h4>
-              <button class="btn btn-sm btn-primary" @click="addSection">
+              <button class="add-section-btn" @click="addSection">
                 <i class="fa-solid fa-plus"></i>
                 Add Section
               </button>
@@ -706,11 +706,22 @@ function generateCode(): string {
     settingsCode += `    pass\n`;
   }
 
-  // Extract process method body (remove the def line)
+  // Extract process method body (remove the def line and dedent)
   let processBody = processCode.value;
   const defMatch = processBody.match(/def\s+process\s*\([^)]*\)\s*->\s*[^:]+:\s*/);
   if (defMatch) {
     processBody = processBody.substring(defMatch[0].length);
+  }
+
+  // Dedent the process body - find minimum indentation and remove it
+  const lines = processBody.split('\n');
+  const nonEmptyLines = lines.filter(line => line.trim().length > 0);
+  if (nonEmptyLines.length > 0) {
+    const minIndent = Math.min(...nonEmptyLines.map(line => {
+      const match = line.match(/^(\s*)/);
+      return match ? match[1].length : 0;
+    }));
+    processBody = lines.map(line => line.substring(minIndent)).join('\n');
   }
 
   // Generate node class
@@ -962,6 +973,29 @@ async function saveNode() {
 
 .sections-header .btn {
   flex-shrink: 0;
+}
+
+.add-section-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1rem;
+  background: #4a6cf7;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.add-section-btn:hover {
+  background: #3d5bd9;
+}
+
+.add-section-btn i {
+  font-size: 0.75rem;
 }
 
 .btn-sm {
