@@ -1,7 +1,7 @@
 // Node-related TypeScript interfaces and types
 // Consolidated from features/designer/baseNode/nodeInterfaces.ts and nodeInput.ts
 
-import type { AuthMethod } from "../pages/cloudConnectionManager/CloudConnectionTypes"
+import type { AuthMethod } from "../views/CloudConnectionView/CloudConnectionTypes"
 
 // ============================================================================
 // Data Type Definitions

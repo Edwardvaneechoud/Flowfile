@@ -1,6 +1,6 @@
 // File API Service - Handles file system operations
 // Consolidated from features/designer/components/fileBrowser/fileSystemApi.ts
-import axios from '../services/axios-setup'
+import axios from '../services/axios.config'
 import type { FileInfo, DirectoryContentsParams } from '../types'
 
 const handleApiError = (error: any): never => {

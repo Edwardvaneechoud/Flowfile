@@ -1,5 +1,5 @@
 // Expressions API Service - Handles expression documentation requests
-import axios from '../services/axios-setup'
+import axios from '../services/axios.config'
 import type { ExpressionsOverview } from '../types'
 
 export class ExpressionsApi {

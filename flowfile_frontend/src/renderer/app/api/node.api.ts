@@ -1,5 +1,5 @@
 // Node API Service - Handles all node-related HTTP requests
-import axios from '../services/axios-setup'
+import axios from '../services/axios.config'
 import type { NodeData, TableExample } from '../types'
 
 export class NodeApi {

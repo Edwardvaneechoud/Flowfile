@@ -7,8 +7,8 @@ import type {
   TableExample,
   NodeDescriptionDictionary,
   ExpressionsOverview,
-} from '../features/designer/baseNode/nodeInterfaces';
-import { NodeApi, ExpressionsApi } from '../services/api';
+} from '../types';
+import { NodeApi, ExpressionsApi } from '../api';
 import { useFlowStore } from './flow-store';
 import { useResultsStore } from './results-store';
 import { useEditorStore } from './editor-store';
