@@ -1045,6 +1045,7 @@ async function saveNode() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .panel-header {
@@ -1107,6 +1108,8 @@ async function saveNode() {
   flex-direction: column;
   gap: 1.5rem;
   padding-bottom: 3rem;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .metadata-section h4 {
