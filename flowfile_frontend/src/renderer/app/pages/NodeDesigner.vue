@@ -432,12 +432,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from "vue";
-import { EditorView } from "@codemirror/view";
-import { EditorState, Extension } from "@codemirror/state";
+import { ref, computed, reactive, watch } from "vue";
+import { EditorView, keymap } from "@codemirror/view";
+import { EditorState, Extension, Compartment } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { autocompletion, CompletionContext, CompletionResult, acceptCompletion } from "@codemirror/autocomplete";
+import { indentMore } from "@codemirror/commands";
 import axios from "axios";
 
 // Available component types
@@ -503,11 +505,109 @@ const processCode = ref(`def process(self, *inputs: pl.DataFrame) -> pl.DataFram
 
     return df`);
 
+// Dynamic autocompletion based on schema
+function schemaCompletions(context: CompletionContext): CompletionResult | null {
+  // Match patterns like "self.settings_schema." or "self.settings_schema.section_name."
+  const beforeCursor = context.state.doc.sliceString(0, context.pos);
+
+  // Check for "self.settings_schema."
+  const settingsMatch = beforeCursor.match(/self\.settings_schema\.(\w*)$/);
+  if (settingsMatch) {
+    const typed = settingsMatch[1];
+    const sectionOptions = sections.value.map(section => {
+      const sectionName = toSnakeCase(section.name || section.title || "section");
+      return {
+        label: sectionName,
+        type: "property",
+        info: `Section: ${section.title}`,
+        detail: "Section",
+      };
+    });
+
+    return {
+      from: context.pos - typed.length,
+      options: sectionOptions,
+      validFor: /^\w*$/,
+    };
+  }
+
+  // Check for "self.settings_schema.section_name."
+  for (const section of sections.value) {
+    const sectionName = toSnakeCase(section.name || section.title || "section");
+    const sectionMatch = beforeCursor.match(new RegExp(`self\\.settings_schema\\.${sectionName}\\.([\\w]*)$`));
+
+    if (sectionMatch) {
+      const typed = sectionMatch[1];
+      const componentOptions = section.components.map(comp => {
+        const fieldName = toSnakeCase(comp.field_name);
+        return {
+          label: fieldName,
+          type: "property",
+          info: `${comp.component_type}: ${comp.label}`,
+          detail: comp.component_type,
+          apply: fieldName + ".value",
+        };
+      });
+
+      return {
+        from: context.pos - typed.length,
+        options: componentOptions,
+        validFor: /^\w*$/,
+      };
+    }
+  }
+
+  // Common Polars completions
+  const wordMatch = context.matchBefore(/\w+/);
+  if (!wordMatch && !context.explicit) return null;
+
+  const polarsCompletions = [
+    { label: "self.settings_schema", type: "property", info: "Access node settings", apply: "self.settings_schema." },
+    { label: "pl.col", type: "function", info: "Select a column", apply: 'pl.col("")' },
+    { label: "pl.lit", type: "function", info: "Create a literal value", apply: 'pl.lit()' },
+    { label: "df.filter", type: "method", info: "Filter rows", apply: 'df.filter()' },
+    { label: "df.select", type: "method", info: "Select columns", apply: 'df.select()' },
+    { label: "df.with_columns", type: "method", info: "Add/modify columns", apply: 'df.with_columns()' },
+    { label: "df.group_by", type: "method", info: "Group by columns", apply: 'df.group_by()' },
+    { label: "df.sort", type: "method", info: "Sort rows", apply: 'df.sort()' },
+    { label: "df.join", type: "method", info: "Join dataframes", apply: 'df.join()' },
+    { label: "df.drop", type: "method", info: "Drop columns", apply: 'df.drop()' },
+    { label: "df.rename", type: "method", info: "Rename columns", apply: 'df.rename()' },
+    { label: "inputs[0]", type: "variable", info: "First input dataframe" },
+    { label: "inputs[1]", type: "variable", info: "Second input dataframe" },
+  ];
+
+  return {
+    from: wordMatch ? wordMatch.from : context.pos,
+    options: polarsCompletions,
+    validFor: /^\w*$/,
+  };
+}
+
+// Tab keymap for accepting completions
+const tabKeymap = keymap.of([
+  {
+    key: "Tab",
+    run: (view: EditorView): boolean => {
+      if (acceptCompletion(view)) {
+        return true;
+      }
+      return indentMore(view);
+    },
+  },
+]);
+
 // CodeMirror extensions
 const extensions: Extension[] = [
   python(),
   oneDark,
   EditorState.tabSize.of(4),
+  autocompletion({
+    override: [schemaCompletions],
+    defaultKeymap: false,
+    closeOnBlur: false,
+  }),
+  tabKeymap,
 ];
 
 // Preview modal
