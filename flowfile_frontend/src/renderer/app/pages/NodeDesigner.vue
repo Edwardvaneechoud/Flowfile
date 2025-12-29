@@ -494,16 +494,17 @@ const selectedSectionIndex = ref<number | null>(null);
 const selectedComponentIndex = ref<number | null>(null);
 
 // Python code for process method
-const processCode = ref(`def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-    # Get the first input dataframe
-    df = inputs[0]
+const processCode = ref(`def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    # Get the first input LazyFrame
+    lf = inputs[0]
 
     # Access settings values like this:
     # value = self.settings_schema.section_name.field_name.value
 
     # Your transformation logic here
+    # Example: lf = lf.filter(pl.col("column") > 0)
 
-    return df`);
+    return lf`);
 
 // Dynamic autocompletion based on schema
 function schemaCompletions(context: CompletionContext): CompletionResult | null {
@@ -562,19 +563,84 @@ function schemaCompletions(context: CompletionContext): CompletionResult | null 
   if (!wordMatch && !context.explicit) return null;
 
   const polarsCompletions = [
+    // Settings access
     { label: "self.settings_schema", type: "property", info: "Access node settings", apply: "self.settings_schema." },
-    { label: "pl.col", type: "function", info: "Select a column", apply: 'pl.col("")' },
+
+    // Input dataframes
+    { label: "inputs[0]", type: "variable", info: "First input LazyFrame" },
+    { label: "inputs[1]", type: "variable", info: "Second input LazyFrame" },
+
+    // Polars expressions
+    { label: "pl.col", type: "function", info: "Select a column by name", apply: 'pl.col("")' },
     { label: "pl.lit", type: "function", info: "Create a literal value", apply: 'pl.lit()' },
-    { label: "df.filter", type: "method", info: "Filter rows", apply: 'df.filter()' },
-    { label: "df.select", type: "method", info: "Select columns", apply: 'df.select()' },
-    { label: "df.with_columns", type: "method", info: "Add/modify columns", apply: 'df.with_columns()' },
-    { label: "df.group_by", type: "method", info: "Group by columns", apply: 'df.group_by()' },
-    { label: "df.sort", type: "method", info: "Sort rows", apply: 'df.sort()' },
-    { label: "df.join", type: "method", info: "Join dataframes", apply: 'df.join()' },
-    { label: "df.drop", type: "method", info: "Drop columns", apply: 'df.drop()' },
-    { label: "df.rename", type: "method", info: "Rename columns", apply: 'df.rename()' },
-    { label: "inputs[0]", type: "variable", info: "First input dataframe" },
-    { label: "inputs[1]", type: "variable", info: "Second input dataframe" },
+    { label: "pl.all", type: "function", info: "Select all columns", apply: 'pl.all()' },
+    { label: "pl.exclude", type: "function", info: "Select all except specified", apply: 'pl.exclude("")' },
+    { label: "pl.when", type: "function", info: "Start conditional expression", apply: 'pl.when().then().otherwise()' },
+    { label: "pl.concat", type: "function", info: "Concatenate LazyFrames", apply: 'pl.concat([])' },
+    { label: "pl.struct", type: "function", info: "Create struct column", apply: 'pl.struct([])' },
+
+    // LazyFrame methods - Selection & Filtering
+    { label: "lf.select", type: "method", info: "Select columns", apply: 'lf.select()' },
+    { label: "lf.filter", type: "method", info: "Filter rows by condition", apply: 'lf.filter()' },
+    { label: "lf.with_columns", type: "method", info: "Add or modify columns", apply: 'lf.with_columns()' },
+    { label: "lf.drop", type: "method", info: "Drop columns", apply: 'lf.drop()' },
+    { label: "lf.rename", type: "method", info: "Rename columns", apply: 'lf.rename({})' },
+    { label: "lf.cast", type: "method", info: "Cast column types", apply: 'lf.cast({})' },
+
+    // LazyFrame methods - Sorting & Limiting
+    { label: "lf.sort", type: "method", info: "Sort by columns", apply: 'lf.sort("")' },
+    { label: "lf.head", type: "method", info: "Get first n rows", apply: 'lf.head()' },
+    { label: "lf.tail", type: "method", info: "Get last n rows", apply: 'lf.tail()' },
+    { label: "lf.limit", type: "method", info: "Limit number of rows", apply: 'lf.limit()' },
+    { label: "lf.slice", type: "method", info: "Slice rows by offset and length", apply: 'lf.slice()' },
+    { label: "lf.unique", type: "method", info: "Get unique rows", apply: 'lf.unique()' },
+
+    // LazyFrame methods - Grouping & Aggregation
+    { label: "lf.group_by", type: "method", info: "Group by columns", apply: 'lf.group_by().agg()' },
+    { label: "lf.agg", type: "method", info: "Aggregate expressions", apply: 'lf.agg()' },
+    { label: "lf.rolling", type: "method", info: "Rolling window operations", apply: 'lf.rolling()' },
+    { label: "lf.group_by_dynamic", type: "method", info: "Dynamic time-based grouping", apply: 'lf.group_by_dynamic()' },
+
+    // LazyFrame methods - Joins
+    { label: "lf.join", type: "method", info: "Join with another LazyFrame", apply: 'lf.join(other, on="", how="left")' },
+    { label: "lf.join_asof", type: "method", info: "As-of join for time series", apply: 'lf.join_asof()' },
+    { label: "lf.cross_join", type: "method", info: "Cross join (cartesian product)", apply: 'lf.cross_join()' },
+
+    // LazyFrame methods - Reshaping
+    { label: "lf.explode", type: "method", info: "Explode list column to rows", apply: 'lf.explode("")' },
+    { label: "lf.unpivot", type: "method", info: "Unpivot wide to long format", apply: 'lf.unpivot()' },
+    { label: "lf.pivot", type: "method", info: "Pivot long to wide format", apply: 'lf.pivot()' },
+    { label: "lf.unnest", type: "method", info: "Unnest struct column", apply: 'lf.unnest("")' },
+
+    // LazyFrame methods - Missing data
+    { label: "lf.fill_null", type: "method", info: "Fill null values", apply: 'lf.fill_null()' },
+    { label: "lf.fill_nan", type: "method", info: "Fill NaN values", apply: 'lf.fill_nan()' },
+    { label: "lf.drop_nulls", type: "method", info: "Drop rows with nulls", apply: 'lf.drop_nulls()' },
+    { label: "lf.interpolate", type: "method", info: "Interpolate null values", apply: 'lf.interpolate()' },
+
+    // LazyFrame methods - Other
+    { label: "lf.with_row_index", type: "method", info: "Add row index column", apply: 'lf.with_row_index("index")' },
+    { label: "lf.reverse", type: "method", info: "Reverse row order", apply: 'lf.reverse()' },
+    { label: "lf.collect", type: "method", info: "Execute and collect to DataFrame", apply: 'lf.collect()' },
+    { label: "lf.lazy", type: "method", info: "Convert to LazyFrame", apply: 'lf.lazy()' },
+
+    // Expression methods (chainable)
+    { label: ".alias", type: "method", info: "Rename expression result", apply: '.alias("")' },
+    { label: ".cast", type: "method", info: "Cast to type", apply: '.cast(pl.Utf8)' },
+    { label: ".is_null", type: "method", info: "Check for null", apply: '.is_null()' },
+    { label: ".is_not_null", type: "method", info: "Check for not null", apply: '.is_not_null()' },
+    { label: ".fill_null", type: "method", info: "Fill null values", apply: '.fill_null()' },
+    { label: ".sum", type: "method", info: "Sum values", apply: '.sum()' },
+    { label: ".mean", type: "method", info: "Calculate mean", apply: '.mean()' },
+    { label: ".min", type: "method", info: "Get minimum", apply: '.min()' },
+    { label: ".max", type: "method", info: "Get maximum", apply: '.max()' },
+    { label: ".count", type: "method", info: "Count values", apply: '.count()' },
+    { label: ".first", type: "method", info: "Get first value", apply: '.first()' },
+    { label: ".last", type: "method", info: "Get last value", apply: '.last()' },
+    { label: ".str", type: "property", info: "String operations namespace", apply: '.str.' },
+    { label: ".dt", type: "property", info: "Datetime operations namespace", apply: '.dt.' },
+    { label: ".list", type: "property", info: "List operations namespace", apply: '.list.' },
+    { label: ".over", type: "method", info: "Window function over groups", apply: '.over("")' },
   ];
 
   return {
@@ -836,7 +902,7 @@ class ${nodeName}(CustomNodeBase):
     number_of_outputs: int = ${nodeMetadata.number_of_outputs}
     settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
 ${processBody.split('\n').map(line => '        ' + line).join('\n')}
 `;
 
