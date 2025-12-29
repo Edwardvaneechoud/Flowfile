@@ -47,5 +47,12 @@ export default {
         icon: "fa-solid fa-key",
       },
     },
+    {
+      name: "nodeDesigner",
+      displayName: "menu.nodeDesigner",
+      meta: {
+        icon: "fa-solid fa-puzzle-piece",
+      },
+    },
   ] as INavigationRoute[],
 };
