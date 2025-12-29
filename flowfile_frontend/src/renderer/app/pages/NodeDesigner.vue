@@ -1002,10 +1002,10 @@ async function saveNode() {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  padding-bottom: 2rem;
 }
 
-.metadata-section h4,
-.code-editor-section h4 {
+.metadata-section h4 {
   margin: 0 0 0.75rem 0;
   font-size: 0.9375rem;
   font-weight: 600;
@@ -1240,27 +1240,41 @@ async function saveNode() {
 
 /* Code Editor */
 .code-editor-section {
-  border-top: 1px solid var(--border-color);
-  padding-top: 1rem;
+  margin-top: 1rem;
+  padding: 1.25rem;
+  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+}
+
+.code-editor-section h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a2e);
 }
 
 .code-hint {
-  margin: 0 0 0.75rem 0;
+  margin: 0 0 1rem 0;
   font-size: 0.8125rem;
-  color: var(--text-secondary);
+  color: var(--text-secondary, #6c757d);
+  line-height: 1.5;
 }
 
 .code-hint code {
-  background: var(--bg-secondary);
-  padding: 0.125rem 0.375rem;
-  border-radius: 3px;
+  background: var(--card-bg, #ffffff);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
   font-size: 0.75rem;
+  border: 1px solid var(--border-color, #e0e0e0);
+  font-family: 'Fira Code', 'Monaco', monospace;
 }
 
 .code-editor-wrapper {
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
   overflow: hidden;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 /* Property Editor */
