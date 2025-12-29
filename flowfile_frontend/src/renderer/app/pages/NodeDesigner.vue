@@ -1106,7 +1106,7 @@ async function saveNode() {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
-  padding-bottom: 2rem;
+  padding-bottom: 3rem;
 }
 
 .metadata-section h4 {
@@ -1378,6 +1378,7 @@ async function saveNode() {
 /* Code Editor */
 .code-editor-section {
   margin-top: 1rem;
+  margin-bottom: 1.5rem;
   padding: 1.25rem;
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e0e0e0);
