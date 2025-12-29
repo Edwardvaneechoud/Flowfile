@@ -152,14 +152,14 @@ import {
   createCloudStorageConnectionApi,
   deleteCloudStorageConnectionApi,
   convertConnectionInterfacePytoTs,
-} from "./cloudConnectionManager/api";
+} from "./api";
 import {
   FullCloudStorageConnectionInterface,
   FullCloudStorageConnection,
   CloudStorageType,
   AuthMethod,
-} from "./cloudConnectionManager/CloudConnectionTypes";
-import CloudConnectionSettings from "./cloudConnectionManager/CloudConnectionSettings.vue";
+} from "./CloudConnectionTypes";
+import CloudConnectionSettings from "./CloudConnectionSettings.vue";
 import { connect } from "http2";
 
 // State

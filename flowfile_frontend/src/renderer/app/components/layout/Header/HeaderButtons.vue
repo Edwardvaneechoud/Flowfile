@@ -135,11 +135,11 @@ import { ElMessage } from "element-plus";
 
 import { saveFlow } from "./utils";
 import RunButton from "./run.vue";
-import FileBrowser from "../fileBrowser/fileBrowser.vue";
-import { FileInfo } from "../fileBrowser/types";
-import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../fileBrowser/constants";
-import { useNodeStore } from "../../../../stores/column-store";
-import { useEditorStore } from "../../../../stores/editor-store";
+import FileBrowser from "../../common/FileBrowser/fileBrowser.vue";
+import { FileInfo } from "../../common/FileBrowser/types";
+import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
+import { useNodeStore } from "../../../stores/column-store";
+import { useEditorStore } from "../../../stores/editor-store";
 import {
   createFlow,
   getFlowSettings,

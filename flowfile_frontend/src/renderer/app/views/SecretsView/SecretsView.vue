@@ -160,8 +160,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import type { SecretInput } from "./secretManager/secretTypes";
-import { useSecretManager } from "./secretManager/useSecretManager";
+import type { SecretInput } from "./secretTypes";
+import { useSecretManager } from "./useSecretManager";
 
 // Use our secrets composable
 const { secrets, filteredSecrets, isLoading, searchTerm, loadSecrets, addSecret, deleteSecret } =

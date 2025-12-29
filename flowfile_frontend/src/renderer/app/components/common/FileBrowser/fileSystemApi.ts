@@ -1,4 +1,4 @@
-// DEPRECATED: Import from '@/api' or '../../../../api' instead
+// DEPRECATED: Import from '@/api' or '../../../api' instead
 // This file is kept for backward compatibility during migration
 
 export {
@@ -12,4 +12,4 @@ export {
   createDirectory,
   getFileTree,
   getLocalFiles,
-} from '../../../../api/file.api'
+} from '../../../api/file.api'

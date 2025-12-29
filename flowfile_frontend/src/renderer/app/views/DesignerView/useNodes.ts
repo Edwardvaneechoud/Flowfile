@@ -1,4 +1,4 @@
-// DEPRECATED: Import from '@/composables' or '../../../../composables' instead
+// DEPRECATED: Import from '@/composables' or '../../composables' instead
 // This file is kept for backward compatibility during migration
 
 export {
@@ -8,4 +8,4 @@ export {
   getNodeTemplatesByItems,
   clearNodeTemplatesCache,
   preloadNodeTemplates,
-} from '../../../../composables/useNodes'
+} from '../../composables/useNodes'

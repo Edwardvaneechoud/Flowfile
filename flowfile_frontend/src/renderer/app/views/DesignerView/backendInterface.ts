@@ -1,12 +1,12 @@
-// DEPRECATED: Import from '@/api' or '../../../../api' instead
+// DEPRECATED: Import from '@/api' or '../../api' instead
 // This file is kept for backward compatibility during migration
 
-import { FlowApi } from '../../../../api/flow.api'
-import type { NodeConnection, NodePromise, AxiosResponse } from '../../../../types'
+import { FlowApi } from '../../api/flow.api'
+import type { NodeConnection, NodePromise, AxiosResponse } from '../../types'
 
 // Re-export types
-export type { AxiosResponse, NodeInputConnection, NodeOutputConnection, NodeConnection } from '../../../../types/canvas.types'
-export type { FlowSettings } from '../../../../types/flow.types'
+export type { AxiosResponse, NodeInputConnection, NodeOutputConnection, NodeConnection } from '../../types/canvas.types'
+export type { FlowSettings } from '../../types/flow.types'
 
 // Legacy function wrappers that delegate to the new API
 export const connectNode = async (flowId: number, nodeConnection: NodeConnection) => {

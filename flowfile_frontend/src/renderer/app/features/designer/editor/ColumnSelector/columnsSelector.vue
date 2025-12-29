@@ -12,7 +12,7 @@
 import { ref, watch, onMounted, defineEmits } from "vue";
 import { MenuContents, ColumnSelectorInterface } from "./types";
 import { useNodeStore } from "../../../../stores/column-store";
-import { FileColumn } from "../../baseNode/nodeInterfaces";
+import { FileColumn } from "../../../../components/nodes/baseNode/nodeInterfaces";
 
 const emit = defineEmits<{
   (event: "value-selected", payload: string): void;

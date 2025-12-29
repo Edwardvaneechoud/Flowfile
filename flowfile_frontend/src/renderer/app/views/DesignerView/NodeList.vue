@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { ArrowDown, ArrowRight } from "@element-plus/icons-vue";
-import { getImageUrl } from "../../utils";
+import { getImageUrl } from "../../features/designer/utils";
 import { useNodes } from "./useNodes";
 import { NodeTemplate } from "../../types";
 

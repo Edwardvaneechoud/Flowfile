@@ -59,8 +59,8 @@ import {
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
-import FileBrowser from "../../../components/fileBrowser/fileBrowser.vue";
-import { FileInfo } from "../../../components/fileBrowser/types";
+import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
+import { FileInfo } from "../../../../common/FileBrowser/types";
 
 const nodeStore = useNodeStore();
 const selectedFile = ref<FileInfo | null>(null);

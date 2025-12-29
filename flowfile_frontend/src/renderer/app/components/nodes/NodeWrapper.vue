@@ -121,11 +121,11 @@
 <script setup lang="ts">
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
-import { useNodeStore } from "../../../../stores/column-store";
+import { useNodeStore } from "../../stores/column-store";
 import { VueFlowStore } from "@vue-flow/core";
-import { NodeCopyValue } from "./types";
-import { toSnakeCase } from "./utils";
-import GenericNode from "../../nodes/GenericNode.vue";
+import { NodeCopyValue } from "../../views/DesignerView/types";
+import { toSnakeCase } from "../../views/DesignerView/utils";
+import GenericNode from "./GenericNode.vue";
 import type { NodeTemplate } from "../../types";
 
 const nodeStore = useNodeStore();

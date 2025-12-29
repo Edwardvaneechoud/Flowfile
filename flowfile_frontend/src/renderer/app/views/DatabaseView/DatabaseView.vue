@@ -140,12 +140,12 @@ import {
   createDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
   convertConnectionInterfacePytoTs,
-} from "./databaseManager/api";
+} from "./api";
 import {
   FullDatabaseConnectionInterface,
   FullDatabaseConnection,
-} from "./databaseManager/databaseConnectionTypes";
-import DatabaseConnectionForm from "./databaseManager/DatabaseConnectionSettings.vue";
+} from "./databaseConnectionTypes";
+import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 
 // State
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);

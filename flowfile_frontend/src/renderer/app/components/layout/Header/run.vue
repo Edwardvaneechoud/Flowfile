@@ -11,8 +11,8 @@
 
 <script setup lang="ts">
 import { defineProps } from "vue";
-import { useNodeStore } from "../../../../stores/column-store";
-import { useFlowExecution } from "../../composables/useFlowExecution";
+import { useNodeStore } from "../../../stores/column-store";
+import { useFlowExecution } from "../../../composables/useFlowExecution";
 
 const nodeStore = useNodeStore();
 

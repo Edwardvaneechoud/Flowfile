@@ -44,7 +44,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
-import { TableExample } from "./baseNode/nodeInterfaces";
+import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
 import { AgGridVue } from "@ag-grid-community/vue3";

@@ -201,7 +201,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { FileInfo } from "./types";
-import { useFileBrowserStore } from "../../../../stores/fileBrowserStore";
+import { useFileBrowserStore } from "../../../stores/fileBrowserStore";
 
 import { ElMessage, ElMessageBox } from "element-plus";
 import {

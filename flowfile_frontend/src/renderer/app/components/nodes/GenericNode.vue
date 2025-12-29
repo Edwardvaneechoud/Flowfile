@@ -18,9 +18,9 @@ import {
   shallowRef,
   onMounted,
 } from "vue";
-import NodeButton from "../baseNode/nodeButton.vue";
-import { toTitleCase } from "../components/Canvas/utils";
-import type { NodeTemplate } from "../types";
+import NodeButton from "./baseNode/nodeButton.vue";
+import { toTitleCase } from "../../views/DesignerView/utils";
+import type { NodeTemplate } from "../../types";
 
 // Import all components in the elements folder at build time
 // This tells Vite to include all these files in the bundle

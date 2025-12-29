@@ -53,7 +53,7 @@
 import { ref, computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-import { useItemStore } from "./../components/Canvas/DraggableItem/stateStore";
+import { useItemStore } from "../../../components/common/DraggableItem/stateStore";
 import { View, Minus } from "@element-plus/icons-vue";
 import PopOver from "../editor/PopOver.vue";
 

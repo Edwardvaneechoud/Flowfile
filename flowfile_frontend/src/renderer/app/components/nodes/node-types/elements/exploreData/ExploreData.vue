@@ -6,7 +6,7 @@ import VueGraphicWalker from "./vueGraphicWalker/VueGraphicWalker.vue";
 import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
 import { useNodeStore } from "../../../../../stores/column-store";
-import { useItemStore } from "../../../components/Canvas/DraggableItem/stateStore";
+import { useItemStore } from "../../../../common/DraggableItem/stateStore";
 
 const isLoading = ref(false);
 const nodeData = ref<NodeGraphicWalker | null>(null);
