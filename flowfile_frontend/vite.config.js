@@ -22,6 +22,15 @@ const config = defineConfig({
         vuePlugin(),
         reactPlugin()
     ],
+    resolve: {
+        alias: {
+            '@': Path.resolve(__dirname, './src/renderer/app'),
+            '@/api': Path.resolve(__dirname, './src/renderer/app/api'),
+            '@/types': Path.resolve(__dirname, './src/renderer/app/types'),
+            '@/stores': Path.resolve(__dirname, './src/renderer/app/stores'),
+            '@/composables': Path.resolve(__dirname, './src/renderer/app/composables'),
+        },
+    },
 });
 
 module.exports = config;

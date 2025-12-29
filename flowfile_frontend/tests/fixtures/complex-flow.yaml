@@ -1,0 +1,661 @@
+flowfile_version: 0.5.0
+flowfile_id: 1
+flowfile_name: complex_elaborate_flow
+flowfile_settings:
+  description: null
+  execution_mode: Performance
+  execution_location: remote
+  auto_save: false
+  show_detailed_progress: true
+nodes:
+- id: 1
+  type: manual_input
+  is_start_node: true
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [11, 43]
+  setting_input:
+    cache_results: false
+    raw_data_format:
+      columns:
+      - name: customer_id
+        data_type: String
+      - name: name
+        data_type: String
+      - name: city
+        data_type: String
+      - name: segment
+        data_type: String
+      data:
+      - [C001, C002, C003, C004, C005]
+      - [John Smith, Jane Doe, Edward Jones, Courtney Brown, Michael Davis]
+      - [New York, Los Angeles, Chicago, Chicago, Houston]
+      - [Premium, Standard, Premium, Standard, Premium]
+- id: 2
+  type: manual_input
+  is_start_node: true
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [16]
+  setting_input:
+    cache_results: false
+    raw_data_format:
+      columns:
+      - name: Address
+        data_type: String
+      - name: Name
+        data_type: String
+      - name: Zipcode
+        data_type: String
+      - name: DOB
+        data_type: Date
+      - name: Phone
+        data_type: String
+      - name: Work
+        data_type: String
+      - name: ID
+        data_type: Int64
+      - name: Email
+        data_type: String
+      - name: sales_data
+        data_type: Int64
+      - name: Country
+        data_type: String
+      - name: City
+        data_type: String
+      data:
+      - [465 Michael Orchard, 527 Michael Orchard, 340 Glenn Canyon, 294 Sydney Brooks,
+        964 Glenn Canyon, 600 Ryan Place, 386 Paula Forest, 999 Dixon Parks, 860 Michael
+          Orchard, 545 Moody Street]
+      - [Cynthia Reyes, Amanda Jackson, Alexander Gibbs, Derek Gibbs, Larry Jackson,
+        Crystal Nguyen, Rachel Jackson, Allison Cole, Brittany Ward, Alexander Gibbs]
+      - ['83433', '70782', '70782', '39644', '53538', '83433', '83433', '48414', '32687',
+        '96215']
+      - ['1943-10-28', '1911-05-27', '1995-12-09', '2001-04-03', '1943-10-28', '1972-02-10',
+        '1972-02-10', '1954-01-12', '1943-10-28', '1995-12-09']
+      - [+1-734-343-7055x7441, 001-575-449-0513, (762)278-6814x429, 816.850.1271x748,
+        +1-210-616-1464x482, 209.395.9974x11595, 789.415.9757, 284-642-5689x84265,
+        001-962-365-5838x43825, 001-697-439-3146x2759]
+      - [Clayton-Brooks, Rogers Ltd, Kent Group, Williams Inc, 'Wright, Williams and
+          Dominguez', Lee Group, Kent Group, Clayton-Brooks, Mcintyre PLC, Kent Group]
+      - [128311, 421884, 337823, 406164, 635951, 396629, 385026, 775448, 744622, 823012]
+      - [cynthia_reyes.37@edwards.com, amanda_jackson.42@gibbs-white.com, alexander_gibbs.33@gibbs-white.com,
+        derek_gibbs.55@williams-livingston.info, larry_jackson.73@gregory.com, crystal_nguyen.29@gregory.com,
+        rachel_jackson.12@hunter-mason.com, allison_cole.15@gibbs-white.com, brittany_ward.78@sherman-carroll.com,
+        alexander_gibbs.33@gibbs-white.com]
+      - [846, 846, 846, 702, 911, 504, 375, 911, 702, 564]
+      - [French Polynesia, Kenya, Kenya, Algeria, Algeria, Zimbabwe, Singapore, Zimbabwe,
+        Azerbaijan, Zimbabwe]
+      - [Los Angeles, Chicago, Los Angeles, Chicago, New York, Chicago, Chicago, Los
+          Angeles, Chicago, Chicago]
+- id: 3
+  type: manual_input
+  is_start_node: true
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [30]
+  setting_input:
+    cache_results: false
+    raw_data_format:
+      columns:
+      - name: product_id
+        data_type: String
+      - name: category
+        data_type: String
+      - name: price
+        data_type: Float64
+      - name: tags
+        data_type: String
+      data:
+      - [P001, P002, P003, P004]
+      - [Electronics, Electronics, Furniture, Furniture]
+      - [299.99, 599.99, 899.99, 399.99]
+      - ['laptop,computer,portable', 'phone,mobile,smart', 'desk,office,wood', 'chair,office,ergonomic']
+- id: 4
+  type: manual_input
+  is_start_node: true
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [43]
+  setting_input:
+    cache_results: false
+    raw_data_format:
+      columns:
+      - name: name
+        data_type: String
+      - name: address
+        data_type: String
+      data:
+      - [Jon Smith, Jane Do, Eduard Jones]
+      - [123 Main St, 456 Oak Ave, 789 Elm St]
+- id: 5
+  type: manual_input
+  is_start_node: true
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [31]
+  setting_input:
+    cache_results: false
+    raw_data_format:
+      columns:
+      - name: from
+        data_type: String
+      - name: to
+        data_type: String
+      data:
+      - [A, B, C, X, Y]
+      - [B, C, D, Y, Z]
+- id: 11
+  type: filter
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [1]
+  outputs: [12]
+  setting_input:
+    cache_results: false
+    filter_input:
+      advanced_filter: '[segment] = "Premium"'
+      basic_filter: null
+      filter_type: advanced
+- id: 12
+  type: formula
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [11]
+  outputs: [13]
+  setting_input:
+    cache_results: false
+    function:
+      field:
+        name: full_name_upper
+        data_type: Auto
+      function: uppercase([name])
+- id: 13
+  type: select
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [12]
+  outputs: [14]
+  setting_input:
+    cache_results: false
+    keep_missing: false
+    select_input:
+    - old_name: customer_id
+      new_name: id
+    - old_name: full_name_upper
+      new_name: customer_name
+    - old_name: city
+    sorted_by: none
+- id: 14
+  type: sort
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [13]
+  outputs: [15]
+  setting_input:
+    cache_results: false
+    sort_input:
+    - column: city
+      how: ascending
+    - column: customer_name
+      how: ascending
+- id: 15
+  type: record_id
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [14]
+  outputs: [41]
+  setting_input:
+    cache_results: false
+    record_id_input:
+      output_column_name: row_number
+      offset: 1
+      group_by: false
+      group_by_columns: []
+- id: 16
+  type: sample
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [2]
+  outputs: [17, 26, 41]
+  setting_input:
+    cache_results: false
+    sample_size: 50
+- id: 17
+  type: unique
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [16]
+  outputs: [42]
+  setting_input:
+    cache_results: false
+    unique_input:
+      columns: [Country]
+      strategy: any
+- id: 26
+  type: group_by
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [16]
+  outputs: [32, 61]
+  setting_input:
+    cache_results: false
+    groupby_input:
+      agg_cols:
+      - old_name: Country
+        agg: groupby
+        new_name: Country
+        output_type: null
+      - old_name: sales_data
+        agg: sum
+        new_name: total_sales
+        output_type: null
+      - old_name: sales_data
+        agg: mean
+        new_name: avg_sales
+        output_type: Float64
+      - old_name: sales_data
+        agg: count
+        new_name: num_transactions
+        output_type: Int64
+- id: 27
+  type: manual_input
+  is_start_node: true
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: null
+  outputs: [28]
+  setting_input:
+    cache_results: false
+    raw_data_format:
+      columns:
+      - name: quarter
+        data_type: Int64
+      - name: Country
+        data_type: String
+      - name: sales_data
+        data_type: Int64
+      data:
+      - [1, 1, 1, 0, 2, 1, 2, 0, 1, 2]
+      - [Equatorial Guinea, Cyprus, Kazakhstan, Turkey, Turkey, Equatorial Guinea,
+        Equatorial Guinea, Cyprus, Yemen, Turkey]
+      - [762, 631, 750, 485, 762, 762, 358, 750, 5, 750]
+- id: 28
+  type: pivot
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [27]
+  outputs: [9999]
+  setting_input:
+    cache_results: false
+    pivot_input:
+      index_columns: [Country]
+      pivot_column: quarter
+      value_col: sales_data
+      aggregations: [sum]
+    output_fields: null
+- id: 9999
+  type: select
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [28]
+  outputs: [29]
+  setting_input:
+    cache_results: false
+    keep_missing: true
+    select_input:
+    - old_name: '0'
+      new_name: first_quarter
+    - old_name: '1'
+      new_name: second_quarter
+    - old_name: '2'
+      new_name: third_quarter
+    sorted_by: none
+- id: 29
+  type: unpivot
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [9999]
+  outputs: []
+  setting_input:
+    cache_results: false
+    unpivot_input:
+      index_columns: [Country]
+      value_columns: [first_quarter, second_quarter, third_quarter]
+      data_type_selector: null
+      data_type_selector_mode: column
+- id: 30
+  type: text_to_rows
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [3]
+  outputs: [42]
+  setting_input:
+    cache_results: false
+    text_to_rows_input:
+      column_to_split: tags
+      output_column_name: null
+      split_by_fixed_value: true
+      split_fixed_value: ','
+      split_by_column: null
+- id: 31
+  type: graph_solver
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [5]
+  outputs: [73]
+  setting_input:
+    cache_results: false
+    graph_solver_input:
+      col_from: from
+      col_to: to
+      output_column_name: component_id
+- id: 32
+  type: polars_code
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [26]
+  outputs: [61]
+  setting_input:
+    cache_results: false
+    polars_code_input:
+      polars_code: "\n# Custom Polars code to add derived columns\noutput_df = input_df.with_columns([\n\
+        \    (pl.col('total_sales') / pl.col('num_transactions')).alias('sales_per_transaction'),\n\
+        \    (pl.col('total_sales') * 1.1).alias('total_sales_with_tax')\n])\n"
+- id: 41
+  type: join
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: 16
+  input_ids: [15]
+  outputs: [51, 52, 71]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: city
+        right_col: City
+      left_select:
+        select:
+        - old_name: id
+          new_name: customer_id
+        - old_name: customer_name
+        - old_name: city
+      right_select:
+        select:
+        - old_name: sales_data
+          new_name: sale_amount
+        - old_name: Work
+          new_name: work_type
+      how: inner
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 42
+  type: cross_join
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: 30
+  input_ids: [17]
+  outputs: []
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    cross_join_input:
+      left_select:
+        select:
+        - old_name: Country
+          new_name: country
+      right_select:
+        select:
+        - old_name: tags
+          new_name: product_tag
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 43
+  type: fuzzy_match
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: 4
+  input_ids: [1]
+  outputs: [72]
+  setting_input:
+    cache_results: false
+    auto_generate_selection: true
+    verify_integrity: true
+    join_input:
+      join_mapping:
+      - left_col: name
+        right_col: name
+        threshold_score: 75
+        fuzzy_type: levenshtein
+        perc_unique: 0
+        output_column_name: fuzzy_score_name_name
+        valid: true
+      left_select:
+        select:
+        - old_name: customer_id
+        - old_name: name
+          new_name: customer_name
+      right_select:
+        select:
+        - old_name: name
+          new_name: address_name
+        - old_name: address
+      how: inner
+      aggregate_output: false
+    auto_keep_all: true
+    auto_keep_right: true
+    auto_keep_left: true
+- id: 51
+  type: record_count
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [41]
+  outputs: []
+  setting_input:
+    cache_results: false
+- id: 52
+  type: explore_data
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [41]
+  outputs: []
+  setting_input:
+    cache_results: false
+    graphic_walker_input: null
+- id: 61
+  type: union
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [26, 32]
+  outputs: [74]
+  setting_input:
+    cache_results: false
+    union_input:
+      mode: relaxed
+- id: 71
+  type: output
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [41]
+  outputs: []
+  setting_input:
+    cache_results: false
+    output_settings:
+      name: customer_sales_analysis.csv
+      directory: /tmp/flowfile-test
+      file_type: csv
+      write_mode: overwrite
+      abs_file_path: /tmp/flowfile-test/customer_sales_analysis.csv
+      table_settings:
+        delimiter: ','
+        encoding: utf-8
+- id: 72
+  type: output
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [43]
+  outputs: []
+  setting_input:
+    cache_results: false
+    output_settings:
+      name: fuzzy_matched_customers.parquet
+      directory: /tmp/flowfile-test
+      file_type: parquet
+      write_mode: overwrite
+      abs_file_path: /tmp/flowfile-test/fuzzy_matched_customers.parquet
+- id: 73
+  type: output
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [31]
+  outputs: []
+  setting_input:
+    cache_results: false
+    output_settings:
+      name: network_components.csv
+      directory: /tmp/flowfile-test
+      file_type: csv
+      write_mode: overwrite
+      abs_file_path: /tmp/flowfile-test/network_components.csv
+      table_settings:
+        delimiter: ','
+        encoding: utf-8
+- id: 74
+  type: output
+  is_start_node: false
+  description: ''
+  x_position: 0
+  y_position: 0
+  left_input_id: null
+  right_input_id: null
+  input_ids: [61]
+  outputs: []
+  setting_input:
+    cache_results: false
+    output_settings:
+      name: combined_aggregations.csv
+      directory: /tmp/flowfile-test
+      file_type: csv
+      write_mode: overwrite
+      abs_file_path: /tmp/flowfile-test/combined_aggregations.csv
+      table_settings:
+        delimiter: ','
+        encoding: utf-8

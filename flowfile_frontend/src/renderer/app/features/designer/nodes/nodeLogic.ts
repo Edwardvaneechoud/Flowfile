@@ -1,34 +1,17 @@
+// DEPRECATED: Import from '@/api' or '../../../api' instead
+// This file is kept for backward compatibility during migration
+
 import { ref, Ref } from 'vue'
 import axios from 'axios'
-import { NodeData, nodeData as nodeDataRef, TableExample, RunInformation} from '../baseNode/nodeInterfaces'
-import { AxiosResponse } from 'axios';
+import { FlowApi } from '../../../api/flow.api'
+import type { NodeData } from '../../../types/node.types'
+import type { FlowSettings, LocalFileInfo, RunInformation } from '../../../types/flow.types'
+import { AxiosResponse } from 'axios'
 
-export type ExecutionMode = 'Development' | 'Performance';
-export type ExecutionLocation = 'local' | 'remote';
+// Re-export types for backward compatibility
+export type { ExecutionMode, ExecutionLocation, FlowSettings, LocalFileInfo } from '../../../types/flow.types'
 
-
-export interface FlowSettings {
-  flow_id: number
-  name: string
-  description?: string
-  save_location?: string
-  auto_save: boolean
-  modified_on?: number
-  path?: string
-  execution_mode: ExecutionMode
-  execution_location: ExecutionLocation
-  show_detailed_progress: boolean
-  is_running: boolean
-}
-
-
-export interface LocalFileInfo {
-  path: string
-  file_name: string
-  file_type: string
-  last_modified_date_timestamp?: number
-  exists: boolean
-}
+// Legacy function wrappers that delegate to the new API
 
 export const insertNode = async (flow_id: number, node_id: number, node_type: string): Promise<AxiosResponse> => {
   const response = await axios.post(
@@ -48,64 +31,21 @@ export const insertNode = async (flow_id: number, node_id: number, node_type: st
   return response
 }
 
-
-export async function createFlow(flowPath: string|null = null, name: string|null = null): Promise<number> {
-  const response = await axios.post(
-    '/editor/create_flow',
-    {},
-    {
-      headers: { accept: 'application/json' },
-      params: { 
-        flow_path: flowPath,
-        name: name 
-      },
-    },
-  )
-  if (response.status === 200) {
-    return response.data
-  }
-  throw Error('Error creating flow')
+export async function createFlow(flowPath: string | null = null, name: string | null = null): Promise<number> {
+  return FlowApi.createFlow(flowPath, name)
 }
 
 export async function getFlowSettings(flow_id: number): Promise<FlowSettings | null> {
-  try {
-    const response = await axios.get('/editor/flow', {
-      headers: { accept: 'application/json' },
-      params: { flow_id: flow_id },
-      validateStatus: (status) => {
-        return status === 200 || status === 404;
-      }
-    })
-
-    if (response.status === 200) {
-      return response.data;
-    }
-    return null;
-
-  } catch (error) {
-    return null;
-  }
+  return FlowApi.getFlowSettings(flow_id)
 }
 
 export async function updateFlowSettings(flowSettings: FlowSettings): Promise<null> {
   console.log(flowSettings)
-  const response = await axios.post('/flow_settings/', flowSettings, {
-    headers: { accept: 'application/json' },
-  })
-  if (response.status === 200) {
-    return null
-  }
-  throw Error('Error updating flow settings')
+  return FlowApi.updateFlowSettings(flowSettings)
 }
 
 export async function getSavedFlows(): Promise<LocalFileInfo[]> {
-  const response = await axios.get('/files/available_flow_files', {
-    headers: { accept: 'application/json' },
-  })
-  if (response.status === 200) {
-    return response.data
-  }
-  throw Error('Error fetching flow data')
+  return FlowApi.getSavedFlows()
 }
 
 export async function deleteConnection(flow_id: number, nodeConnection: object): Promise<any> {
@@ -145,48 +85,28 @@ export const addNodeSettings = async (node_type: string, nodeSettings: any) => {
 }
 
 export async function deleteNode(flow_id: number, node_id: number): Promise<any> {
-  try {
-    const response: AxiosResponse = await axios.post(
-      '/editor/delete_node/',
-      {},
-      {
-        params: {
-          flow_id,
-          node_id,
-        },
-        headers: {
-          accept: 'application/json',
-        },
-      },
-    )
-
-    return response.data
-  } catch (error) {
-    console.error('There was an error:', error)
-    throw error
-  }
+  return FlowApi.deleteNode(flow_id, node_id)
 }
 
 const isResponseSuccessful = (status: number): boolean =>
-  status >= 200 && status < 300;
-
+  status >= 200 && status < 300
 
 export const getRunStatus = async (flowId: number): Promise<AxiosResponse<RunInformation>> => {
-  const response = await axios.get("/flow/run_status/", {
+  const response = await axios.get('/flow/run_status/', {
     params: { flow_id: flowId },
-    headers: { accept: "application/json" },
-  });
-  return response;
-};
+    headers: { accept: 'application/json' },
+  })
+  return response
+}
 
 export const updateRunStatus = async (
   flowId: number,
   nodeStore: { insertRunResult: (result: RunInformation) => void }
 ): Promise<AxiosResponse<RunInformation>> => {
-  const response = await getRunStatus(flowId);
+  const response = await getRunStatus(flowId)
   if (isResponseSuccessful(response.status)) {
-    nodeStore.insertRunResult(response.data);
+    nodeStore.insertRunResult(response.data)
   }
 
-  return response;
-};
+  return response
+}

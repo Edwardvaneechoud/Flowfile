@@ -104,6 +104,10 @@ const reloadCanvas = async (flowPath: string) => {
   try {
     console.log("reloadCanvas", flowPath);
     const flowId = await importSavedFlow(flowPath);
+    if (flowId === undefined) {
+      console.error("Failed to import flow from path:", flowPath);
+      return;
+    }
     nodeStore.setFlowId(flowId);
     if (canvasFlow.value) {
       await canvasFlow.value.loadFlow();

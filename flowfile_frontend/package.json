@@ -14,7 +14,10 @@
     "build:mac": "node scripts/build.js && electron-builder --mac",
     "build:linux": "node scripts/build.js && electron-builder --linux",
     "build:test": "node scripts/build.js && electron-builder --dir",
-    "test": "playwright test"
+    "test": "playwright test tests/app.spec.ts",
+    "test:electron": "playwright test tests/app.spec.ts tests/complex-flow.spec.ts",
+    "test:web": "playwright test tests/web-flow.spec.ts",
+    "test:all": "playwright test"
   },
   "repository": "https://github.com/Edwardvaneechoud/Flowfile",
   "author": {

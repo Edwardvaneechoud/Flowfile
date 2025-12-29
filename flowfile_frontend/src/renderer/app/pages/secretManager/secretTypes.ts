@@ -1,28 +1,4 @@
-// src/components/secrets/secretTypes.ts
+// DEPRECATED: Import from '@/types' or '../../types' instead
+// This file is kept for backward compatibility during migration
 
-/**
- * Interface representing a secret fetched from the backend.
- * Note: The 'value' might be encrypted or masked depending on the API.
- */
-export interface Secret {
-    name: string;
-    value: string;
-    user_id?: string;
-  }
-  
-  /**
-   * Interface representing the input for creating a new secret.
-   */
-  export interface SecretInput {
-    name: string;
-    value: string;
-  }
-  
-  /**
-   * Interface for the actual secret value fetched for copying.
-   * Assumes the API returns the decrypted value in a specific structure.
-   */
-  export interface SecretValueResponse {
-      name: string;
-      value: string;
-  }
+export * from '../../types/secrets.types'

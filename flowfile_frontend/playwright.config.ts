@@ -6,7 +6,8 @@ const config: PlaywrightTestConfig = {
   timeout: 60000,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // Use 1 worker for Electron tests to prevent port conflicts
+  workers: 1,
   reporter: 'html',
   use: {
     actionTimeout: 15000,
