@@ -894,9 +894,14 @@ async function saveNode() {
 }
 
 .metadata-section h4,
-.sections-header h4,
 .code-editor-section h4 {
   margin: 0 0 0.75rem 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.sections-header h4 {
+  margin: 0;
   font-size: 0.9375rem;
   font-weight: 600;
 }
@@ -939,15 +944,29 @@ async function saveNode() {
 }
 
 /* Sections */
+.sections-area {
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--bg-secondary, #f8f9fa);
+}
+
 .sections-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.sections-header .btn {
+  flex-shrink: 0;
 }
 
 .btn-sm {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
 }
 
 .section-card {
@@ -1236,12 +1255,12 @@ async function saveNode() {
 }
 
 .btn-primary {
-  background: var(--primary-color);
+  background: var(--primary-color, #4a6cf7);
   color: white;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--primary-hover);
+  background: var(--primary-hover, #3d5bd9);
 }
 
 .btn-secondary {
