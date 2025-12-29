@@ -993,10 +993,12 @@ async function saveNode() {
 <style scoped>
 .node-designer-container {
   padding: 1rem;
-  height: 100%;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .page-header {
@@ -1035,6 +1037,7 @@ async function saveNode() {
   gap: 1rem;
   flex: 1;
   min-height: 0;
+  height: 0;
   overflow: hidden;
 }
 
@@ -1067,6 +1070,8 @@ async function saveNode() {
   padding: 1rem;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
+  height: 0;
 }
 
 /* Component Palette */
@@ -1108,8 +1113,6 @@ async function saveNode() {
   flex-direction: column;
   gap: 1.5rem;
   padding-bottom: 3rem;
-  overflow-y: auto;
-  min-height: 0;
 }
 
 .metadata-section h4 {
