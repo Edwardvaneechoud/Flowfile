@@ -132,13 +132,29 @@
               @click="selectSection(sectionIndex)"
             >
               <div class="section-header">
-                <input
-                  v-model="section.title"
-                  type="text"
-                  class="section-title-input"
-                  placeholder="Section Title"
-                  @click.stop
-                />
+                <div class="section-fields">
+                  <div class="section-field">
+                    <label>Variable Name</label>
+                    <input
+                      v-model="section.name"
+                      type="text"
+                      class="section-name-input"
+                      placeholder="section_name"
+                      @click.stop
+                      @input="sanitizeSectionName(sectionIndex)"
+                    />
+                  </div>
+                  <div class="section-field">
+                    <label>Display Title</label>
+                    <input
+                      v-model="section.title"
+                      type="text"
+                      class="section-title-input"
+                      placeholder="Section Title"
+                      @click.stop
+                    />
+                  </div>
+                </div>
                 <button class="btn-icon" @click.stop="removeSection(sectionIndex)">
                   <i class="fa-solid fa-trash"></i>
                 </button>
@@ -516,11 +532,13 @@ function schemaCompletions(context: CompletionContext): CompletionResult | null 
   if (settingsMatch) {
     const typed = settingsMatch[1];
     const sectionOptions = sections.value.map(section => {
-      const sectionName = toSnakeCase(section.name || section.title || "section");
+      // Use the sanitized variable name directly
+      const sectionName = section.name || toSnakeCase(section.title || "section");
+      const sectionTitle = section.title || section.name || "Section";
       return {
         label: sectionName,
         type: "property",
-        info: `Section: ${section.title}`,
+        info: `Section: ${sectionTitle}`,
         detail: "Section",
       };
     });
@@ -534,7 +552,8 @@ function schemaCompletions(context: CompletionContext): CompletionResult | null 
 
   // Check for "self.settings_schema.section_name."
   for (const section of sections.value) {
-    const sectionName = toSnakeCase(section.name || section.title || "section");
+    // Use the sanitized variable name directly
+    const sectionName = section.name || toSnakeCase(section.title || "section");
     const sectionMatch = beforeCursor.match(new RegExp(`self\\.settings_schema\\.${sectionName}\\.([\\w]*)$`));
 
     if (sectionMatch) {
@@ -715,6 +734,22 @@ function toPascalCase(str: string): string {
     .join('');
 }
 
+function sanitizeSectionName(index: number) {
+  // Ensure section name is a valid Python identifier
+  let name = sections.value[index].name;
+  // Replace spaces and hyphens with underscores
+  name = name.replace(/[\s-]+/g, '_');
+  // Remove any non-alphanumeric characters except underscores
+  name = name.replace(/[^a-zA-Z0-9_]/g, '');
+  // Ensure it doesn't start with a number
+  if (/^[0-9]/.test(name)) {
+    name = '_' + name;
+  }
+  // Convert to lowercase
+  name = name.toLowerCase();
+  sections.value[index].name = name;
+}
+
 // Section management
 function addSection() {
   const sectionNumber = sections.value.length + 1;
@@ -817,10 +852,12 @@ function generateCode(): string {
   // Generate sections code
   let sectionsCode = "";
   sections.value.forEach(section => {
-    const sectionName = toSnakeCase(section.name || section.title || "section");
-    sectionsCode += `\n# ${section.title || sectionName}\n`;
+    // Use the sanitized variable name directly, fallback to snake_case of title if empty
+    const sectionName = section.name || toSnakeCase(section.title || "section");
+    const sectionTitle = section.title || section.name || "Section";
+    sectionsCode += `\n# ${sectionTitle}\n`;
     sectionsCode += `${sectionName} = Section(\n`;
-    sectionsCode += `    title="${section.title || sectionName}",\n`;
+    sectionsCode += `    title="${sectionTitle}",\n`;
 
     section.components.forEach(comp => {
       const fieldName = toSnakeCase(comp.field_name);
@@ -865,7 +902,8 @@ function generateCode(): string {
   // Generate settings class
   let settingsCode = `\nclass ${nodeSettingsName}(NodeSettings):\n`;
   sections.value.forEach(section => {
-    const sectionName = toSnakeCase(section.name || section.title || "section");
+    // Use the sanitized variable name directly
+    const sectionName = section.name || toSnakeCase(section.title || "section");
     settingsCode += `    ${sectionName}: Section = ${sectionName}\n`;
   });
   if (sections.value.length === 0) {
@@ -1184,25 +1222,58 @@ async function saveNode() {
 .section-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 0.5rem 0.75rem;
+  align-items: flex-start;
+  padding: 0.75rem;
   border-bottom: 1px solid var(--border-color);
+  gap: 0.5rem;
+}
+
+.section-fields {
+  display: flex;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.section-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.section-field label {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.section-name-input,
+.section-title-input {
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--input-bg, #fff);
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  width: 100%;
+}
+
+.section-name-input {
+  font-family: 'Fira Code', 'Monaco', monospace;
+  font-size: 0.75rem;
 }
 
 .section-title-input {
-  flex: 1;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  background: transparent;
   font-weight: 500;
-  color: var(--text-primary);
 }
 
+.section-name-input:focus,
 .section-title-input:focus {
   outline: none;
-  border-color: var(--border-color);
-  background: var(--input-bg);
+  border-color: var(--primary-color, #4a6cf7);
+  box-shadow: 0 0 0 2px rgba(74, 108, 247, 0.1);
 }
 
 .btn-icon {
