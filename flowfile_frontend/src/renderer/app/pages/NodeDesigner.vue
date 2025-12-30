@@ -483,51 +483,65 @@
     </div>
 
     <!-- Node Browser Modal -->
-    <div v-if="showNodeBrowser" class="modal-overlay" @click="showNodeBrowser = false">
+    <div v-if="showNodeBrowser" class="modal-overlay" @click="closeNodeBrowser">
       <div class="modal-container modal-large" @click.stop>
         <div class="modal-header">
           <h3 class="modal-title">
             <i class="fa-solid fa-folder-open"></i>
-            Browse Custom Nodes
+            {{ viewingNodeCode ? viewingNodeName : 'Browse Custom Nodes' }}
           </h3>
-          <button class="modal-close" @click="showNodeBrowser = false">
+          <button class="modal-close" @click="closeNodeBrowser">
             <i class="fa-solid fa-times"></i>
           </button>
         </div>
         <div class="modal-content">
-          <div v-if="loadingNodes" class="loading-indicator">
-            <i class="fa-solid fa-spinner fa-spin"></i>
-            Loading custom nodes...
-          </div>
-          <div v-else-if="customNodes.length === 0" class="empty-nodes">
-            <i class="fa-solid fa-folder-open"></i>
-            <p>No custom nodes found</p>
-            <p class="empty-hint">Save a node to see it here</p>
-          </div>
-          <div v-else class="nodes-grid">
-            <div
-              v-for="node in customNodes"
-              :key="node.file_name"
-              class="node-card"
-              @click="loadCustomNode(node.file_name)"
-            >
-              <div class="node-card-header">
-                <i class="fa-solid fa-puzzle-piece"></i>
-                <span class="node-name">{{ node.node_name || node.file_name }}</span>
-              </div>
-              <div class="node-card-body">
-                <span class="node-category">{{ node.node_category }}</span>
-                <p class="node-description">{{ node.intro || 'No description' }}</p>
-              </div>
-              <div class="node-card-footer">
-                <span class="node-file">{{ node.file_name }}</span>
+          <!-- Viewing a specific node's code -->
+          <template v-if="viewingNodeCode">
+            <div class="code-preview node-code-view">
+              <pre><code>{{ viewingNodeCode }}</code></pre>
+            </div>
+          </template>
+
+          <!-- Node list -->
+          <template v-else>
+            <div v-if="loadingNodes" class="loading-indicator">
+              <i class="fa-solid fa-spinner fa-spin"></i>
+              Loading custom nodes...
+            </div>
+            <div v-else-if="customNodes.length === 0" class="empty-nodes">
+              <i class="fa-solid fa-folder-open"></i>
+              <p>No custom nodes found</p>
+              <p class="empty-hint">Save a node to see it here</p>
+            </div>
+            <div v-else class="nodes-grid">
+              <div
+                v-for="node in customNodes"
+                :key="node.file_name"
+                class="node-card"
+                @click="viewCustomNode(node.file_name)"
+              >
+                <div class="node-card-header">
+                  <i class="fa-solid fa-puzzle-piece"></i>
+                  <span class="node-name">{{ node.node_name || node.file_name }}</span>
+                </div>
+                <div class="node-card-body">
+                  <span class="node-category">{{ node.node_category }}</span>
+                  <p class="node-description">{{ node.intro || 'No description' }}</p>
+                </div>
+                <div class="node-card-footer">
+                  <span class="node-file">{{ node.file_name }}</span>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" @click="showNodeBrowser = false">
-            Cancel
+          <button v-if="viewingNodeCode" class="btn btn-secondary" @click="backToNodeList">
+            <i class="fa-solid fa-arrow-left"></i>
+            Back
+          </button>
+          <button class="btn btn-secondary" @click="closeNodeBrowser">
+            {{ viewingNodeCode ? 'Close' : 'Cancel' }}
           </button>
         </div>
       </div>
@@ -970,58 +984,39 @@ async function fetchCustomNodes() {
   }
 }
 
-async function loadCustomNode(fileName: string) {
+// View node code state
+const viewingNodeCode = ref("");
+const viewingNodeName = ref("");
+
+async function viewCustomNode(fileName: string) {
   try {
     const response = await axios.get(`/user_defined_components/get-custom-node/${fileName}`);
     const nodeData = response.data;
 
-    // Reset sections first (backend doesn't parse them from file)
-    sections.value = [];
-
-    // Load metadata
-    if (nodeData.metadata) {
-      nodeMetadata.node_name = nodeData.metadata.node_name || "";
-      nodeMetadata.node_category = nodeData.metadata.node_category || "Custom";
-      nodeMetadata.title = nodeData.metadata.title || "";
-      nodeMetadata.intro = nodeData.metadata.intro || "";
-      nodeMetadata.number_of_inputs = nodeData.metadata.number_of_inputs || 1;
-      nodeMetadata.number_of_outputs = nodeData.metadata.number_of_outputs || 1;
-    }
-
-    // Load process code - it comes with the class method indentation, need to extract body
-    if (nodeData.processCode) {
-      // The backend returns the full process method, we can use it directly
-      // But we need to dedent it to match our editor format
-      let code = nodeData.processCode;
-      const lines = code.split('\n');
-      if (lines.length > 0) {
-        // Find indentation of first line (def process...)
-        const firstLineIndent = lines[0].match(/^(\s*)/)?.[1].length || 0;
-        // Remove that base indentation from all lines
-        const dedentedLines = lines.map(line => {
-          if (line.length >= firstLineIndent) {
-            return line.substring(firstLineIndent);
-          }
-          return line.trimStart();
-        });
-        processCode.value = dedentedLines.join('\n');
-      }
-    }
-
-    showNodeBrowser.value = false;
-    saveToSessionStorage();
-
-    // Inform user that sections need to be rebuilt
-    alert(`Loaded "${nodeData.metadata?.node_name || fileName}". Note: UI sections must be recreated manually.`);
+    viewingNodeName.value = nodeData.metadata?.node_name || fileName;
+    viewingNodeCode.value = nodeData.content || "// No content available";
   } catch (error: any) {
     console.error("Failed to load custom node:", error);
-    alert(`Failed to load custom node: ${error.message || 'Unknown error'}`);
+    viewingNodeCode.value = `// Error loading node: ${error.message || 'Unknown error'}`;
   }
 }
 
 function openNodeBrowser() {
   fetchCustomNodes();
+  viewingNodeCode.value = "";
+  viewingNodeName.value = "";
   showNodeBrowser.value = true;
+}
+
+function closeNodeBrowser() {
+  showNodeBrowser.value = false;
+  viewingNodeCode.value = "";
+  viewingNodeName.value = "";
+}
+
+function backToNodeList() {
+  viewingNodeCode.value = "";
+  viewingNodeName.value = "";
 }
 
 // Watch for changes and save to session storage
@@ -2073,5 +2068,25 @@ function closeValidationModal() {
   font-size: 0.75rem;
   color: var(--text-secondary);
   font-family: 'Fira Code', 'Monaco', monospace;
+}
+
+/* Node Code View in Browser */
+.node-code-view {
+  max-height: calc(80vh - 180px);
+  overflow: auto;
+}
+
+.node-code-view pre {
+  margin: 0;
+  padding: 1.25rem;
+}
+
+.node-code-view code {
+  font-family: 'Fira Code', 'Monaco', 'Consolas', monospace;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: #abb2bf;
+  white-space: pre;
+  display: block;
 }
 </style>
