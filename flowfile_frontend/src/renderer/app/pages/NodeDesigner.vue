@@ -547,8 +547,40 @@
             <i class="fa-solid fa-arrow-left"></i>
             Back
           </button>
+          <button v-if="viewingNodeCode" class="btn btn-danger" @click="confirmDeleteNode">
+            <i class="fa-solid fa-trash"></i>
+            Delete
+          </button>
           <button class="btn btn-secondary" @click="closeNodeBrowser">
             {{ viewingNodeCode ? 'Close' : 'Cancel' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div v-if="showDeleteConfirm" class="modal-overlay" @click="showDeleteConfirm = false">
+      <div class="modal-container" @click.stop>
+        <div class="modal-header modal-header-error">
+          <h3 class="modal-title">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Confirm Delete
+          </h3>
+          <button class="modal-close" @click="showDeleteConfirm = false">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-content">
+          <p>Are you sure you want to delete <strong>{{ viewingNodeName }}</strong>?</p>
+          <p class="delete-warning">This action cannot be undone.</p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showDeleteConfirm = false">
+            Cancel
+          </button>
+          <button class="btn btn-danger" @click="deleteNode">
+            <i class="fa-solid fa-trash"></i>
+            Delete
           </button>
         </div>
       </div>
@@ -1003,12 +1035,15 @@ async function fetchCustomNodes() {
 // View node code state
 const viewingNodeCode = ref("");
 const viewingNodeName = ref("");
+const viewingNodeFileName = ref("");
+const showDeleteConfirm = ref(false);
 
 async function viewCustomNode(fileName: string) {
   try {
     const response = await axios.get(`/user_defined_components/get-custom-node/${fileName}`);
     const nodeData = response.data;
 
+    viewingNodeFileName.value = fileName;
     viewingNodeName.value = nodeData.metadata?.node_name || fileName;
     viewingNodeCode.value = nodeData.content || "// No content available";
   } catch (error: any) {
@@ -1021,6 +1056,7 @@ function openNodeBrowser() {
   fetchCustomNodes();
   viewingNodeCode.value = "";
   viewingNodeName.value = "";
+  viewingNodeFileName.value = "";
   showNodeBrowser.value = true;
 }
 
@@ -1028,11 +1064,32 @@ function closeNodeBrowser() {
   showNodeBrowser.value = false;
   viewingNodeCode.value = "";
   viewingNodeName.value = "";
+  viewingNodeFileName.value = "";
 }
 
 function backToNodeList() {
   viewingNodeCode.value = "";
   viewingNodeName.value = "";
+  viewingNodeFileName.value = "";
+}
+
+function confirmDeleteNode() {
+  showDeleteConfirm.value = true;
+}
+
+async function deleteNode() {
+  if (!viewingNodeFileName.value) return;
+
+  try {
+    await axios.delete(`/user_defined_components/delete-custom-node/${viewingNodeFileName.value}`);
+    showDeleteConfirm.value = false;
+    backToNodeList();
+    fetchCustomNodes();
+  } catch (error: any) {
+    console.error("Failed to delete custom node:", error);
+    alert(`Error deleting node: ${error.response?.data?.detail || error.message || 'Unknown error'}`);
+    showDeleteConfirm.value = false;
+  }
 }
 
 // Watch for changes and save to session storage
@@ -1932,6 +1989,22 @@ function closeValidationModal() {
 
 .btn-secondary:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+/* Delete Confirmation */
+.delete-warning {
+  color: #dc2626;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
 }
 
 /* Validation Modal */

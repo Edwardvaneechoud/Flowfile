@@ -294,3 +294,46 @@ def get_custom_node(file_name: str) -> Dict[str, Any]:
         # Return the raw content even if parsing fails
 
     return result
+
+
+@router.delete("/delete-custom-node/{file_name}", summary="Delete a custom node")
+def delete_custom_node(file_name: str) -> Dict[str, Any]:
+    """
+    Delete a custom node Python file from the user-defined nodes directory.
+    This also attempts to unregister the node from the node store.
+    """
+    # Sanitize file name
+    if not file_name.endswith('.py'):
+        file_name += '.py'
+
+    safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', file_name)
+    file_path = storage.user_defined_nodes_directory / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Node file '{safe_name}' not found")
+
+    # Try to find and unregister the node from the store
+    try:
+        info = _extract_node_info_from_file(file_path)
+        if info.node_name:
+            # Remove from CUSTOM_NODE_STORE if present
+            node_type_key = info.node_name.lower().replace(' ', '_')
+            if node_type_key in CUSTOM_NODE_STORE:
+                del CUSTOM_NODE_STORE[node_type_key]
+                logger.info(f"Unregistered custom node: {info.node_name}")
+    except Exception as e:
+        logger.warning(f"Could not unregister node: {e}")
+
+    # Delete the file
+    try:
+        file_path.unlink()
+        logger.info(f"Deleted custom node file: {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to delete custom node file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
+
+    return {
+        "success": True,
+        "file_name": safe_name,
+        "message": f"Node '{safe_name}' deleted successfully"
+    }
