@@ -12,7 +12,7 @@ import "./styles/main.css";
 
 // Import auth service and configured axios
 import authService from "./app/services/auth.service";
-import "./app/services/axios-setup";
+import "./app/services/axios.config";
 
 const app = createApp(App);
 
