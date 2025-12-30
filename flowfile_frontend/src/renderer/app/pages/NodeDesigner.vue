@@ -975,22 +975,47 @@ async function loadCustomNode(fileName: string) {
     const response = await axios.get(`/user_defined_components/get-custom-node/${fileName}`);
     const nodeData = response.data;
 
-    // Clear current state and load new data
+    // Reset sections first (backend doesn't parse them from file)
+    sections.value = [];
+
+    // Load metadata
     if (nodeData.metadata) {
-      Object.assign(nodeMetadata, nodeData.metadata);
+      nodeMetadata.node_name = nodeData.metadata.node_name || "";
+      nodeMetadata.node_category = nodeData.metadata.node_category || "Custom";
+      nodeMetadata.title = nodeData.metadata.title || "";
+      nodeMetadata.intro = nodeData.metadata.intro || "";
+      nodeMetadata.number_of_inputs = nodeData.metadata.number_of_inputs || 1;
+      nodeMetadata.number_of_outputs = nodeData.metadata.number_of_outputs || 1;
     }
-    if (nodeData.sections) {
-      sections.value = nodeData.sections;
-    }
+
+    // Load process code - it comes with the class method indentation, need to extract body
     if (nodeData.processCode) {
-      processCode.value = nodeData.processCode;
+      // The backend returns the full process method, we can use it directly
+      // But we need to dedent it to match our editor format
+      let code = nodeData.processCode;
+      const lines = code.split('\n');
+      if (lines.length > 0) {
+        // Find indentation of first line (def process...)
+        const firstLineIndent = lines[0].match(/^(\s*)/)?.[1].length || 0;
+        // Remove that base indentation from all lines
+        const dedentedLines = lines.map(line => {
+          if (line.length >= firstLineIndent) {
+            return line.substring(firstLineIndent);
+          }
+          return line.trimStart();
+        });
+        processCode.value = dedentedLines.join('\n');
+      }
     }
 
     showNodeBrowser.value = false;
     saveToSessionStorage();
-  } catch (error) {
+
+    // Inform user that sections need to be rebuilt
+    alert(`Loaded "${nodeData.metadata?.node_name || fileName}". Note: UI sections must be recreated manually.`);
+  } catch (error: any) {
     console.error("Failed to load custom node:", error);
-    alert("Failed to load custom node");
+    alert(`Failed to load custom node: ${error.message || 'Unknown error'}`);
   }
 }
 
@@ -1222,7 +1247,7 @@ function generateCode(): string {
 
   // Extract process method body (remove the def line and dedent)
   let processBody = processCode.value;
-  const defMatch = processBody.match(/def\s+process\s*\([^)]*\)\s*->\s*[^:]+:\s*/);
+  const defMatch = processBody.match(/def\s+process\s*\([^)]*\)\s*->\s*[^:]+:\n?/);
   if (defMatch) {
     processBody = processBody.substring(defMatch[0].length);
   }
@@ -1230,13 +1255,24 @@ function generateCode(): string {
   // Dedent the process body - find minimum indentation and remove it
   const lines = processBody.split('\n');
   const nonEmptyLines = lines.filter(line => line.trim().length > 0);
+  let minIndent = 0;
   if (nonEmptyLines.length > 0) {
-    const minIndent = Math.min(...nonEmptyLines.map(line => {
+    minIndent = Math.min(...nonEmptyLines.map(line => {
       const match = line.match(/^(\s*)/);
       return match ? match[1].length : 0;
     }));
-    processBody = lines.map(line => line.substring(minIndent)).join('\n');
   }
+
+  // Apply dedent and re-indent with 8 spaces for method body
+  const reindentedLines = lines.map(line => {
+    if (line.trim().length === 0) {
+      return '';  // Empty lines stay empty
+    }
+    // Remove minIndent spaces from the beginning
+    const dedented = line.length >= minIndent ? line.substring(minIndent) : line.trimStart();
+    return '        ' + dedented;
+  });
+  processBody = reindentedLines.join('\n');
 
   // Generate node class
   const nodeCode = `
@@ -1251,7 +1287,7 @@ class ${nodeName}(CustomNodeBase):
     settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
 
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-${processBody.split('\n').map(line => '        ' + line).join('\n')}
+${processBody}
 `;
 
   // Combine all parts
@@ -1774,7 +1810,8 @@ function closeValidationModal() {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1782,13 +1819,14 @@ function closeValidationModal() {
 }
 
 .modal-container {
-  background: var(--card-bg);
+  background: var(--card-bg, #ffffff);
   border-radius: 8px;
   max-width: 600px;
   width: 90%;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
 }
 
 .modal-large {
