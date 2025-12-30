@@ -13,7 +13,7 @@
 import { ref } from "vue";
 import NavigationRoutes from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
-import Logo from "../logo/Logo.vue";
+import Logo from "../Logo/Logo.vue";
 
 // Define the isCollapse prop
 const props = defineProps({
