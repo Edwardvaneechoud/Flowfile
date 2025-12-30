@@ -497,8 +497,15 @@
         <div class="modal-content">
           <!-- Viewing a specific node's code -->
           <template v-if="viewingNodeCode">
-            <div class="code-preview node-code-view">
-              <pre><code>{{ viewingNodeCode }}</code></pre>
+            <div class="node-code-view">
+              <codemirror
+                v-model="viewingNodeCode"
+                :style="{ height: 'auto', maxHeight: 'calc(80vh - 180px)' }"
+                :autofocus="false"
+                :indent-with-tab="false"
+                :tab-size="4"
+                :extensions="readOnlyExtensions"
+              />
             </div>
           </template>
 
@@ -841,6 +848,15 @@ const extensions: Extension[] = [
     closeOnBlur: false,
   }),
   tabKeymap,
+];
+
+// Read-only CodeMirror extensions for code preview
+const readOnlyExtensions: Extension[] = [
+  python(),
+  oneDark,
+  EditorState.tabSize.of(4),
+  EditorView.editable.of(false),
+  EditorState.readOnly.of(true),
 ];
 
 // Preview modal
@@ -2072,21 +2088,8 @@ function closeValidationModal() {
 
 /* Node Code View in Browser */
 .node-code-view {
-  max-height: calc(80vh - 180px);
-  overflow: auto;
-}
-
-.node-code-view pre {
-  margin: 0;
-  padding: 1.25rem;
-}
-
-.node-code-view code {
-  font-family: 'Fira Code', 'Monaco', 'Consolas', monospace;
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  color: #abb2bf;
-  white-space: pre;
-  display: block;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-color, #3a3a4a);
 }
 </style>
