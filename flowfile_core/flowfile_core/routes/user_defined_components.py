@@ -1,7 +1,8 @@
 
 import ast
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -20,6 +21,15 @@ from shared import storage
 
 
 router = APIRouter()
+
+
+class CustomNodeInfo(BaseModel):
+    """Info about a custom node file."""
+    file_name: str
+    node_name: str = ""
+    node_category: str = ""
+    title: str = ""
+    intro: str = ""
 
 
 class SaveCustomNodeRequest(BaseModel):
@@ -139,3 +149,148 @@ def save_custom_node(request: SaveCustomNodeRequest):
         "file_name": safe_name,
         "message": f"Node saved successfully to {safe_name}"
     }
+
+
+def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
+    """Extract node metadata from a Python file by parsing its AST."""
+    info = CustomNodeInfo(file_name=file_path.name)
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        tree = ast.parse(content)
+
+        # Find class definitions that might be custom nodes
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                # Look for class attributes
+                for item in node.body:
+                    if isinstance(item, ast.Assign):
+                        for target in item.targets:
+                            if isinstance(target, ast.Name):
+                                attr_name = target.id
+                                # Extract string values
+                                if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
+                                    value = item.value.value
+                                    if attr_name == "node_name":
+                                        info.node_name = value
+                                    elif attr_name == "node_category":
+                                        info.node_category = value
+                                    elif attr_name == "title":
+                                        info.title = value
+                                    elif attr_name == "intro":
+                                        info.intro = value
+
+                # If we found a node_name, this is likely a custom node class
+                if info.node_name:
+                    break
+
+    except Exception as e:
+        logger.warning(f"Failed to parse node info from {file_path}: {e}")
+
+    return info
+
+
+@router.get("/list-custom-nodes", summary="List all custom nodes", response_model=List[CustomNodeInfo])
+def list_custom_nodes() -> List[CustomNodeInfo]:
+    """
+    List all custom node Python files in the user-defined nodes directory.
+    Returns basic metadata extracted from each file.
+    """
+    nodes_dir = storage.user_defined_nodes_directory
+    nodes: List[CustomNodeInfo] = []
+
+    if not nodes_dir.exists():
+        return nodes
+
+    for file_path in nodes_dir.glob("*.py"):
+        if file_path.name.startswith("_"):
+            continue  # Skip private files
+        info = _extract_node_info_from_file(file_path)
+        nodes.append(info)
+
+    # Sort by node name
+    nodes.sort(key=lambda x: x.node_name or x.file_name)
+    return nodes
+
+
+@router.get("/get-custom-node/{file_name}", summary="Get custom node details")
+def get_custom_node(file_name: str) -> Dict[str, Any]:
+    """
+    Get the full content and parsed metadata of a custom node file.
+    This endpoint is used by the Node Designer to load an existing node for editing.
+    """
+    # Sanitize file name
+    if not file_name.endswith('.py'):
+        file_name += '.py'
+
+    safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', file_name)
+    file_path = storage.user_defined_nodes_directory / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Node file '{safe_name}' not found")
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read file: {str(e)}")
+
+    # Parse the file to extract metadata and sections
+    result = {
+        "file_name": safe_name,
+        "content": content,
+        "metadata": {},
+        "sections": [],
+        "processCode": ""
+    }
+
+    try:
+        tree = ast.parse(content)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                # Check if this looks like a custom node class (has node_name attribute)
+                is_custom_node = False
+                for item in node.body:
+                    if isinstance(item, ast.Assign):
+                        for target in item.targets:
+                            if isinstance(target, ast.Name) and target.id == "node_name":
+                                is_custom_node = True
+                                break
+
+                if is_custom_node:
+                    # Extract metadata
+                    for item in node.body:
+                        if isinstance(item, ast.Assign):
+                            for target in item.targets:
+                                if isinstance(target, ast.Name):
+                                    attr_name = target.id
+                                    if isinstance(item.value, ast.Constant):
+                                        value = item.value.value
+                                        if attr_name in ["node_name", "node_category", "title", "intro"]:
+                                            result["metadata"][attr_name] = value
+                                        elif attr_name == "number_of_inputs":
+                                            result["metadata"]["number_of_inputs"] = value
+                                        elif attr_name == "number_of_outputs":
+                                            result["metadata"]["number_of_outputs"] = value
+
+                    # Extract process method
+                    for item in node.body:
+                        if isinstance(item, ast.FunctionDef) and item.name == "process":
+                            # Get the source code of the process method
+                            start_line = item.lineno - 1
+                            end_line = item.end_lineno if hasattr(item, 'end_lineno') else start_line + 20
+                            lines = content.split('\n')
+                            process_lines = lines[start_line:end_line]
+                            result["processCode"] = '\n'.join(process_lines)
+                            break
+
+                    break
+
+    except Exception as e:
+        logger.warning(f"Failed to parse custom node file: {e}")
+        # Return the raw content even if parsing fails
+
+    return result

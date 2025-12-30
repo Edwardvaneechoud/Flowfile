@@ -7,13 +7,21 @@
         <p class="page-description">Design custom nodes visually and generate Python code</p>
       </div>
       <div class="header-actions">
+        <button class="btn btn-secondary" @click="openNodeBrowser">
+          <i class="fa-solid fa-folder-open"></i>
+          Browse
+        </button>
+        <button class="btn btn-secondary" @click="clearSessionStorage">
+          <i class="fa-solid fa-file"></i>
+          New
+        </button>
         <button class="btn btn-secondary" @click="previewCode">
           <i class="fa-solid fa-code"></i>
-          Preview Code
+          Preview
         </button>
-        <button class="btn btn-primary" :disabled="!canSave" @click="saveNode">
+        <button class="btn btn-primary" @click="saveNode">
           <i class="fa-solid fa-save"></i>
-          Save Node
+          Save
         </button>
       </div>
     </div>
@@ -444,11 +452,91 @@
         </div>
       </div>
     </div>
+
+    <!-- Validation Errors Modal -->
+    <div v-if="showValidationModal" class="modal-overlay" @click="closeValidationModal">
+      <div class="modal-container" @click.stop>
+        <div class="modal-header modal-header-error">
+          <h3 class="modal-title">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Validation Errors
+          </h3>
+          <button class="modal-close" @click="closeValidationModal">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-content">
+          <p class="validation-intro">Please fix the following issues before saving:</p>
+          <ul class="validation-errors-list">
+            <li v-for="(error, index) in validationErrors" :key="index" class="validation-error-item">
+              <i class="fa-solid fa-circle-xmark"></i>
+              {{ error.message }}
+            </li>
+          </ul>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" @click="closeValidationModal">
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Node Browser Modal -->
+    <div v-if="showNodeBrowser" class="modal-overlay" @click="showNodeBrowser = false">
+      <div class="modal-container modal-large" @click.stop>
+        <div class="modal-header">
+          <h3 class="modal-title">
+            <i class="fa-solid fa-folder-open"></i>
+            Browse Custom Nodes
+          </h3>
+          <button class="modal-close" @click="showNodeBrowser = false">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-content">
+          <div v-if="loadingNodes" class="loading-indicator">
+            <i class="fa-solid fa-spinner fa-spin"></i>
+            Loading custom nodes...
+          </div>
+          <div v-else-if="customNodes.length === 0" class="empty-nodes">
+            <i class="fa-solid fa-folder-open"></i>
+            <p>No custom nodes found</p>
+            <p class="empty-hint">Save a node to see it here</p>
+          </div>
+          <div v-else class="nodes-grid">
+            <div
+              v-for="node in customNodes"
+              :key="node.file_name"
+              class="node-card"
+              @click="loadCustomNode(node.file_name)"
+            >
+              <div class="node-card-header">
+                <i class="fa-solid fa-puzzle-piece"></i>
+                <span class="node-name">{{ node.node_name || node.file_name }}</span>
+              </div>
+              <div class="node-card-body">
+                <span class="node-category">{{ node.node_category }}</span>
+                <p class="node-description">{{ node.intro || 'No description' }}</p>
+              </div>
+              <div class="node-card-footer">
+                <span class="node-file">{{ node.file_name }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showNodeBrowser = false">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, watch } from "vue";
+import { ref, computed, reactive, watch, onMounted } from "vue";
 import { EditorView, keymap } from "@codemirror/view";
 import { EditorState, Extension, Compartment } from "@codemirror/state";
 import { Codemirror } from "vue-codemirror";
@@ -457,6 +545,24 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, CompletionContext, CompletionResult, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore } from "@codemirror/commands";
 import axios from "axios";
+
+// Session storage key
+const STORAGE_KEY = "nodeDesigner_state";
+
+// Validation error interface
+interface ValidationError {
+  field: string;
+  message: string;
+}
+
+// Custom node info for browser
+interface CustomNodeInfo {
+  file_name: string;
+  node_name: string;
+  node_category: string;
+  title: string;
+  intro: string;
+}
 
 // Available component types
 const availableComponents = [
@@ -726,6 +832,182 @@ const extensions: Extension[] = [
 // Preview modal
 const showPreviewModal = ref(false);
 const generatedCode = ref("");
+
+// Validation state
+const validationErrors = ref<ValidationError[]>([]);
+const showValidationModal = ref(false);
+
+// Node browser state
+const showNodeBrowser = ref(false);
+const customNodes = ref<CustomNodeInfo[]>([]);
+const loadingNodes = ref(false);
+
+// Validation function
+function validateSettings(): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  // Validate node metadata
+  if (!nodeMetadata.node_name.trim()) {
+    errors.push({ field: "node_name", message: "Node name is required" });
+  } else if (!/^[a-zA-Z][a-zA-Z0-9_\s]*$/.test(nodeMetadata.node_name)) {
+    errors.push({ field: "node_name", message: "Node name must start with a letter and contain only letters, numbers, spaces, and underscores" });
+  }
+
+  if (!nodeMetadata.node_category.trim()) {
+    errors.push({ field: "node_category", message: "Category is required" });
+  }
+
+  // Validate sections
+  if (sections.value.length === 0) {
+    errors.push({ field: "sections", message: "At least one section is required" });
+  }
+
+  // Check for duplicate section names
+  const sectionNames = new Set<string>();
+  sections.value.forEach((section, index) => {
+    const name = section.name || toSnakeCase(section.title || "section");
+    if (sectionNames.has(name)) {
+      errors.push({ field: `section_${index}`, message: `Duplicate section name: "${name}"` });
+    }
+    sectionNames.add(name);
+
+    // Check for empty sections
+    if (section.components.length === 0) {
+      errors.push({ field: `section_${index}`, message: `Section "${section.title || name}" has no components` });
+    }
+
+    // Check for duplicate field names within section
+    const fieldNames = new Set<string>();
+    section.components.forEach((comp, compIndex) => {
+      const fieldName = toSnakeCase(comp.field_name);
+      if (!fieldName) {
+        errors.push({ field: `section_${index}_comp_${compIndex}`, message: `Component in "${section.title}" is missing a field name` });
+      } else if (fieldNames.has(fieldName)) {
+        errors.push({ field: `section_${index}_comp_${compIndex}`, message: `Duplicate field name "${fieldName}" in section "${section.title}"` });
+      }
+      fieldNames.add(fieldName);
+    });
+  });
+
+  // Validate Python code syntax (basic check)
+  const code = processCode.value;
+  if (!code.includes("def process")) {
+    errors.push({ field: "process_code", message: "Process method definition is missing" });
+  }
+  if (!code.includes("return")) {
+    errors.push({ field: "process_code", message: "Process method must return a value" });
+  }
+
+  return errors;
+}
+
+// Session storage functions
+function saveToSessionStorage() {
+  const state = {
+    nodeMetadata: { ...nodeMetadata },
+    sections: sections.value,
+    processCode: processCode.value,
+  };
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function loadFromSessionStorage() {
+  const saved = sessionStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    try {
+      const state = JSON.parse(saved);
+      if (state.nodeMetadata) {
+        Object.assign(nodeMetadata, state.nodeMetadata);
+      }
+      if (state.sections) {
+        sections.value = state.sections;
+      }
+      if (state.processCode) {
+        processCode.value = state.processCode;
+      }
+    } catch (e) {
+      console.error("Failed to load from session storage:", e);
+    }
+  }
+}
+
+function clearSessionStorage() {
+  sessionStorage.removeItem(STORAGE_KEY);
+  // Reset to defaults
+  nodeMetadata.node_name = "";
+  nodeMetadata.node_category = "Custom";
+  nodeMetadata.title = "";
+  nodeMetadata.intro = "";
+  nodeMetadata.number_of_inputs = 1;
+  nodeMetadata.number_of_outputs = 1;
+  sections.value = [];
+  processCode.value = `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+    # Get the first input LazyFrame
+    lf = inputs[0]
+
+    # Access settings values like this:
+    # value = self.settings_schema.section_name.field_name.value
+
+    # Your transformation logic here
+    # Example: lf = lf.filter(pl.col("column") > 0)
+
+    return lf`;
+  selectedSectionIndex.value = null;
+  selectedComponentIndex.value = null;
+}
+
+// Node browser functions
+async function fetchCustomNodes() {
+  loadingNodes.value = true;
+  try {
+    const response = await axios.get("/user_defined_components/list-custom-nodes");
+    customNodes.value = response.data;
+  } catch (error) {
+    console.error("Failed to fetch custom nodes:", error);
+    customNodes.value = [];
+  } finally {
+    loadingNodes.value = false;
+  }
+}
+
+async function loadCustomNode(fileName: string) {
+  try {
+    const response = await axios.get(`/user_defined_components/get-custom-node/${fileName}`);
+    const nodeData = response.data;
+
+    // Clear current state and load new data
+    if (nodeData.metadata) {
+      Object.assign(nodeMetadata, nodeData.metadata);
+    }
+    if (nodeData.sections) {
+      sections.value = nodeData.sections;
+    }
+    if (nodeData.processCode) {
+      processCode.value = nodeData.processCode;
+    }
+
+    showNodeBrowser.value = false;
+    saveToSessionStorage();
+  } catch (error) {
+    console.error("Failed to load custom node:", error);
+    alert("Failed to load custom node");
+  }
+}
+
+function openNodeBrowser() {
+  fetchCustomNodes();
+  showNodeBrowser.value = true;
+}
+
+// Watch for changes and save to session storage
+watch([() => ({ ...nodeMetadata }), sections, processCode], () => {
+  saveToSessionStorage();
+}, { deep: true });
+
+// Load from session storage on mount
+onMounted(() => {
+  loadFromSessionStorage();
+});
 
 // Computed properties
 const selectedComponent = computed(() => {
@@ -1000,7 +1282,13 @@ function copyCode() {
 }
 
 async function saveNode() {
-  if (!canSave.value) return;
+  // Validate before saving
+  const errors = validateSettings();
+  if (errors.length > 0) {
+    validationErrors.value = errors;
+    showValidationModal.value = true;
+    return;
+  }
 
   const code = generateCode();
   const fileName = toSnakeCase(nodeMetadata.node_name) + ".py";
@@ -1015,6 +1303,10 @@ async function saveNode() {
     const errorMsg = error.response?.data?.detail || error.message || "Failed to save node";
     alert(`Error saving node: ${errorMsg}`);
   }
+}
+
+function closeValidationModal() {
+  showValidationModal.value = false;
 }
 </script>
 
@@ -1591,5 +1883,157 @@ async function saveNode() {
 
 .btn-secondary:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+/* Validation Modal */
+.modal-header-error {
+  background: #fef2f2;
+  border-bottom-color: #fecaca;
+}
+
+.modal-header-error .modal-title {
+  color: #dc2626;
+}
+
+.modal-header-error .modal-title i {
+  margin-right: 0.5rem;
+}
+
+.validation-intro {
+  margin: 0 0 1rem 0;
+  color: var(--text-secondary);
+}
+
+.validation-errors-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.validation-error-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+
+.validation-error-item:last-child {
+  border-bottom: none;
+}
+
+.validation-error-item i {
+  color: #dc2626;
+  margin-top: 0.125rem;
+}
+
+/* Node Browser Modal */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--text-secondary);
+}
+
+.loading-indicator i {
+  font-size: 1.25rem;
+}
+
+.empty-nodes {
+  text-align: center;
+  padding: 3rem;
+  color: var(--text-secondary);
+}
+
+.empty-nodes i {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.empty-nodes p {
+  margin: 0;
+}
+
+.empty-hint {
+  font-size: 0.8125rem;
+  margin-top: 0.5rem !important;
+}
+
+.nodes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.node-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  overflow: hidden;
+}
+
+.node-card:hover {
+  border-color: var(--primary-color);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.node-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.node-card-header i {
+  color: var(--primary-color);
+}
+
+.node-name {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.node-card-body {
+  padding: 0.75rem 1rem;
+}
+
+.node-category {
+  display: inline-block;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  padding: 0.125rem 0.5rem;
+  background: var(--primary-color);
+  color: white;
+  border-radius: 3px;
+  margin-bottom: 0.5rem;
+}
+
+.node-description {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.node-card-footer {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.node-file {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: 'Fira Code', 'Monaco', monospace;
 }
 </style>
