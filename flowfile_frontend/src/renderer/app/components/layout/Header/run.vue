@@ -10,7 +10,6 @@
 </template>
 
 <script setup lang="ts">
-import { defineProps } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useFlowExecution } from "../../../composables/useFlowExecution";
 
@@ -39,7 +38,7 @@ const { runFlow, cancelFlow, showNotification, startPolling, stopPolling, checkR
     pollingKey: `run_button_${props.flowId}`,
   });
 
-const emit = defineEmits(["logs-start", "logs-stop"]);
+defineEmits(["logs-start", "logs-stop"]);
 
 // Expose methods if parent component needs them
 defineExpose({

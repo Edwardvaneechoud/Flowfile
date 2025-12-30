@@ -52,7 +52,7 @@ import { useItemStore } from "./stateStore";
 
 // Define emits for parent component communication
 const emit = defineEmits<{
-  "reset-layout-graph": [];
+  (e: "reset-layout-graph"): void;
 }>();
 
 const itemStore = useItemStore();

@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { join, dirname } from "path";
-import { ChildProcess, exec, spawn } from "child_process";
+import { ChildProcess, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
 import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT, WORKER_PORT, CORE_PORT } from "./constants";
@@ -171,7 +171,6 @@ export function startProcess(
       return;
     }
 
-    const isWindows = platform() === "win32";
     console.log(`Starting ${name} from ${path}`);
 
     try {

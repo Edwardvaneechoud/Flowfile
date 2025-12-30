@@ -16,7 +16,7 @@ import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
 
 // Define the isCollapse prop
-const props = defineProps({
+defineProps({
   isCollapse: {
     type: Boolean,
     default: false,
@@ -24,7 +24,7 @@ const props = defineProps({
 });
 
 // Define the toggle-collapse emit
-const emit = defineEmits(["toggle-collapse"]);
+defineEmits(["toggle-collapse"]);
 
 const items = ref(NavigationRoutes.routes);
 </script>

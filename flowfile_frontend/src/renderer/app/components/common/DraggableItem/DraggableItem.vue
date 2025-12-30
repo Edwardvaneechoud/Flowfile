@@ -749,7 +749,7 @@ onMounted(() => {
   }
 
   // Listen for layout reset events
-  const handleLayoutReset = (event: Event) => {
+  const handleLayoutReset = (_event: Event) => {
     // Get the updated state from the store
     itemState.value = { ...itemStore.items[props.id] };
 
