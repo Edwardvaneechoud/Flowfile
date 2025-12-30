@@ -21,11 +21,11 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import FileBrowser from "../../components/common/FileBrowser/fileBrowser.vue";
-import { FileInfo } from "../../components/common/FileBrowser/types";
-import { saveFlow } from "../../components/layout/Header/utils";
-import { getFlowSettings } from "../../components/nodes/nodeLogic";
-import { ALLOWED_SAVE_EXTENSIONS } from "../../components/common/FileBrowser/constants";
+import FileBrowser from "../../../components/common/FileBrowser/fileBrowser.vue";
+import { FileInfo } from "../../../components/common/FileBrowser/types";
+import { saveFlow } from "../../../components/layout/Header/utils";
+import { getFlowSettings } from "../../../components/nodes/nodeLogic";
+import { ALLOWED_SAVE_EXTENSIONS } from "../../../components/common/FileBrowser/constants";
 
 const props = defineProps({
   visible: {
