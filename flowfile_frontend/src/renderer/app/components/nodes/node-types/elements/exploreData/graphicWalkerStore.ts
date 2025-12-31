@@ -3,9 +3,9 @@ import { reactive } from 'vue'
 interface VizStore {
   exportViewSpec: () => any // Adapt this to your actual return type
   exportAsRaw: () => string
-  importRaw: (raw: string) => void
-  setVisName: (name: string) => void
-  importStoInfo: (stoInfo: any) => void
+  importRaw: () => void
+  setVisName: () => void
+  importStoInfo: () => void
 }
 
 interface Dataset {
@@ -53,13 +53,13 @@ const globalStoreInstance = reactive<IGlobalStore>({
       exportAsRaw: () => {
         return ''
       },
-      importRaw: (_raw: string) => {
+      importRaw: () => {
         console.log('importing raw')
       },
-      setVisName: (_name: string) => {
+      setVisName: () => {
         console.log('setting visual name')
       },
-      importStoInfo: (_stoInfo: any) => {
+      importStoInfo: () => {
         console.log('importing sto info')
       },
     },

@@ -20,6 +20,7 @@
         :class="{ 'popover--left': props.placement === 'left' }"
       >
         <h3 v-if="props.title !== ''">{{ props.title }}</h3>
+        <!-- eslint-disable-next-line vue/no-v-html -->
         <p class="content" v-html="props.content"></p>
       </div>
     </Teleport>

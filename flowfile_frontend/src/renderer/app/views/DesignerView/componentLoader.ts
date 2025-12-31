@@ -1,5 +1,4 @@
 import { DefineComponent, markRaw } from "vue";
-import { NodeTemplate } from "../../types";
 import GenericNode from "../../nodes/GenericNode.vue"; // Import GenericNode directly
 
 const componentCache: Map<string, Promise<DefineComponent>> = new Map();
@@ -8,7 +7,7 @@ const componentCache: Map<string, Promise<DefineComponent>> = new Map();
  * ALWAYS returns the GenericNode component
  * The nodeOrItem parameter is kept for backward compatibility but not used
  */
-export function getComponent(_nodeOrItem: NodeTemplate | string): Promise<DefineComponent> {
+export function getComponent(): Promise<DefineComponent> {
   // Always return the same GenericNode component for ALL nodes
   const cacheKey = 'generic-node';
   
@@ -27,9 +26,9 @@ export function getComponent(_nodeOrItem: NodeTemplate | string): Promise<Define
  * Gets a component using the raw name (without case conversion)
  * This is kept for backward compatibility but also returns GenericNode
  */
-export function getComponentRaw(name: string): Promise<DefineComponent> {
+export function getComponentRaw(): Promise<DefineComponent> {
   // Also return GenericNode for raw components
-  return getComponent(name);
+  return getComponent();
 }
 
 /**
@@ -44,7 +43,7 @@ export function clearComponentCache(): void {
  * Preload multiple components
  * Since we're using GenericNode for everything, this just ensures it's loaded
  */
-export async function preloadComponents(_items: string[]): Promise<void> {
+export async function preloadComponents(): Promise<void> {
   // Just load the GenericNode once
-  await getComponent('generic');
+  await getComponent();
 }

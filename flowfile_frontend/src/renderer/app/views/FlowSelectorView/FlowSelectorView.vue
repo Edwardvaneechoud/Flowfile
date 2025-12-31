@@ -136,7 +136,7 @@ const confirmCloseTab = (flowId: number) => {
 };
 
 // Handle saving flow before closing
-const handleSaveAndClose = async (_flowId: number) => {
+const handleSaveAndClose = async () => {
   // Show save dialog
   if (saveDialog.value) {
     saveDialog.value.open();

@@ -34,7 +34,7 @@
           title="From Column"
           :item="graphSolverInput.col_from ?? ''"
           droppable="true"
-          @remove-item="removeColumn('from', $event)"
+          @remove-item="removeColumn('from')"
           @dragover.prevent
           @drop="onDropInSection('from')"
         />
@@ -42,7 +42,7 @@
           title="To Column"
           :item="graphSolverInput.col_to ?? ''"
           droppable="true"
-          @remove-item="removeColumn('to', $event)"
+          @remove-item="removeColumn('to')"
           @dragover.prevent
           @drop="onDropInSection('to')"
         />
