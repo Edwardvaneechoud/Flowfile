@@ -6,7 +6,9 @@ from flowfile_core.configs.node_store.user_defined_node_registry import (
 from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.schemas.schemas import NodeTemplate
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
+import logging
 
+logger = logging.getLogger(__name__)
 
 nodes_with_defaults = {'sample', 'sort', 'union', 'select', 'record_count'}
 
@@ -34,20 +36,34 @@ def remove_from_custom_node_store(node_key: str) -> bool:
     """
     removed = False
 
+    logger.info(f"Attempting to remove node with key: '{node_key}'")
+    logger.info(f"Current CUSTOM_NODE_STORE keys: {list(CUSTOM_NODE_STORE.keys())}")
+    logger.info(f"Current nodes_list items: {[n.item for n in nodes_list if hasattr(n, 'item')]}")
+
     # Remove from CUSTOM_NODE_STORE
     if node_key in CUSTOM_NODE_STORE:
         del CUSTOM_NODE_STORE[node_key]
+        logger.info(f"Removed '{node_key}' from CUSTOM_NODE_STORE")
         removed = True
+    else:
+        logger.warning(f"Key '{node_key}' not found in CUSTOM_NODE_STORE")
 
     # Remove from node_dict
     if node_key in node_dict:
         del node_dict[node_key]
+        logger.info(f"Removed '{node_key}' from node_dict")
 
     # Remove from nodes_list
+    removed_from_list = False
     for i, node in enumerate(nodes_list):
         if node.item == node_key:
             nodes_list.pop(i)
+            logger.info(f"Removed '{node_key}' from nodes_list at index {i}")
+            removed_from_list = True
             break
+
+    if not removed_from_list:
+        logger.warning(f"Key '{node_key}' not found in nodes_list")
 
     # Clean up module cache
     unload_node_by_name(node_key)
