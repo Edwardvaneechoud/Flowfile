@@ -48,7 +48,7 @@ import { TableExample } from "../../components/nodes/baseNode/nodeInterfaces";
 import { useNodeStore } from "../../stores/column-store";
 import { useFlowExecution } from "./composables/useFlowExecution";
 import { AgGridVue } from "@ag-grid-community/vue3";
-import { GridApi, GridReadyEvent } from "@ag-grid-community/core";
+import { GridApi } from "@ag-grid-community/core";
 import { ModuleRegistry } from "@ag-grid-community/core";
 import { ClientSideRowModelModule } from "@ag-grid-community/client-side-row-model";
 import "@ag-grid-community/styles/ag-grid.css";
@@ -80,6 +80,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   showFileStats: false,
   hideTitle: true,
+  flowId: undefined,
 });
 
 // Use the flow execution composable with persistent polling for node fetches
@@ -242,8 +243,6 @@ function removeData() {
   showFetchButton.value = false;
   currentNodeId.value = null;
 }
-
-const parentElement = ref(null);
 
 onMounted(() => {
   calculateGridHeight();

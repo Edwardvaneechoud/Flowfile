@@ -102,7 +102,6 @@ import {
   isOutputCsvTable,
   isOutputParquetTable,
   isOutputExcelTable,
-  OutputTableSettings,
 } from "../../../baseNode/nodeInput";
 import {
   createDefaultOutputSettings,

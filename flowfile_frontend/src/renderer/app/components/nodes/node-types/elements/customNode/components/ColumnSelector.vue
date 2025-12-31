@@ -11,7 +11,7 @@
       :placeholder="schema.multiple ? 'Select columns...' : 'Select a column...'"
       style="width: 100%"
       size="large"
-      @update:modelValue="$emit('update:modelValue', $event)"
+      @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option
         v-for="column in filteredColumns"

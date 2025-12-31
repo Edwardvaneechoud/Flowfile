@@ -1,6 +1,4 @@
-import { ref, Ref } from 'vue'
 import { NodeFormula, FormulaInput, FieldInput } from '../../../baseNode/nodeInput'
-import axios from 'axios'
 
 export const createFormulaInput = (
   field_name = '',

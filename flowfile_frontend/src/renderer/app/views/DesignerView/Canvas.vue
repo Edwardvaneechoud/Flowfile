@@ -249,7 +249,7 @@ const copyValue = async (x: number, y: number) => {
 };
 
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
-  const { actionId, targetType, targetId, position } = actionData;
+  const { actionId, position } = actionData;
   if (actionId === "fit-view") {
     fitView();
   } else if (actionId === "zoom-in") {

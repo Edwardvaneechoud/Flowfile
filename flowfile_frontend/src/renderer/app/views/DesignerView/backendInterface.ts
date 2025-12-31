@@ -2,7 +2,7 @@
 // This file is kept for backward compatibility during migration
 
 import { FlowApi } from '../../api/flow.api'
-import type { NodeConnection, NodePromise, AxiosResponse } from '../../types'
+import type { NodeConnection, NodePromise } from '../../types'
 
 // Re-export types
 export type { AxiosResponse, NodeInputConnection, NodeOutputConnection, NodeConnection } from '../../types/canvas.types'

@@ -225,7 +225,7 @@ const handleDeleteSecret = async () => {
 
 // Load secrets when component mounts
 onMounted(() => {
-  loadSecrets().catch((error) => {
+  loadSecrets().catch(() => {
     alert("Failed to load secrets. Please try again.");
   });
 });

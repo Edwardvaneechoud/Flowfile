@@ -86,7 +86,7 @@ const graphSolverInput = ref<GraphSolverInput>({
 
 const nodeGraphSolver = ref<NodeGraphSolver | null>(null);
 
-const props = defineProps({ nodeId: { type: Number, required: true } });
+defineProps({ nodeId: { type: Number, required: true } });
 
 const singleColumnSelected = computed(() => selectedColumns.value.length === 1);
 
@@ -174,7 +174,7 @@ const removeColumnIfExists = (columnName: string) => {
   }
 };
 
-const removeColumn = (type: "from" | "to", _: string) => {
+const removeColumn = (type: "from" | "to") => {
   if (type === "from") {
     graphSolverInput.value.col_from = "";
   } else if (type === "to") {

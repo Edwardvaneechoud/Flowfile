@@ -7,21 +7,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getDockerStatus: () => ipcRenderer.invoke("get-docker-status"),
   getServicesStatus: () => ipcRenderer.invoke("get-services-status"),
   onStartupSuccess: (callback: () => void) => {
-    const listener = (_event: any) => callback();
+    const listener = () => callback();
     ipcRenderer.on("startup-success", listener);
     return () => {
       ipcRenderer.removeListener("startup-success", listener);
     };
   },
   onDockerStatusUpdate: (callback: (status: any) => void) => {
-    const listener = (_event: any, status: any) => callback(status);
+    const listener = (_: any, status: any) => callback(status);
     ipcRenderer.on("update-docker-status", listener);
     return () => {
       ipcRenderer.removeListener("update-docker-status", listener);
     };
   },
   onServicesStatusUpdate: (callback: (status: any) => void) => {
-    const listener = (_event: any, status: any) => callback(status);
+    const listener = (_: any, status: any) => callback(status);
     ipcRenderer.on("update-services-status", listener);
     return () => {
       ipcRenderer.removeListener("update-services-status", listener);

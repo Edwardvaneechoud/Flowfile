@@ -240,7 +240,7 @@ const fileBrowserRef = ref<{
   selectedFile: FileInfo | null;
 } | null>(null);
 
-const saveFlowAction = async (flowPath: string, _1: string, _2: string) => {
+const saveFlowAction = async (flowPath: string) => {
   // Check for deprecated .flowfile extension
   if (flowPath.toLowerCase().endsWith(".flowfile")) {
     ElMessage.error({
@@ -301,7 +301,7 @@ const toggleCodeGenerator = () => {
   nodeStore.toggleCodeGenerator();
 };
 
-const handleCreateAction = async (flowPath: string, _1: string, _2: string) => {
+const handleCreateAction = async (flowPath: string) => {
   if (!isValidSaveExtension(flowPath)) {
     ElMessage.error({
       message: "Invalid file extension. Please use .yaml or .yml",

@@ -151,16 +151,12 @@ import {
   fetchCloudStorageConnectionsInterfaces,
   createCloudStorageConnectionApi,
   deleteCloudStorageConnectionApi,
-  convertConnectionInterfacePytoTs,
 } from "./api";
 import {
   FullCloudStorageConnectionInterface,
   FullCloudStorageConnection,
-  CloudStorageType,
-  AuthMethod,
 } from "./CloudConnectionTypes";
 import CloudConnectionSettings from "./CloudConnectionSettings.vue";
-import { connect } from "http2";
 
 // State
 const connectionInterfaces = ref<FullCloudStorageConnectionInterface[]>([]);

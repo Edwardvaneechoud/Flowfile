@@ -10,9 +10,8 @@
 
 <script lang="ts" setup>
 import PopOver from "../../editor/PopOver.vue";
-import { defineProps } from "vue";
 
-const props = defineProps({
+defineProps({
   iconText: {
     type: String,
     default: "!", // Default to '!' if no input is provided

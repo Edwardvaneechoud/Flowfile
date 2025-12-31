@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, defineProps, defineEmits } from "vue";
-import { useNodeStore } from "../../stores/column-store";
-import { useVueFlow } from "@vue-flow/core";
+import { ref, onMounted, onUnmounted } from "vue";
 import { ContextMenuAction } from "./types";
 
 const props = defineProps({
@@ -29,7 +27,6 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["action"]);
-const nodeStore = useNodeStore();
 
 const menuRef = ref<HTMLElement | null>(null);
 

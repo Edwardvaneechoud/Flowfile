@@ -5,7 +5,7 @@
       :model-value="modelValue"
       size="large"
       inline-prompt
-      @update:modelValue="$emit('update:modelValue', $event)"
+      @update:model-value="$emit('update:modelValue', $event)"
     />
   </div>
 </template>

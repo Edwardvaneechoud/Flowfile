@@ -167,7 +167,7 @@
 
 <script lang="ts" setup>
 import { CodeLoader } from "vue-content-loader";
-import { ref, onMounted } from "vue";
+import { ref } from "vue";
 import { NodeCloudStorageReader } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
@@ -180,7 +180,7 @@ interface Props {
   nodeId: number;
 }
 
-const props = defineProps<Props>();
+defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageReader = ref<NodeCloudStorageReader | null>(null);

@@ -18,8 +18,6 @@ import { getImageUrl } from "../../../features/designer/utils";
 import { useNodeStore } from "../../../stores/column-store";
 import { NodeTitleInfo } from "./nodeInterfaces";
 const description = ref<string>("");
-const mouseX = ref(0);
-const mouseY = ref(0);
 const nodeStore = useNodeStore();
 
 const props = defineProps<{
@@ -33,34 +31,6 @@ const props = defineProps<{
 
 const isSelected = computed(() => {
   return nodeStore.node_id == props.nodeId;
-});
-
-const overlayStyle = computed(() => {
-  const overlayWidth = 400; // Overlay width
-  const overlayHeight = 200; // Overlay height
-  const buffer = 100; // A small buffer distance from the cursor to the overlay
-
-  let left = mouseX.value + buffer;
-  let top = mouseY.value + buffer;
-
-  // Ensuring the overlay doesn't go off the right edge of the viewport
-  if (left + overlayWidth > window.innerWidth) {
-    left -= overlayWidth + 2 * buffer; // Move it to the left of the cursor if it goes off the right
-  }
-
-  // Ensuring the overlay doesn't go off the bottom edge of the viewport
-  if (top + overlayHeight > window.innerHeight) {
-    top -= overlayHeight + 2 * buffer; // Move it above the cursor if it goes off the bottom
-  }
-
-  // Adjust if overlay goes off the left or top edge of the viewport (rare due to cursor positioning)
-  left = Math.max(left, buffer); // Ensure it doesn't go off-screen to the left
-  top = Math.max(top, buffer); // Ensure it doesn't go off-screen to the top
-
-  return {
-    top: `${top}px`,
-    left: `${left}px`,
-  };
 });
 
 interface ResultOutput {
@@ -184,11 +154,11 @@ const getNodeDescription = async () => {
   description.value = await nodeStore.getNodeDescription(props.nodeId);
 };
 
-const emits = defineEmits(["click"]);
+defineEmits(["click"]);
 
 watch(
   () => nodeStore.node_id,
-  (newNodeId, oldNodeId) => {
+  (newNodeId) => {
     if (String(newNodeId) === String(props.nodeId) && props.drawerComponent) {
       nodeStore.openDrawer(props.drawerComponent, props.nodeTitleInfo);
     }

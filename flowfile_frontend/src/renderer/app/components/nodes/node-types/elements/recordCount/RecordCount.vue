@@ -12,7 +12,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, nextTick, defineProps } from "vue";
+import { ref, onMounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeBase } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";

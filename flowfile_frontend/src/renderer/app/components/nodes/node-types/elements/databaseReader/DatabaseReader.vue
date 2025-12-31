@@ -152,7 +152,7 @@ interface Props {
 
 const connectionModeOptions = ref<ConnectionModeOption[]>(["inline", "reference"]);
 const connectionInterfaces = ref<FullDatabaseConnectionInterface[]>([]);
-const props = defineProps<Props>();
+defineProps<Props>();
 const nodeStore = useNodeStore();
 const nodeDatabaseReader = ref<null | NodeDatabaseReader>(null);
 const dataLoaded = ref(false);

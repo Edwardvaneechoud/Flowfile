@@ -20,8 +20,6 @@ interface DrawerComponentInstance {
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const drawerComponentInstance = ref<DrawerComponentInstance | null>(null);
-const nodeTitle = ref<string>("");
-const nodeIntro = ref<string>("");
 
 // Track last executed values to prevent double execution
 const lastExecutedState = ref({
@@ -55,7 +53,7 @@ const setupNewNode = () => {
 // Combined watcher for both drawerComponentInstance and node_id
 watch(
   [() => drawerComponentInstance.value, () => nodeStore.node_id],
-  async ([newInstance, newNodeId], [oldInstance, oldNodeId]) => {
+  async ([newInstance, newNodeId], [, oldNodeId]) => {
     // Only execute cleanup when node ID changes (not on initial mount or instance changes)
     const nodeIdChanged = newNodeId !== oldNodeId;
     // Execute cleanup only when node ID changes and we have a previous valid state

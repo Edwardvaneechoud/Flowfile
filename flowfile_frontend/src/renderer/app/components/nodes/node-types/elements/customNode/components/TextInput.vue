@@ -6,7 +6,7 @@
       :placeholder="schema.placeholder || 'Enter value...'"
       clearable
       size="large"
-      @update:modelValue="$emit('update:modelValue', $event)"
+      @update:model-value="$emit('update:modelValue', $event)"
     />
   </div>
 </template>
@@ -20,7 +20,10 @@ defineProps({
     type: Object as PropType<TextInputComponent>,
     required: true,
   },
-  modelValue: String,
+  modelValue: {
+    type: String,
+    default: "",
+  },
 });
 
 defineEmits(["update:modelValue"]);

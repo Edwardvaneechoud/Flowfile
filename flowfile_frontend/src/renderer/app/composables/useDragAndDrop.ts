@@ -56,41 +56,8 @@ function isValidModuleName(name: string): boolean {
   return /^[a-zA-Z][a-zA-Z0-9]*$/.test(name)
 }
 
-// Cache for node templates - persists for the entire session
-let nodeTemplatesCache: NodeTemplate[] | null = null
-let cachePromise: Promise<NodeTemplate[]> | null = null
-
 // Component cache to avoid re-importing
 const componentCache: Map<string, Promise<any>> = new Map()
-
-/**
- * Fetches node templates with caching to minimize API calls
- */
-async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
-  if (nodeTemplatesCache !== null) {
-    return nodeTemplatesCache
-  }
-
-  if (cachePromise !== null) {
-    return cachePromise
-  }
-
-  const { default: axios } = await import('axios')
-
-  cachePromise = axios.get('/node_list')
-    .then(response => {
-      const allNodes = response.data as NodeTemplate[]
-      nodeTemplatesCache = allNodes
-      return nodeTemplatesCache as NodeTemplate[]
-    })
-    .catch(error => {
-      console.error("Failed to fetch node templates:", error)
-      cachePromise = null
-      throw error
-    })
-
-  return cachePromise
-}
 
 /**
  * Gets a specific node template by item name

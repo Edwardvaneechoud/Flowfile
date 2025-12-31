@@ -53,13 +53,13 @@ const globalStoreInstance = reactive<IGlobalStore>({
       exportAsRaw: () => {
         return ''
       },
-      importRaw: (raw: string) => {
+      importRaw: (_raw: string) => {
         console.log('importing raw')
       },
-      setVisName: (name: string) => {
+      setVisName: (_name: string) => {
         console.log('setting visual name')
       },
-      importStoInfo: (stoInfo: any) => {
+      importStoInfo: (_stoInfo: any) => {
         console.log('importing sto info')
       },
     },

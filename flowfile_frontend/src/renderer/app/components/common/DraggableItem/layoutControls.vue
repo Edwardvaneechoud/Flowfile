@@ -206,15 +206,6 @@ const arrangeLayout = (layout: "tile" | "cascade") => {
   itemStore.arrangeItems(layout);
 };
 
-// Sync all groups
-const syncAllGroups = () => {
-  if (itemStore.groups) {
-    Object.keys(itemStore.groups).forEach((groupName) => {
-      itemStore.syncGroupDimensions(groupName);
-    });
-  }
-};
-
 // Reset layout using the store's resetLayout method without reloading
 const resetLayout = () => {
   itemStore.resetLayout();

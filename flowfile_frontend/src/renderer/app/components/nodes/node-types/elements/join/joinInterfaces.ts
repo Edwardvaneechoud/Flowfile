@@ -1,4 +1,4 @@
-import { SelectInput, NodeSelect, SelectInputs, NodeMultiInput } from '../../../baseNode/nodeInput'
+import { SelectInputs, NodeMultiInput } from '../../../baseNode/nodeInput'
 
 export interface NodeJoin extends NodeMultiInput {
   auto_generate_selection: boolean

@@ -17,7 +17,7 @@
 
 <script lang="ts" setup>
 // Props & Emits
-const props = defineProps<{
+defineProps<{
   modelValue: string;
 }>();
 

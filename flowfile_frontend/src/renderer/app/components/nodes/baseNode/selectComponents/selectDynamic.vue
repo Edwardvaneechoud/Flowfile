@@ -112,7 +112,6 @@ import {
   watchEffect,
   defineEmits,
   defineExpose,
-  watch,
 } from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";

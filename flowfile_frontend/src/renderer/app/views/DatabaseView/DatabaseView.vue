@@ -139,7 +139,6 @@ import {
   fetchDatabaseConnectionsInterfaces,
   createDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
-  convertConnectionInterfacePytoTs,
 } from "./api";
 import {
   FullDatabaseConnectionInterface,

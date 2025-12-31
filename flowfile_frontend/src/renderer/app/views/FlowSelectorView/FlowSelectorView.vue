@@ -55,6 +55,7 @@ const props = defineProps({
   onFlowChange: {
     type: Function,
     required: false,
+    default: null,
   },
 });
 
@@ -73,7 +74,6 @@ const saveConfirmationModal = ref<InstanceType<typeof SaveConfirmationModal> | n
 const saveDialog = ref<InstanceType<typeof SaveDialog> | null>(null);
 
 // Computed properties
-const hasFlows = computed(() => flows.value.length > 0);
 const selectedFlow = computed(
   () => flows.value.find((flow) => flow.flow_id === selectedFlowId.value) || null,
 );
@@ -123,11 +123,6 @@ const selectFlow = (flowId: number) => {
   }
 };
 
-// Create a new flow
-const createNewFlow = () => {
-  emit("create-flow");
-};
-
 // Show confirmation dialog before closing tab
 const confirmCloseTab = (flowId: number) => {
   pendingCloseFlowId.value = flowId;
@@ -141,7 +136,7 @@ const confirmCloseTab = (flowId: number) => {
 };
 
 // Handle saving flow before closing
-const handleSaveAndClose = async (flowId: number) => {
+const handleSaveAndClose = async (_flowId: number) => {
   // Show save dialog
   if (saveDialog.value) {
     saveDialog.value.open();

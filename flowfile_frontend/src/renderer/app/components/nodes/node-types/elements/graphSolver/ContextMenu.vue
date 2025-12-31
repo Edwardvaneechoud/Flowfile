@@ -14,9 +14,7 @@
 </template>
 
 <script lang="ts" setup>
-import { defineProps, defineEmits } from "vue";
-
-const props = defineProps({
+defineProps({
   position: { type: Object as () => { x: number; y: number }, required: true },
   options: {
     type: Array as () => { label: string; action: string; disabled: boolean }[],

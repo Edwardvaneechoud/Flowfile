@@ -1,5 +1,4 @@
 import { DefineComponent, markRaw } from "vue";
-import { toTitleCase } from "../../views/DesignerView/utils";
 
 const componentCache: Record<string, Promise<DefineComponent>> = {};
 

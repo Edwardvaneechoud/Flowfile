@@ -1,9 +1,5 @@
 import { DirectiveBinding, ObjectDirective } from 'vue'
 
-interface HTMLElementWithClickOutsideEvent extends HTMLElement {
-  clickOutsideEvent?: (event: Event) => void
-}
-
 const ClickOutsideDirective: ObjectDirective = {
   beforeMount(el: HTMLElement, binding: DirectiveBinding) {
     // Type assertion to bypass TypeScript's type checking

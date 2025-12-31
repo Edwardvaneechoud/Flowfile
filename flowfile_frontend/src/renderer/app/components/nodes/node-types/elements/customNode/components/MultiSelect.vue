@@ -10,7 +10,7 @@
       placeholder="Select one or more options"
       style="width: 100%"
       size="large"
-      @update:modelValue="$emit('update:modelValue', $event)"
+      @update:model-value="$emit('update:modelValue', $event)"
     >
       <el-option
         v-for="item in options"

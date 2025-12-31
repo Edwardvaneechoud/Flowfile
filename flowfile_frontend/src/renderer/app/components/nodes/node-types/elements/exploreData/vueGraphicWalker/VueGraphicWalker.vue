@@ -34,7 +34,7 @@ const internalStoreRef = ref<{ current: VizSpecStore | null }>({ current: null }
 type GraphicWalkerCombinedProps = ILocalVizAppProps & IRemoteComputationProps;
 
 const dummyComputation: IComputationFunction = async (
-  _payload: IDataQueryPayload,
+  _: IDataQueryPayload,
 ): Promise<IRow[]> => {
   console.warn(
     "Dummy computation function called. This should not happen when providing local data.",

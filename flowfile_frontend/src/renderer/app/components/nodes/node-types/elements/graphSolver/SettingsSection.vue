@@ -13,9 +13,7 @@
 </template>
 
 <script lang="ts" setup>
-import { defineProps, defineEmits } from "vue";
-
-const props = defineProps({
+defineProps({
   title: { type: String, required: true },
   item: { type: String, required: true }, // Changed to a single item
 });

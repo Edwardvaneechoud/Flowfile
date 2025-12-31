@@ -10,7 +10,7 @@
 <script lang="ts" setup>
 import { InputParquetTable } from "../../../baseNode/nodeInput";
 
-const props = defineProps<{
+defineProps<{
   modelValue: InputParquetTable;
 }>();
 </script>

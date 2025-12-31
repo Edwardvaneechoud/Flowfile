@@ -1,6 +1,5 @@
-
 import { ref, Ref } from 'vue'
-import { NodeData, nodeData as nodeDataRef, TableExample } from '../nodeInterfaces'
+import { TableExample } from '../nodeInterfaces'
 import { SelectInput, NodeSelect } from '../nodeInput'
 import axios from 'axios'
 
@@ -86,7 +85,7 @@ export const createNewSelect = (org_node_select: NodeSelect, node_id: number): N
 }
 
 export const insertSelect = async (select_input: NodeSelect): Promise<NodeSelect> => {
-  const response = await axios.post('/transform/select', select_input, {
+  await axios.post('/transform/select', select_input, {
     headers: {
       'Content-Type': 'application/json',
     },

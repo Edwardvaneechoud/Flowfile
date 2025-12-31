@@ -73,10 +73,6 @@ const formattedTime = computed(() => {
   });
 });
 
-const popoverTitle = computed(() => {
-  return isRunning.value ? "Processing Flow" : "Flow Idle";
-});
-
 const tooltipContent = computed(() => {
   let content = `Last updated: ${formattedTime.value}<br>`;
   // Get current run result for this flow if available

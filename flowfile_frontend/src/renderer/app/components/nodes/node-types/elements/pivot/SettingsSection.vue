@@ -16,9 +16,7 @@
 </template>
 
 <script lang="ts" setup>
-import { defineProps, defineEmits } from "vue";
-
-const props = defineProps({
+defineProps({
   title: { type: String, required: true },
   items: { type: Array as () => string[], required: true },
 });

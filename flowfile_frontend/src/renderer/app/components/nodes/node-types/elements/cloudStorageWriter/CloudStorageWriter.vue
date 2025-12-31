@@ -174,7 +174,7 @@ interface Props {
   nodeId: number;
 }
 
-const props = defineProps<Props>();
+defineProps<Props>();
 const nodeStore = useNodeStore();
 const dataLoaded = ref<boolean>(false);
 const nodeCloudStorageWriter = ref<NodeCloudStorageWriter | null>(null); // Use the writer type

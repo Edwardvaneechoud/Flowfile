@@ -7,7 +7,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted, nextTick, defineProps } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { UnionInput, NodeUnion } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";

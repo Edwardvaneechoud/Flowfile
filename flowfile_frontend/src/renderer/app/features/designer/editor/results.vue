@@ -63,6 +63,7 @@ const props = defineProps({
   tableViewer: {
     type: Object,
     required: false,
+    default: null,
   },
   onClick: {
     type: Function,
@@ -73,7 +74,6 @@ const props = defineProps({
 const nodeStore = useNodeStore();
 const runInformation = computed(() => nodeStore.currentRunResult);
 const selectedNode = ref<Element | null>(null);
-const timer = ref<number | null>(null);
 
 const formatTimestamp = (timestamp: number) => {
   return format(new Date(timestamp * 1000), "yyyy-MM-dd HH:mm:ss");

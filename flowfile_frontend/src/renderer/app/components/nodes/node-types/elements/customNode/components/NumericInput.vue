@@ -9,7 +9,7 @@
       controls-position="right"
       size="large"
       style="width: 100%"
-      @update:modelValue="$emit('update:modelValue', $event)"
+      @update:model-value="$emit('update:modelValue', $event)"
     />
   </div>
 </template>
@@ -23,7 +23,10 @@ defineProps({
     type: Object as PropType<NumericInputComponent>,
     required: true,
   },
-  modelValue: Number,
+  modelValue: {
+    type: Number,
+    default: 0,
+  },
 });
 
 defineEmits(["update:modelValue"]);

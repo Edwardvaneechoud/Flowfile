@@ -24,7 +24,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, watch, watchEffect } from "vue";
+import { ref, watchEffect } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { get_template_source_type } from "./createTemplateExternalSource";
 import { SampleUsers, NodeExternalSource } from "../../../baseNode/nodeInput";
