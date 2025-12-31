@@ -191,3 +191,94 @@ def get_all_nodes_from_standard_location() -> Dict[str, Type[CustomNodeBase]]:
     """
 
     return get_all_custom_nodes_with_validation()
+
+
+def load_single_node_from_file(file_path: Path) -> Type[CustomNodeBase] | None:
+    """
+    Load a single custom node from a specific file.
+
+    Args:
+        file_path: Path to the Python file containing the custom node
+
+    Returns:
+        The custom node class if found and valid, None otherwise
+    """
+    if not file_path.exists():
+        logger.error(f"File not found: {file_path}")
+        return None
+
+    try:
+        # Create a unique module name to avoid conflicts with cached modules
+        module_name = f"custom_node_{file_path.stem}_{id(file_path)}"
+
+        # Remove old module from sys.modules if it exists (for reloading)
+        old_module_name = file_path.stem
+        if old_module_name in sys.modules:
+            del sys.modules[old_module_name]
+
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+            for name, obj in inspect.getmembers(module):
+                if (inspect.isclass(obj) and
+                        issubclass(obj, CustomNodeBase) and
+                        obj is not CustomNodeBase):
+
+                    try:
+                        _obj = obj()
+                        # Validate required attributes
+                        if not hasattr(_obj, 'node_name'):
+                            raise ValueError(f"Node {name} must have a node_name attribute")
+                        if not hasattr(_obj, 'settings_schema'):
+                            raise ValueError(f"Node {name} must have a settings_schema attribute")
+                        if not hasattr(_obj, 'process'):
+                            raise ValueError(f"Node {name} must have a process method")
+
+                        logger.info(f"✓ Loaded: {_obj.node_name} from {file_path.name}")
+                        return obj
+                    except Exception as e:
+                        logger.error(f"Error validating node {name}: {e}")
+                        raise
+
+    except SyntaxError as e:
+        logger.error(f"Syntax error in {file_path}: {e}")
+        raise
+    except ImportError as e:
+        logger.error(f"Import error in {file_path}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error loading {file_path}: {e}")
+        raise
+
+    return None
+
+
+def unload_node_by_name(node_name: str) -> bool:
+    """
+    Remove a node from sys.modules cache by its name.
+    This helps ensure the node can be cleanly reloaded later.
+
+    Args:
+        node_name: The name of the node to unload
+
+    Returns:
+        True if any modules were removed, False otherwise
+    """
+    # Convert node name to potential module names
+    module_stem = node_name.lower().replace(' ', '_')
+
+    # Find and remove any matching modules from sys.modules
+    modules_to_remove = [
+        key for key in sys.modules.keys()
+        if key == module_stem or key.startswith(f"custom_node_{module_stem}")
+    ]
+
+    for mod_name in modules_to_remove:
+        del sys.modules[mod_name]
+        logger.info(f"Removed module from cache: {mod_name}")
+
+    return len(modules_to_remove) > 0

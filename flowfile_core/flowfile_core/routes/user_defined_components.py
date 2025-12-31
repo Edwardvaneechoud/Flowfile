@@ -11,7 +11,12 @@ from flowfile_core import flow_file_handler
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, add_to_custom_node_store
+from flowfile_core.configs.node_store import (
+    CUSTOM_NODE_STORE,
+    add_to_custom_node_store,
+    remove_from_custom_node_store,
+    load_single_node_from_file,
+)
 # File handling
 from flowfile_core.schemas import input_schema
 from flowfile_core.utils.utils import camel_case_to_snake_case
@@ -118,28 +123,12 @@ def save_custom_node(request: SaveCustomNodeRequest):
         logger.error(f"Failed to save custom node: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
-    # Try to load and register the node
+    # Try to load and register the node using the centralized loader
     try:
-        import importlib.util
-        import inspect
-        from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
-
-        module_name = safe_name[:-3]  # Remove .py
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Find CustomNodeBase subclasses
-            for name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and
-                    issubclass(obj, CustomNodeBase) and
-                    obj is not CustomNodeBase):
-                    # Register the node
-                    add_to_custom_node_store(obj)
-                    logger.info(f"Registered custom node: {obj().node_name}")
-
+        node_class = load_single_node_from_file(file_path)
+        if node_class:
+            add_to_custom_node_store(node_class)
+            logger.info(f"Registered custom node: {node_class().node_name}")
     except Exception as e:
         logger.warning(f"Node saved but failed to load: {e}")
         # Don't fail the request - the file is saved, it just couldn't be loaded yet
@@ -312,14 +301,13 @@ def delete_custom_node(file_name: str) -> Dict[str, Any]:
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Node file '{safe_name}' not found")
 
-    # Try to find and unregister the node from the store
+    # Try to find and unregister the node from all stores
     try:
         info = _extract_node_info_from_file(file_path)
         if info.node_name:
-            # Remove from CUSTOM_NODE_STORE if present
+            # Use the centralized remove function which cleans up all stores
             node_type_key = info.node_name.lower().replace(' ', '_')
-            if node_type_key in CUSTOM_NODE_STORE:
-                del CUSTOM_NODE_STORE[node_type_key]
+            if remove_from_custom_node_store(node_type_key):
                 logger.info(f"Unregistered custom node: {info.node_name}")
     except Exception as e:
         logger.warning(f"Could not unregister node: {e}")

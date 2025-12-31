@@ -7,6 +7,7 @@ from polars.testing import assert_frame_equal
 from flowfile_core.flowfile.node_designer.ui_components import (
     TextInput,
     NumericInput,
+    SliderInput,
     ToggleSwitch,
     SingleSelect,
     MultiSelect,
@@ -81,6 +82,7 @@ def sample_components() -> Dict[str, Any]:
     return {
         "text_input": TextInput(label="Name", default="Default Name", placeholder="Enter name"),
         "num_input": NumericInput(label="Count", default=5),
+        "slider_input": SliderInput(label="Threshold", min_value=0, max_value=100, default=50),
         "toggle": ToggleSwitch(label="Enable", default=True),
         "single_select": SingleSelect(label="Mode", options=["A", "B", "C"], default="A"),
         "multi_select": MultiSelect(label="Tags", options=["T1", "T2"], default=["T1"]),
@@ -126,6 +128,37 @@ def test_numeric_input_initialization():
     assert comp.value == 10
     comp.set_value(25)
     assert comp.value == 25
+
+
+def test_slider_input_initialization():
+    """Tests SliderInput initialization and default value handling."""
+    comp = SliderInput(min_value=0, max_value=100, step=5, default=50)
+    assert comp.value == 50
+    assert comp.min_value == 0
+    assert comp.max_value == 100
+    assert comp.step == 5
+    comp.set_value(75)
+    assert comp.value == 75
+
+
+def test_slider_input_defaults_to_min_value():
+    """Tests that SliderInput defaults to min_value when no default is provided."""
+    comp = SliderInput(min_value=10, max_value=200)
+    assert comp.value == 10
+
+
+def test_slider_input_with_default():
+    """Tests SliderInput with explicit default value."""
+    comp = SliderInput(min_value=0, max_value=100, default=25)
+    assert comp.value == 25
+
+
+def test_slider_input_component_type():
+    """Tests that SliderInput has the correct component_type."""
+    comp = SliderInput()
+    assert comp.component_type == "SliderInput"
+    assert comp.input_type == "number"
+
 
 def test_toggle_switch_initialization_and_bool():
     """Tests ToggleSwitch default value, updates, and boolean representation."""
