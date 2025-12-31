@@ -304,17 +304,22 @@ def delete_custom_node(file_name: str) -> Dict[str, Any]:
     # Try to find and unregister the node from all stores
     try:
         info = _extract_node_info_from_file(file_path)
-        logger.info(f"Extracted node info: node_name='{info.node_name}', file_name='{info.file_name}'")
+        file_stem = file_path.stem  # filename without .py extension
+        logger.info(f"Extracted node info: node_name='{info.node_name}', file_name='{info.file_name}', file_stem='{file_stem}'")
+
+        # Use the centralized remove function which cleans up all stores
+        # Pass both the computed key from node_name and the file_stem as fallback
         if info.node_name:
-            # Use the centralized remove function which cleans up all stores
             node_type_key = info.node_name.lower().replace(' ', '_')
             logger.info(f"Computed node_type_key: '{node_type_key}'")
-            if remove_from_custom_node_store(node_type_key):
-                logger.info(f"Unregistered custom node: {info.node_name}")
-            else:
-                logger.warning(f"Node '{node_type_key}' was not found in stores during unregister")
         else:
-            logger.warning(f"Could not extract node_name from file {file_path}")
+            node_type_key = file_stem
+            logger.info(f"Using file_stem as node_type_key: '{node_type_key}'")
+
+        if remove_from_custom_node_store(node_type_key, file_stem=file_stem):
+            logger.info(f"Unregistered custom node: {info.node_name or file_stem}")
+        else:
+            logger.warning(f"Node '{node_type_key}' was not found in stores during unregister")
     except Exception as e:
         logger.warning(f"Could not unregister node: {e}")
 
