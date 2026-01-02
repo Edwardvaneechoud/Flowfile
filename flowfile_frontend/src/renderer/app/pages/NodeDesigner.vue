@@ -986,11 +986,6 @@ function validateSettings(): ValidationError[] {
     errors.push({ field: "node_category", message: "Category is required" });
   }
 
-  // Validate sections
-  if (sections.value.length === 0) {
-    errors.push({ field: "sections", message: "At least one section is required" });
-  }
-
   // Check for duplicate section names
   const sectionNames = new Set<string>();
   sections.value.forEach((section, index) => {
@@ -999,11 +994,6 @@ function validateSettings(): ValidationError[] {
       errors.push({ field: `section_${index}`, message: `Duplicate section name: "${name}"` });
     }
     sectionNames.add(name);
-
-    // Check for empty sections
-    if (section.components.length === 0) {
-      errors.push({ field: `section_${index}`, message: `Section "${section.title || name}" has no components` });
-    }
 
     // Check for duplicate field names within section
     const fieldNames = new Set<string>();
