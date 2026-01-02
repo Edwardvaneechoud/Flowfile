@@ -764,7 +764,85 @@ function schemaCompletions(context: CompletionContext): CompletionResult | null 
     };
   }
 
-  // Common Polars completions
+  // Check for LazyFrame method completion: lf. or any_var.
+  // This handles cases like "lf.with_" -> should complete to "with_columns()" not "lf.with_columns()"
+  const lfMethodMatch = beforeCursor.match(/(\w+)\.(\w*)$/);
+  if (lfMethodMatch) {
+    const varName = lfMethodMatch[1];
+    const typed = lfMethodMatch[2];
+
+    // LazyFrame methods (without the lf. prefix since user already typed it)
+    const lazyFrameMethods = [
+      // Selection & Filtering
+      { label: "select", type: "method", info: "Select columns", apply: 'select()' },
+      { label: "filter", type: "method", info: "Filter rows by condition", apply: 'filter()' },
+      { label: "with_columns", type: "method", info: "Add or modify columns", apply: 'with_columns()' },
+      { label: "drop", type: "method", info: "Drop columns", apply: 'drop()' },
+      { label: "rename", type: "method", info: "Rename columns", apply: 'rename({})' },
+      { label: "cast", type: "method", info: "Cast column types", apply: 'cast({})' },
+
+      // Sorting & Limiting
+      { label: "sort", type: "method", info: "Sort by columns", apply: 'sort("")' },
+      { label: "head", type: "method", info: "Get first n rows", apply: 'head()' },
+      { label: "tail", type: "method", info: "Get last n rows", apply: 'tail()' },
+      { label: "limit", type: "method", info: "Limit number of rows", apply: 'limit()' },
+      { label: "slice", type: "method", info: "Slice rows by offset and length", apply: 'slice()' },
+      { label: "unique", type: "method", info: "Get unique rows", apply: 'unique()' },
+
+      // Grouping & Aggregation
+      { label: "group_by", type: "method", info: "Group by columns", apply: 'group_by().agg()' },
+      { label: "agg", type: "method", info: "Aggregate expressions", apply: 'agg()' },
+      { label: "rolling", type: "method", info: "Rolling window operations", apply: 'rolling()' },
+      { label: "group_by_dynamic", type: "method", info: "Dynamic time-based grouping", apply: 'group_by_dynamic()' },
+
+      // Joins
+      { label: "join", type: "method", info: "Join with another LazyFrame", apply: 'join(other, on="", how="left")' },
+      { label: "join_asof", type: "method", info: "As-of join for time series", apply: 'join_asof()' },
+      { label: "cross_join", type: "method", info: "Cross join (cartesian product)", apply: 'cross_join()' },
+
+      // Reshaping
+      { label: "explode", type: "method", info: "Explode list column to rows", apply: 'explode("")' },
+      { label: "unpivot", type: "method", info: "Unpivot wide to long format", apply: 'unpivot()' },
+      { label: "pivot", type: "method", info: "Pivot long to wide format", apply: 'pivot()' },
+      { label: "unnest", type: "method", info: "Unnest struct column", apply: 'unnest("")' },
+
+      // Missing data
+      { label: "fill_null", type: "method", info: "Fill null values", apply: 'fill_null()' },
+      { label: "fill_nan", type: "method", info: "Fill NaN values", apply: 'fill_nan()' },
+      { label: "drop_nulls", type: "method", info: "Drop rows with nulls", apply: 'drop_nulls()' },
+      { label: "interpolate", type: "method", info: "Interpolate null values", apply: 'interpolate()' },
+
+      // Other
+      { label: "with_row_index", type: "method", info: "Add row index column", apply: 'with_row_index("index")' },
+      { label: "reverse", type: "method", info: "Reverse row order", apply: 'reverse()' },
+      { label: "collect", type: "method", info: "Execute and collect to DataFrame", apply: 'collect()' },
+      { label: "lazy", type: "method", info: "Convert to LazyFrame", apply: 'lazy()' },
+
+      // Expression methods (chainable)
+      { label: "alias", type: "method", info: "Rename expression result", apply: 'alias("")' },
+      { label: "is_null", type: "method", info: "Check for null", apply: 'is_null()' },
+      { label: "is_not_null", type: "method", info: "Check for not null", apply: 'is_not_null()' },
+      { label: "sum", type: "method", info: "Sum values", apply: 'sum()' },
+      { label: "mean", type: "method", info: "Calculate mean", apply: 'mean()' },
+      { label: "min", type: "method", info: "Get minimum", apply: 'min()' },
+      { label: "max", type: "method", info: "Get maximum", apply: 'max()' },
+      { label: "count", type: "method", info: "Count values", apply: 'count()' },
+      { label: "first", type: "method", info: "Get first value", apply: 'first()' },
+      { label: "last", type: "method", info: "Get last value", apply: 'last()' },
+      { label: "str", type: "property", info: "String operations namespace", apply: 'str.' },
+      { label: "dt", type: "property", info: "Datetime operations namespace", apply: 'dt.' },
+      { label: "list", type: "property", info: "List operations namespace", apply: 'list.' },
+      { label: "over", type: "method", info: "Window function over groups", apply: 'over("")' },
+    ];
+
+    return {
+      from: context.pos - typed.length,
+      options: lazyFrameMethods,
+      validFor: /^\w*$/,
+    };
+  }
+
+  // Common Polars completions (for standalone typing, not after a dot)
   const wordMatch = context.matchBefore(/\w+/);
   if (!wordMatch && !context.explicit) return null;
 
