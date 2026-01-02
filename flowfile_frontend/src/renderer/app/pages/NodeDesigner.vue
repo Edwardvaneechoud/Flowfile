@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="header-left">
         <h2 class="page-title">Node Designer</h2>
-        <p class="page-description">Design custom nodes visually and generate Python code</p>
+        <p class="page-description">Design custom nodes visually</p>
       </div>
       <div class="header-actions">
         <button class="btn btn-secondary" @click="openNodeBrowser">
@@ -97,7 +97,7 @@
                   placeholder="A custom node for data processing"
                 />
               </div>
-              <div class="form-field">
+              <!-- <div class="form-field">
                 <label for="node-inputs">Number of Inputs</label>
                 <input
                   id="node-inputs"
@@ -107,18 +107,7 @@
                   max="10"
                   class="form-input"
                 />
-              </div>
-              <div class="form-field">
-                <label for="node-outputs">Number of Outputs</label>
-                <input
-                  id="node-outputs"
-                  v-model.number="nodeMetadata.number_of_outputs"
-                  type="number"
-                  min="1"
-                  max="10"
-                  class="form-input"
-                />
-              </div>
+              </div> -->
             </div>
           </div>
 
