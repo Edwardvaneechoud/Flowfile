@@ -171,15 +171,6 @@ def test_numeric_input_initialization():
     assert comp.value == 25
 
 
-def test_node_settings_with_multi_column_selector(node_settings_with_multi_column_selector):
-    breakpoint()
-    r = node_settings_with_multi_column_selector()
-    print(r)
-
-
-
-
-
 def test_slider_input_initialization():
     """Tests SliderInput initialization and default value handling."""
     comp = SliderInput(min_value=0, max_value=100, step=5, default=50)
@@ -540,6 +531,8 @@ class TestNumericStringAliasBug:
         }
 
         assert set(selector.data_types_filter) == expected
+
+
 
 
 if __name__ == "__main__":
