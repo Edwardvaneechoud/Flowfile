@@ -97,7 +97,7 @@
                   placeholder="A custom node for data processing"
                 />
               </div>
-              <!-- <div class="form-field">
+              <div class="form-field">
                 <label for="node-inputs">Number of Inputs</label>
                 <input
                   id="node-inputs"
@@ -107,7 +107,7 @@
                   max="10"
                   class="form-input"
                 />
-              </div> -->
+              </div>
             </div>
           </div>
 
