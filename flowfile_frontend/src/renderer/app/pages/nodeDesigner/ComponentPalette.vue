@@ -19,16 +19,16 @@
 </template>
 
 <script setup lang="ts">
-import { availableComponents } from './constants';
-import type { AvailableComponent } from './types';
+import { availableComponents } from "./constants";
+import type { AvailableComponent } from "./types";
 
 const emit = defineEmits<{
-  (e: 'dragstart', event: DragEvent, component: AvailableComponent): void;
+  (e: "dragstart", event: DragEvent, component: AvailableComponent): void;
 }>();
 
 function handleDragStart(event: DragEvent, component: AvailableComponent) {
-  event.dataTransfer?.setData('component_type', component.type);
-  emit('dragstart', event, component);
+  event.dataTransfer?.setData("component_type", component.type);
+  emit("dragstart", event, component);
 }
 </script>
 

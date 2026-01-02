@@ -21,8 +21,8 @@
 </template>
 
 <script setup lang="ts">
-import { Codemirror } from 'vue-codemirror';
-import type { Extension } from '@codemirror/state';
+import { Codemirror } from "vue-codemirror";
+import type { Extension } from "@codemirror/state";
 
 defineProps<{
   modelValue: string;
@@ -30,7 +30,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void;
+  (e: "update:modelValue", value: string): void;
 }>();
 </script>
 
@@ -64,7 +64,7 @@ const emit = defineEmits<{
   border-radius: 4px;
   font-size: 0.75rem;
   border: 1px solid var(--border-color, #e0e0e0);
-  font-family: 'Fira Code', 'Monaco', monospace;
+  font-family: "Fira Code", "Monaco", monospace;
 }
 
 .code-editor-wrapper {

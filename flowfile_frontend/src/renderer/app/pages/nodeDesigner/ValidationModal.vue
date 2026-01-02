@@ -20,16 +20,14 @@
         </ul>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-primary" @click="emit('close')">
-          OK
-        </button>
+        <button class="btn btn-primary" @click="emit('close')">OK</button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { ValidationError } from './types';
+import type { ValidationError } from "./types";
 
 defineProps<{
   show: boolean;
@@ -37,7 +35,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'close'): void;
+  (e: "close"): void;
 }>();
 </script>
 

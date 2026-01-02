@@ -1,9 +1,5 @@
 <template>
-  <div
-    class="section-card"
-    :class="{ selected: isSelected }"
-    @click="emit('select')"
-  >
+  <div class="section-card" :class="{ selected: isSelected }" @click="emit('select')">
     <div class="section-header">
       <div class="section-fields">
         <div class="section-field">
@@ -34,11 +30,7 @@
       </button>
     </div>
 
-    <div
-      class="section-components"
-      @dragover.prevent
-      @drop="handleDrop"
-    >
+    <div class="section-components" @dragover.prevent @drop="handleDrop">
       <div
         v-for="(component, compIndex) in section.components"
         :key="compIndex"
@@ -64,8 +56,8 @@
 </template>
 
 <script setup lang="ts">
-import type { DesignerSection } from './types';
-import { getComponentIcon } from './constants';
+import type { DesignerSection } from "./types";
+import { getComponentIcon } from "./constants";
 
 const props = defineProps<{
   section: DesignerSection;
@@ -74,27 +66,27 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'select'): void;
-  (e: 'remove'): void;
-  (e: 'selectComponent', compIndex: number): void;
-  (e: 'removeComponent', compIndex: number): void;
-  (e: 'drop', event: DragEvent): void;
-  (e: 'updateName', name: string): void;
-  (e: 'updateTitle', title: string): void;
+  (e: "select"): void;
+  (e: "remove"): void;
+  (e: "selectComponent", compIndex: number): void;
+  (e: "removeComponent", compIndex: number): void;
+  (e: "drop", event: DragEvent): void;
+  (e: "updateName", name: string): void;
+  (e: "updateTitle", title: string): void;
 }>();
 
 function handleNameChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  emit('updateName', target.value);
+  emit("updateName", target.value);
 }
 
 function handleTitleChange(event: Event) {
   const target = event.target as HTMLInputElement;
-  emit('updateTitle', target.value);
+  emit("updateTitle", target.value);
 }
 
 function handleDrop(event: DragEvent) {
-  emit('drop', event);
+  emit("drop", event);
 }
 </script>
 
@@ -153,7 +145,7 @@ function handleDrop(event: DragEvent) {
 }
 
 .section-name-input {
-  font-family: 'Fira Code', 'Monaco', monospace;
+  font-family: "Fira Code", "Monaco", monospace;
   font-size: 0.75rem;
 }
 

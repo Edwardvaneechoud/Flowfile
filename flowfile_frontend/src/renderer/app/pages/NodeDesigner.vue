@@ -121,13 +121,18 @@
               :key="sectionIndex"
               :section="section"
               :is-selected="selectedSectionIndex === sectionIndex"
-              :selected-component-index="selectedSectionIndex === sectionIndex ? selectedComponentIndex : null"
+              :selected-component-index="
+                selectedSectionIndex === sectionIndex ? selectedComponentIndex : null
+              "
               @select="selectSection(sectionIndex)"
               @remove="removeSection(sectionIndex)"
               @select-component="selectComponent(sectionIndex, $event)"
               @remove-component="removeComponent(sectionIndex, $event)"
               @drop="handleDrop($event, sectionIndex)"
-              @update-name="section.name = $event; sanitizeSectionName(sectionIndex)"
+              @update-name="
+                section.name = $event;
+                sanitizeSectionName(sectionIndex);
+              "
               @update-title="section.title = $event"
             />
 
@@ -138,18 +143,12 @@
           </div>
 
           <!-- Python Code Editor -->
-          <ProcessCodeEditor
-            v-model="processCode"
-            :extensions="autocompletion.extensions"
-          />
+          <ProcessCodeEditor v-model="processCode" :extensions="autocompletion.extensions" />
         </div>
       </div>
 
       <!-- Right Panel: Property Editor -->
-      <PropertyEditor
-        :component="selectedComponent"
-        @update="handlePropertyUpdate"
-      />
+      <PropertyEditor :component="selectedComponent" @update="handlePropertyUpdate" />
     </div>
 
     <!-- Modals -->
@@ -184,17 +183,17 @@
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted } from 'vue';
-import axios from 'axios';
+import { watch, onMounted } from "vue";
+import axios from "axios";
 
 // Child components
-import ComponentPalette from './nodeDesigner/ComponentPalette.vue';
-import SectionCard from './nodeDesigner/SectionCard.vue';
-import PropertyEditor from './nodeDesigner/PropertyEditor.vue';
-import ProcessCodeEditor from './nodeDesigner/ProcessCodeEditor.vue';
-import CodePreviewModal from './nodeDesigner/CodePreviewModal.vue';
-import ValidationModal from './nodeDesigner/ValidationModal.vue';
-import NodeBrowserModal from './nodeDesigner/NodeBrowserModal.vue';
+import ComponentPalette from "./nodeDesigner/ComponentPalette.vue";
+import SectionCard from "./nodeDesigner/SectionCard.vue";
+import PropertyEditor from "./nodeDesigner/PropertyEditor.vue";
+import ProcessCodeEditor from "./nodeDesigner/ProcessCodeEditor.vue";
+import CodePreviewModal from "./nodeDesigner/CodePreviewModal.vue";
+import ValidationModal from "./nodeDesigner/ValidationModal.vue";
+import NodeBrowserModal from "./nodeDesigner/NodeBrowserModal.vue";
 
 // Composables
 import {
@@ -205,8 +204,8 @@ import {
   useNodeBrowser,
   usePolarsAutocompletion,
   toSnakeCase,
-} from './nodeDesigner/composables';
-import type { DesignerComponent } from './nodeDesigner/types';
+} from "./nodeDesigner/composables";
+import type { DesignerComponent } from "./nodeDesigner/types";
 
 // Initialize composables - destructure for proper TypeScript support
 const {
@@ -236,11 +235,9 @@ const autocompletion = usePolarsAutocompletion(() => sections.value);
 const storage = useSessionStorage(getState, setState, resetState);
 
 // Setup auto-save and load on mount
-watch(
-  [() => ({ ...nodeMetadata }), sections, processCode],
-  () => storage.saveToSessionStorage(),
-  { deep: true }
-);
+watch([() => ({ ...nodeMetadata }), sections, processCode], () => storage.saveToSessionStorage(), {
+  deep: true,
+});
 
 onMounted(() => {
   storage.loadFromSessionStorage();
@@ -256,11 +253,7 @@ function handlePreview() {
 }
 
 async function handleSave() {
-  const errors = validation.validateSettings(
-    nodeMetadata,
-    sections.value,
-    processCode.value
-  );
+  const errors = validation.validateSettings(nodeMetadata, sections.value, processCode.value);
 
   if (errors.length > 0) {
     validation.showErrors(errors);
@@ -268,22 +261,22 @@ async function handleSave() {
   }
 
   const code = codeGen.generateCode(nodeMetadata, sections.value, processCode.value);
-  const fileName = toSnakeCase(nodeMetadata.node_name) + '.py';
+  const fileName = toSnakeCase(nodeMetadata.node_name) + ".py";
 
   try {
-    await axios.post('/user_defined_components/save-custom-node', {
+    await axios.post("/user_defined_components/save-custom-node", {
       file_name: fileName,
       code: code,
     });
     alert(`Node "${nodeMetadata.node_name}" saved successfully!`);
   } catch (error: any) {
-    const errorMsg = error.response?.data?.detail || error.message || 'Failed to save node';
+    const errorMsg = error.response?.data?.detail || error.message || "Failed to save node";
     alert(`Error saving node: ${errorMsg}`);
   }
 }
 
 function handleDrop(event: DragEvent, sectionIndex: number) {
-  const componentType = event.dataTransfer?.getData('component_type');
+  const componentType = event.dataTransfer?.getData("component_type");
   if (!componentType) return;
 
   const compCount = sections.value[sectionIndex].components.length + 1;
@@ -291,23 +284,23 @@ function handleDrop(event: DragEvent, sectionIndex: number) {
     component_type: componentType,
     field_name: `${toSnakeCase(componentType)}_${compCount}`,
     label: `${componentType} ${compCount}`,
-    options_source: 'static',
-    options_string: '',
+    options_source: "static",
+    options_string: "",
   };
 
   // Set defaults based on type
-  if (componentType === 'TextInput') {
-    newComponent.default = '';
-    newComponent.placeholder = '';
-  } else if (componentType === 'NumericInput') {
+  if (componentType === "TextInput") {
+    newComponent.default = "";
+    newComponent.placeholder = "";
+  } else if (componentType === "NumericInput") {
     newComponent.default = 0;
-  } else if (componentType === 'ToggleSwitch') {
+  } else if (componentType === "ToggleSwitch") {
     newComponent.default = false;
-  } else if (componentType === 'ColumnSelector') {
+  } else if (componentType === "ColumnSelector") {
     newComponent.required = false;
     newComponent.multiple = false;
-    newComponent.data_types = 'ALL';
-  } else if (componentType === 'SliderInput') {
+    newComponent.data_types = "ALL";
+  } else if (componentType === "SliderInput") {
     newComponent.min_value = 0;
     newComponent.max_value = 100;
     newComponent.step = 1;
@@ -324,7 +317,7 @@ function handlePropertyUpdate(field: string, value: any) {
 </script>
 
 <style scoped>
-@import './nodeDesigner/nodeDesigner.css';
+@import "./nodeDesigner/nodeDesigner.css";
 
 .node-designer-container {
   padding: 1rem;

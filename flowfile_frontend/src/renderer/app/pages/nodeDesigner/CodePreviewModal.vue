@@ -17,9 +17,7 @@
           <i class="fa-solid fa-copy"></i>
           Copy Code
         </button>
-        <button class="btn btn-primary" @click="emit('close')">
-          Close
-        </button>
+        <button class="btn btn-primary" @click="emit('close')">Close</button>
       </div>
     </div>
   </div>
@@ -32,12 +30,12 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'close'): void;
+  (e: "close"): void;
 }>();
 
 function copyCode() {
   navigator.clipboard.writeText(arguments[0]);
-  alert('Code copied to clipboard!');
+  alert("Code copied to clipboard!");
 }
 </script>
 
@@ -54,7 +52,7 @@ function copyCode() {
 }
 
 .code-preview code {
-  font-family: 'Fira Code', 'Monaco', monospace;
+  font-family: "Fira Code", "Monaco", monospace;
   font-size: 0.8125rem;
   color: #abb2bf;
   white-space: pre;

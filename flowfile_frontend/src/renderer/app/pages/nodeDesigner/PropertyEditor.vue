@@ -233,18 +233,18 @@
 </template>
 
 <script setup lang="ts">
-import type { DesignerComponent } from './types';
+import type { DesignerComponent } from "./types";
 
 const props = defineProps<{
   component: DesignerComponent | null;
 }>();
 
 const emit = defineEmits<{
-  (e: 'update', field: string, value: any): void;
+  (e: "update", field: string, value: any): void;
 }>();
 
 function updateField(field: string, value: any) {
-  emit('update', field, value);
+  emit("update", field, value);
 }
 </script>
 

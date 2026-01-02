@@ -5,7 +5,7 @@
       <div class="modal-header">
         <h3 class="modal-title">
           <i class="fa-solid fa-folder-open"></i>
-          {{ viewingNodeCode ? viewingNodeName : 'Browse Custom Nodes' }}
+          {{ viewingNodeCode ? viewingNodeName : "Browse Custom Nodes" }}
         </h3>
         <button class="modal-close" @click="emit('close')">
           <i class="fa-solid fa-times"></i>
@@ -50,7 +50,7 @@
               </div>
               <div class="node-card-body">
                 <span class="node-category">{{ node.node_category }}</span>
-                <p class="node-description">{{ node.intro || 'No description' }}</p>
+                <p class="node-description">{{ node.intro || "No description" }}</p>
               </div>
               <div class="node-card-footer">
                 <span class="node-file">{{ node.file_name }}</span>
@@ -69,7 +69,7 @@
           Delete
         </button>
         <button class="btn btn-secondary" @click="emit('close')">
-          {{ viewingNodeCode ? 'Close' : 'Cancel' }}
+          {{ viewingNodeCode ? "Close" : "Cancel" }}
         </button>
       </div>
     </div>
@@ -88,13 +88,14 @@
         </button>
       </div>
       <div class="modal-content">
-        <p>Are you sure you want to delete <strong>{{ viewingNodeName }}</strong>?</p>
+        <p>
+          Are you sure you want to delete <strong>{{ viewingNodeName }}</strong
+          >?
+        </p>
         <p class="delete-warning">This action cannot be undone.</p>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-secondary" @click="emit('cancelDelete')">
-          Cancel
-        </button>
+        <button class="btn btn-secondary" @click="emit('cancelDelete')">Cancel</button>
         <button class="btn btn-danger" @click="emit('delete')">
           <i class="fa-solid fa-trash"></i>
           Delete
@@ -105,9 +106,9 @@
 </template>
 
 <script setup lang="ts">
-import { Codemirror } from 'vue-codemirror';
-import type { Extension } from '@codemirror/state';
-import type { CustomNodeInfo } from './types';
+import { Codemirror } from "vue-codemirror";
+import type { Extension } from "@codemirror/state";
+import type { CustomNodeInfo } from "./types";
 
 defineProps<{
   show: boolean;
@@ -120,12 +121,12 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'viewNode', fileName: string): void;
-  (e: 'back'): void;
-  (e: 'confirmDelete'): void;
-  (e: 'cancelDelete'): void;
-  (e: 'delete'): void;
+  (e: "close"): void;
+  (e: "viewNode", fileName: string): void;
+  (e: "back"): void;
+  (e: "confirmDelete"): void;
+  (e: "cancelDelete"): void;
+  (e: "delete"): void;
 }>();
 </script>
 
@@ -235,7 +236,7 @@ const emit = defineEmits<{
 .node-file {
   font-size: 0.75rem;
   color: var(--text-secondary);
-  font-family: 'Fira Code', 'Monaco', monospace;
+  font-family: "Fira Code", "Monaco", monospace;
 }
 
 .node-code-view {
