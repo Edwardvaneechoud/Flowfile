@@ -45,7 +45,7 @@
                 <label for="node-name">Node Name *</label>
                 <input
                   id="node-name"
-                  v-model="state.nodeMetadata.node_name"
+                  v-model="nodeMetadata.node_name"
                   type="text"
                   class="form-input"
                   placeholder="My Custom Node"
@@ -55,7 +55,7 @@
                 <label for="node-category">Category *</label>
                 <input
                   id="node-category"
-                  v-model="state.nodeMetadata.node_category"
+                  v-model="nodeMetadata.node_category"
                   type="text"
                   class="form-input"
                   placeholder="Custom"
@@ -65,7 +65,7 @@
                 <label for="node-title">Title</label>
                 <input
                   id="node-title"
-                  v-model="state.nodeMetadata.title"
+                  v-model="nodeMetadata.title"
                   type="text"
                   class="form-input"
                   placeholder="My Custom Node"
@@ -75,7 +75,7 @@
                 <label for="node-intro">Description</label>
                 <input
                   id="node-intro"
-                  v-model="state.nodeMetadata.intro"
+                  v-model="nodeMetadata.intro"
                   type="text"
                   class="form-input"
                   placeholder="A custom node for data processing"
@@ -85,7 +85,7 @@
                 <label for="node-inputs">Number of Inputs</label>
                 <input
                   id="node-inputs"
-                  v-model.number="state.nodeMetadata.number_of_inputs"
+                  v-model.number="nodeMetadata.number_of_inputs"
                   type="number"
                   min="0"
                   max="10"
@@ -96,7 +96,7 @@
                 <label for="node-outputs">Number of Outputs</label>
                 <input
                   id="node-outputs"
-                  v-model.number="state.nodeMetadata.number_of_outputs"
+                  v-model.number="nodeMetadata.number_of_outputs"
                   type="number"
                   min="1"
                   max="10"
@@ -110,28 +110,28 @@
           <div class="sections-area">
             <div class="sections-header">
               <h4>UI Sections</h4>
-              <button class="add-section-btn" @click="state.addSection()">
+              <button class="add-section-btn" @click="addSection()">
                 <i class="fa-solid fa-plus"></i>
                 Add Section
               </button>
             </div>
 
             <SectionCard
-              v-for="(section, sectionIndex) in state.sections"
+              v-for="(section, sectionIndex) in sections"
               :key="sectionIndex"
               :section="section"
-              :is-selected="state.selectedSectionIndex === sectionIndex"
-              :selected-component-index="state.selectedSectionIndex === sectionIndex ? state.selectedComponentIndex : null"
-              @select="state.selectSection(sectionIndex)"
-              @remove="state.removeSection(sectionIndex)"
-              @select-component="state.selectComponent(sectionIndex, $event)"
-              @remove-component="state.removeComponent(sectionIndex, $event)"
+              :is-selected="selectedSectionIndex === sectionIndex"
+              :selected-component-index="selectedSectionIndex === sectionIndex ? selectedComponentIndex : null"
+              @select="selectSection(sectionIndex)"
+              @remove="removeSection(sectionIndex)"
+              @select-component="selectComponent(sectionIndex, $event)"
+              @remove-component="removeComponent(sectionIndex, $event)"
               @drop="handleDrop($event, sectionIndex)"
-              @update-name="section.name = $event; state.sanitizeSectionName(sectionIndex)"
+              @update-name="section.name = $event; sanitizeSectionName(sectionIndex)"
               @update-title="section.title = $event"
             />
 
-            <div v-if="state.sections.length === 0" class="empty-sections">
+            <div v-if="sections.length === 0" class="empty-sections">
               <i class="fa-solid fa-layer-group"></i>
               <p>No sections yet. Add a section to start designing your node UI.</p>
             </div>
@@ -139,7 +139,7 @@
 
           <!-- Python Code Editor -->
           <ProcessCodeEditor
-            v-model="state.processCode"
+            v-model="processCode"
             :extensions="autocompletion.extensions"
           />
         </div>
@@ -147,7 +147,7 @@
 
       <!-- Right Panel: Property Editor -->
       <PropertyEditor
-        :component="state.selectedComponent"
+        :component="selectedComponent"
         @update="handlePropertyUpdate"
       />
     </div>
@@ -208,22 +208,36 @@ import {
 } from './nodeDesigner/composables';
 import type { DesignerComponent } from './nodeDesigner/types';
 
-// Initialize composables
-const state = useNodeDesignerState();
+// Initialize composables - destructure for proper TypeScript support
+const {
+  nodeMetadata,
+  sections,
+  selectedSectionIndex,
+  selectedComponentIndex,
+  processCode,
+  selectedComponent,
+  addSection,
+  removeSection,
+  selectSection,
+  sanitizeSectionName,
+  selectComponent,
+  removeComponent,
+  addComponentToSection,
+  resetState,
+  getState,
+  setState,
+} = useNodeDesignerState();
+
 const validation = useNodeValidation();
 const codeGen = useCodeGeneration();
 const nodeBrowser = useNodeBrowser();
-const autocompletion = usePolarsAutocompletion(() => state.sections.value);
+const autocompletion = usePolarsAutocompletion(() => sections.value);
 
-const storage = useSessionStorage(
-  state.getState,
-  state.setState,
-  state.resetState
-);
+const storage = useSessionStorage(getState, setState, resetState);
 
 // Setup auto-save and load on mount
 watch(
-  [() => ({ ...state.nodeMetadata }), state.sections, state.processCode],
+  [() => ({ ...nodeMetadata }), sections, processCode],
   () => storage.saveToSessionStorage(),
   { deep: true }
 );
@@ -238,14 +252,14 @@ function handleNew() {
 }
 
 function handlePreview() {
-  codeGen.previewCode(state.nodeMetadata, state.sections.value, state.processCode.value);
+  codeGen.previewCode(nodeMetadata, sections.value, processCode.value);
 }
 
 async function handleSave() {
   const errors = validation.validateSettings(
-    state.nodeMetadata,
-    state.sections.value,
-    state.processCode.value
+    nodeMetadata,
+    sections.value,
+    processCode.value
   );
 
   if (errors.length > 0) {
@@ -253,15 +267,15 @@ async function handleSave() {
     return;
   }
 
-  const code = codeGen.generateCode(state.nodeMetadata, state.sections.value, state.processCode.value);
-  const fileName = toSnakeCase(state.nodeMetadata.node_name) + '.py';
+  const code = codeGen.generateCode(nodeMetadata, sections.value, processCode.value);
+  const fileName = toSnakeCase(nodeMetadata.node_name) + '.py';
 
   try {
     await axios.post('/user_defined_components/save-custom-node', {
       file_name: fileName,
       code: code,
     });
-    alert(`Node "${state.nodeMetadata.node_name}" saved successfully!`);
+    alert(`Node "${nodeMetadata.node_name}" saved successfully!`);
   } catch (error: any) {
     const errorMsg = error.response?.data?.detail || error.message || 'Failed to save node';
     alert(`Error saving node: ${errorMsg}`);
@@ -272,7 +286,7 @@ function handleDrop(event: DragEvent, sectionIndex: number) {
   const componentType = event.dataTransfer?.getData('component_type');
   if (!componentType) return;
 
-  const compCount = state.sections.value[sectionIndex].components.length + 1;
+  const compCount = sections.value[sectionIndex].components.length + 1;
   const newComponent: DesignerComponent = {
     component_type: componentType,
     field_name: `${toSnakeCase(componentType)}_${compCount}`,
@@ -299,12 +313,12 @@ function handleDrop(event: DragEvent, sectionIndex: number) {
     newComponent.step = 1;
   }
 
-  state.addComponentToSection(sectionIndex, newComponent);
+  addComponentToSection(sectionIndex, newComponent);
 }
 
 function handlePropertyUpdate(field: string, value: any) {
-  if (state.selectedComponent.value) {
-    (state.selectedComponent.value as any)[field] = value;
+  if (selectedComponent.value) {
+    (selectedComponent.value as any)[field] = value;
   }
 }
 </script>
