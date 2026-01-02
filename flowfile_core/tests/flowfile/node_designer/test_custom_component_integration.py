@@ -78,14 +78,14 @@ def UserDefinedNode():
             ),
         )
 
-        def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
             """
             The core processing logic for the node.
             """
             if not inputs:
-                return pl.DataFrame()
+                return pl.LazyFrame()
 
-            input_df = inputs[0]
+            input_lf = inputs[0]
 
             # Access settings in a type-safe way
             fixed_value = self.settings_schema.main_section.standard_input.value
@@ -93,9 +93,9 @@ def UserDefinedNode():
 
             # Ensure both values are set before proceeding
             if fixed_value is None or not new_col_name:
-                return input_df
+                return input_lf
 
-            return input_df.with_columns(
+            return input_lf.with_columns(
                 pl.lit(fixed_value).alias(new_col_name)
             )
     return FixedColumn

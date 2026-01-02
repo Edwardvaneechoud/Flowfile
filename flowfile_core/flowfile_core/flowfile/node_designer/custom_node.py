@@ -335,20 +335,20 @@ class CustomNodeBase(BaseModel):
             self.settings_schema.populate_values(values)
         return self
 
-    def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
+    def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
         """
         The main data processing logic for the node.
 
         This method must be implemented by all subclasses. It receives one or
-        more Polars DataFrames as input and should return a single DataFrame
+        more Polars LazyFrames as input and should return a single LazyFrame
         as output.
 
         Args:
-            *inputs: A variable number of Polars DataFrames, corresponding to
+            *inputs: A variable number of Polars LazyFrames, corresponding to
                      the inputs connected to the node.
 
         Returns:
-            A Polars DataFrame containing the processed data.
+            A Polars LazyFrame containing the processed data.
         """
         raise NotImplementedError
 
