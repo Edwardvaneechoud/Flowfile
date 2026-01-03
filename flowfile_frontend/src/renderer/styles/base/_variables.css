@@ -1,127 +1,221 @@
 /* styles/base/_variables.css - Design Token System */
 :root {
   /* ========== Typography Tokens ========== */
-  --font-family-base: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  --font-family-base: "Roboto", "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-family-mono: "SF Mono", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace;
 
-  --font-size-xs: 10px;
-  --font-size-sm: 11px;
+  /* Font sizes - refined for modern data tool aesthetics */
+  --font-size-2xs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
   --font-size-md: 13px;
+  --font-size-base: 14px;
   --font-size-lg: 15px;
+  --font-size-xl: 16px;
+  --font-size-2xl: 18px;
+  --font-size-3xl: 20px;
+  --font-size-4xl: 24px;
 
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
+  --font-weight-bold: 700;
 
-  --line-height-tight: 1.2;
-  --line-height-normal: 1.4;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.625;
 
   /* ========== Brand Color Tokens ========== */
-  /* Primary brand colors */
-  --primary-blue: #081b30;
-  --primary-blue-hover: #0d2640;
-  --primary-blue-light: #00040a;
-  --light-blue: #2C74B3;
+  /* Dark brand color for headers/navigation */
+  --primary-blue: #0f172a;
+  --primary-blue-hover: #1e293b;
+  --primary-blue-light: #334155;
 
-  /* Legacy color tokens (mapped to brand colors for backward compatibility) */
-  --color-primary: var(--light-blue);
-  --color-primary-dark: var(--primary-blue);
+  /* Accent Color: Teal/Cyan (#0891b2 - Tailwind cyan-600)
+     Chosen for a friendly, modern data tool aesthetic. Teal is welcoming and
+     professional without being as corporate as pure blue. Use for:
+     - Primary action buttons
+     - Interactive element highlights
+     - Focus states and accents
+     - Icons in active/selected states */
+  --color-accent: #0891b2;
+  --color-accent-hover: #0e7490;
+  --color-accent-light: #22d3ee;
+  --color-accent-subtle: #ecfeff;
+
+  /* Legacy alias (maps to accent for consistency) */
+  --light-blue: #0891b2;
+  --light-blue-hover: #0e7490;
 
   /* ========== Semantic Color Tokens ========== */
   /* Background colors */
   --color-background-primary: #ffffff;
-  --color-background-secondary: #f5f5f5;
+  --color-background-secondary: #f8f9fa;
+  --color-background-tertiary: #f1f3f5;
   --color-background-hover: #f0f7ff;
-  --color-background-selected: #e0f7fa;
+  --color-background-selected: #e7f3ff;
+  --color-background-muted: #fafafa;
 
-  /* Legacy mappings */
+  /* Text colors */
+  --color-text-primary: #1a1a2e;
+  --color-text-secondary: #4a5568;
+  --color-text-tertiary: #718096;
+  --color-text-muted: #a0aec0;
+  --color-text-inverse: #ffffff;
+  --color-text-selected: #0c254a;
+
+  /* Border colors */
+  --color-border-primary: #e2e8f0;
+  --color-border-secondary: #cbd5e0;
+  --color-border-light: #edf2f7;
+  --color-border-focus: var(--light-blue);
+
+  /* Status colors */
+  --color-success: #10b981;
+  --color-success-light: #d1fae5;
+  --color-danger: #ef4444;
+  --color-danger-light: #fee2e2;
+  --color-warning: #f59e0b;
+  --color-warning-light: #fef3c7;
+  --color-info: #3b82f6;
+  --color-info-light: #dbeafe;
+
+  /* Gray scale */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+
+  /* ========== Legacy Mappings (for backward compatibility) ========== */
+  --color-primary: var(--light-blue);
+  --color-primary-dark: var(--primary-blue);
   --color-background: var(--color-background-primary);
   --color-hover: var(--color-background-secondary);
   --hover-blue: var(--color-background-hover);
   --color-selected: var(--color-background-selected);
-
-  /* Text colors */
-  --color-text-primary: #333333;
-  --color-text-secondary: #666666;
-  --color-text-selected: #0c254a;
-
-  /* Legacy mappings */
   --color-text: var(--color-text-primary);
   --color-selected-text: var(--color-text-selected);
-
-  /* Border colors */
-  --color-border-primary: #e0e0e0;
-  --color-border-secondary: #dddddd;
-
-  /* Legacy mappings */
   --border-color: var(--color-border-primary);
-  --color-border: var(--color-border-secondary);
+  --color-border: var(--color-border-primary);
 
-  /* Status colors */
-  --color-success: #2f855a;
-  --color-danger: #e53e3e;
-  --color-warning: #dd6b20;
-  --color-info: #3182ce;
-
-  /* Gray scale */
-  --color-gray-50: #f9fafb;
-  --color-gray-100: #f7fafc;
-  --color-gray-200: #edf2f7;
-  --color-gray-300: #e2e8f0;
-  --color-gray-400: #cbd5e0;
-  --color-gray-500: #a0aec0;
-  --color-gray-600: #718096;
-  --color-gray-700: #4a5568;
-  --color-gray-800: #2d3748;
-  --color-gray-900: #1a202c;
+  /* NodeDesigner compatibility */
+  --card-bg: var(--color-background-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-primary: var(--color-text-primary);
+  --bg-secondary: var(--color-background-secondary);
+  --bg-hover: var(--color-background-hover);
+  --primary-color: var(--light-blue);
+  --primary-hover: var(--light-blue-hover);
 
   /* ========== Spacing Tokens ========== */
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 12px;
-  --spacing-lg: 16px;
-  --spacing-xl: 24px;
-  --spacing-2xl: 32px;
-  --spacing-3xl: 48px;
+  --spacing-0: 0;
+  --spacing-px: 1px;
+  --spacing-0-5: 2px;
+  --spacing-1: 4px;
+  --spacing-1-5: 6px;
+  --spacing-2: 8px;
+  --spacing-2-5: 10px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-10: 40px;
+  --spacing-12: 48px;
+
+  /* Legacy spacing mappings */
+  --spacing-xs: var(--spacing-1);
+  --spacing-sm: var(--spacing-2);
+  --spacing-md: var(--spacing-3);
+  --spacing-lg: var(--spacing-4);
+  --spacing-xl: var(--spacing-6);
+  --spacing-2xl: var(--spacing-8);
+  --spacing-3xl: var(--spacing-12);
 
   /* ========== Shadow Tokens ========== */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-default: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-default: 0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.05);
 
   /* ========== Border Radius Tokens ========== */
+  --border-radius-none: 0;
   --border-radius-sm: 4px;
-  --border-radius-md: 8px;
-  --border-radius-lg: 12px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 8px;
+  --border-radius-xl: 12px;
+  --border-radius-2xl: 16px;
   --border-radius-full: 9999px;
 
   /* ========== Animation Tokens ========== */
-  --transition-fast: 150ms;
-  --transition-base: 200ms;
+  --transition-fast: 100ms;
+  --transition-base: 150ms;
+  --transition-normal: 200ms;
   --transition-slow: 300ms;
   --transition-timing: cubic-bezier(0.4, 0, 0.2, 1);
 
   /* ========== Z-Index Tokens ========== */
+  --z-index-base: 1;
+  --z-index-sticky: 100;
   --z-index-dropdown: 1000;
   --z-index-modal: 1050;
+  --z-index-popover: 1075;
   --z-index-tooltip: 1100;
   --z-index-notification: 1200;
+
+  /* ========== Component-Specific Tokens ========== */
+  /* Table */
+  --table-header-bg: var(--color-background-muted);
+  --table-row-hover: var(--color-background-tertiary);
+  --table-border: var(--color-border-light);
+
+  /* Input */
+  --input-border: var(--color-border-primary);
+  --input-border-focus: var(--light-blue);
+  --input-bg: var(--color-background-primary);
+  --input-placeholder: var(--color-text-muted);
+
+  /* Card */
+  --card-border: var(--color-border-primary);
+  --card-shadow: var(--shadow-sm);
+
+  /* Node */
+  --node-bg: var(--color-background-primary);
+  --node-border: var(--color-border-primary);
+  --node-selected-border: var(--color-gray-500);
 }
 
-/* ========== Dark Theme (Future Support) ========== */
+/* ========== Dark Theme ========== */
+/* TODO: Add theme toggle mechanism. To enable dark mode, set data-theme="dark"
+   on the html or body element. Consider using a ThemeProvider component or
+   localStorage-persisted user preference with system preference detection. */
 [data-theme="dark"] {
-  --color-background-primary: #1a1a1a;
-  --color-background-secondary: #2d2d2d;
-  --color-background-hover: #374151;
-  --color-background-selected: #1f2937;
+  --color-background-primary: #1a1a2e;
+  --color-background-secondary: #16213e;
+  --color-background-tertiary: #0f3460;
+  --color-background-hover: #1e3a5f;
+  --color-background-selected: #0f3460;
+  --color-background-muted: #1f1f3a;
 
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #d1d5db;
-  --color-text-selected: #93c5fd;
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #cbd5e1;
+  --color-text-tertiary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-text-inverse: #1a1a2e;
 
-  --color-border-primary: #374151;
-  --color-border-secondary: #4b5563;
+  --color-border-primary: #334155;
+  --color-border-secondary: #475569;
+  --color-border-light: #1e293b;
 
-  /* Brand colors remain the same in dark mode */
+  --card-bg: var(--color-background-secondary);
+  --node-bg: var(--color-background-secondary);
 }

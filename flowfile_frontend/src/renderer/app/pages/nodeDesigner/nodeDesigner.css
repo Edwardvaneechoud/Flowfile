@@ -1,12 +1,13 @@
 /**
- * Shared styles for Node Designer components
+ * Node Designer specific styles
+ * Uses design tokens from the main styling system
  */
 
-/* Panel styles */
+/* Panel styles - specific to Node Designer */
 .panel {
   background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -14,140 +15,169 @@
 }
 
 .panel-header {
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border-color);
+  padding: var(--spacing-3) var(--spacing-4);
+  border-bottom: 1px solid var(--color-border-primary);
   flex-shrink: 0;
+  background-color: var(--color-background-secondary);
 }
 
 .panel-header h3 {
   margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-secondary);
+  color: var(--color-text-secondary);
 }
 
 .panel-content {
-  padding: 1rem;
+  padding: var(--spacing-4);
   overflow-y: auto;
   flex: 1;
   min-height: 0;
   height: 0;
 }
 
-/* Modal styles */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+/* Node Designer specific layout */
+.node-designer-container {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
+  height: 100%;
+  background-color: var(--color-background-secondary);
 }
 
-.modal-container {
-  background: var(--card-bg, #ffffff);
-  border-radius: 8px;
-  max-width: 600px;
-  width: 90%;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+.node-designer-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border-primary);
+  background-color: var(--color-background-primary);
+  overflow-y: auto;
 }
 
-.modal-large {
-  max-width: 900px;
+.node-designer-canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
 }
 
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
-  border-bottom: 1px solid var(--border-color);
+.node-designer-properties {
+  width: 320px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--color-border-primary);
+  background-color: var(--color-background-primary);
+  overflow-y: auto;
 }
 
-.modal-title {
+/* Component list styles
+   Note: .component-list is currently unused, .component-item is used. */
+.component-list {
+  list-style: none;
+  padding: 0;
   margin: 0;
 }
 
-.modal-close {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 1.25rem;
-}
-
-.modal-content {
-  padding: 1rem;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.modal-actions {
+.component-item {
   display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 1rem;
-  border-top: 1px solid var(--border-color);
-}
-
-/* Button styles */
-.btn {
-  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 4px;
-  font-size: 0.875rem;
-  font-weight: 500;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
   cursor: pointer;
-  transition: all 0.2s;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast);
 }
 
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.component-item:hover {
+  background-color: var(--color-background-hover);
 }
 
-.btn-primary {
-  background: var(--primary-color, #4a6cf7);
-  color: white;
+.component-item:last-child {
+  border-bottom: none;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: var(--primary-hover, #3d5bd9);
+.component-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
 }
 
-.btn-secondary {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
+/* Property editor styles
+   TODO: These classes are prepared for a future property editor panel.
+   Remove if not used by the time this feature is implemented. */
+.property-group {
+  margin-bottom: var(--spacing-4);
 }
 
-.btn-secondary:hover:not(:disabled) {
-  background: var(--bg-hover);
+.property-group-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--spacing-2);
+  padding-bottom: var(--spacing-1);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
-.btn-danger {
-  background: #dc2626;
-  color: white;
+.property-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+  margin-bottom: var(--spacing-3);
 }
 
-.btn-danger:hover:not(:disabled) {
-  background: #b91c1c;
+.property-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
 }
 
-.btn-sm {
-  padding: 0.375rem 0.75rem;
-  font-size: 0.8125rem;
+.property-input {
+  width: 100%;
+  padding: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  transition: border-color var(--transition-fast);
+}
+
+.property-input:focus {
+  outline: none;
+  border-color: var(--input-border-focus);
+}
+
+/* Validation message styles
+   TODO: These classes are prepared for future form validation UI.
+   Remove if not used by the time this feature is implemented. */
+.validation-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-2);
+}
+
+.validation-message.is-error {
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.validation-message.is-warning {
+  background-color: var(--color-warning-light);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+
+.validation-message.is-success {
+  background-color: var(--color-success-light);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
 }

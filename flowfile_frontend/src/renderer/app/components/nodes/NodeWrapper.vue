@@ -439,7 +439,7 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: visible;
   text-overflow: ellipsis;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .description-display {
@@ -451,7 +451,7 @@ onMounted(async () => {
   padding: 2px 4px;
   cursor: pointer;
   background-color: rgba(185, 185, 185, 0.117);
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
   display: flex;
   align-items: flex-start;
   gap: 4px;
@@ -480,7 +480,8 @@ onMounted(async () => {
   margin: 0;
   white-space: pre-wrap;
   word-wrap: break-word;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-xs);
 }
 
 .edit-overlay {
@@ -499,7 +500,7 @@ onMounted(async () => {
   border: 1px solid #0f275f;
   border-radius: 4px;
   font-size: small;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
   background-color: white;
 }
 
@@ -521,7 +522,7 @@ onMounted(async () => {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   padding: 4px 0;
   min-width: 120px;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .context-menu-item {
@@ -532,7 +533,7 @@ onMounted(async () => {
   cursor: pointer;
   font-size: 13px;
   transition: background-color 0.2s;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .context-menu-item:hover {
@@ -544,6 +545,6 @@ onMounted(async () => {
 }
 
 .context-menu-item span {
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 </style>

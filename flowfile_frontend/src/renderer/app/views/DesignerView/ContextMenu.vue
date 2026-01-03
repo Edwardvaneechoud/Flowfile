@@ -111,19 +111,21 @@ onUnmounted(() => {
 .context-menu {
   position: fixed;
   min-width: 200px;
-  background-color: white;
-  border-radius: 4px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  background-color: var(--color-background-primary);
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--shadow-lg);
   z-index: 10000;
   overflow: hidden;
+  border: 1px solid var(--color-border-primary);
 }
 
 .context-menu-header {
-  padding: 8px 12px;
-  font-weight: bold;
-  background-color: #f5f5f5;
-  border-bottom: 1px solid #e0e0e0;
-  font-size: 14px;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-weight: var(--font-weight-semibold);
+  background-color: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
 }
 
 .context-menu-items {
@@ -134,19 +136,21 @@ onUnmounted(() => {
 .context-menu-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: var(--spacing-2) var(--spacing-3);
   cursor: pointer;
-  transition: background-color 0.2s;
-  font-size: 14px;
+  transition: background-color var(--transition-fast);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
 }
 
 .context-menu-item:hover {
-  background-color: #f5f5f5;
+  background-color: var(--color-background-tertiary);
 }
 
 .context-menu-icon {
-  margin-right: 8px;
+  margin-right: var(--spacing-2);
   width: 20px;
   text-align: center;
+  color: var(--color-text-secondary);
 }
 </style>

@@ -1,70 +1,68 @@
-/* Complete Modern Listbox Styles */
+/* styles/components/_listbox.css - Modern Listbox Styles */
+
 .listbox-wrapper {
   position: relative;
-  overflow-y: hidden;
   overflow: visible;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border-radius: 8px;
-  margin: 5px;
-  background-color: #fff;
-  padding: 6px;
-  z-index: 1;
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--border-radius-lg);
+  margin: var(--spacing-1);
+  background-color: var(--color-background-primary);
+  padding: var(--spacing-1-5);
+  z-index: var(--z-index-base);
 }
 
 .custom-component-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border-radius: 8px;
+  gap: var(--spacing-2);
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--border-radius-lg);
 }
 
 .listbox-subtitle {
   display: flex;
   align-items: center;
-  padding: 4px 16px;
-  font-weight: 200;
-  color: #333;
-  background-color: #fafafa;
-  border-bottom: 1px solid #ddd;
+  padding: var(--spacing-1) var(--spacing-4);
+  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  background-color: var(--color-background-muted);
+  border-bottom: 1px solid var(--color-border-light);
   width: 100%;
-  border-top-left-radius: 1px;
-  border-top-right-radius: 1px;
-  font-size: small;
+  border-top-left-radius: var(--border-radius-sm);
+  border-top-right-radius: var(--border-radius-sm);
   height: 32px;
-  overflow: hidden;        /* Prevent overflow */
-  text-overflow: ellipsis; /* Add ellipsis for overflowing text */
-  white-space: nowrap;     /* Prevent text wrapping */
-  box-sizing: border-box;  /* Include padding in width calculation */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
 }
 
-/* If the subtitle contains other elements */
 .listbox-subtitle > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;           /* Allow flex items to shrink below content size */
+  min-width: 0;
 }
 
-/* If you specifically need to handle long text in a span */
 .listbox-subtitle span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;               /* Take up remaining space */
-  min-width: 0;          /* Allow text to shrink */
+  flex: 1;
+  min-width: 0;
 }
 
 .listbox-title {
   display: flex;
   align-items: center;
-  padding: 8px 16px;
-  font-weight: 600;
-  color: #333;
+  padding: var(--spacing-2) var(--spacing-4);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
   width: 100%;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-  font-size: large;
+  border-top-left-radius: var(--border-radius-lg);
+  border-top-right-radius: var(--border-radius-lg);
   height: 40px;
 }
 
@@ -73,40 +71,40 @@
   padding: 0;
   margin: 0;
   list-style-type: none;
-  border-radius: 8px;
+  border-radius: var(--border-radius-lg);
   overflow: hidden;
   overflow-y: auto;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
   max-height: 300px;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
 }
 
 .listbox li {
-  padding: 8px 16px;
+  padding: var(--spacing-2) var(--spacing-4);
   cursor: pointer;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
   user-select: none;
-  border-bottom: 1px solid #ddd;
-  transition: background-color 0.2s ease;
-  font-size: 12px;
+  border-bottom: 1px solid var(--color-border-light);
+  transition: background-color var(--transition-fast) var(--transition-timing);
+  font-size: var(--font-size-sm);
 }
 
-.listbox li:not(:last-child) {
-  border-bottom: 1px solid #eee;
+.listbox li:last-child {
+  border-bottom: none;
 }
 
 .listbox li:hover {
-  background-color: #f5f5f5;
+  background-color: var(--color-background-tertiary);
 }
 
 .listbox li.is-selected {
-  background-color: #cbcbcb;
-  color: #0c254a;
+  background-color: var(--color-background-selected);
+  color: var(--color-text-selected);
 }
 
 /* Custom scrollbar */
 .listbox::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 .listbox::-webkit-scrollbar-track {
@@ -114,10 +112,10 @@
 }
 
 .listbox::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.1);
-  border-radius: 4px;
+  background-color: var(--color-gray-300);
+  border-radius: var(--border-radius-full);
 }
 
 .listbox::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: var(--color-gray-400);
 }

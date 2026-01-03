@@ -35,6 +35,7 @@ $tabletBreakPointPX: 1000;
   &__content {
     display: flex;
     flex-grow: 1;
+    overflow: hidden;
 
     @media screen and (max-width: $tabletBreakPointPX) {
       .app-layout__sidebar-wrapper {

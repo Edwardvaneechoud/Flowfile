@@ -89,22 +89,20 @@
         </div>
 
         <!-- Secrets List -->
-        <div v-else-if="filteredSecrets.length > 0" class="flex-col gap-2">
+        <div v-else-if="filteredSecrets.length > 0" class="secrets-list">
           <div v-for="secret in filteredSecrets" :key="secret.name" class="secret-item">
-            <div class="secret-info">
-              <div class="secret-name">
-                <i class="fa-solid fa-key"></i>
-                <span>{{ secret.name }}</span>
-              </div>
-              <div class="secret-value">
-                <input
-                  type="password"
-                  value="••••••••••••••••"
-                  readonly
-                  class="form-input"
-                  aria-label="Masked secret value"
-                />
-              </div>
+            <div class="secret-name">
+              <i class="fa-solid fa-key"></i>
+              <span>{{ secret.name }}</span>
+            </div>
+            <div class="secret-value">
+              <input
+                type="password"
+                value="••••••••••••••••"
+                readonly
+                class="form-input"
+                aria-label="Masked secret value"
+              />
             </div>
             <div class="secret-actions">
               <button
@@ -230,3 +228,48 @@ onMounted(() => {
   });
 });
 </script>
+
+<style scoped>
+/* Override global styles to ensure horizontal layout */
+.secret-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: var(--spacing-2) var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  gap: var(--spacing-4);
+}
+
+.secret-name {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+  width: 350px;
+  flex-shrink: 0;
+}
+
+.secret-name i {
+  color: var(--color-accent);
+}
+
+.secret-value {
+  flex: 1;
+  min-width: 100px;
+  max-width: 250px;
+}
+
+.secret-value .form-input {
+  background-color: var(--color-background-muted);
+  height: 32px;
+}
+
+.secret-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+</style>

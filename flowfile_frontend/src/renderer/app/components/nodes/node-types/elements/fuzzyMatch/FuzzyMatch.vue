@@ -330,7 +330,7 @@ onMounted(async () => {
 <style scoped>
 /* Modern styling for an AI app */
 .fuzzy-join-container {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
   color: #1a202c;
   max-width: 100%;
 }

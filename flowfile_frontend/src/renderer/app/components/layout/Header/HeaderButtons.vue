@@ -366,40 +366,34 @@ onMounted(async () => {
 
 <style scoped>
 .action-buttons {
-  padding-left: 20px;
+  padding-left: var(--spacing-5);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--spacing-2);
   height: 50px;
-  font-family:
-    "Inter",
-    "Roboto",
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .action-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  height: 36px;
-  background-color: rgba(3, 11, 27, 0.05); /* Slightly darker background */
-  border: 1px solid rgba(16, 24, 40, 0.12); /* Darker border */
-  border-radius: 6px;
+  gap: var(--spacing-1-5);
+  padding: var(--spacing-2) var(--spacing-3);
+  height: 34px;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
   cursor: pointer;
-  transition: all 0.2s ease;
-  color: rgb(2, 27, 45); /* Darker text color */
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  box-shadow: 0 1px 2px rgba(1, 5, 13, 0.08); /* Slightly darker shadow */
+  transition: all var(--transition-fast);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-xs);
 }
 
 .action-btn:hover {
-  background-color: rgba(16, 24, 40, 0.08); /* Darker hover background */
-  border-color: rgba(16, 24, 40, 0.18); /* Darker hover border */
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
 }
 
 .action-btn:active {
@@ -407,9 +401,26 @@ onMounted(async () => {
   box-shadow: none;
 }
 
+.action-btn.active {
+  background-color: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 .btn-icon {
-  font-size: 16px;
-  color: rgb(2, 27, 45); /* Darker icon color */
+  font-size: 18px;
+  color: var(--color-text-secondary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.action-btn:hover .btn-icon {
+  color: var(--color-text-primary);
+}
+
+.action-btn.active .btn-icon {
+  color: var(--color-accent);
 }
 
 .btn-text {
@@ -417,62 +428,57 @@ onMounted(async () => {
 }
 
 .settings-modal-content {
-  padding: 16px;
-  font-family:
-    "Inter",
-    "Roboto",
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+  padding: var(--spacing-4);
+  font-family: var(--font-family-base);
 }
 
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: var(--spacing-4);
 }
 
 .form-group label {
   display: block;
-  margin-bottom: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: rgba(16, 24, 40, 0.9);
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
 }
 
 .quick-create-modal {
-  padding: 16px 0;
+  padding: var(--spacing-4) 0;
 }
 
 .quick-create-modal .form-group {
-  margin-bottom: 20px;
+  margin-bottom: var(--spacing-5);
 }
 
 .quick-create-modal label {
   display: block;
-  margin-bottom: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: rgba(16, 24, 40, 0.9);
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
 }
 
 .preview-text {
-  padding: 12px;
-  background-color: rgba(3, 11, 27, 0.03);
-  border: 1px solid rgba(16, 24, 40, 0.08);
-  border-radius: 6px;
-  font-size: 13px;
-  color: rgba(16, 24, 40, 0.7);
+  padding: var(--spacing-3);
+  background-color: var(--color-background-muted);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
 }
 
 .preview-text code {
-  background-color: rgba(16, 24, 40, 0.08);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: "Monaco", "Menlo", "Ubuntu Mono", monospace;
-  font-size: 12px;
+  background-color: var(--color-background-tertiary);
+  padding: 2px var(--spacing-1-5);
+  border-radius: var(--border-radius-sm);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
 }
 
 .dialog-footer {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-2);
 }
 </style>
