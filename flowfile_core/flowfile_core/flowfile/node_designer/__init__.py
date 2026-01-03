@@ -20,7 +20,9 @@ from .ui_components import (
     SingleSelect,
     MultiSelect,
     ColumnSelector,
-    IncomingColumns,  # Important marker class for dynamic dropdowns
+    IncomingColumns,
+    AvailableSecrets,
+    SecretSelector,
 )
 
 # Import the main `Types` object for filtering in ColumnSelector
@@ -43,7 +45,7 @@ __all__ = [
     "NodeSettings",
     "ColumnSelector",
     "IncomingColumns",
-
-    # Data Type Filtering
+    "AvailableSecrets",
+    "SecretSelector",
     "Types",
 ]
