@@ -114,7 +114,7 @@ import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
 import ParquetTableConfig from "./outputParquet.vue";
-import FileBrowser from "../../../../../common/FileBrowser/fileBrowser.vue";
+import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { WarningFilled } from "@element-plus/icons-vue";
 
 interface LocalFileInfo {

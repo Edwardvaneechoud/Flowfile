@@ -181,7 +181,6 @@
             <span class="preview-label">Will be saved as:</span>
             <code>{{ previewFileName }}</code>
             <span v-if="!hasValidExtension" class="auto-extension-hint">
-              (.yaml added automatically)
             </span>
           </div>
         </el-form-item>
