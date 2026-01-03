@@ -24,7 +24,7 @@ import type { NodeTemplate } from "../../types";
 
 // Import all components in the elements folder at build time
 // This tells Vite to include all these files in the bundle
-const drawerModules = import.meta.glob("./elements/**/*.vue");
+const drawerModules = import.meta.glob("./node-types/elements/**/*.vue");
 
 interface Props {
   nodeId: number;
@@ -64,7 +64,7 @@ const loadDrawerComponent = () => {
     }
 
     // Build the expected path
-    const componentPath = `./elements/${folderName}/${componentName}.vue`;
+    const componentPath = `./node-types/elements/${folderName}/${componentName}.vue`;
 
     // Check if the component exists
     const componentLoader = drawerModules[componentPath];

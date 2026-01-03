@@ -1,5 +1,5 @@
 import { DefineComponent, markRaw } from "vue";
-import GenericNode from "../../nodes/GenericNode.vue"; // Import GenericNode directly
+import GenericNode from "../../components/nodes/GenericNode.vue"; // Import GenericNode directly
 
 const componentCache: Map<string, Promise<DefineComponent>> = new Map();
 
