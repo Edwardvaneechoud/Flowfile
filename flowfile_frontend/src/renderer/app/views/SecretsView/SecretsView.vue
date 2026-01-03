@@ -254,8 +254,8 @@ onMounted(() => {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
+  width: 350px;
   flex-shrink: 0;
-  white-space: nowrap;
 }
 
 .secret-name i {
