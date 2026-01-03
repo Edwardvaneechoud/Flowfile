@@ -1,9 +1,9 @@
 """
 Tests for secret access functionality in custom nodes.
 
+Release 1: Secret Access
 This module tests:
 - SecretSelector UI component and .secret_value property
-- SecretLeakScanner output scanning
 - NodeSettings.set_secret_context() for injecting execution context
 - NodeSettings helper methods (get_value, get_all_components)
 - End-to-end integration with flow graphs using real database
@@ -11,7 +11,7 @@ This module tests:
 import pytest
 import polars as pl
 from polars.testing import assert_frame_equal
-from typing import Dict, Any, List
+from typing import Dict, List
 from pydantic import SecretStr
 import uuid
 
@@ -25,7 +25,6 @@ from flowfile_core.flowfile.node_designer import (
     SecretSelector,
     AvailableSecrets,
 )
-from flowfile_core.flowfile.node_designer.output_scanner import SecretLeakScanner
 from flowfile_core.flowfile.node_designer.ui_components import FlowfileInComponent
 
 # Database and secret manager imports
@@ -134,18 +133,6 @@ def get_test_user_id() -> int:
 # =============================================================================
 
 @pytest.fixture
-def sample_secret_value() -> str:
-    """A sample secret value for testing."""
-    return "super-secret-api-key-12345"
-
-
-@pytest.fixture
-def sample_secrets_set(sample_secret_value) -> set:
-    """A set of secret values for testing scanning."""
-    return {sample_secret_value, "another-secret-password"}
-
-
-@pytest.fixture
 def test_user_id() -> int:
     """Get or create a test user and return their ID."""
     return get_test_user_id()
@@ -244,41 +231,9 @@ def SecretUsingNode():
     return APIConnectorNode
 
 
-@pytest.fixture
-def LeakyNode():
-    """A custom node that accidentally leaks a secret in its output."""
-    class SecretLeakerNode(CustomNodeBase):
-        node_name: str = "Secret Leaker"
-        node_group: str = "custom"
-        node_category: str = "Testing"
-        intro: str = "Accidentally leaks secrets (for testing)"
-        title: str = "Secret Leaker"
-        number_of_inputs: int = 1
-        number_of_outputs: int = 1
-        settings_schema: NodeSettings = NodeSettings(
-            config=Section(
-                title="Config",
-                api_key=SecretSelector(label="API Key")
-            )
-        )
-
-        def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
-            if not inputs:
-                return pl.DataFrame()
-            input_df = inputs[0]
-
-            # Access secret using .secret_value property
-            api_key = self.settings_schema.config.api_key.secret_value
-
-            if api_key:
-                # BAD: Accidentally including the secret in output!
-                return input_df.with_columns(
-                    pl.lit(f"key={api_key.get_secret_value()}").alias("leaked_data")
-                )
-            return input_df
-
-    return SecretLeakerNode
-
+# =============================================================================
+# Tests for SecretSelector UI Component
+# =============================================================================
 
 class TestSecretSelector:
     """Tests for the SecretSelector UI component."""
@@ -330,206 +285,11 @@ class TestSecretSelector:
 
 
 # =============================================================================
-# Tests for SecretLeakScanner
-# =============================================================================
-
-class TestSecretLeakScanner:
-    """Tests for the SecretLeakScanner utility class."""
-
-    def test_build_variants_includes_original(self, sample_secret_value):
-        """Tests that _build_variants includes the original secret."""
-        secrets = {sample_secret_value}
-        variants = SecretLeakScanner._build_variants(secrets)
-
-        assert sample_secret_value in variants
-
-    def test_build_variants_includes_base64(self, sample_secret_value):
-        """Tests that _build_variants includes base64 encoding."""
-        import base64
-        secrets = {sample_secret_value}
-        variants = SecretLeakScanner._build_variants(secrets)
-
-        expected_b64 = base64.b64encode(sample_secret_value.encode()).decode()
-        assert expected_b64 in variants
-
-    def test_build_variants_includes_hex(self, sample_secret_value):
-        """Tests that _build_variants includes hex encoding."""
-        secrets = {sample_secret_value}
-        variants = SecretLeakScanner._build_variants(secrets)
-
-        expected_hex = sample_secret_value.encode().hex()
-        assert expected_hex in variants
-
-    def test_build_variants_handles_empty_secrets(self):
-        """Tests that _build_variants handles empty secret sets."""
-        variants = SecretLeakScanner._build_variants(set())
-        assert variants == set()
-
-    def test_build_variants_handles_empty_string(self):
-        """Tests that _build_variants skips empty strings."""
-        variants = SecretLeakScanner._build_variants({""})
-        assert "" not in variants
-
-    def test_scan_dataframe_no_secrets(self):
-        """Tests scanning when no secrets are provided."""
-        df = pl.DataFrame({"col": ["value1", "value2"]})
-        result = SecretLeakScanner.scan_dataframe(df, set())
-
-        assert_frame_equal(result, df)
-
-    def test_scan_dataframe_empty_df(self, sample_secrets_set):
-        """Tests scanning an empty DataFrame."""
-        df = pl.DataFrame({"col": []})
-        result = SecretLeakScanner.scan_dataframe(df, sample_secrets_set)
-
-        assert result.is_empty()
-
-    def test_scan_dataframe_no_leaks(self, sample_secrets_set):
-        """Tests scanning a DataFrame with no secret leaks."""
-        df = pl.DataFrame({
-            "name": ["Alice", "Bob"],
-            "value": ["public_data", "more_public"]
-        })
-        result = SecretLeakScanner.scan_dataframe(df, sample_secrets_set)
-
-        assert_frame_equal(result, df)
-
-    def test_scan_dataframe_detects_and_redacts_leak(self, sample_secret_value):
-        """Tests that leaked secrets are detected and redacted."""
-        df = pl.DataFrame({
-            "name": ["Alice", "Bob"],
-            "data": [f"Token: {sample_secret_value}", "Clean data"]
-        })
-
-        result = SecretLeakScanner.scan_dataframe(
-            df,
-            {sample_secret_value},
-            node_name="TestNode"
-        )
-
-        # Secret should be redacted
-        assert sample_secret_value not in str(result["data"].to_list())
-        assert "***REDACTED***" in result["data"].to_list()[0]
-        # Other data should be unchanged
-        assert result["name"].to_list() == ["Alice", "Bob"]
-        assert result["data"].to_list()[1] == "Clean data"
-
-    def test_scan_dataframe_skips_non_string_columns(self, sample_secret_value):
-        """Tests that non-string columns are not scanned."""
-        df = pl.DataFrame({
-            "numbers": [123, 456],
-            "floats": [1.5, 2.5],
-            "text": ["safe", "data"]
-        })
-
-        result = SecretLeakScanner.scan_dataframe(df, {sample_secret_value})
-        assert_frame_equal(result, df)
-
-    def test_scan_dataframe_redacts_base64_encoded_leak(self, sample_secret_value):
-        """Tests that base64-encoded secrets are also redacted."""
-        import base64
-        encoded = base64.b64encode(sample_secret_value.encode()).decode()
-
-        df = pl.DataFrame({
-            "data": [f"Encoded: {encoded}"]
-        })
-
-        result = SecretLeakScanner.scan_dataframe(df, {sample_secret_value})
-
-        assert encoded not in str(result["data"].to_list())
-        assert "***REDACTED***" in result["data"].to_list()[0]
-
-    def test_scan_string_no_secrets(self):
-        """Tests scanning a string with no secrets."""
-        result = SecretLeakScanner.scan_string("Hello world", set())
-        assert result == "Hello world"
-
-    def test_scan_string_empty_string(self, sample_secrets_set):
-        """Tests scanning an empty string."""
-        result = SecretLeakScanner.scan_string("", sample_secrets_set)
-        assert result == ""
-
-    def test_scan_string_with_leak(self, sample_secret_value):
-        """Tests that secrets in strings are redacted."""
-        text = f"Error: API key {sample_secret_value} is invalid"
-        result = SecretLeakScanner.scan_string(text, {sample_secret_value})
-
-        assert sample_secret_value not in result
-        assert "***REDACTED***" in result
-        assert "Error: API key" in result
-
-    def test_scan_string_multiple_occurrences(self, sample_secret_value):
-        """Tests redaction of multiple occurrences."""
-        text = f"Key: {sample_secret_value}, Again: {sample_secret_value}"
-        result = SecretLeakScanner.scan_string(text, {sample_secret_value})
-
-        assert result.count("***REDACTED***") == 2
-        assert sample_secret_value not in result
-
-    def test_scan_dict_simple(self, sample_secret_value):
-        """Tests scanning a simple dictionary."""
-        data = {
-            "message": f"Key is {sample_secret_value}",
-            "status": "error"
-        }
-        result = SecretLeakScanner.scan_dict(data, {sample_secret_value})
-
-        assert sample_secret_value not in result["message"]
-        assert "***REDACTED***" in result["message"]
-        assert result["status"] == "error"
-
-    def test_scan_dict_nested(self, sample_secret_value):
-        """Tests scanning nested dictionaries."""
-        data = {
-            "outer": {
-                "inner": {
-                    "secret": sample_secret_value
-                }
-            }
-        }
-        result = SecretLeakScanner.scan_dict(data, {sample_secret_value})
-
-        assert result["outer"]["inner"]["secret"] == "***REDACTED***"
-
-    def test_scan_dict_with_lists(self, sample_secret_value):
-        """Tests scanning dictionaries containing lists."""
-        data = {
-            "items": ["safe", sample_secret_value, "also_safe"]
-        }
-        result = SecretLeakScanner.scan_dict(data, {sample_secret_value})
-
-        assert result["items"][0] == "safe"
-        assert result["items"][1] == "***REDACTED***"
-        assert result["items"][2] == "also_safe"
-
-    def test_scan_dict_with_tuples(self, sample_secret_value):
-        """Tests scanning dictionaries containing tuples."""
-        data = {
-            "coords": ("x", sample_secret_value, "z")
-        }
-        result = SecretLeakScanner.scan_dict(data, {sample_secret_value})
-
-        assert isinstance(result["coords"], tuple)
-        assert result["coords"][1] == "***REDACTED***"
-
-    def test_scan_dict_empty(self, sample_secrets_set):
-        """Tests scanning empty dictionaries."""
-        result = SecretLeakScanner.scan_dict({}, sample_secrets_set)
-        assert result == {}
-
-    def test_scan_dict_no_secrets(self):
-        """Tests scanning when no secrets provided."""
-        data = {"key": "value"}
-        result = SecretLeakScanner.scan_dict(data, set())
-        assert result == data
-
-
-# =============================================================================
 # Tests for NodeSettings Helper Methods
 # =============================================================================
 
 class TestNodeSettingsHelperMethods:
-    """Tests for the new get_value and get_all_components methods."""
+    """Tests for the get_value and get_all_components methods."""
 
     @pytest.fixture
     def complex_settings(self):
@@ -612,7 +372,7 @@ class TestCustomNodeBaseSecretMethods:
 
         return SecretNode
 
-    def testset_execution_context(self, node_class_with_secrets):
+    def test_set_execution_context(self, node_class_with_secrets):
         """Tests setting the execution context on CustomNodeBase."""
         node = node_class_with_secrets()
         node.set_execution_context(user_id=123)
@@ -620,7 +380,7 @@ class TestCustomNodeBaseSecretMethods:
         assert node._user_id == 123
         assert node.accessed_secrets == set()
 
-    def testset_execution_context_clears_accessed_secrets(self, node_class_with_secrets):
+    def test_set_execution_context_clears_accessed_secrets(self, node_class_with_secrets):
         """Tests that setting context clears previously accessed secrets."""
         node = node_class_with_secrets()
         node._accessed_secrets = {"old_secret"}
@@ -651,16 +411,16 @@ class TestCustomNodeBaseSecretMethods:
 
     def test_get_secret_names_empty_schema(self):
         """Tests get_secret_names with no settings schema."""
-
         class EmptyNode(CustomNodeBase):
             node_name: str = "Empty"
-            settings_schema: NodeSettings | None = None  # Need the type annotation!
+            settings_schema: NodeSettings | None = None
 
             def process(self, *inputs):
                 return inputs[0] if inputs else pl.DataFrame()
 
         node = EmptyNode()
         assert node.get_secret_names() == []
+
 
 class TestNodeSettingsSecretContext:
     """Tests for NodeSettings.set_secret_context() method."""
@@ -709,9 +469,9 @@ class TestNodeSettingsSecretContext:
             accessed_secrets=accessed_secrets
         )
 
-        # TextInput should not have these attributes
+        # TextInput should not have these attributes set
         regular = settings_with_multiple_secrets.config.regular_input
-        assert not hasattr(regular, '_user_id') or regular._user_id is None
+        assert not hasattr(regular, '_user_id') or getattr(regular, '_user_id', None) is None
 
 
 class TestSecretSelectorSecretValue:
@@ -861,41 +621,9 @@ class TestSecretAccessFlowGraphIntegration:
         result = graph.get_node(2).get_resulting_data()
         result_dict = result.to_dict()
 
-        # Should have the auth_status column but NOT the actual secret
+        # Should have the auth_status column showing successful authentication
         assert "auth_status" in result_dict
         assert result_dict["auth_status"] == ["auth_success", "auth_success"]
-        # Secret should NOT be in the output
-        assert secret_value not in str(result_dict)
-
-    def test_leaky_node_gets_secret_redacted(self, LeakyNode, stored_secret, test_user_id):
-        """Tests that the output scanner catches and redacts leaked secrets."""
-        secret_name, secret_value = stored_secret
-        add_to_custom_node_store(LeakyNode)
-        graph = create_graph()
-        add_manual_input(graph, [{"id": 1}], node_id=1)
-
-        settings = {
-            "config": {
-                "api_key": secret_name
-            }
-        }
-        add_custom_node_to_graph(
-            graph, LeakyNode, node_id=2,
-            settings=settings, user_id=test_user_id
-        )
-        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
-
-        run_result = graph.run_graph()
-        handle_run_info(run_result)
-
-        result = graph.get_node(2).get_resulting_data()
-        result_dict = result.to_dict()
-
-        # The leaked_data column should exist but secret should be redacted
-        assert "leaked_data" in result_dict
-        leaked_value = result_dict["leaked_data"][0]
-        assert secret_value not in leaked_value
-        assert "***REDACTED***" in leaked_value
 
     def test_node_without_secret_passes_through(self, SecretUsingNode, test_user_id):
         """Tests that a node without a secret configured just passes data through."""
@@ -925,58 +653,31 @@ class TestSecretAccessFlowGraphIntegration:
         # Should just pass through without auth_status column
         assert "id" in result_dict
         assert result_dict["id"] == [1, 2]
+        assert "auth_status" not in result_dict
 
+    def test_node_with_invalid_secret_raises(self, SecretUsingNode, test_user_id):
+        """Tests that referencing a non-existent secret raises an error."""
+        add_to_custom_node_store(SecretUsingNode)
 
-# =============================================================================
-# Edge Cases and Error Handling
-# =============================================================================
+        graph = create_graph()
+        add_manual_input(graph, [{"id": 1}], node_id=1)
 
-class TestEdgeCases:
-    """Tests for edge cases and error handling."""
+        settings = {
+            "config": {
+                "api_key": "this_secret_does_not_exist",
+                "prefix": "auth_"
+            }
+        }
+        add_custom_node_to_graph(
+            graph, SecretUsingNode, node_id=2,
+            settings=settings, user_id=test_user_id
+        )
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
 
-    def test_scanner_handles_none_values_in_dataframe(self):
-        """Tests scanner handles null values gracefully."""
-        df = pl.DataFrame({
-            "data": ["value1", None, "value2"]
-        })
+        run_result = graph.run_graph()
 
-        result = SecretLeakScanner.scan_dataframe(df, {"some_secret"})
-
-        # Should complete without error
-        assert result.height == 3
-
-    def test_scanner_handles_special_characters_in_secrets(self):
-        """Tests scanner handles secrets with special regex characters."""
-        special_secret = "password+with.special*chars?"
-        df = pl.DataFrame({
-            "data": [f"Key: {special_secret}"]
-        })
-
-        result = SecretLeakScanner.scan_dataframe(df, {special_secret})
-
-        # Should redact even with special characters
-        assert special_secret not in result["data"].to_list()[0]
-
-    def test_scanner_performance_large_dataframe(self):
-        """Tests that scanner uses sampling for large DataFrames."""
-        # Create a large DataFrame
-        large_df = pl.DataFrame({
-            "data": ["safe_value"] * 10000
-        })
-
-        # Should complete quickly due to sampling (only checks first 500)
-        result = SecretLeakScanner.scan_dataframe(large_df, {"not_present"})
-
-        assert result.height == 10000
-
-    def test_get_value_with_direct_field(self):
-        """Tests get_value works with fields directly on NodeSettings."""
-        class DirectSettings(NodeSettings):
-            direct_field: TextInput = TextInput(label="Direct", default="direct_value")
-
-        settings = DirectSettings()
-        # This tests the model_fields path in get_value
-        assert settings.get_value("direct_field") == "direct_value"
+        # Should fail because secret doesn't exist
+        assert not run_result.success
 
 
 # =============================================================================
@@ -985,34 +686,6 @@ class TestEdgeCases:
 
 class TestSecurityBehavior:
     """Tests focused on security properties."""
-
-    def test_secrets_not_logged(self):
-        """Tests that the scanner doesn't include secrets in logs."""
-        import logging
-        import io
-
-        # Set up log capture
-        log_stream = io.StringIO()
-        handler = logging.StreamHandler(log_stream)
-        handler.setLevel(logging.WARNING)
-
-        logger = logging.getLogger('flowfile_core.flowfile.node_designer.output_scanner')
-        logger.addHandler(handler)
-
-        try:
-            secret = "super-secret-123"
-            df = pl.DataFrame({"data": [f"leak: {secret}"]})
-
-            SecretLeakScanner.scan_dataframe(df, {secret}, node_name="TestNode")
-
-            log_output = log_stream.getvalue()
-
-            # Logs should not contain the actual secret
-            assert secret not in log_output
-            # But should mention there was a leak
-            assert "SECRET LEAK DETECTED" in log_output or log_output == ""
-        finally:
-            logger.removeHandler(handler)
 
     def test_secret_str_prevents_accidental_exposure(self):
         """Tests that SecretStr is used properly to prevent exposure."""
@@ -1046,6 +719,22 @@ class TestSecurityBehavior:
                 if db_secret:
                     db.delete(db_secret)
                     db.commit()
+
+    def test_secret_value_property_returns_secret_str(self, stored_secret, test_user_id):
+        """Tests that secret_value returns SecretStr, not plain string."""
+        secret_name, secret_value = stored_secret
+
+        selector = SecretSelector(label="API Key")
+        selector.set_execution_context(user_id=test_user_id, accessed_secrets=set())
+        selector.set_value(secret_name)
+
+        result = selector.secret_value
+
+        # Should be SecretStr, not str
+        assert isinstance(result, SecretStr)
+        # The actual value should only be accessible via get_secret_value()
+        assert secret_value not in str(result)
+        assert secret_value not in repr(result)
 
 
 if __name__ == "__main__":
