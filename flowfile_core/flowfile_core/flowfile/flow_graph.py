@@ -57,6 +57,7 @@ from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layou
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from importlib.metadata import version, PackageNotFoundError
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
+from flowfile_core.flowfile.node_designer.output_scanner import SecretLeakScanner
 
 try:
     __version__ = version("Flowfile")
@@ -479,16 +480,54 @@ class FlowGraph:
         node = self._node_db.get(node_id)
         if node is not None:
             return node
-        
+
     def add_user_defined_node(self, *,
                               custom_node: CustomNodeBase,
                               user_defined_node_settings: input_schema.UserDefinedNode
                               ):
-        def _func(*fdes: FlowDataEngine) -> FlowDataEngine | None:
-            output = custom_node.process(*(fde.data_frame for fde in fdes))
-            if isinstance(output, pl.LazyFrame | pl.DataFrame):
-                return FlowDataEngine(output)
-            return None
+        """Adds a user-defined custom node to the graph.
+
+        Args:
+            custom_node: The custom node instance to add.
+            user_defined_node_settings: The settings for the user-defined node.
+        """
+
+        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            user_id = user_defined_node_settings.user_id
+            if user_id is not None:
+                custom_node.set_execution_context(user_id)
+                if custom_node.settings_schema:
+                    custom_node.settings_schema.set_secret_context(
+                        user_id,
+                        custom_node.accessed_secrets
+                    )
+
+            try:
+                output = custom_node.process(*(fde.data_frame for fde in flow_data_engine))
+
+                accessed_secrets = custom_node.get_accessed_secrets()
+                if accessed_secrets and isinstance(output, (pl.LazyFrame, pl.DataFrame)):
+                    # Convert to DataFrame for scanning if needed
+                    df_to_scan = output.collect() if isinstance(output, pl.LazyFrame) else output
+                    scanned = SecretLeakScanner.scan_dataframe(
+                        df_to_scan,
+                        accessed_secrets,
+                        node_name=custom_node.node_name
+                    )
+                    return FlowDataEngine(scanned)
+
+                if isinstance(output, (pl.LazyFrame, pl.DataFrame)):
+                    return FlowDataEngine(output)
+                return None
+
+            except Exception as e:
+                # Scan error message for secrets before re-raising
+                accessed_secrets = custom_node.get_accessed_secrets()
+                if accessed_secrets:
+                    safe_message = SecretLeakScanner.scan_string(str(e), accessed_secrets)
+                    raise type(e)(safe_message) from None
+                raise
+
         self.add_node_step(node_id=user_defined_node_settings.node_id,
                            function=_func,
                            setting_input=user_defined_node_settings,

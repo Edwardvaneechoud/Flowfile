@@ -2,7 +2,7 @@
 
 from typing import List, Optional, Any, Literal, Union, Type, Tuple, Dict
 
-from pydantic import Field, BaseModel, computed_field
+from pydantic import Field, BaseModel, computed_field, SecretStr
 
 from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec
 # Public API import
@@ -292,3 +292,92 @@ class Section(BaseModel):
                     components[field_name] = value
 
         return components
+
+
+class AvailableSecrets:
+    """
+    A marker class used in `SecretSelector` components.
+
+    When `options` is set to this class, the component will be dynamically
+    populated with the secret names available to the current user.
+    This allows users to select from available secrets at runtime.
+
+    Example:
+        class MyNodeSettings(NodeSettings):
+            api_key = SecretSelector(
+                label="Select an API Key",
+                options=AvailableSecrets
+            )
+    """
+    pass
+
+
+class SecretSelector(FlowfileInComponent):
+    component_type: Literal["SecretSelector"] = "SecretSelector"
+    options: Type[AvailableSecrets] = AvailableSecrets
+    required: bool = False
+    description: Optional[str] = None
+    input_type: InputType = "secret"
+    name_prefix: Optional[str] = None
+
+    # Private fields for runtime context
+    _user_id: Optional[int] = None
+    _accessed_secrets: Optional[set] = None  # Reference to node's tracking set
+
+    def set_execution_context(self, user_id: int, accessed_secrets: set):
+        """Called by framework before process() runs."""
+        self._user_id = user_id
+        self._accessed_secrets = accessed_secrets
+
+    @property
+    def secret_value(self) -> Optional[SecretStr]:
+        """
+        Get the decrypted secret value.
+
+        Can only be called during node execution (after context is set).
+        Returns None if no secret is selected.
+        """
+        if self.value is None:
+            return None
+
+        if self._user_id is None:
+            raise ValueError(
+                "Secret can only be accessed during node execution. "
+                "Ensure you're calling this from within the process() method."
+            )
+
+        from flowfile_core.secret_manager.secret_manager import (
+            get_encrypted_secret,
+            decrypt_secret
+        )
+
+        encrypted = get_encrypted_secret(
+            current_user_id=self._user_id,
+            secret_name=self.value
+        )
+
+        if encrypted is None:
+            raise ValueError(
+                f"Secret '{self.value}' not found for user. "
+                f"Please ensure the secret exists in your secrets store."
+            )
+
+        decrypted = decrypt_secret(encrypted)
+
+        # Track for output scanning
+        if self._accessed_secrets is not None:
+            self._accessed_secrets.add(decrypted.get_secret_value())
+
+        return decrypted
+
+    def model_dump(self, **kwargs) -> dict:
+        """
+        Overrides the default `model_dump` to signal to the frontend
+        that this needs dynamic population from available secrets.
+        """
+        data = super().model_dump(**kwargs)
+        # Signal to frontend that options should be fetched from /secrets endpoint
+        data['options'] = {"__type__": "AvailableSecrets"}
+        if self.name_prefix:
+            data['name_prefix'] = self.name_prefix
+        return data

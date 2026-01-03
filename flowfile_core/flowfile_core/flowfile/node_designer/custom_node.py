@@ -2,9 +2,11 @@
 
 import polars as pl
 from pydantic import BaseModel
-from typing import Any, Dict, Optional, TypeVar
-from flowfile_core.flowfile.node_designer.ui_components import FlowfileInComponent, IncomingColumns, Section
+from typing import Any, Dict, Optional, TypeVar, Set
+from flowfile_core.flowfile.node_designer.ui_components import (FlowfileInComponent, IncomingColumns, Section,
+                                                                SecretSelector)
 from flowfile_core.schemas.schemas import NodeTemplate, NodeTypeLiteral, TransformTypeLiteral
+from pydantic import SecretStr
 
 
 def to_frontend_schema(model_instance: BaseModel) -> dict:
@@ -162,6 +164,80 @@ class NodeSettings(BaseModel):
                         component.set_value(section_values[component_name])
         return self
 
+    def get_value(self, field_name: str) -> Any:
+        """
+        Gets the current value of a field by name.
+
+        Searches through direct fields, extra fields, and sections.
+
+        Args:
+            field_name: The name of the field to retrieve.
+
+        Returns:
+            The current value of the field, or None if not found.
+        """
+        # Check direct model fields
+        if field_name in self.model_fields:
+            component = getattr(self, field_name, None)
+            if component is not None:
+                if isinstance(component, FlowfileInComponent):
+                    return component.value
+                return component
+
+        # Check pydantic extra fields
+        extras = getattr(self, '__pydantic_extra__', {}) or {}
+        if field_name in extras:
+            component = extras[field_name]
+            if isinstance(component, FlowfileInComponent):
+                return component.value
+            return component
+
+        # Check within sections (both in model_fields and extras)
+        all_fields = {**{k: getattr(self, k) for k in self.model_fields}, **extras}
+        for value in all_fields.values():
+            if isinstance(value, Section):
+                components = value.get_components()
+                if field_name in components:
+                    component = components[field_name]
+                    if isinstance(component, FlowfileInComponent):
+                        return component.value
+                    return component
+
+        return None
+
+    def get_all_components(self) -> Dict[str, FlowfileInComponent]:
+        """
+        Returns all UI components in the settings, including those nested in sections.
+
+        Returns:
+            Dictionary mapping field names to their FlowfileInComponent instances.
+        """
+        components = {}
+
+        # Get from model fields
+        for field_name in self.model_fields:
+            value = getattr(self, field_name, None)
+            if isinstance(value, FlowfileInComponent):
+                components[field_name] = value
+            elif isinstance(value, Section):
+                components.update(value.get_components())
+
+        # Get from extra fields
+        extras = getattr(self, '__pydantic_extra__', {}) or {}
+        for field_name, value in extras.items():
+            if isinstance(value, FlowfileInComponent):
+                components[field_name] = value
+            elif isinstance(value, Section):
+                components.update(value.get_components())
+
+        return components
+
+    def set_secret_context(self, user_id: int, accessed_secrets: set):
+        """Inject execution context into all SecretSelector components."""
+        for component in self.get_all_components().values():
+            if isinstance(component, SecretSelector):
+                component.set_execution_context(user_id, accessed_secrets)
+
 
 def create_node_settings(**sections: Section) -> NodeSettings:
     """
@@ -269,6 +345,9 @@ class CustomNodeBase(BaseModel):
     node_type: NodeTypeLiteral = "process"
     transform_type: TransformTypeLiteral = "wide"
 
+    _user_id: Optional[int] = None
+    accessed_secrets: Set[str] = set()
+
     @property
     def item(self):
         """A unique identifier for the node, derived from its name."""
@@ -285,6 +364,83 @@ class CustomNodeBase(BaseModel):
         super().__init__(**data)
         if self.settings_schema and initial_values:
             self.settings_schema.populate_values(initial_values)
+
+    def set_execution_context(self, user_id: int):
+        """
+        Sets the execution context for the node.
+        Called by the framework before executing the node.
+
+        Args:
+            user_id: The ID of the user executing this node.
+        """
+        self._user_id = user_id
+        self.accessed_secrets = set()
+
+    def get_accessed_secrets(self) -> Set[str]:
+        """
+        Returns the set of secret values accessed during this execution.
+        Used by the output scanner to detect accidental leaks.
+        """
+        return self.accessed_secrets.copy()
+
+    # Update your existing resolve_secret to track accessed secrets
+    def resolve_secret(self, setting_name: str) -> Optional[SecretStr]:
+        """
+        Resolves a secret reference to its actual decrypted value.
+        ... (keep your existing docstring) ...
+        """
+        if self._user_id is None:
+            raise ValueError(
+                "User context not set. Ensure the node is executed through the proper framework."
+            )
+        breakpoint()
+        if self.settings_schema is None:
+            raise ValueError(f"No settings schema defined for node {self.node_name}")
+
+        secret_name = self.settings_schema.get_value(setting_name)
+
+        if secret_name is None:
+            return None
+
+        from flowfile_core.secret_manager.secret_manager import (
+            get_encrypted_secret,
+            decrypt_secret
+        )
+
+        encrypted = get_encrypted_secret(
+            current_user_id=self._user_id,
+            secret_name=secret_name
+        )
+
+        if encrypted is None:
+            raise ValueError(
+                f"Secret '{secret_name}' not found for user. "
+                f"Please ensure the secret exists in your secrets store."
+            )
+
+        decrypted = decrypt_secret(encrypted)
+
+        # Track accessed secrets for output scanning
+        self.accessed_secrets.add(decrypted.get_secret_value())
+
+        return decrypted
+
+    def get_secret_names(self) -> list[str]:
+        """
+        Returns a list of all SecretSelector field names in the settings schema.
+        Useful for validation and debugging.
+        """
+        from flowfile_core.flowfile.node_designer.ui_components import SecretSelector
+
+        if self.settings_schema is None:
+            return []
+
+        secret_fields = []
+        for name, field in self.settings_schema.get_all_components().items():
+            if isinstance(field, SecretSelector):
+                secret_fields.append(name)
+
+        return secret_fields
 
     def get_frontend_schema(self) -> dict:
         """
