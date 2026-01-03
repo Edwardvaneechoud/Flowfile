@@ -3,6 +3,7 @@
   <component
     :is="nodeStore.activeDrawerComponent"
     v-bind="nodeStore.drawerProps"
+    :node-id="nodeStore.node_id"
     ref="drawerComponentInstance"
   />
 </template>
