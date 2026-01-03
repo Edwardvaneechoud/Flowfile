@@ -47,6 +47,9 @@ export function useCodeGeneration() {
       });
     });
 
+    // Collect secret fields for generating access comments
+    const secretFields: { section: string; field: string }[] = [];
+
     // Generate sections code
     let sectionsCode = '';
     sections.forEach((section) => {
@@ -58,6 +61,9 @@ export function useCodeGeneration() {
 
       section.components.forEach((comp) => {
         const fieldName = toSnakeCase(comp.field_name);
+        if (comp.component_type === 'SecretSelector') {
+          secretFields.push({ section: sectionName, field: fieldName });
+        }
         sectionsCode += `    ${fieldName}=${comp.component_type}(\n`;
         sectionsCode += `        label="${comp.label || fieldName}",\n`;
 
@@ -142,6 +148,15 @@ export function useCodeGeneration() {
     });
     processBody = reindentedLines.join('\n');
 
+    // Generate secret access comments if any SecretSelector fields exist
+    let secretComments = '';
+    if (secretFields.length > 0) {
+      secretComments = '\n    # Access secrets using .secret_value:\n';
+      secretFields.forEach(({ section, field }) => {
+        secretComments += `    # ${field} = self.settings_schema.${section}.${field}.secret_value\n`;
+      });
+    }
+
     // Generate node class
     const nodeCode = `
 
@@ -153,7 +168,7 @@ class ${nodeName}(CustomNodeBase):
     number_of_inputs: int = ${nodeMetadata.number_of_inputs}
     number_of_outputs: int = ${nodeMetadata.number_of_outputs}
     settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
-
+${secretComments}
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
 ${processBody}
 `;

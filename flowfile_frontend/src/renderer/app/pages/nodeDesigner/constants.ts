@@ -25,6 +25,7 @@ export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> p
 
     # Access settings values like this:
     # value = self.settings_schema.section_name.field_name.value
+    # For secrets use: secret = self.settings_schema.section_name.field_name.secret_value
 
     # Your transformation logic here
     # Example: lf = lf.filter(pl.col("column") > 0)
