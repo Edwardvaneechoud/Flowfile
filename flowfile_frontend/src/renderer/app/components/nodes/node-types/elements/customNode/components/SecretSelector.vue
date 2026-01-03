@@ -67,14 +67,11 @@ const filteredSecrets = computed(() => {
 });
 
 const loadSecrets = async () => {
-  console.log("SecretSelector: loadSecrets called");
   loading.value = true;
   try {
-    const result = await SecretsApi.getAll();
-    console.log("SecretSelector: secrets fetched", result);
-    secrets.value = result;
+    secrets.value = await SecretsApi.getAll();
   } catch (error) {
-    console.error("SecretSelector: Failed to load secrets:", error);
+    console.error("Failed to load secrets:", error);
     secrets.value = [];
   } finally {
     loading.value = false;
@@ -82,12 +79,10 @@ const loadSecrets = async () => {
 };
 
 const openSecretsManager = () => {
-  // Navigate to secrets manager - using window location for now
   window.open("/#/secrets", "_blank");
 };
 
 onMounted(() => {
-  console.log("SecretSelector: onMounted triggered");
   loadSecrets();
 });
 </script>
