@@ -67,7 +67,8 @@
   overflow-y: auto;
 }
 
-/* Component list styles */
+/* Component list styles
+   Note: .component-list is currently unused, .component-item is used. */
 .component-list {
   list-style: none;
   padding: 0;
@@ -103,7 +104,9 @@
   color: var(--color-text-secondary);
 }
 
-/* Property editor styles */
+/* Property editor styles
+   TODO: These classes are prepared for a future property editor panel.
+   Remove if not used by the time this feature is implemented. */
 .property-group {
   margin-bottom: var(--spacing-4);
 }
@@ -148,7 +151,9 @@
   border-color: var(--input-border-focus);
 }
 
-/* Validation message styles */
+/* Validation message styles
+   TODO: These classes are prepared for future form validation UI.
+   Remove if not used by the time this feature is implemented. */
 .validation-message {
   display: flex;
   align-items: flex-start;

@@ -102,6 +102,8 @@
 }
 
 /* ========== Secret Item Styles ========== */
+/* Single-line layout for simple key-value items like secrets.
+   Use .secret-item for compact rows: [icon | name | value | actions] */
 .secrets-list {
   display: flex;
   flex-direction: column;
@@ -126,7 +128,7 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
-  min-width: 200px;
+  width: 350px;
   flex-shrink: 0;
 }
 
@@ -155,7 +157,15 @@
   margin-left: auto;
 }
 
-/* ========== Connection Item Styles (for database/cloud) ========== */
+/* ========== Connection Item Styles ========== */
+/* Multi-line layout for complex items with details (database/cloud connections).
+   Use .connection-item for items with name + badges on first line, details below. */
+.connections-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
 .connection-item {
   display: flex;
   align-items: flex-start;

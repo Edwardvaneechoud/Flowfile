@@ -31,13 +31,19 @@
   --primary-blue-hover: #1e293b;
   --primary-blue-light: #334155;
 
-  /* Friendly teal-blue accent color for primary actions */
+  /* Accent Color: Teal/Cyan (#0891b2 - Tailwind cyan-600)
+     Chosen for a friendly, modern data tool aesthetic. Teal is welcoming and
+     professional without being as corporate as pure blue. Use for:
+     - Primary action buttons
+     - Interactive element highlights
+     - Focus states and accents
+     - Icons in active/selected states */
   --color-accent: #0891b2;
   --color-accent-hover: #0e7490;
   --color-accent-light: #22d3ee;
   --color-accent-subtle: #ecfeff;
 
-  /* Softer blue alternative */
+  /* Legacy alias (maps to accent for consistency) */
   --light-blue: #0891b2;
   --light-blue-hover: #0e7490;
 
@@ -189,6 +195,9 @@
 }
 
 /* ========== Dark Theme ========== */
+/* TODO: Add theme toggle mechanism. To enable dark mode, set data-theme="dark"
+   on the html or body element. Consider using a ThemeProvider component or
+   localStorage-persisted user preference with system preference detection. */
 [data-theme="dark"] {
   --color-background-primary: #1a1a2e;
   --color-background-secondary: #16213e;
