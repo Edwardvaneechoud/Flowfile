@@ -26,11 +26,20 @@
   --line-height-relaxed: 1.625;
 
   /* ========== Brand Color Tokens ========== */
-  --primary-blue: #081b30;
-  --primary-blue-hover: #0d2640;
-  --primary-blue-light: #0f3460;
-  --light-blue: #2C74B3;
-  --light-blue-hover: #2563a8;
+  /* Dark brand color for headers/navigation */
+  --primary-blue: #0f172a;
+  --primary-blue-hover: #1e293b;
+  --primary-blue-light: #334155;
+
+  /* Friendly teal-blue accent color for primary actions */
+  --color-accent: #0891b2;
+  --color-accent-hover: #0e7490;
+  --color-accent-light: #22d3ee;
+  --color-accent-subtle: #ecfeff;
+
+  /* Softer blue alternative */
+  --light-blue: #0891b2;
+  --light-blue-hover: #0e7490;
 
   /* ========== Semantic Color Tokens ========== */
   /* Background colors */

@@ -4,47 +4,50 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--spacing-1);
+  gap: var(--spacing-1-5);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  border-radius: var(--border-radius-md);
+  border-radius: var(--border-radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast) var(--transition-timing);
-  padding: var(--spacing-2) var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-4);
   border: 1px solid transparent;
   white-space: nowrap;
-  height: 32px;
+  height: 34px;
   line-height: 1;
+  box-shadow: var(--shadow-xs);
 }
 
 .btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* Size variants */
 .btn-sm {
   height: 28px;
-  padding: var(--spacing-1) var(--spacing-2);
+  padding: var(--spacing-1-5) var(--spacing-3);
   font-size: var(--font-size-xs);
 }
 
 .btn-lg {
   height: 40px;
-  padding: var(--spacing-3) var(--spacing-4);
+  padding: var(--spacing-3) var(--spacing-5);
   font-size: var(--font-size-base);
 }
 
 /* Button variants */
 .btn-primary {
-  background-color: var(--color-primary);
+  background-color: var(--color-accent);
   color: var(--color-text-inverse);
-  border-color: var(--color-primary);
+  border-color: var(--color-accent);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background-color: var(--color-primary-dark);
-  border-color: var(--color-primary-dark);
+  background-color: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-secondary {
@@ -60,12 +63,13 @@
 
 .btn-danger {
   color: var(--color-danger);
-  border-color: var(--color-danger);
-  background-color: transparent;
+  border-color: var(--color-border-primary);
+  background-color: var(--color-background-primary);
 }
 
 .btn-danger:hover:not(:disabled) {
   background-color: var(--color-danger-light);
+  border-color: var(--color-danger);
 }
 
 .btn-danger-filled {
@@ -77,6 +81,7 @@
 .btn-danger-filled:hover:not(:disabled) {
   background-color: #dc2626;
   border-color: #dc2626;
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-success {
@@ -88,22 +93,25 @@
 .btn-success:hover:not(:disabled) {
   background-color: #059669;
   border-color: #059669;
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-info {
   color: var(--color-info);
-  border-color: var(--color-info);
-  background-color: transparent;
+  border-color: var(--color-border-primary);
+  background-color: var(--color-background-primary);
 }
 
 .btn-info:hover:not(:disabled) {
   background-color: var(--color-info-light);
+  border-color: var(--color-info);
 }
 
 .btn-ghost {
   background-color: transparent;
   color: var(--color-text-secondary);
   border-color: transparent;
+  box-shadow: none;
 }
 
 .btn-ghost:hover:not(:disabled) {
@@ -128,21 +136,23 @@
 
 /* Toggle button */
 .toggle-button {
-  background-color: var(--color-primary);
+  background-color: var(--color-accent);
   color: var(--color-text-inverse);
-  padding: var(--spacing-2) var(--spacing-3);
+  padding: var(--spacing-2) var(--spacing-4);
   border: none;
-  border-radius: var(--border-radius-md);
+  border-radius: var(--border-radius-lg);
   cursor: pointer;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  transition: background-color var(--transition-fast) var(--transition-timing);
+  transition: all var(--transition-fast) var(--transition-timing);
+  box-shadow: var(--shadow-xs);
 }
 
 .toggle-button:hover {
-  background-color: var(--color-primary-dark);
+  background-color: var(--color-accent-hover);
+  box-shadow: var(--shadow-sm);
 }
 
 .toggle-button.is-active {
-  background-color: var(--color-primary-dark);
+  background-color: var(--color-accent-hover);
 }

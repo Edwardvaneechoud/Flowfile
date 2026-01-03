@@ -369,7 +369,7 @@ onMounted(async () => {
   padding-left: var(--spacing-5);
   display: flex;
   align-items: center;
-  gap: var(--spacing-3);
+  gap: var(--spacing-2);
   height: 50px;
   font-family: var(--font-family-base);
 }
@@ -379,16 +379,15 @@ onMounted(async () => {
   align-items: center;
   gap: var(--spacing-1-5);
   padding: var(--spacing-2) var(--spacing-3);
-  height: 36px;
-  background-color: var(--color-background-secondary);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
+  height: 34px;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
   color: var(--color-text-primary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  letter-spacing: 0.01em;
   box-shadow: var(--shadow-xs);
 }
 
@@ -402,9 +401,26 @@ onMounted(async () => {
   box-shadow: none;
 }
 
+.action-btn.active {
+  background-color: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 .btn-icon {
-  font-size: var(--font-size-xl);
+  font-size: 18px;
+  color: var(--color-text-secondary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.action-btn:hover .btn-icon {
   color: var(--color-text-primary);
+}
+
+.action-btn.active .btn-icon {
+  color: var(--color-accent);
 }
 
 .btn-text {

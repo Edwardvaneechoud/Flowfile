@@ -319,37 +319,37 @@ defineExpose({
 
 <style scoped>
 .settings-section {
-  padding: 1.25rem;
-  background: var(--el-bg-color);
-  border-radius: 8px;
-  margin-bottom: 1rem;
+  padding: var(--spacing-5);
+  background: var(--color-background-primary);
+  border-radius: var(--border-radius-lg);
+  margin-bottom: var(--spacing-4);
 }
 
 .table-container {
   max-height: 400px;
   overflow: auto;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  margin-bottom: 1rem;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  margin-bottom: var(--spacing-4);
 }
 
 .modern-table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  background: white;
+  background: var(--color-background-primary);
 }
 
 .modern-table th,
 .modern-table td {
-  padding: 0.5rem;
-  border: 1px solid var(--el-border-color-lighter);
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border-light);
 }
 
 .column-header {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--spacing-1);
 }
 
 .type-select {
@@ -357,30 +357,31 @@ defineExpose({
 }
 
 .type-select :deep(.el-input__inner) {
-  font-size: 0.75rem;
-  padding: 0 0.5rem;
+  font-size: var(--font-size-xs);
+  padding: 0 var(--spacing-2);
 }
 
 .input-header,
 .input-cell {
   width: 100%;
   border: none;
-  padding: 0.25rem;
-  font-size: 0.875rem;
+  padding: var(--spacing-1);
+  font-size: var(--font-size-sm);
   background: transparent;
+  color: var(--color-text-primary);
 }
 
 .input-header {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .controls-section {
-  margin: 1rem 0;
+  margin: var(--spacing-4) 0;
 }
 
 .button-group {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--spacing-2);
 }
 
 .delete-button {
@@ -393,8 +394,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #cecece;
-  transition: color 0.2s;
+  color: var(--color-gray-300);
+  transition: color var(--transition-fast);
   position: relative;
   margin: 0 auto;
 }
@@ -414,18 +415,18 @@ defineExpose({
 }
 
 .delete-button:hover {
-  color: #ff4d4f;
+  color: var(--color-danger);
 }
 
 .raw-data-section {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: var(--el-bg-color-page);
-  border-radius: 8px;
+  margin-top: var(--spacing-4);
+  padding: var(--spacing-4);
+  background: var(--color-background-muted);
+  border-radius: var(--border-radius-lg);
 }
 
 .raw-data-controls {
-  margin-top: 0.5rem;
+  margin-top: var(--spacing-2);
   display: flex;
   justify-content: flex-end;
 }

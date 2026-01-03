@@ -255,78 +255,69 @@ onMounted(() => {
 
 <style scoped>
 .description-text {
-  color: #6c757d;
-  margin-top: 0.5rem;
-  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+  margin-top: var(--spacing-2);
+  font-size: var(--font-size-sm);
 }
 
 .info-box {
   display: flex;
-  gap: 1rem;
-  padding: 1rem;
-  background-color: #f8f9fa;
-  border-left: 4px solid #17a2b8;
-  border-radius: 4px;
+  gap: var(--spacing-4);
+  padding: var(--spacing-4);
+  background-color: var(--color-background-muted);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--border-radius-md);
 }
 
 .info-box i {
-  color: #17a2b8;
-  font-size: 1.5rem;
-  margin-top: 0.5rem;
+  color: var(--color-accent);
+  font-size: var(--font-size-2xl);
+  margin-top: var(--spacing-2);
 }
 
 .info-box p {
   margin: 0;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 .info-box p:last-child {
   margin-bottom: 0;
 }
 
+.info-box p strong {
+  color: var(--color-text-primary);
+}
+
 .modal-description {
-  color: #6c757d;
-  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 .badge {
-  background-color: #e9ecef;
-  border-radius: 1rem;
-  padding: 0.25rem 0.75rem;
-  font-size: 0.75rem;
-  margin-left: 0.5rem;
-}
-
-.warning-text {
-  color: #dc3545;
-  font-size: 0.875rem;
-  margin-top: 0.5rem;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 1rem;
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-radius: var(--border-radius-full);
+  padding: var(--spacing-1) var(--spacing-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  margin-left: var(--spacing-2);
 }
 
 .connection-details {
-  font-size: 0.85rem;
-  color: #6c757d;
-  margin-top: 0.25rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-1);
 }
 
 .separator {
-  margin: 0 0.5rem;
+  margin: 0 var(--spacing-2);
 }
 
 .hint-text {
-  color: #6c757d;
-  font-size: 0.875rem;
-  margin-top: 0.5rem;
-}
-
-.mb-3 {
-  margin-bottom: 1rem;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  margin-top: var(--spacing-2);
 }
 </style>

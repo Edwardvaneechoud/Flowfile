@@ -89,6 +89,25 @@ button {
   background-color: var(--color-gray-400);
 }
 
+/* ========== Material Icons ========== */
+.material-icons {
+  font-family: 'Material Icons';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
 /* ========== Component Styles ========== */
 @import './components/_listbox.css';
 @import './components/_buttons.css';
@@ -101,6 +120,21 @@ button {
 @import './utils/_layout.css';
 
 /* ========== Element Plus Theme Overrides ========== */
+/* Set Element Plus CSS variables at root level */
+:root {
+  --el-color-primary: var(--color-accent);
+  --el-color-primary-light-3: var(--color-accent-light);
+  --el-color-primary-light-5: var(--color-accent-subtle);
+  --el-color-primary-light-7: var(--color-accent-subtle);
+  --el-color-primary-light-8: var(--color-accent-subtle);
+  --el-color-primary-light-9: var(--color-accent-subtle);
+  --el-color-primary-dark-2: var(--color-accent-hover);
+  --el-border-radius-base: var(--border-radius-md);
+  --el-border-radius-small: var(--border-radius-sm);
+  --el-font-size-base: var(--font-size-base);
+  --el-font-size-small: var(--font-size-sm);
+}
+
 /* General font family */
 [class^="el-"],
 [class*=" el-"] {
@@ -117,44 +151,80 @@ button {
   font-family: element-icons !important;
 }
 
-/* Reduce default Element Plus sizing for modern look */
+/* ========== Element Plus Button Styling ========== */
+/* Base button styling - friendlier appearance */
+.el-button {
+  --el-button-font-weight: var(--font-weight-medium);
+  border-radius: var(--border-radius-lg) !important;
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-fast) var(--transition-timing);
+}
+
+/* Primary button - friendly teal/cyan color */
+.el-button--primary {
+  --el-button-bg-color: var(--color-accent) !important;
+  --el-button-border-color: var(--color-accent) !important;
+  --el-button-hover-bg-color: var(--color-accent-hover) !important;
+  --el-button-hover-border-color: var(--color-accent-hover) !important;
+  --el-button-active-bg-color: var(--color-accent-hover) !important;
+  --el-button-active-border-color: var(--color-accent-hover) !important;
+  background-color: var(--color-accent) !important;
+  border-color: var(--color-accent) !important;
+}
+
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background-color: var(--color-accent-hover) !important;
+  border-color: var(--color-accent-hover) !important;
+}
+
+/* Default button - subtle styling */
+.el-button--default {
+  --el-button-bg-color: var(--color-background-primary);
+  --el-button-border-color: var(--color-border-secondary);
+  --el-button-text-color: var(--color-text-primary);
+  --el-button-hover-bg-color: var(--color-background-tertiary);
+  --el-button-hover-border-color: var(--color-border-secondary);
+}
+
+/* Small button refinement */
+.el-button--small {
+  font-size: var(--font-size-sm);
+  padding: 6px 12px;
+}
+
+/* ========== Element Plus Input Styling ========== */
 .el-input__wrapper {
   font-size: var(--font-size-sm);
+  border-radius: var(--border-radius-md);
+  transition: box-shadow var(--transition-fast);
+}
+
+.el-input.is-focus .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--color-accent) inset !important;
 }
 
 .el-select {
   --el-select-input-font-size: var(--font-size-sm);
 }
 
-/* Primary button styling */
-.el-button--primary {
-  --el-button-bg-color: var(--primary-blue);
-  --el-button-border-color: var(--primary-blue);
-  --el-button-hover-bg-color: var(--primary-blue-hover);
-  --el-button-hover-border-color: var(--primary-blue-hover);
-}
-
 /* Select dropdown styling */
 .el-select-dropdown__item.is-selected {
-  background-color: var(--color-background-hover);
-  color: var(--primary-blue);
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
 }
 
-/* Input focus styling */
-.el-input.is-focus .el-input__wrapper {
-  box-shadow: 0 0 0 1px var(--light-blue) inset;
-}
-
-/* Notification styling */
+/* ========== Element Plus Notification ========== */
 .el-notification {
   font-family: var(--font-family-base);
-  border-radius: var(--border-radius-md);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .el-notification__title {
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
 }
 
 .el-notification__content {
@@ -162,16 +232,22 @@ button {
   color: var(--color-text-secondary);
 }
 
-/* Drawer styling */
+/* ========== Element Plus Drawer ========== */
 .el-drawer__body {
   color: var(--color-text-primary);
   padding: var(--spacing-5);
   overflow-y: auto;
 }
 
-/* Dialog/Modal styling */
+/* ========== Element Plus Dialog ========== */
 .el-dialog {
-  --el-dialog-border-radius: var(--border-radius-lg);
+  --el-dialog-border-radius: var(--border-radius-xl);
+  border-radius: var(--border-radius-xl);
+}
+
+.el-dialog__header {
+  padding: var(--spacing-4) var(--spacing-5);
+  border-bottom: 1px solid var(--color-border-light);
 }
 
 .el-dialog__title {
@@ -181,9 +257,15 @@ button {
 
 .el-dialog__body {
   font-size: var(--font-size-sm);
+  padding: var(--spacing-5);
 }
 
-/* Table styling for Element Plus */
+.el-dialog__footer {
+  padding: var(--spacing-4) var(--spacing-5);
+  border-top: 1px solid var(--color-border-light);
+}
+
+/* ========== Element Plus Table ========== */
 .el-table {
   --el-table-border-color: var(--color-border-light);
   --el-table-header-bg-color: var(--color-background-muted);
@@ -195,29 +277,42 @@ button {
   color: var(--color-text-primary);
 }
 
-/* Form item styling */
+/* ========== Element Plus Form ========== */
 .el-form-item__label {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
 }
 
-/* Popover and tooltip */
+/* ========== Element Plus Misc ========== */
 .el-popover,
 .el-tooltip__content {
   font-size: var(--font-size-sm);
+  border-radius: var(--border-radius-md);
 }
 
-/* Tabs */
 .el-tabs__item {
   font-size: var(--font-size-sm);
 }
 
-/* Message box */
+.el-message-box {
+  border-radius: var(--border-radius-xl);
+}
+
 .el-message-box__title {
   font-size: var(--font-size-lg);
 }
 
 .el-message-box__message {
+  font-size: var(--font-size-sm);
+}
+
+/* ========== Element Plus Collapse ========== */
+.el-collapse-item__header {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.el-collapse-item__content {
   font-size: var(--font-size-sm);
 }
