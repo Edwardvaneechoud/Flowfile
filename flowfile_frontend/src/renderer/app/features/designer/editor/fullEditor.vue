@@ -122,50 +122,54 @@ const stopResize = () => {
 
 .container {
   display: flex;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   border-radius: 5px;
   overflow: hidden;
-  height: 100%; /* Make it take full height */
+  height: 100%;
   cursor: auto;
+  background-color: var(--color-background-primary);
 }
 
 .options-container {
-  flex-shrink: 0; /* Prevent shrinking */
-  min-width: 50px; /* Minimum width */
-  max-height: 300px; /* Maximum height */
+  flex-shrink: 0;
+  min-width: 50px;
+  max-height: 300px;
   padding-left: 5px;
   padding-right: 5px;
   z-index: 1;
-  overflow-y: auto; /* Make it scrollable */
+  overflow-y: auto;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .resizer {
   width: 5px;
-  cursor: ew-resize; /* East-west resize cursor */
-  background-color: #ddd;
-  border-right: 0.5px solid #ccc;
-  flex-shrink: 0; /* Prevent shrinking */
+  cursor: ew-resize;
+  background-color: var(--color-border-primary);
+  border-right: 0.5px solid var(--color-border-secondary);
+  flex-shrink: 0;
 }
 
 .editor-wrapper {
-  flex-grow: 1; /* Take up the remaining space */
+  flex-grow: 1;
   flex-direction: column;
-  overflow: hidden; /* Hide overflow */
+  overflow: hidden;
+  background-color: var(--color-background-secondary);
 }
 
 .prism-editor-ref {
   flex: 1;
   padding: 1px;
-  min-height: 0px; /* Important to make it respect the parent's height */
+  min-height: 0px;
 }
 
 .error-box-wrapper {
   overflow-y: auto;
-  border-top: 1px solid #ccc;
+  border-top: 1px solid var(--color-border-primary);
 }
 
 .divider {
-  border-top: 1px solid #ccc;
+  border-top: 1px solid var(--color-border-primary);
   padding-bottom: 10px;
 }
 </style>

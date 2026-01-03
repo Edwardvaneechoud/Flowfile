@@ -346,3 +346,114 @@ button {
   color: var(--color-accent);
 }
 
+/* ========== Element Plus Tabs Styling ========== */
+.el-tabs__header {
+  background-color: var(--color-background-primary);
+}
+
+.el-tabs__nav-wrap::after {
+  background-color: var(--color-border-primary);
+}
+
+.el-tabs__item {
+  color: var(--color-text-secondary);
+}
+
+.el-tabs__item:hover {
+  color: var(--color-text-primary);
+}
+
+.el-tabs__item.is-active {
+  color: var(--color-accent);
+}
+
+.el-tabs__content {
+  background-color: var(--color-background-primary);
+}
+
+.el-tab-pane {
+  background-color: var(--color-background-primary);
+}
+
+/* ========== Element Plus Drawer Styling ========== */
+.el-drawer {
+  background-color: var(--color-background-primary);
+}
+
+.el-drawer__header {
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.el-drawer__body {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Switch Styling ========== */
+.el-switch__label {
+  color: var(--color-text-secondary);
+}
+
+.el-switch__label.is-active {
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Textarea/Input Styling ========== */
+.el-textarea__inner {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-textarea__inner:focus {
+  border-color: var(--color-accent);
+}
+
+.el-input__inner {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Card Styling ========== */
+.el-card {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-card__header {
+  background-color: var(--color-background-secondary);
+  border-bottom-color: var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+.el-card__body {
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Dropdown Styling ========== */
+.el-dropdown-menu {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-dropdown-menu__item {
+  color: var(--color-text-primary);
+}
+
+.el-dropdown-menu__item:hover {
+  background-color: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Popover Styling ========== */
+.el-popover {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-popover__title {
+  color: var(--color-text-primary);
+}
+

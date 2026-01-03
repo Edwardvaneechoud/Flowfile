@@ -102,6 +102,10 @@ const apiData = ref<ExpressionGroup[]>([
   font-weight: bold;
 }
 
+.tree-node {
+  color: var(--color-text-primary);
+}
+
 .tree-subview {
   list-style-type: none;
   padding-left: 20px;
@@ -118,10 +122,11 @@ const apiData = ref<ExpressionGroup[]>([
 }
 
 .cool-button {
-  width: 100%; /* Ensure the button takes full width of the container */
-  max-width: 200px; /* Set a max-width if you want to control the maximum button size */
+  width: 100%;
+  max-width: 200px;
   border: none;
-  color: rgb(0, 0, 0);
+  color: var(--color-text-primary);
+  background-color: transparent;
   padding: 3px 3px;
   text-align: left;
   display: inline-block;
@@ -130,10 +135,10 @@ const apiData = ref<ExpressionGroup[]>([
   border-radius: 4px;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis; /* Add ellipsis for overflow text */
+  text-overflow: ellipsis;
 }
 
 .cool-button:hover {
-  background-color: #bcbcbc;
+  background-color: var(--color-background-hover);
 }
 </style>
