@@ -43,7 +43,6 @@ def ensure_db_connection_is_available():
             store_database_connection(db, connection, user_id=1)
 
 
-
 @contextmanager
 def generator_func():
     try:

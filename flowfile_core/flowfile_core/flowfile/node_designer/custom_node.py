@@ -383,48 +383,6 @@ class CustomNodeBase(BaseModel):
         """
         return self.accessed_secrets.copy()
 
-    # Update your existing resolve_secret to track accessed secrets
-    def resolve_secret(self, setting_name: str) -> Optional[SecretStr]:
-        """
-        Resolves a secret reference to its actual decrypted value.
-        ... (keep your existing docstring) ...
-        """
-        if self._user_id is None:
-            raise ValueError(
-                "User context not set. Ensure the node is executed through the proper framework."
-            )
-        breakpoint()
-        if self.settings_schema is None:
-            raise ValueError(f"No settings schema defined for node {self.node_name}")
-
-        secret_name = self.settings_schema.get_value(setting_name)
-
-        if secret_name is None:
-            return None
-
-        from flowfile_core.secret_manager.secret_manager import (
-            get_encrypted_secret,
-            decrypt_secret
-        )
-
-        encrypted = get_encrypted_secret(
-            current_user_id=self._user_id,
-            secret_name=secret_name
-        )
-
-        if encrypted is None:
-            raise ValueError(
-                f"Secret '{secret_name}' not found for user. "
-                f"Please ensure the secret exists in your secrets store."
-            )
-
-        decrypted = decrypt_secret(encrypted)
-
-        # Track accessed secrets for output scanning
-        self.accessed_secrets.add(decrypted.get_secret_value())
-
-        return decrypted
-
     def get_secret_names(self) -> list[str]:
         """
         Returns a list of all SecretSelector field names in the settings schema.

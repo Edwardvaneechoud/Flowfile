@@ -533,6 +533,7 @@ class FlowGraph:
                            setting_input=user_defined_node_settings,
                            input_node_ids=user_defined_node_settings.depending_on_ids,
                            node_type=custom_node.item,
+
                            )
         if custom_node.number_of_inputs == 0:
             node = self.get_node(user_defined_node_settings.node_id)

@@ -265,7 +265,6 @@ def LeakyNode():
         def process(self, *inputs: pl.DataFrame) -> pl.DataFrame:
             if not inputs:
                 return pl.DataFrame()
-
             input_df = inputs[0]
 
             # Access secret using .secret_value property
@@ -280,10 +279,6 @@ def LeakyNode():
 
     return SecretLeakerNode
 
-
-# =============================================================================
-# Tests for SecretSelector UI Component
-# =============================================================================
 
 class TestSecretSelector:
     """Tests for the SecretSelector UI component."""
@@ -876,7 +871,6 @@ class TestSecretAccessFlowGraphIntegration:
         """Tests that the output scanner catches and redacts leaked secrets."""
         secret_name, secret_value = stored_secret
         add_to_custom_node_store(LeakyNode)
-
         graph = create_graph()
         add_manual_input(graph, [{"id": 1}], node_id=1)
 

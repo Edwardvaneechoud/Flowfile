@@ -8,6 +8,11 @@ from flowfile_core.flowfile.node_designer._type_registry import normalize_type_s
 # Public API import
 from flowfile_core.types import DataType, TypeSpec
 
+from flowfile_core.secret_manager.secret_manager import (
+    get_encrypted_secret,
+    decrypt_secret
+)
+
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 
 
@@ -346,11 +351,6 @@ class SecretSelector(FlowfileInComponent):
                 "Ensure you're calling this from within the process() method."
             )
 
-        from flowfile_core.secret_manager.secret_manager import (
-            get_encrypted_secret,
-            decrypt_secret
-        )
-
         encrypted = get_encrypted_secret(
             current_user_id=self._user_id,
             secret_name=self.value
@@ -364,10 +364,10 @@ class SecretSelector(FlowfileInComponent):
 
         decrypted = decrypt_secret(encrypted)
 
-        # Track for output scanning
         if self._accessed_secrets is not None:
             self._accessed_secrets.add(decrypted.get_secret_value())
-
+        else:
+            self._accessed_secrets = {decrypted.get_secret_value()}
         return decrypted
 
     def model_dump(self, **kwargs) -> dict:
