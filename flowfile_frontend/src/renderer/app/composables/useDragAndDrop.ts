@@ -7,7 +7,7 @@ import { FlowApi } from "../api"
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
-const nodeModules = import.meta.glob('../features/designer/nodes/elements/**/*.vue')
+const nodeModules = import.meta.glob('../components/nodes/node-types/elements/**/*.vue')
 
 // Validate that parsed JSON data is a valid NodeTemplate
 // This prevents unvalidated dynamic method calls from untrusted data
@@ -97,8 +97,8 @@ async function getComponent(node: NodeTemplate | string): Promise<any> {
 
   // Use CustomNode for nodes marked as custom_node, otherwise use specific component
   const modulePath = nodeTemplate.custom_node
-    ? '../features/designer/nodes/elements/customNode/CustomNode.vue'
-    : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
+    ? '../components/nodes/node-types/elements/customNode/CustomNode.vue'
+    : `../components/nodes/node-types/elements/${dirName}/${formattedItemName}.vue`
 
   console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node)
 
@@ -152,8 +152,8 @@ async function getComponentRaw(item: string): Promise<any> {
 
   // Use CustomNode for nodes marked as custom_node, otherwise use specific component
   const modulePath = nodeTemplate.custom_node
-    ? '../features/designer/nodes/elements/customNode/CustomNode.vue'
-    : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
+    ? '../components/nodes/node-types/elements/customNode/CustomNode.vue'
+    : `../components/nodes/node-types/elements/${dirName}/${formattedItemName}.vue`
 
   console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node)
 
