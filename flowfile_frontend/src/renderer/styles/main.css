@@ -314,3 +314,35 @@ button {
 .el-collapse-item__content {
   font-size: var(--font-size-sm);
 }
+
+/* ========== Element Plus Menu Styling ========== */
+.el-menu {
+  background-color: var(--color-background-primary);
+  border-right: none;
+}
+
+.el-menu-item,
+.el-sub-menu__title {
+  color: var(--color-text-secondary);
+}
+
+.el-menu-item:hover,
+.el-sub-menu__title:hover {
+  background-color: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+.el-menu-item.is-active {
+  color: var(--color-accent);
+  background-color: var(--color-background-selected);
+}
+
+.el-menu-item i,
+.el-sub-menu__title i {
+  color: var(--color-text-secondary);
+}
+
+.el-menu-item.is-active i {
+  color: var(--color-accent);
+}
+
