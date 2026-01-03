@@ -73,7 +73,9 @@ def update_user_defined_node(input_data: Dict[str, Any], node_type: str, current
     user_defined_model = CUSTOM_NODE_STORE.get(node_type)
     if not user_defined_model:
         raise HTTPException(status_code=404, detail=f"Node type '{node_type}' not found")
-
+    print('adding user defined node')
+    print(input_data)
+    print('-----')
     user_defined_node_settings = input_schema.UserDefinedNode.model_validate(input_data)
     initialized_model = user_defined_model.from_settings(user_defined_node_settings.settings)
 

@@ -56,6 +56,7 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (g
 from flowfile_core.flowfile.util.calculate_layout import calculate_layered_layout
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from importlib.metadata import version, PackageNotFoundError
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 
 try:
     __version__ = version("Flowfile")
@@ -262,6 +263,15 @@ class FlowGraph:
             self.reset()
         self._flow_settings = flow_settings
 
+    def add_node_to_starting_list(self, node: FlowNode) -> None:
+        """Adds a node to the list of starting nodes for the flow if not already present.
+
+        Args:
+            node: The FlowNode to add as a starting node.
+        """
+        if node.node_id not in {self_node.node_id for self_node in self._flow_starts}:
+            self._flow_starts.append(node)
+
     def add_node_promise(self, node_promise: input_schema.NodePromise):
         """Adds a placeholder node to the graph that is not yet fully configured.
 
@@ -277,6 +287,19 @@ class FlowGraph:
 
         self.add_node_step(node_id=node_promise.node_id, node_type=node_promise.node_type, function=placeholder,
                            setting_input=node_promise)
+        if node_promise.is_user_defined:
+
+            node_needs_settings: bool
+            custom_node = CUSTOM_NODE_STORE.get(node_promise.node_type)
+            if custom_node is None:
+                raise Exception(f"Custom node type '{node_promise.node_type}' not found in registry.")
+            settings_schema = custom_node.model_fields['settings_schema'].default
+            node_needs_settings = settings_schema is not None and not settings_schema.is_empty()
+            if not node_needs_settings:
+                user_defined_node_settings = input_schema.UserDefinedNode(settings={}, **node_promise.model_dump())
+                initialized_model = custom_node()
+                self.add_user_defined_node(custom_node=initialized_model,
+                                           user_defined_node_settings=user_defined_node_settings)
 
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
         """Calculates and applies a layered layout to all nodes in the graph.
@@ -461,19 +484,20 @@ class FlowGraph:
                               custom_node: CustomNodeBase,
                               user_defined_node_settings: input_schema.UserDefinedNode
                               ):
-       
         def _func(*fdes: FlowDataEngine) -> FlowDataEngine | None:
             output = custom_node.process(*(fde.data_frame for fde in fdes))
             if isinstance(output, pl.LazyFrame | pl.DataFrame):
                 return FlowDataEngine(output)
             return None
-        
         self.add_node_step(node_id=user_defined_node_settings.node_id,
                            function=_func,
                            setting_input=user_defined_node_settings,
                            input_node_ids=user_defined_node_settings.depending_on_ids,
                            node_type=custom_node.item,
                            )
+        if custom_node.number_of_inputs == 0:
+            node = self.get_node(user_defined_node_settings.node_id)
+            self.add_node_to_starting_list(node)
 
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
         """Adds a pivot node to the graph.
@@ -1285,8 +1309,7 @@ class FlowGraph:
             node.function = _func
             node.setting_input = node_database_reader
             node.node_settings.cache_results = node_database_reader.cache_results
-            if node_database_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
             node.schema_callback = schema_callback
         else:
             node = FlowNode(node_database_reader.node_id, function=_func,
@@ -1294,7 +1317,7 @@ class FlowGraph:
                             name=node_type, node_type=node_type, parent_uuid=self.uuid,
                             schema_callback=schema_callback)
             self._node_db[node_database_reader.node_id] = node
-            self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
             self._node_ids.append(node_database_reader.node_id)
 
     def add_sql_source(self, external_source_input: input_schema.NodeExternalSource):
@@ -1395,8 +1418,7 @@ class FlowGraph:
                                   setting_input=node_cloud_storage_reader,
                                   node_type=node_type,
                                   )
-        if node_cloud_storage_reader.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-            self._flow_starts.append(node)
+        self.add_node_to_starting_list(node)
 
     def add_external_source(self,
                             external_source_input: input_schema.NodeExternalSource):
@@ -1434,14 +1456,14 @@ class FlowGraph:
             node.function = _func
             node.setting_input = external_source_input
             node.node_settings.cache_results = external_source_input.cache_results
-            if external_source_input.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
+
         else:
             node = FlowNode(external_source_input.node_id, function=_func,
                             setting_input=external_source_input,
                             name=node_type, node_type=node_type, parent_uuid=self.uuid)
             self._node_db[external_source_input.node_id] = node
-            self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
             self._node_ids.append(external_source_input.node_id)
         if external_source_input.source_settings.fields and len(external_source_input.source_settings.fields) > 0:
             logger.info('Using provided schema in the node')
@@ -1495,8 +1517,7 @@ class FlowGraph:
             node.name = 'read'
             node.function = _func
             node.setting_input = input_file
-            if input_file.node_id not in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
 
             if start_hash != node.hash:
                 logger.info('Hash changed, updating schema')
@@ -1528,7 +1549,7 @@ class FlowGraph:
                             setting_input=input_file,
                             name='read', node_type='read', parent_uuid=self.uuid)
             self._node_db[input_file.node_id] = node
-            self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
             self._node_ids.append(input_file.node_id)
 
         if schema_callback is not None:
@@ -1559,15 +1580,15 @@ class FlowGraph:
             node.name = ref
             node.function = input_data
             node.setting_input = input_file
-            if not input_file.node_id in set(start_node.node_id for start_node in self._flow_starts):
-                self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
+
         else:
             input_data.collect()
             node = FlowNode(input_file.node_id, function=input_data,
                             setting_input=input_file,
                             name=ref, node_type=ref, parent_uuid=self.uuid)
             self._node_db[input_file.node_id] = node
-            self._flow_starts.append(node)
+            self.add_node_to_starting_list(node)
             self._node_ids.append(input_file.node_id)
         return self
 
@@ -1715,12 +1736,10 @@ class FlowGraph:
         if self.flow_settings.is_running:
             raise Exception('Flow is already running')
         try:
-
             self.flow_settings.is_running = True
             self.flow_settings.is_canceled = False
             self.flow_logger.clear_log_file()
             self.flow_logger.info('Starting to run flowfile flow...')
-
             skip_nodes, execution_order = compute_execution_plan(
                 nodes=self.nodes,
                 flow_starts=self._flow_starts+self.get_implicit_starter_nodes()

@@ -108,6 +108,18 @@ class NodeSettings(BaseModel):
         extra = 'allow'
         arbitrary_types_allowed = True
 
+    def has_sections(self) -> bool:
+        """Check if this settings class has any sections defined."""
+        if self.model_fields:
+            return True
+        extra = getattr(self, '__pydantic_extra__', {})
+        return bool(extra)
+
+    def is_empty(self) -> bool:
+        """Check if this is an empty settings class with no configuration."""
+
+        return not self.has_sections()
+
     def __init__(self, **sections):
         """
         Initialize NodeSettings with sections as keyword arguments.

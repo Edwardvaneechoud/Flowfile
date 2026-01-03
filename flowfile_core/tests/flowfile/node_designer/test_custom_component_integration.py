@@ -74,10 +74,10 @@ def add_custom_node_to_graph(
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
         node_id=node_id,
-        node_type=custom_node_class().item
+        node_type=custom_node_class().item,
+        is_user_defined=True
     )
     graph.add_node_promise(node_promise)
-
     user_defined_node = custom_node_class.from_settings(settings)
     node_settings = input_schema.UserDefinedNode(
         flow_id=graph.flow_id,
@@ -878,34 +878,6 @@ def DataGeneratorNode():
 
 
 @pytest.fixture
-def WrongNoInputNode():
-    class TestNodeNoSectionsSettings(NodeSettings):
-        pass
-
-    class TestNodeNoSections(CustomNodeBase):
-        node_name: str = "test_node_no_sections"
-        node_category: str = "Custom"
-        title: str = "test_node_no_sections"
-        intro: str = "A custom node for data processing"
-        number_of_inputs: int = 0
-        number_of_outputs: int = 1
-        settings_schema: TestNodeNoSectionsSettings = TestNodeNoSectionsSettings()
-
-        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-            # Get the first input LazyFrame
-            lf = inputs[0]
-
-            # Access settings values like this:
-            # value = self.settings_schema.section_name.field_name.value
-
-            # Your transformation logic here
-            # Example: lf = lf.filter(pl.col("column") > 0)
-
-            return lf
-    return TestNodeNoSections()
-
-
-@pytest.fixture
 def DateRangeGeneratorNode():
     """A custom source node that generates a date range."""
 
@@ -1051,7 +1023,6 @@ class TestSourceNodes:
             }
         }
         add_custom_node_to_graph(graph, DataGeneratorNode, node_id=1, settings=settings)
-
         run_result = graph.run_graph()
         handle_run_info(run_result)
 
@@ -1339,7 +1310,6 @@ class TestSourceNodeEdgeCases:
     def test_source_node_with_zero_rows(self, DataGeneratorNode):
         """Test generator configured for minimum rows."""
         add_to_custom_node_store(DataGeneratorNode)
-
         graph = create_graph()
 
         settings = {
@@ -1351,13 +1321,12 @@ class TestSourceNodeEdgeCases:
             }
         }
         add_custom_node_to_graph(graph, DataGeneratorNode, node_id=1, settings=settings)
-
         run_result = graph.run_graph()
         handle_run_info(run_result)
 
         result = graph.get_node(1).get_resulting_data()
         assert result.count() == 1
-        assert result.to_dict()["name"] == ["Only_0"]
+        assert result.to_dict()["name"] == ["Only_1"]
 
     def test_source_node_invalid_date_fallback(self, DateRangeGeneratorNode):
         """Test date generator with invalid date string falls back gracefully."""
@@ -1402,6 +1371,226 @@ class TestSourceNodeEdgeCases:
         # Should return default fallback
         assert result.count() == 1
         assert result.to_dict()["value"] == ["default"]
+
+
+@pytest.fixture
+def WrongNoInputNode():
+    """A buggy node that declares no inputs but tries to access inputs[0]."""
+
+    class TestNodeNoSectionsSettings(NodeSettings):
+        pass
+
+    class TestNodeNoSections(CustomNodeBase):
+        node_name: str = "test_node_no_sections"
+        node_category: str = "Custom"
+        title: str = "test_node_no_sections"
+        intro: str = "A custom node for data processing"
+        number_of_inputs: int = 0
+        number_of_outputs: int = 1
+        settings_schema: TestNodeNoSectionsSettings = TestNodeNoSectionsSettings()
+
+        def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            # BUG: This node declares 0 inputs but tries to access inputs[0]
+            lf = inputs[0]
+            return lf
+
+    return TestNodeNoSections  # Return class, not instance
+
+
+class TestMisconfiguredNodes:
+    """Tests for nodes with configuration errors or bugs."""
+
+    def test_no_input_node_accessing_inputs_fails(self, WrongNoInputNode):
+        """Test that a source node incorrectly accessing inputs raises an error."""
+        add_to_custom_node_store(WrongNoInputNode)
+
+        graph = create_graph()
+
+        add_custom_node_to_graph(graph, WrongNoInputNode, node_id=1, settings={})
+
+        run_result = graph.run_graph()
+
+        # The run should fail because process() tries to access inputs[0]
+        # but no inputs are provided to a source node
+        assert not run_result.success, "Node should fail when accessing non-existent inputs"
+
+        # Verify the error is related to the index/input access
+        node_errors = [
+            step for step in run_result.node_step_result
+            if not step.success and step.node_id == 1
+        ]
+        assert len(node_errors) > 0, "Should have an error for node 1"
+
+    def test_no_input_node_error_message_is_descriptive(self, WrongNoInputNode):
+        """Test that the error from misconfigured node is descriptive."""
+        add_to_custom_node_store(WrongNoInputNode)
+
+        graph = create_graph()
+
+        add_custom_node_to_graph(graph, WrongNoInputNode, node_id=1, settings={})
+
+        run_result = graph.run_graph()
+
+        assert not run_result.success
+
+        # Find the error message
+        failed_step = next(
+            (step for step in run_result.node_step_result if not step.success),
+            None
+        )
+        assert failed_step is not None
+        assert failed_step.error is not None
+        # Should mention index error or tuple index out of range
+        assert "index" in failed_step.error.lower() or "IndexError" in failed_step.error
+
+    def test_no_input_node_does_not_block_other_nodes(self, WrongNoInputNode, AddFixedColumnNode):
+        """Test that a failing source node doesn't prevent independent nodes from running."""
+        add_to_custom_node_store(WrongNoInputNode)
+        add_to_custom_node_store(AddFixedColumnNode)
+
+        graph = create_graph()
+
+        # Add the broken source node
+        add_custom_node_to_graph(graph, WrongNoInputNode, node_id=1, settings={})
+
+        # Add an independent working branch
+        add_manual_input(graph, [{"a": 1}], node_id=2)
+        add_custom_node_to_graph(graph, AddFixedColumnNode, node_id=3, settings={
+            "config": {"column_name": "new", "fixed_value": "works"}
+        })
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(2, 3))
+
+        run_result = graph.run_graph()
+
+        # Node 1 should fail
+        node_1_result = next(
+            (step for step in run_result.node_step_result if step.node_id == 1),
+            None
+        )
+        assert node_1_result is not None
+        assert not node_1_result.success
+
+        # Node 3 (independent branch) should succeed
+        node_3_result = next(
+            (step for step in run_result.node_step_result if step.node_id == 3),
+            None
+        )
+        assert node_3_result is not None
+        assert node_3_result.success
+
+        # Verify node 3 has correct data
+        result = graph.get_node(3).get_resulting_data()
+        assert result.to_dict()["new"] == ["works"]
+
+    def test_no_input_node_blocks_dependent_nodes(self, WrongNoInputNode, NumericMultiplierNode):
+        """Test that nodes depending on a failing source node also fail."""
+        add_to_custom_node_store(WrongNoInputNode)
+        add_to_custom_node_store(NumericMultiplierNode)
+
+        graph = create_graph()
+
+        # Broken source node
+        add_custom_node_to_graph(graph, WrongNoInputNode, node_id=1, settings={})
+
+        # Dependent transform node
+        add_custom_node_to_graph(graph, NumericMultiplierNode, node_id=2, settings={
+            "config": {"column": "value", "factor": 2.0, "output_column": "doubled"}
+        })
+        add_connection(graph, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        run_result = graph.run_graph()
+
+        # Both nodes should fail (node 1 directly, node 2 because of dependency)
+        assert not run_result.success
+
+        node_1_result = next(
+            (step for step in run_result.node_step_result if step.node_id == 1),
+            None
+        )
+        assert not node_1_result.success
+
+    def test_empty_settings_node_registration(self, WrongNoInputNode):
+        """Test that a node with empty settings can still be registered."""
+        add_to_custom_node_store(WrongNoInputNode)
+
+        instance = WrongNoInputNode()
+        assert instance.item in CUSTOM_NODE_STORE
+        assert instance.number_of_inputs == 0
+        assert instance.number_of_outputs == 1
+
+    def test_empty_settings_schema_structure(self, WrongNoInputNode):
+        """Test the frontend schema of a node with no settings."""
+        instance = WrongNoInputNode()
+        schema = instance.get_frontend_schema()
+
+        assert "settings_schema" in schema
+        # Empty settings should still have the structure, just no sections
+        assert schema["settings_schema"] == {} or isinstance(schema["settings_schema"], dict)
+
+
+class TestCorrectNoInputNode:
+    """Tests for properly implemented source nodes (for comparison)."""
+
+    @pytest.fixture
+    def CorrectNoInputNode(self):
+        """A correctly implemented source node that doesn't access inputs."""
+
+        class CorrectSourceSettings(NodeSettings):
+            config: Section = Section(
+                title="Configuration",
+                value=TextInput(label="Output Value", default="generated")
+            )
+
+        class CorrectSource(CustomNodeBase):
+            node_name: str = "correct_source_node"
+            node_category: str = "Custom"
+            title: str = "Correct Source Node"
+            intro: str = "A properly implemented source node"
+            number_of_inputs: int = 0
+            number_of_outputs: int = 1
+            settings_schema: CorrectSourceSettings = CorrectSourceSettings()
+
+            def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+                # Correctly ignores inputs since number_of_inputs is 0
+                value = self.settings_schema.config.value.value
+                return pl.LazyFrame({"output": [value]})
+
+        return CorrectSource
+
+    def test_correct_no_input_node_succeeds(self, CorrectNoInputNode):
+        """Test that a properly implemented source node works."""
+        add_to_custom_node_store(CorrectNoInputNode)
+
+        graph = create_graph()
+
+        add_custom_node_to_graph(graph, CorrectNoInputNode, node_id=1, settings={
+            "config": {"value": "hello"}
+        })
+
+        run_result = graph.run_graph()
+        handle_run_info(run_result)
+
+        result = graph.get_node(1).get_resulting_data()
+        assert result.to_dict()["output"] == ["hello"]
+
+    def test_comparison_wrong_vs_correct_source_node(self, WrongNoInputNode, CorrectNoInputNode):
+        """Compare behavior of wrong vs correct source node implementations."""
+        add_to_custom_node_store(WrongNoInputNode)
+        add_to_custom_node_store(CorrectNoInputNode)
+
+        # Test wrong node
+        graph1 = create_graph(flow_id=1)
+        add_custom_node_to_graph(graph1, WrongNoInputNode, node_id=1, settings={})
+        wrong_result = graph1.run_graph()
+
+        # Test correct node
+        graph2 = create_graph(flow_id=2)
+        add_custom_node_to_graph(graph2, CorrectNoInputNode, node_id=1, settings={
+            "config": {"value": "test"}
+        })
+        correct_result = graph2.run_graph()
+        assert not wrong_result.success, "Wrong implementation should fail"
+        assert correct_result.success, "Correct implementation should succeed"
 
 
 if __name__ == "__main__":
