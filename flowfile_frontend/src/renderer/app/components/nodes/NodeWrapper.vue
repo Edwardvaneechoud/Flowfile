@@ -481,6 +481,7 @@ onMounted(async () => {
   white-space: pre-wrap;
   word-wrap: break-word;
   font-family: var(--font-family-base);
+  font-size: var(--font-size-xs);
 }
 
 .edit-overlay {
