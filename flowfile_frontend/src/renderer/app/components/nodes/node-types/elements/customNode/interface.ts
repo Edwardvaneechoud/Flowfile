@@ -54,6 +54,14 @@ export interface ColumnSelectorComponent extends BaseComponent {
   multiple?: boolean;
 }
 
+export interface SecretSelectorComponent extends BaseComponent {
+  component_type: "SecretSelector";
+  required?: boolean;
+  description?: string;
+  options: { __type__: "AvailableSecrets" };
+  name_prefix?: string;
+}
+
 
 // --- Section Component Type ---
 
@@ -69,14 +77,15 @@ export interface SettingsSchema {
   [sectionKey: string]: SectionComponent;
 }
 
-export type UIComponent = 
-  | TextInputComponent 
-  | MultiSelectComponent 
+export type UIComponent =
+  | TextInputComponent
+  | MultiSelectComponent
   | ToggleSwitchComponent
   | NumericInputComponent
   | SliderInputComponent
   | SingleSelectComponent
-  | ColumnSelectorComponent;
+  | ColumnSelectorComponent
+  | SecretSelectorComponent;
 
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";

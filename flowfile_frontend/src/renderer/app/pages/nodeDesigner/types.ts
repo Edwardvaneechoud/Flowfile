@@ -18,6 +18,7 @@ export interface DesignerComponent {
   data_types?: string;
   options_source?: string;
   options_string?: string;
+  name_prefix?: string; // For SecretSelector: filter secrets by name prefix
 }
 
 /** A section containing multiple components */
