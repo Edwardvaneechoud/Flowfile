@@ -226,10 +226,15 @@ const validateDatabaseSettings = async () => {
   resetFields();
 
   try {
-    const response = await axios.post(
-      "/validate_db_settings",
-      nodeDatabaseReader.value.database_settings,
-    );
+    // Clean up settings based on connection_mode before sending
+    const settings = { ...nodeDatabaseReader.value.database_settings };
+    if (settings.connection_mode === "reference") {
+      settings.database_connection = undefined;
+    } else {
+      settings.database_connection_name = undefined;
+    }
+
+    const response = await axios.post("/validate_db_settings", settings);
 
     // If we get here, validation was successful
     validationSuccess.value = response.data.message || "Settings are valid";
@@ -249,6 +254,12 @@ const validateDatabaseSettings = async () => {
 const pushNodeData = async () => {
   if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
     return;
+  }
+  // Clean up settings based on connection_mode before saving
+  if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
+    nodeDatabaseReader.value.database_settings.database_connection = undefined;
+  } else {
+    nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
   }
   nodeDatabaseReader.value.is_setup = true;
   nodeStore.updateSettings(nodeDatabaseReader);
