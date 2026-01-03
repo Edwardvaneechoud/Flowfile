@@ -167,6 +167,13 @@ const pushNodeData = async () => {
     return;
   }
 
+  // Clean up settings based on connection_mode before saving
+  if (nodeData.value.database_write_settings.connection_mode === "reference") {
+    nodeData.value.database_write_settings.database_connection = undefined;
+  } else {
+    nodeData.value.database_write_settings.database_connection_name = undefined;
+  }
+
   nodeData.value.is_setup = true;
   try {
     await nodeStore.updateSettings(nodeData);
