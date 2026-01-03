@@ -162,12 +162,12 @@ onMounted(() => {
 .popover h3 {
   margin: 0 0 2px;
   font-size: 16px;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .popover p {
   margin: 0;
-  font-family: "Roboto", "Source Sans Pro", Avenir, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .content {

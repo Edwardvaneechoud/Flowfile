@@ -331,7 +331,7 @@ defineExpose({
 
 <style scoped>
 .cloud-storage-container {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
   max-width: 100%;
   color: #333;
 }

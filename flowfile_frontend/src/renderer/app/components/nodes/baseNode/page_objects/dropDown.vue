@@ -330,7 +330,7 @@ watch(
 .dropdown-container {
   position: relative;
   width: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .input-wrapper {
