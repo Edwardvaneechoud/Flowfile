@@ -53,7 +53,7 @@
 import { ref, computed } from "vue";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-import { useItemStore } from "./../components/Canvas/DraggableItem/stateStore";
+import { useItemStore } from "../../../components/common/DraggableItem/stateStore";
 import { View, Minus } from "@element-plus/icons-vue";
 import PopOver from "../editor/PopOver.vue";
 
@@ -71,10 +71,6 @@ const formattedTime = computed(() => {
     minute: "2-digit",
     second: "2-digit",
   });
-});
-
-const popoverTitle = computed(() => {
-  return isRunning.value ? "Processing Flow" : "Flow Idle";
 });
 
 const tooltipContent = computed(() => {

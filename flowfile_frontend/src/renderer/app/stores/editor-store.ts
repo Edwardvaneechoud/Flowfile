@@ -2,7 +2,7 @@
 import { defineStore } from 'pinia';
 import { ref, shallowRef } from 'vue';
 import type { Component } from 'vue';
-import type { NodeTitleInfo } from '../features/designer/baseNode/nodeInterfaces';
+import type { NodeTitleInfo } from '../types';
 
 export const useEditorStore = defineStore('editor', {
   state: () => ({

@@ -1,6 +1,6 @@
 // Secrets API Service - Handles secret management operations
 // Consolidated from pages/secretManager/secretApi.ts
-import axios from '../services/axios-setup'
+import axios from '../services/axios.config'
 import type { Secret, SecretInput, SecretValueResponse } from '../types'
 
 const API_BASE_URL = '/secrets/secrets'

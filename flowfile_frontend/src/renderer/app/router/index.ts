@@ -19,7 +19,7 @@ const routes: Array<RouteRecordRaw> = [
       {
         path: "designer",
         name: "designer",
-        component: () => import("../pages/designer.vue"),
+        component: () => import("../views/DesignerView/DesignerView.vue"),
       },
       {
         name: "nodeData",
@@ -29,22 +29,22 @@ const routes: Array<RouteRecordRaw> = [
       {
         name: "documentation",
         path: "documentation",
-        component: () => import("../pages/documentation.vue"),
+        component: () => import("../views/DocumentationView/DocumentationView.vue"),
       },
       {
         name: "databaseManager",
         path: "databaseManager",
-        component: () => import("../pages/DatabaseManager.vue"),
+        component: () => import("../views/DatabaseView/DatabaseView.vue"),
       },
       {
         name: "cloudConnectionManager",
         path: "cloudConnectionManager",
-        component: () => import("../pages/CloudConnectionManager.vue"),
+        component: () => import("../views/CloudConnectionView/CloudConnectionView.vue"),
       },
       {
         name: "secretManager",
         path: "secretManager",
-        component: () => import("../pages/SecretManager.vue"),
+        component: () => import("../views/SecretsView/SecretsView.vue"),
       },
       {
         name: "nodeDesigner",

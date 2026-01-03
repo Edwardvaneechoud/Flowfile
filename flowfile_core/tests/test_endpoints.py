@@ -29,7 +29,8 @@ from shared.storage_config import storage
 
 try:
     from tests.flowfile.test_flowfile import find_parent_directory
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available,
+                                                ensure_db_connection_is_available)
     from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
                              ensure_no_cloud_storage_connection_is_available,
                              get_cloud_connection)
@@ -40,10 +41,11 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile/test_flowfile.py")))
     from tests.flowfile.test_flowfile import find_parent_directory
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available,
+                                          ensure_db_connection_is_available)
     from tests.utils import (ensure_cloud_storage_connection_is_available_and_get_connection,
                              ensure_no_cloud_storage_connection_is_available,
-                             get_cloud_connection)
+                             get_cloud_connection, )
 
 FlowId = int
 
@@ -652,7 +654,21 @@ def test_validate_db_settings():
                                                       schema_name='public', table_name='movies')
 
     r = client.post("/validate_db_settings", json=database_settings.model_dump())
-    assert r.status_code == 200, 'Settings not validated'
+    assert r.status_code == 200, 'Settings be validated'
+
+
+@pytest.mark.skipif(not is_docker_available(),
+                    reason="Docker is not available or not running so database reader cannot be tested")
+def test_validate_db_settings_connection_reference():
+    ensure_db_connection_is_available()
+    settings = {
+        "query_mode": "query",
+        "connection_mode": "reference",
+        "query": "select 1",
+        "database_connection_name": "test_connection_endpoint"
+    }
+    r = client.post("/validate_db_settings", json=settings)
+    assert r.status_code == 200, 'Settings should be valid'
 
 
 @pytest.mark.skipif(not is_docker_available(),
@@ -911,7 +927,6 @@ def test_create_cloud_storage_connection():
 
 
 def test_create_cloud_storage_connection_allow_unsafe_html():
-    ensure_password_is_available()
     ensure_password_is_available()
     user_id = 1
     ensure_no_cloud_storage_connection_is_available(user_id=user_id)

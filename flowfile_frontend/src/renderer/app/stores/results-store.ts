@@ -6,7 +6,7 @@ import type {
   NodeResult,
   NodeValidation,
   NodeValidationInput,
-} from '../features/designer/baseNode/nodeInterfaces';
+} from '../types';
 
 export const useResultsStore = defineStore('results', {
   state: () => ({

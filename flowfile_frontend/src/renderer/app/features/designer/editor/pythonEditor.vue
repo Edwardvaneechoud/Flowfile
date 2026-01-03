@@ -103,7 +103,7 @@ const log = (type: any, event: any) => {
   console.log(type, event);
 };
 
-const handleBlur = async (_: any) => {
+const handleBlur = async () => {
   try {
     validationError.value = null;
     emit("validation-error", null);
