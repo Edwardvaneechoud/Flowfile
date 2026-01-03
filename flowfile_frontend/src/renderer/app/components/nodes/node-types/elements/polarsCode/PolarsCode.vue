@@ -17,7 +17,7 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
-import pythonEditor from "../../../editor/pythonEditor.vue";
+import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
 

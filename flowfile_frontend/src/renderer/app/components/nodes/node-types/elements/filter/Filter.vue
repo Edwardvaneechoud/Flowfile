@@ -55,7 +55,7 @@ import { CodeLoader } from "vue-content-loader";
 
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import { useNodeStore } from "../../../../../stores/column-store";
-import mainEditorRef from "../../../editor/fullEditor.vue";
+import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
