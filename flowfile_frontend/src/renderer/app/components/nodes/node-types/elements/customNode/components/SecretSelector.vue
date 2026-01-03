@@ -38,8 +38,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, PropType } from "vue";
 import type { SecretSelectorComponent } from "../interface";
-import { SecretsApi } from "@/renderer/app/api/secrets.api";
-import type { Secret } from "@/renderer/app/types";
+import { SecretsApi } from "../../../../../../api";
+import type { Secret } from "../../../../../../types";
 
 const props = defineProps({
   schema: {
