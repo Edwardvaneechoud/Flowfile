@@ -222,6 +222,40 @@
             />
           </div>
         </template>
+
+        <!-- SecretSelector Properties -->
+        <template v-if="component.component_type === 'SecretSelector'">
+          <div class="form-field">
+            <label>Required</label>
+            <input
+              :checked="component.required"
+              type="checkbox"
+              class="form-checkbox"
+              @change="updateField('required', ($event.target as HTMLInputElement).checked)"
+            />
+          </div>
+          <div class="form-field">
+            <label>Description</label>
+            <input
+              :value="component.description"
+              type="text"
+              class="form-input"
+              placeholder="Help text for the user"
+              @input="updateField('description', ($event.target as HTMLInputElement).value)"
+            />
+          </div>
+          <div class="form-field">
+            <label>Name Prefix Filter</label>
+            <input
+              :value="component.name_prefix"
+              type="text"
+              class="form-input"
+              placeholder="e.g. API_KEY_"
+              @input="updateField('name_prefix', ($event.target as HTMLInputElement).value)"
+            />
+            <span class="field-hint">Only show secrets starting with this prefix</span>
+          </div>
+        </template>
       </div>
 
       <div v-else class="no-selection">
@@ -303,5 +337,11 @@ function updateField(field: string, value: any) {
 .no-selection i {
   font-size: 2rem;
   margin-bottom: 0.5rem;
+}
+
+.field-hint {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
 }
 </style>

@@ -70,6 +70,13 @@
               :schema="component"
               :incoming-columns="columnTypes"
             />
+
+            <SecretSelector
+              v-else-if="component.component_type === 'SecretSelector'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+            />
+
             <div v-else class="text-red-500 text-xs">
               Unknown component type: {{ (component as any).component_type }}
             </div>
@@ -96,6 +103,7 @@ import NumericInput from "./components/NumericInput.vue";
 import SliderInput from "./components/SliderInput.vue";
 import SingleSelect from "./components/SingleSelect.vue";
 import ColumnSelector from "./components/ColumnSelector.vue";
+import SecretSelector from "./components/SecretSelector.vue";
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);

@@ -91,6 +91,10 @@ export function useCodeGeneration() {
           sectionsCode += `        min_value=${comp.min_value ?? 0},\n`;
           sectionsCode += `        max_value=${comp.max_value ?? 100},\n`;
           if (comp.step) sectionsCode += `        step=${comp.step},\n`;
+        } else if (comp.component_type === 'SecretSelector') {
+          if (comp.required) sectionsCode += `        required=True,\n`;
+          if (comp.description) sectionsCode += `        description="${comp.description}",\n`;
+          if (comp.name_prefix) sectionsCode += `        name_prefix="${comp.name_prefix}",\n`;
         }
 
         sectionsCode += `    ),\n`;

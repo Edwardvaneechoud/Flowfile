@@ -15,6 +15,7 @@ export const availableComponents: AvailableComponent[] = [
   { type: 'MultiSelect', label: 'Multi Select', icon: 'fa-solid fa-list-check' },
   { type: 'ColumnSelector', label: 'Column Selector', icon: 'fa-solid fa-table-columns' },
   { type: 'SliderInput', label: 'Slider', icon: 'fa-solid fa-sliders' },
+  { type: 'SecretSelector', label: 'Secret Selector', icon: 'fa-solid fa-key' },
 ];
 
 /** Default process code template */
