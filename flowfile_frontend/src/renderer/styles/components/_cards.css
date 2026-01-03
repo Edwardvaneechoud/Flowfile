@@ -157,7 +157,8 @@
 
 /* ========== Page Container ========== */
 .secret-manager-container,
-.database-manager-container {
+.database-manager-container,
+.cloud-connection-manager-container {
   max-width: 900px;
   margin: 0 auto;
   padding: var(--spacing-5);
