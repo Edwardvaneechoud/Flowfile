@@ -157,6 +157,23 @@ class NumericInput(FlowfileInComponent):
             self.value = self.default
 
 
+class SliderInput(FlowfileInComponent):
+    """A slider input for selecting a numeric value within a range."""
+    component_type: Literal["SliderInput"] = "SliderInput"
+    default: Optional[float] = None
+    min_value: float = 0
+    max_value: float = 100
+    step: float = 1
+    input_type: InputType = "number"
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if self.value is None and self.default is not None:
+            self.value = self.default
+        elif self.value is None:
+            self.value = self.min_value
+
+
 class ToggleSwitch(FlowfileInComponent):
     """A boolean toggle switch, typically used for enabling or disabling a feature."""
     component_type: Literal["ToggleSwitch"] = "ToggleSwitch"

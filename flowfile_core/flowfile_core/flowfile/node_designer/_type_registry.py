@@ -43,7 +43,7 @@ class TypeRegistry:
             TypeMapping(DataType.Float64, pl.Float64, TypeGroup.Numeric,
                         ("f64", "float64", "float", "double")),
             TypeMapping(DataType.Decimal, pl.Decimal, TypeGroup.Numeric,
-                        ("decimal", "numeric", "dec")),
+                        ("decimal", "dec")),
 
             # String types
             TypeMapping(DataType.String, pl.String, TypeGroup.String,
@@ -102,6 +102,7 @@ class TypeRegistry:
         This is the main internal API for type resolution.
         """
         # Handle special case: All types
+
         if type_spec == TypeGroup.All or type_spec == "ALL":
             return set(self._by_data_type.keys())
 
@@ -129,6 +130,10 @@ class TypeRegistry:
         # Handle string aliases
         if isinstance(type_spec, str):
             type_spec_lower = type_spec.lower()
+            group: TypeGroup
+            for group in TypeGroup:
+                if group.lower() == type_spec_lower:
+                    return {m.data_type for m in (self._by_group.get(group) or [])}
 
             # Try TypeGroup name
             try:

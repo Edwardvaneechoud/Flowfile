@@ -334,6 +334,7 @@
     "spacing": "Spacing",
     "sliders": "Sliders",
     "secretManager": "Secret Manager",
+    "nodeDesigner": "Node Designer",
     "databaseManager": "Database Connection Manager",
     "cloudConnectionManager": "Cloud Connection Manager",
     "popovers": "Popovers",
