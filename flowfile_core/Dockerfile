@@ -29,6 +29,8 @@ RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
 # Copy the shared package
 COPY shared /app/shared
 
+COPY tools /app/tools
+
 # Copy the flowfile_core package contents into the container
 COPY flowfile_core/flowfile_core /app/flowfile_core
 

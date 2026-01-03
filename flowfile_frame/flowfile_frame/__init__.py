@@ -1,7 +1,7 @@
 # flowframe/__init__.py
 """A Polars-like API for building ETL graphs."""
 
-from importlib.metadata import version
+from importlib.metadata import version, PackageNotFoundError
 
 # Core classes
 from flowfile_frame.flow_frame import FlowFrame   # noqa: F401
@@ -66,4 +66,8 @@ from polars.datatypes import (  # noqa: F401
     DataType, DataTypeClass, Field
 )
 
-__version__ = version("Flowfile")
+
+try:
+    __version__ = version("Flowfile")
+except PackageNotFoundError:
+    __version__ = "0.5.0"

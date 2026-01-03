@@ -2,10 +2,13 @@ from typing import Dict
 import threading
 import multiprocessing
 from shared.storage_config import storage
-from importlib.metadata import version
 
-__version__ = version("Flowfile")
+from importlib.metadata import version, PackageNotFoundError
 
+try:
+    __version__ = version("Flowfile")
+except PackageNotFoundError:
+    __version__ = "0.5.0"
 multiprocessing.set_start_method('spawn', force=True)
 
 from multiprocessing import get_context
