@@ -5,7 +5,10 @@ import platform
 from flowfile_core.secret_manager.secret_manager import store_secret, get_encrypted_secret
 from flowfile_core.database.connection import get_db_context
 from flowfile_core.auth.models import SecretInput
+from flowfile_core.schemas import input_schema
 
+
+from contextlib import contextmanager
 
 def is_docker_available():
     """Check if Docker is running."""
@@ -25,7 +28,20 @@ def ensure_password_is_available():
             store_secret(db, secret, 1)
 
 
-from contextlib import contextmanager
+def ensure_db_connection_is_available():
+    from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
+                                                                                   get_database_connection)
+
+    connection = input_schema.FullDatabaseConnection(username='testuser', password='testpass',
+                                        connection_name='test_connection_endpoint', host='localhost',
+                                        port=5433, database='testdb', database_type='postgresql', ssl_enabled=False)
+
+    with get_db_context() as db:
+        existing_database_connection = get_database_connection(db, connection.connection_name, user_id=1)
+        if not existing_database_connection:
+            store_database_connection(db, connection, user_id=1)
+
+
 
 @contextmanager
 def generator_func():
