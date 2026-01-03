@@ -89,22 +89,20 @@
         </div>
 
         <!-- Secrets List -->
-        <div v-else-if="filteredSecrets.length > 0" class="flex-col gap-2">
+        <div v-else-if="filteredSecrets.length > 0" class="secrets-list">
           <div v-for="secret in filteredSecrets" :key="secret.name" class="secret-item">
-            <div class="secret-info">
-              <div class="secret-name">
-                <i class="fa-solid fa-key"></i>
-                <span>{{ secret.name }}</span>
-              </div>
-              <div class="secret-value">
-                <input
-                  type="password"
-                  value="••••••••••••••••"
-                  readonly
-                  class="form-input"
-                  aria-label="Masked secret value"
-                />
-              </div>
+            <div class="secret-name">
+              <i class="fa-solid fa-key"></i>
+              <span>{{ secret.name }}</span>
+            </div>
+            <div class="secret-value">
+              <input
+                type="password"
+                value="••••••••••••••••"
+                readonly
+                class="form-input"
+                aria-label="Masked secret value"
+              />
             </div>
             <div class="secret-actions">
               <button
