@@ -384,7 +384,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .refresh-link-button {
-  background: linear-gradient(135deg, #ffffff 0%, #fef3c7 100%);
+  background: linear-gradient(135deg, var(--color-background-primary) 0%, #fef3c7 100%);
   border: 1px solid #f59e0b;
   color: #92400e;
   border-radius: 6px;
@@ -432,7 +432,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .dismiss-button {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--color-background-primary);
   border: 1px solid rgba(251, 191, 36, 0.3);
   width: 24px;
   height: 24px;
@@ -452,7 +452,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .dismiss-button:hover {
-  background: white;
+  background: var(--color-background-hover);
   border-color: #f59e0b;
   color: #78350f;
   transform: rotate(90deg) scale(1.1);

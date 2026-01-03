@@ -211,7 +211,7 @@ defineExpose({
 .db-container {
   font-family: var(--font-family-base);
   max-width: 100%;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .section-subtitle {

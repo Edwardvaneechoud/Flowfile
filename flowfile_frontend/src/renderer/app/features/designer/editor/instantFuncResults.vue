@@ -127,11 +127,11 @@ defineExpose({ getInstantFuncResults });
   line-height: 1.5;
   overflow-wrap: break-word;
   word-break: break-word;
-  background-color: #ffffff;
+  background-color: var(--color-background-primary);
 }
 
 .result-content.error .content {
-  background-color: #ffffff;
+  background-color: var(--color-background-primary);
   color: #000000;
 }
 

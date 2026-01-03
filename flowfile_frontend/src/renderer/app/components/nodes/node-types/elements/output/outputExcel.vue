@@ -53,7 +53,7 @@ watch(
 .excel-table-settings label {
   display: block;
   margin-bottom: 10px;
-  color: #333;
+  color: var(--color-text-primary);
   font-size: 16px;
   font-weight: 500;
 }
@@ -65,7 +65,7 @@ watch(
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 16px;
-  color: #333;
+  color: var(--color-text-primary);
   background-color: #f5f5f5;
   transition: background-color 0.3s ease;
 }
@@ -87,7 +87,7 @@ watch(
 }
 
 .excel-table-settings input[type="checkbox"] {
-  accent-color: #333; /* Customize the checkbox color */
+  accent-color: var(--color-text-primary); /* Customize the checkbox color */
 }
 
 .excel-table-settings button {
@@ -96,7 +96,7 @@ watch(
   border-radius: 4px;
   font-size: 16px;
   font-weight: 500;
-  color: #333;
+  color: var(--color-text-primary);
   background-color: #f5f5f5;
   cursor: pointer;
   transition: background-color 0.3s ease;
@@ -161,6 +161,6 @@ watch(
 }
 
 .checkbox-group input[type="checkbox"] {
-  accent-color: #333; /* Customize the checkbox color */
+  accent-color: var(--color-text-primary); /* Customize the checkbox color */
 }
 </style>

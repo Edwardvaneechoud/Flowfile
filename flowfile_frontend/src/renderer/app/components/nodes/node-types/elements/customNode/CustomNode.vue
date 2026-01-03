@@ -218,7 +218,7 @@ defineExpose({
 .node-title {
   font-size: 1.25rem; /* text-xl */
   font-weight: 700; /* font-bold */
-  color: #1f2937; /* text-gray-800 */
+  color: var(--color-text-primary); /* text-gray-800 */
 }
 
 .node-category {

@@ -594,7 +594,7 @@ onMounted(async () => {
 
 .browser-toolbar {
   padding: 16px;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
   border-bottom: 1px solid #e9ecef;
 }
 
@@ -612,7 +612,7 @@ onMounted(async () => {
   padding: 8px 16px;
   border: 1px solid #dee2e6;
   border-radius: 4px;
-  background-color: white;
+  background-color: var(--color-background-primary);
   color: #495057;
   font-size: 14px;
   cursor: pointer;
@@ -745,7 +745,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   height: 70vh; /* Set to 70% of viewport height */
-  background-color: white;
+  background-color: var(--color-background-primary);
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
