@@ -9,7 +9,7 @@
 </template>
 
 <script lang="ts" setup>
-import PopOver from "../../editor/PopOver.vue";
+import PopOver from "../../../../features/designer/editor/PopOver.vue";
 
 defineProps({
   iconText: {
