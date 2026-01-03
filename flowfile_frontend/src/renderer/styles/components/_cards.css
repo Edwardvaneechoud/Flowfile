@@ -104,24 +104,23 @@
 /* ========== Secret Item Styles ========== */
 .secret-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-4);
+  padding: var(--spacing-3) var(--spacing-4);
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-lg);
-  gap: var(--spacing-4);
+  border-radius: var(--border-radius-md);
+  gap: var(--spacing-3);
 }
 
 .secret-item + .secret-item {
-  margin-top: var(--spacing-3);
+  margin-top: var(--spacing-2);
 }
 
 .secret-info {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--spacing-2);
+  align-items: center;
+  gap: var(--spacing-3);
   flex: 1;
   min-width: 0;
 }
@@ -134,6 +133,7 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
+  min-width: 180px;
 }
 
 .secret-name i {
@@ -142,15 +142,63 @@
 }
 
 .secret-value {
-  width: 100%;
-  max-width: 300px;
+  flex: 1;
+  max-width: 250px;
 }
 
 .secret-value .form-input {
   background-color: var(--color-background-muted);
+  height: 32px;
 }
 
 .secret-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  flex-shrink: 0;
+}
+
+/* ========== Connection Item Styles (for database/cloud) ========== */
+.connection-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--spacing-4);
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-md);
+  gap: var(--spacing-4);
+}
+
+.connection-item + .connection-item {
+  margin-top: var(--spacing-2);
+}
+
+.connection-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.connection-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.connection-name i {
+  color: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.connection-actions {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
@@ -168,7 +216,7 @@
 .secret-manager-container,
 .database-manager-container,
 .cloud-connection-manager-container {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: var(--spacing-5);
 }

@@ -46,14 +46,14 @@
         </div>
 
         <!-- List of connections -->
-        <div v-else class="flex-col gap-2">
+        <div v-else class="connections-list">
           <div
             v-for="connection in connectionInterfaces"
             :key="connection.connectionName"
-            class="secret-item"
+            class="connection-item"
           >
-            <div class="secret-info">
-              <div class="secret-name">
+            <div class="connection-info">
+              <div class="connection-name">
                 <i :class="getStorageIcon(connection.storageType)"></i>
                 <span>{{ connection.connectionName }}</span>
                 <span class="badge">{{ getStorageLabel(connection.storageType) }}</span>
@@ -78,7 +78,7 @@
                 </span>
               </div>
             </div>
-            <div class="secret-actions">
+            <div class="connection-actions">
               <button type="button" class="btn btn-secondary" @click="showEditModal(connection)">
                 <i class="fa-solid fa-edit"></i>
                 <span>Modify</span>
