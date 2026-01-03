@@ -213,22 +213,17 @@ defineExpose({
 <style scoped>
 .flow-tabs-container {
   width: 100%;
-  font-family:
-    "Inter",
-    "Roboto",
-    -apple-system,
-    BlinkMacSystemFont,
-    sans-serif;
+  font-family: var(--font-family-base);
 }
 
 .flow-tabs {
   display: flex;
   align-items: center;
   overflow-x: auto;
-  background-color: rgba(16, 24, 40, 0.02);
-  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  background-color: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
   height: 42px;
-  padding-left: 4px;
+  padding-left: var(--spacing-1);
   scrollbar-width: thin;
 }
 
@@ -241,49 +236,49 @@ defineExpose({
 }
 
 .flow-tabs::-webkit-scrollbar-thumb {
-  background-color: rgba(16, 24, 40, 0.2);
-  border-radius: 2px;
+  background-color: var(--color-gray-300);
+  border-radius: var(--border-radius-full);
 }
 
 .flow-tab {
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 var(--spacing-4);
   height: 38px;
   background-color: transparent;
-  border-right: 1px solid rgba(16, 24, 40, 0.06);
+  border-right: 1px solid var(--color-border-light);
   cursor: pointer;
   min-width: 120px;
   max-width: 180px;
   position: relative;
   user-select: none;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--border-radius-md) var(--border-radius-md) 0 0;
   margin-right: 1px;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
 }
 
 .flow-tab.active {
-  background-color: #fff;
-  border-top: 2px solid rgb(0, 34, 60);
-  box-shadow: 0 2px 5px rgba(16, 24, 40, 0.04);
+  background-color: var(--color-background-primary);
+  border-top: 2px solid var(--primary-blue);
+  box-shadow: var(--shadow-xs);
   z-index: 1;
 }
 
 .flow-tab:not(.active):hover {
-  background-color: rgba(19, 37, 73, 0.164);
+  background-color: var(--color-background-hover);
 }
 
 .tab-content {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2);
   width: calc(100% - 20px);
   overflow: hidden;
 }
 
 .tab-icon {
-  font-size: 16px;
-  color: rgb(2, 27, 45);
+  font-size: var(--font-size-xl);
+  color: var(--primary-blue);
   flex-shrink: 0;
 }
 
@@ -291,25 +286,25 @@ defineExpose({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.01em;
-  color: rgba(16, 24, 40, 0.8);
+  color: var(--color-text-secondary);
 }
 
 .active .tab-name {
-  color: rgba(16, 24, 40, 0.95);
+  color: var(--color-text-primary);
 }
 
 .close-icon {
-  font-size: 15px;
-  color: rgba(16, 24, 40, 0.4);
+  font-size: var(--font-size-lg);
+  color: var(--color-text-muted);
   opacity: 0;
   position: absolute;
-  right: 8px;
-  border-radius: 50%;
+  right: var(--spacing-2);
+  border-radius: var(--border-radius-full);
   padding: 2px;
-  transition: all 0.15s ease;
+  transition: all var(--transition-fast);
   transform: scale(0.9);
 }
 
@@ -318,14 +313,14 @@ defineExpose({
 }
 
 .close-icon:hover {
-  background-color: rgba(16, 24, 40, 0.06);
-  color: rgba(16, 24, 40, 0.7);
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
   transform: scale(1);
 }
 
 .active .close-icon:hover {
-  background-color: rgba(80, 70, 230, 0.1);
-  color: rgba(80, 70, 230, 0.9);
+  background-color: var(--color-background-hover);
+  color: var(--color-primary);
 }
 
 /* New flow tab styling */
@@ -335,10 +330,10 @@ defineExpose({
   display: flex;
   justify-content: center;
   align-items: center;
-  color: rgba(80, 70, 230, 0.8);
+  color: var(--color-primary);
 }
 
 .new-flow-tab:hover {
-  background-color: rgba(80, 70, 230, 0.1);
+  background-color: var(--color-background-hover);
 }
 </style>

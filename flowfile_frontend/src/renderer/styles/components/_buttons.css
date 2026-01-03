@@ -1,28 +1,44 @@
+/* styles/components/_buttons.css - Button Styles */
+
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-1);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  border-radius: var(--border-radius-sm);
+  border-radius: var(--border-radius-md);
   cursor: pointer;
-  transition: all var(--transition-fast);
-  padding: var(--spacing-xs) var(--spacing-sm);
+  transition: all var(--transition-fast) var(--transition-timing);
+  padding: var(--spacing-2) var(--spacing-3);
   border: 1px solid transparent;
   white-space: nowrap;
-  height: 28px;
+  height: 32px;
+  line-height: 1;
 }
 
 .btn:disabled {
-  opacity: 0.7;
+  opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Size variants */
+.btn-sm {
+  height: 28px;
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-size-xs);
+}
+
+.btn-lg {
+  height: 40px;
+  padding: var(--spacing-3) var(--spacing-4);
+  font-size: var(--font-size-base);
 }
 
 /* Button variants */
 .btn-primary {
   background-color: var(--color-primary);
-  color: var(--color-background);
+  color: var(--color-text-inverse);
   border-color: var(--color-primary);
 }
 
@@ -32,13 +48,14 @@
 }
 
 .btn-secondary {
-  background-color: var(--color-background);
-  color: var(--color-text);
-  border-color: var(--color-border);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-secondary);
 }
 
-.btn-secondary:hover {
-  background-color: var(--color-gray-100);
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
 }
 
 .btn-danger {
@@ -47,10 +64,30 @@
   background-color: transparent;
 }
 
+.btn-danger:hover:not(:disabled) {
+  background-color: var(--color-danger-light);
+}
+
 .btn-danger-filled {
   background-color: var(--color-danger);
-  color: var(--color-background);
+  color: var(--color-text-inverse);
   border-color: var(--color-danger);
+}
+
+.btn-danger-filled:hover:not(:disabled) {
+  background-color: #dc2626;
+  border-color: #dc2626;
+}
+
+.btn-success {
+  background-color: var(--color-success);
+  color: var(--color-text-inverse);
+  border-color: var(--color-success);
+}
+
+.btn-success:hover:not(:disabled) {
+  background-color: #059669;
+  border-color: #059669;
 }
 
 .btn-info {
@@ -59,17 +96,53 @@
   background-color: transparent;
 }
 
-/* Maintain existing toggle button - simplified */
-.toggle-button {
-  background-color: var(--color-primary);
-  color: var(--color-background);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: none;
-  border-radius: var(--border-radius-sm);
-  cursor: pointer;
-  font-size: var(--font-size-sm);
+.btn-info:hover:not(:disabled) {
+  background-color: var(--color-info-light);
 }
 
-  .toggle-button:hover {
-    background-color: var(--color-primary-dark);
-  }
+.btn-ghost {
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  border-color: transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background-color: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+/* Icon-only button */
+.btn-icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+.btn-icon.btn-sm {
+  width: 28px;
+}
+
+.btn-icon.btn-lg {
+  width: 40px;
+}
+
+/* Toggle button */
+.toggle-button {
+  background-color: var(--color-primary);
+  color: var(--color-text-inverse);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: none;
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  transition: background-color var(--transition-fast) var(--transition-timing);
+}
+
+.toggle-button:hover {
+  background-color: var(--color-primary-dark);
+}
+
+.toggle-button.is-active {
+  background-color: var(--color-primary-dark);
+}

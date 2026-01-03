@@ -31,11 +31,12 @@ const items = ref(NavigationRoutes.routes);
 
 <style lang="scss">
 .sidebar {
-  height: 100%; // Add this if you need full height
+  height: 100%;
+  background-color: var(--color-background-primary);
 }
 
 .sidebar-container {
-  border-top: 0.5px solid #dfdfdf;
+  border-top: 1px solid var(--color-border-primary);
   display: flex;
   flex-direction: column;
 }
@@ -44,6 +45,6 @@ const items = ref(NavigationRoutes.routes);
   display: flex;
   justify-content: center;
   width: 100%;
-  padding: 2rem 0;
+  padding: var(--spacing-8) 0;
 }
 </style>

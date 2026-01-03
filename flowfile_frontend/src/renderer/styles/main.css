@@ -1,26 +1,113 @@
-/* main.css */
+/* main.css - Main stylesheet entry point */
 
-/* Import design tokens and component styles */
+/* ========== Design Tokens ========== */
 @import './base/_variables.css';
+
+/* ========== Base Styles ========== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-primary);
+  background-color: var(--color-background-primary);
+}
+
+/* ========== Typography Base ========== */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  color: var(--color-text-primary);
+}
+
+h1 { font-size: var(--font-size-4xl); }
+h2 { font-size: var(--font-size-3xl); }
+h3 { font-size: var(--font-size-2xl); }
+h4 { font-size: var(--font-size-xl); }
+h5 { font-size: var(--font-size-lg); }
+h6 { font-size: var(--font-size-base); }
+
+p {
+  margin: 0 0 var(--spacing-3);
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+  transition: color var(--transition-fast) var(--transition-timing);
+}
+
+a:hover {
+  color: var(--color-primary-dark);
+}
+
+/* ========== Form Elements Base ========== */
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* ========== Scrollbar Styling ========== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-gray-300);
+  border-radius: var(--border-radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gray-400);
+}
+
+/* ========== Component Styles ========== */
 @import './components/_listbox.css';
 @import './components/_buttons.css';
 @import './components/_column-options.css';
 @import './components/_styled-table.css';
-@import './utils/_spacing.css';
-
-/* Secret Manager components */
 @import './components/_cards.css';
 @import './components/_forms.css';
 @import './components/_modals.css';
+@import './utils/_spacing.css';
 @import './utils/_layout.css';
 
 /* ========== Element Plus Theme Overrides ========== */
-/* General Element Plus styling */
-[class^="el-"] {
-  font-family: var(--font-family-base) !important;
+/* General font family */
+[class^="el-"],
+[class*=" el-"] {
+  font-family: var(--font-family-base);
 }
 
-/* Exception for icons to ensure they work properly */
+/* Exception for icons */
 .el-icon,
 .el-select__caret,
 .el-input__icon,
@@ -30,24 +117,107 @@
   font-family: element-icons !important;
 }
 
-/* Primary button styling */
-.el-button--primary {
-  background-color: var(--primary-blue) !important;
-  border-color: var(--primary-blue) !important;
+/* Reduce default Element Plus sizing for modern look */
+.el-input__wrapper {
+  font-size: var(--font-size-sm);
 }
 
-.el-button--primary:hover {
-  background-color: var(--primary-blue-hover) !important;
-  border-color: var(--primary-blue-hover) !important;
+.el-select {
+  --el-select-input-font-size: var(--font-size-sm);
+}
+
+/* Primary button styling */
+.el-button--primary {
+  --el-button-bg-color: var(--primary-blue);
+  --el-button-border-color: var(--primary-blue);
+  --el-button-hover-bg-color: var(--primary-blue-hover);
+  --el-button-hover-border-color: var(--primary-blue-hover);
 }
 
 /* Select dropdown styling */
-.el-select-dropdown__item.selected {
-  background-color: var(--hover-blue) !important;
-  color: var(--primary-blue) !important;
+.el-select-dropdown__item.is-selected {
+  background-color: var(--color-background-hover);
+  color: var(--primary-blue);
 }
 
 /* Input focus styling */
-.el-input:focus {
-  border-color: var(--light-blue) !important;
+.el-input.is-focus .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--light-blue) inset;
+}
+
+/* Notification styling */
+.el-notification {
+  font-family: var(--font-family-base);
+  border-radius: var(--border-radius-md);
+}
+
+.el-notification__title {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.el-notification__content {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* Drawer styling */
+.el-drawer__body {
+  color: var(--color-text-primary);
+  padding: var(--spacing-5);
+  overflow-y: auto;
+}
+
+/* Dialog/Modal styling */
+.el-dialog {
+  --el-dialog-border-radius: var(--border-radius-lg);
+}
+
+.el-dialog__title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.el-dialog__body {
+  font-size: var(--font-size-sm);
+}
+
+/* Table styling for Element Plus */
+.el-table {
+  --el-table-border-color: var(--color-border-light);
+  --el-table-header-bg-color: var(--color-background-muted);
+  font-size: var(--font-size-sm);
+}
+
+.el-table th.el-table__cell {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+/* Form item styling */
+.el-form-item__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* Popover and tooltip */
+.el-popover,
+.el-tooltip__content {
+  font-size: var(--font-size-sm);
+}
+
+/* Tabs */
+.el-tabs__item {
+  font-size: var(--font-size-sm);
+}
+
+/* Message box */
+.el-message-box__title {
+  font-size: var(--font-size-lg);
+}
+
+.el-message-box__message {
+  font-size: var(--font-size-sm);
 }

@@ -265,12 +265,12 @@ onMounted(async () => {
 
 <style scoped>
 .canvas {
-  height: calc(100vh - 100px); /* Adjusted for potentially taller header */
+  height: calc(100vh - 100px);
 }
 
 .header {
-  background-color: #f5f5f5;
-  border-bottom: 1px solid #ececec;
+  background-color: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
 }
 
 /* Desktop layout - single row */
@@ -283,7 +283,7 @@ onMounted(async () => {
   }
 
   .header-top {
-    display: contents; /* Makes children behave as direct children of .header */
+    display: contents;
   }
 
   .header-bottom {
@@ -292,7 +292,7 @@ onMounted(async () => {
 
   .left-section {
     min-width: 250px;
-    padding: 0 16px;
+    padding: 0 var(--spacing-4);
     display: flex;
     align-items: center;
   }
@@ -306,7 +306,7 @@ onMounted(async () => {
 
   .right-section {
     min-width: 150px;
-    padding: 0 16px;
+    padding: 0 var(--spacing-4);
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -329,17 +329,17 @@ onMounted(async () => {
     justify-content: space-between;
     align-items: center;
     height: 50px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--color-border-primary);
   }
 
   .header-bottom {
     display: flex;
     height: 40px;
-    padding: 0 8px;
+    padding: 0 var(--spacing-2);
   }
 
   .left-section {
-    padding: 0 12px;
+    padding: 0 var(--spacing-3);
     display: flex;
     align-items: center;
   }
@@ -349,11 +349,11 @@ onMounted(async () => {
     display: flex;
     align-items: center;
     overflow: hidden;
-    padding: 0 8px;
+    padding: 0 var(--spacing-2);
   }
 
   .right-section {
-    padding: 0 12px;
+    padding: 0 var(--spacing-3);
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -367,17 +367,17 @@ onMounted(async () => {
 /* Very narrow screens */
 @media (max-width: 480px) {
   .left-section {
-    padding: 0 8px;
+    padding: 0 var(--spacing-2);
     min-width: auto;
   }
 
   .right-section {
-    padding: 0 8px;
+    padding: 0 var(--spacing-2);
     min-width: auto;
   }
 
   .middle-section {
-    padding: 0 4px;
+    padding: 0 var(--spacing-1);
   }
 }
 
@@ -387,17 +387,17 @@ onMounted(async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  background-color: #f9fafb;
+  background-color: var(--color-background-secondary);
 }
 
 .loading-state-content {
   text-align: center;
-  padding: 2rem;
+  padding: var(--spacing-8);
 }
 
 .loading-state-content p {
-  color: #6b7280;
-  margin-top: 1rem;
+  color: var(--color-text-secondary);
+  margin-top: var(--spacing-4);
 }
 
 /* Empty state styles */
@@ -406,38 +406,38 @@ onMounted(async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  background-color: #f9fafb;
+  background-color: var(--color-background-secondary);
 }
 
 .empty-state-content {
   text-align: center;
-  padding: 2rem;
+  padding: var(--spacing-8);
 }
 
 .empty-icon {
-  font-size: 64px;
-  color: #9ca3af;
-  margin-bottom: 1rem;
+  font-size: var(--font-size-4xl);
+  color: var(--color-gray-400);
+  margin-bottom: var(--spacing-4);
 }
 
 .empty-state h2 {
-  color: #374151;
-  margin-bottom: 0.5rem;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-2);
 }
 
 .empty-state p {
-  color: #6b7280;
-  margin-bottom: 1.5rem;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--spacing-6);
 }
 
 .action-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0 0.5rem;
+  gap: var(--spacing-2);
+  margin: 0 var(--spacing-2);
 }
 
 .action-button .material-icons {
-  font-size: 18px;
+  font-size: var(--font-size-2xl);
 }
 </style>
