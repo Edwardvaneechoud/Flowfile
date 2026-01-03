@@ -32,7 +32,6 @@ import {
   onMounted,
   nextTick,
   computed,
-  onBeforeUnmount,
 } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";

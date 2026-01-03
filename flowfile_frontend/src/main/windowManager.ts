@@ -2,7 +2,6 @@
 import { BrowserWindow, screen } from "electron";
 import { join } from "path";
 import { loadWindow } from "./windowLoader";
-import FileSystem from "fs";
 
 let mainWindow: BrowserWindow | null = null;
 let authWindow: BrowserWindow | null = null;

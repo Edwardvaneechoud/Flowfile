@@ -1,6 +1,6 @@
 // Flow API Service - Handles all flow-related HTTP requests
 // Consolidated from features/designer/nodes/nodeLogic.ts and components/Canvas/backendInterface.ts
-import axios from '../services/axios-setup'
+import axios from '../services/axios.config'
 import type {
   FlowSettings,
   RunInformation,
