@@ -32,7 +32,7 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
-import mainEditorRef from "../../../editor/fullEditor.vue";
+import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
 import { createFormulaNode } from "./formula";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
