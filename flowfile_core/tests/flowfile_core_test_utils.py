@@ -33,14 +33,14 @@ def ensure_db_connection_is_available():
                                                                                    get_database_connection)
 
     connection = input_schema.FullDatabaseConnection(username='testuser', password='testpass',
-                                        connection_name='test_connection_endpoint', host='localhost',
-                                        port=5433, database='testdb', database_type='postgresql', ssl_enabled=False)
+                                                     connection_name='test_connection_endpoint', host='localhost',
+                                                     port=5433, database='testdb',
+                                                     database_type='postgresql', ssl_enabled=False)
 
     with get_db_context() as db:
         existing_database_connection = get_database_connection(db, connection.connection_name, user_id=1)
         if not existing_database_connection:
             store_database_connection(db, connection, user_id=1)
-
 
 
 @contextmanager

@@ -479,21 +479,43 @@ class FlowGraph:
         node = self._node_db.get(node_id)
         if node is not None:
             return node
-        
+
     def add_user_defined_node(self, *,
                               custom_node: CustomNodeBase,
                               user_defined_node_settings: input_schema.UserDefinedNode
                               ):
-        def _func(*fdes: FlowDataEngine) -> FlowDataEngine | None:
-            output = custom_node.process(*(fde.data_frame for fde in fdes))
-            if isinstance(output, pl.LazyFrame | pl.DataFrame):
+        """Adds a user-defined custom node to the graph.
+
+        Args:
+            custom_node: The custom node instance to add.
+            user_defined_node_settings: The settings for the user-defined node.
+        """
+
+        def _func(*flow_data_engine: FlowDataEngine) -> FlowDataEngine | None:
+            user_id = user_defined_node_settings.user_id
+            if user_id is not None:
+                custom_node.set_execution_context(user_id)
+                if custom_node.settings_schema:
+                    custom_node.settings_schema.set_secret_context(
+                        user_id,
+                        custom_node.accessed_secrets
+                    )
+
+            output = custom_node.process(*(fde.data_frame for fde in flow_data_engine))
+
+            accessed_secrets = custom_node.get_accessed_secrets()
+            if accessed_secrets:
+                logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
+            if isinstance(output, (pl.LazyFrame, pl.DataFrame)):
                 return FlowDataEngine(output)
             return None
+
         self.add_node_step(node_id=user_defined_node_settings.node_id,
                            function=_func,
                            setting_input=user_defined_node_settings,
                            input_node_ids=user_defined_node_settings.depending_on_ids,
                            node_type=custom_node.item,
+
                            )
         if custom_node.number_of_inputs == 0:
             node = self.get_node(user_defined_node_settings.node_id)
