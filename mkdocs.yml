@@ -81,9 +81,14 @@ nav:
   - User Guides:
     - Overview: users/index.md
 
+    - Getting Started:
+      - Overview: users/getting-started/index.md
+      - Dark Mode: users/getting-started/dark-mode.md
+
     - Visual Editor:
       - Getting Started: users/visual-editor/index.md
       - Building Flows: users/visual-editor/building-flows.md
+      - User-Defined Nodes: users/visual-editor/user-defined-nodes-ui.md
       - Node Reference:
         - Overview: users/visual-editor/nodes/index.md
         - Input Nodes: users/visual-editor/nodes/input.md

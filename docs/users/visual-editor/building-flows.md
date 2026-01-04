@@ -35,8 +35,12 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
      - Combine Operations (for joining data)
      - Aggregations (for summarizing data)
      - Output Destinations (for saving data)
+     - User-Defined Nodes (your custom nodes)
 2. Drag any node onto the canvas
 3. Connect nodes to create a flow
+
+!!! tip "Create Your Own Nodes"
+    Need a transformation that isn't built-in? You can create custom nodes directly in the UI. See [User-Defined Nodes](user-defined-nodes-ui.md) to get started.
 
 ## Configuring Nodes
 
@@ -184,3 +188,4 @@ After mastering basic flows, explore:
   - [Data aggregation techniques](nodes/aggregate.md)
   - [Advanced joining methods](nodes/combine.md)
   - [Output options](nodes/output.md)
+  - [User-defined nodes](user-defined-nodes-ui.md) - Create your own custom transformations
