@@ -2,11 +2,12 @@
 Tests for the node registry functions that handle loading, registering,
 and removing custom nodes dynamically.
 """
-import pytest
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
+
+import pytest
 
 from flowfile_core.configs.node_store.user_defined_node_registry import (
     load_single_node_from_file,

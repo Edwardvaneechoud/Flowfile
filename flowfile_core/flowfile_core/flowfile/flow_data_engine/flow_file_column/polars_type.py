@@ -1,4 +1,5 @@
-from typing import Optional, Any
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -9,16 +10,16 @@ class ColumnInfo:
 class PlType(BaseModel):
     column_name: str
     col_index: int = -1
-    count: Optional[int] = -1
-    null_count: Optional[int] = -1
-    mean: Optional[str] = ""
-    std: Optional[float] = -1
-    min: Optional[str] = ""
-    max: Optional[str] = ""
-    median: Optional[str] = 0
-    pl_datatype: Optional[Any]
-    n_unique: Optional[int] = -1
-    examples: Optional[str] = ""
+    count: int | None = -1
+    null_count: int | None = -1
+    mean: str | None = ""
+    std: float | None = -1
+    min: str | None = ""
+    max: str | None = ""
+    median: str | None = 0
+    pl_datatype: Any | None
+    n_unique: int | None = -1
+    examples: str | None = ""
 
     class Config:
         arbitrary_types_allowed = True

@@ -1,51 +1,138 @@
 # Comprehensive mapping from SQLAlchemy types to Polars types
-from typing import Dict, Type, Union, cast, TYPE_CHECKING, Any
-from pydantic import SecretStr
+from typing import TYPE_CHECKING, Any, Union, cast
+from urllib.parse import quote_plus
 
 import polars as pl
 from polars import DataType as PolarsType
+from pydantic import SecretStr
 from sqlalchemy.sql.sqltypes import (
-    _Binary, ARRAY, BIGINT, BigInteger, BINARY, BLOB, BOOLEAN, Boolean,
-    CHAR, CLOB, Concatenable, DATE, Date, DATETIME, DateTime,
-    DECIMAL, DOUBLE, Double, DOUBLE_PRECISION, Enum, FLOAT, Float,
-    Indexable, INT, INTEGER, Integer, Interval, JSON, LargeBinary,
-    MatchType, NCHAR, NULLTYPE, NullType, NUMERIC, Numeric, NVARCHAR,
-    PickleType, REAL, SchemaType, SMALLINT, SmallInteger, String,
-    STRINGTYPE, TEXT, Text, TIME, Time, TIMESTAMP, TupleType,
-    Unicode, UnicodeText, UUID, Uuid, VARBINARY, VARCHAR
+    ARRAY,
+    BIGINT,
+    BINARY,
+    BLOB,
+    BOOLEAN,
+    CHAR,
+    CLOB,
+    DATE,
+    DATETIME,
+    DECIMAL,
+    DOUBLE,
+    DOUBLE_PRECISION,
+    FLOAT,
+    INT,
+    INTEGER,
+    JSON,
+    NCHAR,
+    NULLTYPE,
+    NUMERIC,
+    NVARCHAR,
+    REAL,
+    SMALLINT,
+    STRINGTYPE,
+    TEXT,
+    TIME,
+    TIMESTAMP,
+    UUID,
+    VARBINARY,
+    VARCHAR,
+    BigInteger,
+    Boolean,
+    Concatenable,
+    Date,
+    DateTime,
+    Double,
+    Enum,
+    Float,
+    Indexable,
+    Integer,
+    Interval,
+    LargeBinary,
+    MatchType,
+    NullType,
+    Numeric,
+    PickleType,
+    SchemaType,
+    SmallInteger,
+    String,
+    Text,
+    Time,
+    TupleType,
+    Unicode,
+    UnicodeText,
+    Uuid,
+    _Binary,
 )
-from sqlalchemy.sql.type_api import (
-    ExternalType, TypeDecorator,
-    TypeEngine, UserDefinedType, Variant
-)
-
-
-from typing import Optional
-from urllib.parse import quote_plus
-
+from sqlalchemy.sql.type_api import ExternalType, TypeDecorator, TypeEngine, UserDefinedType, Variant
 
 if TYPE_CHECKING:
     SqlType = Union[
-        Type[_Binary], Type[ARRAY], Type[BIGINT], Type[BigInteger], Type[BINARY],
-        Type[BLOB], Type[BOOLEAN], Type[Boolean], Type[CHAR], Type[CLOB],
-        Type[Concatenable], Type[DATE], Type[Date], Type[DATETIME], Type[DateTime],
-        Type[DECIMAL], Type[DOUBLE], Type[Double], Type[DOUBLE_PRECISION], Type[Enum],
-        Type[FLOAT], Type[Float], Type[Indexable], Type[INT], Type[INTEGER],
-        Type[Integer], Type[Interval], Type[JSON], Type[LargeBinary], Type[MatchType],
-        Type[NCHAR], Type[NULLTYPE], Type[NullType], Type[NUMERIC], Type[Numeric],
-        Type[NVARCHAR], Type[PickleType], Type[REAL], Type[SchemaType], Type[SMALLINT],
-        Type[SmallInteger], Type[String], Type[STRINGTYPE], Type[TEXT], Type[Text],
-        Type[TIME], Type[Time], Type[TIMESTAMP], Type[TupleType], Type[Unicode],
-        Type[UnicodeText], Type[UUID], Type[Uuid], Type[VARBINARY], Type[VARCHAR],
-        Type[TypeDecorator], Type[TypeEngine], Type[UserDefinedType], Type[Variant],
-        Type[ExternalType]
+        type[_Binary],
+        type[ARRAY],
+        type[BIGINT],
+        type[BigInteger],
+        type[BINARY],
+        type[BLOB],
+        type[BOOLEAN],
+        type[Boolean],
+        type[CHAR],
+        type[CLOB],
+        type[Concatenable],
+        type[DATE],
+        type[Date],
+        type[DATETIME],
+        type[DateTime],
+        type[DECIMAL],
+        type[DOUBLE],
+        type[Double],
+        type[DOUBLE_PRECISION],
+        type[Enum],
+        type[FLOAT],
+        type[Float],
+        type[Indexable],
+        type[INT],
+        type[INTEGER],
+        type[Integer],
+        type[Interval],
+        type[JSON],
+        type[LargeBinary],
+        type[MatchType],
+        type[NCHAR],
+        type[NULLTYPE],
+        type[NullType],
+        type[NUMERIC],
+        type[Numeric],
+        type[NVARCHAR],
+        type[PickleType],
+        type[REAL],
+        type[SchemaType],
+        type[SMALLINT],
+        type[SmallInteger],
+        type[String],
+        type[STRINGTYPE],
+        type[TEXT],
+        type[Text],
+        type[TIME],
+        type[Time],
+        type[TIMESTAMP],
+        type[TupleType],
+        type[Unicode],
+        type[UnicodeText],
+        type[UUID],
+        type[Uuid],
+        type[VARBINARY],
+        type[VARCHAR],
+        type[TypeDecorator],
+        type[TypeEngine],
+        type[UserDefinedType],
+        type[Variant],
+        type[ExternalType],
     ]
 else:
     SqlType = Any
 
 
 # Comprehensive mapping from SQLAlchemy types to Polars types
-sqlalchemy_to_polars: Dict[SqlType, PolarsType] = {
+sqlalchemy_to_polars: dict[SqlType, PolarsType] = {
     # Numeric types
     Integer: pl.Int64,
     INTEGER: pl.Int64,
@@ -65,7 +152,6 @@ sqlalchemy_to_polars: Dict[SqlType, PolarsType] = {
     DECIMAL: pl.Decimal,
     Boolean: pl.Boolean,
     BOOLEAN: pl.Boolean,
-
     # String types
     String: pl.Utf8,
     VARCHAR: pl.Utf8,
@@ -78,7 +164,6 @@ sqlalchemy_to_polars: Dict[SqlType, PolarsType] = {
     STRINGTYPE: pl.Utf8,
     Unicode: pl.Utf8,
     UnicodeText: pl.Utf8,
-
     # Date/Time types
     Date: pl.Date,
     DATE: pl.Date,
@@ -88,27 +173,22 @@ sqlalchemy_to_polars: Dict[SqlType, PolarsType] = {
     Time: pl.Time,
     TIME: pl.Time,
     Interval: pl.Duration,
-
     # Binary types
     _Binary: pl.Binary,
     LargeBinary: pl.Binary,
     BINARY: pl.Binary,
     VARBINARY: pl.Binary,
     BLOB: pl.Binary,
-
     # JSON types
     JSON: pl.Utf8,  # Polars doesn't have a dedicated JSON type, using Utf8
-
     # UUID types
     UUID: pl.Utf8,  # Mapped to string
     Uuid: pl.Utf8,  # Mapped to string
-
     # Other types
     ARRAY: pl.List,  # Approx mapping
     Enum: pl.String,  # Approx mapping
     PickleType: pl.Object,  # For storing Python objects
     TupleType: pl.Struct,  # Mapped to struct
-
     # Special/Abstract types
     NULLTYPE: None,
     NullType: None,
@@ -124,165 +204,139 @@ sqlalchemy_to_polars: Dict[SqlType, PolarsType] = {
 }
 
 # Create string mappings, filtering out None values
-sqlalchemy_to_polars_str: Dict[str, str] = {
+sqlalchemy_to_polars_str: dict[str, str] = {
     k.__name__: v.__name__
     for k, v in sqlalchemy_to_polars.items()
-    if v is not None and hasattr(k, '__name__') and hasattr(v, '__name__')
+    if v is not None and hasattr(k, "__name__") and hasattr(v, "__name__")
 }
 
 # Additional string mappings for common SQL type names
-sql_type_name_to_polars: Dict[str, PolarsType] = {
-    # PostgreSQL types
-    'integer': pl.Int64,
-    'bigint': pl.Int64,
-    'smallint': pl.Int64,
-    'numeric': pl.Decimal,
-    'real': pl.Float32,
-    'double precision': pl.Float64,
-    'boolean': pl.Boolean,
-    'varchar': pl.Utf8,
-    'character varying': pl.Utf8,
-    'character': pl.Utf8,
-    'text': pl.Utf8,
-    'date': pl.Date,
-    'timestamp': pl.Datetime,
-    'timestamp without time zone': pl.Datetime,
-    'timestamp with time zone': pl.Datetime,
-    'time': pl.Time,
-    'time without time zone': pl.Time,
-    'time with time zone': pl.Time,
-    'interval': pl.Duration,
-    'bytea': pl.Binary,
-    'jsonb': pl.Utf8,
-    'json': pl.Utf8,
-    'uuid': pl.Utf8,
-    'cidr': pl.Utf8,
-    'inet': pl.Utf8,
-    'macaddr': pl.Utf8,
-    'bit': pl.Utf8,
-    'bit varying': pl.Utf8,
-    'money': pl.Decimal,
-    'xml': pl.Utf8,
-    'tsquery': pl.Utf8,
-    'tsvector': pl.Utf8,
-    'hstore': pl.Utf8,
+sql_type_name_to_polars: dict[str, PolarsType] = {
+    # --- Integers ---
+    "int": pl.Int32,
+    "integer": pl.Int64,
+    "int4": pl.Int32,
+    "int8": pl.Int64,
+    "bigint": pl.Int64,
+    "short": pl.Int16,
+    "smallint": pl.Int16,
+    "tinyint": pl.Int8,
+    "mediumint": pl.Int32,
+    "serial": pl.Int32,
+    "bigserial": pl.Int64,
+    "smallserial": pl.Int16,
+    # Unsigned (MySQL specific)
+    "int unsigned": pl.UInt64,
+    "bigint unsigned": pl.UInt64,
+    "smallint unsigned": pl.UInt16,
+    "tinyint unsigned": pl.UInt8,
+    "mediumint unsigned": pl.UInt32,
+    "year": pl.Int16,
 
-    # MySQL types
-    'int': pl.Int32,
-    'int unsigned': pl.UInt64,
-    'bigint unsigned': pl.UInt64,
-    'smallint unsigned': pl.UInt16,
-    'tinyint': pl.Int8,
-    'tinyint unsigned': pl.UInt8,
-    'mediumint': pl.Int32,
-    'mediumint unsigned': pl.UInt32,
-    'decimal': pl.Decimal,
-    'float': pl.Float32,
-    'double': pl.Float64,
-    'bit': pl.Boolean,
-    'char': pl.Utf8,
-    'varchar': pl.Utf8,
-    'binary': pl.Binary,
-    'varbinary': pl.Binary,
-    'tinyblob': pl.Binary,
-    'blob': pl.Binary,
-    'mediumblob': pl.Binary,
-    'longblob': pl.Binary,
-    'tinytext': pl.Utf8,
-    'text': pl.Utf8,
-    'mediumtext': pl.Utf8,
-    'longtext': pl.Utf8,
-    'datetime': pl.Datetime,
-    'timestamp': pl.Datetime,
-    'year': pl.Int16,
-    'enum': pl.String,
-    'set': pl.List,
-    'json': pl.Utf8,
+    # --- Floats & Decimals ---
+    "numeric": pl.Decimal,
+    "decimal": pl.Decimal,
+    "number": pl.Decimal,  # Oracle
+    "money": pl.Decimal,
+    "smallmoney": pl.Decimal,
+    "real": pl.Float32,
+    "float": pl.Float64,
+    "float4": pl.Float32,
+    "float8": pl.Float64,
+    "double": pl.Float64,
+    "double precision": pl.Float64,
+    "binary_float": pl.Float32,  # Oracle
+    "binary_double": pl.Float64,  # Oracle
 
-    # SQLite types
-    'integer': pl.Int64,  # SQLite's INTEGER is 64-bit
-    'real': pl.Float64,
-    'text': pl.Utf8,
-    'blob': pl.Binary,
-    'null': None,
+    # --- Booleans ---
+    "boolean": pl.Boolean,
+    "bool": pl.Boolean,
+    "bit": pl.Boolean,  # Note: PostgreSQL 'bit' is varying, but MSSQL/MySQL 'bit' is boolean. Defaulting to Bool.
 
-    # Oracle types
-    'number': pl.Decimal,
-    'float': pl.Float64,
-    'binary_float': pl.Float32,
-    'binary_double': pl.Float64,
-    'varchar2': pl.Utf8,
-    'nvarchar2': pl.Utf8,
-    'char': pl.Utf8,
-    'nchar': pl.Utf8,
-    'clob': pl.Utf8,
-    'nclob': pl.Utf8,
-    'long': pl.Utf8,
-    'raw': pl.Binary,
-    'long raw': pl.Binary,
-    'rowid': pl.Utf8,
-    'urowid': pl.Utf8,
-    'date': pl.Datetime,  # Oracle DATE includes time
-    'timestamp': pl.Datetime,
-    'timestamp with time zone': pl.Datetime,
-    'timestamp with local time zone': pl.Datetime,
-    'interval year to month': pl.Duration,
-    'interval day to second': pl.Duration,
-    'bfile': pl.Binary,
-    'xmltype': pl.Utf8,
+    # --- Strings / Text ---
+    "varchar": pl.Utf8,
+    "varchar2": pl.Utf8,  # Oracle
+    "nvarchar": pl.Utf8,
+    "nvarchar2": pl.Utf8,  # Oracle
+    "char": pl.Utf8,
+    "nchar": pl.Utf8,
+    "character": pl.Utf8,
+    "character varying": pl.Utf8,
+    "text": pl.Utf8,
+    "tinytext": pl.Utf8,
+    "mediumtext": pl.Utf8,
+    "longtext": pl.Utf8,
+    "ntext": pl.Utf8,
+    "clob": pl.Utf8,
+    "nclob": pl.Utf8,
+    "long": pl.Utf8,  # Oracle
+    "enum": pl.String,
+    "set": pl.List,
+    "rowid": pl.Utf8,  # Oracle
+    "urowid": pl.Utf8,  # Oracle
+    "uniqueidentifier": pl.Utf8,  # MSSQL
+    "xml": pl.Utf8,
+    "xmltype": pl.Utf8,
+    "json": pl.Utf8,
+    "jsonb": pl.Utf8,
 
-    # SQL Server types
-    'bit': pl.Boolean,
-    'tinyint': pl.Int8,
-    'smallint': pl.Int16,
-    'int': pl.Int32,
-    'bigint': pl.Int64,
-    'numeric': pl.Decimal,
-    'decimal': pl.Decimal,
-    'smallmoney': pl.Decimal,
-    'money': pl.Decimal,
-    'float': pl.Float64,
-    'real': pl.Float32,
-    'datetime': pl.Datetime,
-    'datetime2': pl.Datetime,
-    'smalldatetime': pl.Datetime,
-    'date': pl.Date,
-    'time': pl.Time,
-    'datetimeoffset': pl.Datetime,
-    'char': pl.Utf8,
-    'varchar': pl.Utf8,
-    'text': pl.Utf8,
-    'nchar': pl.Utf8,
-    'nvarchar': pl.Utf8,
-    'ntext': pl.Utf8,
-    'binary': pl.Binary,
-    'varbinary': pl.Binary,
-    'image': pl.Binary,
-    'uniqueidentifier': pl.Utf8,
-    'xml': pl.Utf8,
-    'sql_variant': pl.Object,
-    'hierarchyid': pl.Utf8,
-    'geometry': pl.Utf8,
-    'geography': pl.Utf8,
+    # --- Network / Specialized Strings (Postgres) ---
+    "uuid": pl.Utf8,
+    "cidr": pl.Utf8,
+    "inet": pl.Utf8,
+    "macaddr": pl.Utf8,
+    "tsquery": pl.Utf8,
+    "tsvector": pl.Utf8,
+    "hstore": pl.Utf8,
+    "geometry": pl.Utf8,
+    "geography": pl.Utf8,
+    "hierarchyid": pl.Utf8,
+    "bit varying": pl.Utf8,
 
-    # Common abbreviations and aliases
-    'int4': pl.Int32,
-    'int8': pl.Int64,
-    'float4': pl.Float32,
-    'float8': pl.Float64,
-    'bool': pl.Boolean,
-    'serial': pl.Int32,  # PostgreSQL auto-incrementing integer
-    'bigserial': pl.Int64,  # PostgreSQL auto-incrementing bigint
-    'smallserial': pl.Int16,  # PostgreSQL auto-incrementing smallint
+    # --- Dates & Times ---
+    "date": pl.Date,
+    "datetime": pl.Datetime,
+    "datetime2": pl.Datetime,  # MSSQL
+    "smalldatetime": pl.Datetime,  # MSSQL
+    "timestamp": pl.Datetime,
+    "timestamp without time zone": pl.Datetime,
+    "timestamp with time zone": pl.Datetime,
+    "timestamp with local time zone": pl.Datetime,
+    "datetimeoffset": pl.Datetime,  # MSSQL
+    "time": pl.Time,
+    "time without time zone": pl.Time,
+    "time with time zone": pl.Time,
+
+    # --- Durations / Intervals ---
+    "interval": pl.Duration,
+    "interval year to month": pl.Duration,  # Oracle
+    "interval day to second": pl.Duration,  # Oracle
+
+    # --- Binary ---
+    "bytea": pl.Binary,  # Postgres
+    "binary": pl.Binary,
+    "varbinary": pl.Binary,
+    "blob": pl.Binary,
+    "tinyblob": pl.Binary,
+    "mediumblob": pl.Binary,
+    "longblob": pl.Binary,
+    "raw": pl.Binary,  # Oracle
+    "long raw": pl.Binary,  # Oracle
+    "bfile": pl.Binary,  # Oracle
+    "image": pl.Binary,  # MSSQL
+
+    # --- Other ---
+    "null": None,
+    "sql_variant": pl.Object,
 }
 
 # String to string mapping
-sql_type_name_to_polars_str: Dict[str, str] = {
+sql_type_name_to_polars_str: dict[str, str] = {
     k: v.__name__ for k, v in sql_type_name_to_polars.items() if v is not None
 }
 
 
-def get_polars_type(sqlalchemy_type: Union[SqlType, str]):
+def get_polars_type(sqlalchemy_type: SqlType | str):
     """
     Get the corresponding Polars type from a SQLAlchemy type or string type name.
 
@@ -309,14 +363,14 @@ def get_polars_type(sqlalchemy_type: Union[SqlType, str]):
 
 
 def construct_sql_uri(
-        database_type: str = "postgresql",
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        username: Optional[str] = None,
-        password: Optional[SecretStr] = None,
-        database: Optional[str] = None,
-        url: Optional[str] = None,
-        **kwargs
+    database_type: str = "postgresql",
+    host: str | None = None,
+    port: int | None = None,
+    username: str | None = None,
+    password: SecretStr | None = None,
+    database: str | None = None,
+    url: str | None = None,
+    **kwargs,
 ) -> str:
     """
     Constructs a SQL URI string from the provided parameters.

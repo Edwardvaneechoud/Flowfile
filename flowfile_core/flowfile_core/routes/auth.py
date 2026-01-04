@@ -2,10 +2,10 @@
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth.jwt import get_current_active_user, create_access_token
+from flowfile_core.auth.jwt import create_access_token, get_current_active_user
 from flowfile_core.auth.models import Token, User
 from flowfile_core.database.connection import get_db
 

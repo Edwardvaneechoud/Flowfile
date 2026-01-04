@@ -6,8 +6,9 @@ to start and stop PostgreSQL containers with sample data.
 """
 
 import argparse
-import sys
 import logging
+import sys
+
 from . import fixtures
 
 # Set up logging

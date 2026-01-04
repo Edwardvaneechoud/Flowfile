@@ -1,6 +1,4 @@
-
 from pydantic import BaseModel, SecretStr
-from typing import Optional, List
 
 
 class Token(BaseModel):
@@ -9,15 +7,15 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    username: Optional[str] = None
+    username: str | None = None
 
 
 class User(BaseModel):
     username: str
-    id: Optional[int] = None
-    email: Optional[str] = None
-    full_name: Optional[str] = None
-    disabled: Optional[bool] = False
+    id: int | None = None
+    email: str | None = None
+    full_name: str | None = None
+    disabled: bool | None = False
 
 
 class UserInDB(User):

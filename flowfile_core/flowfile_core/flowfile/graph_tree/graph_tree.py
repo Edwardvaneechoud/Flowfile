@@ -1,7 +1,4 @@
-from pydantic import BaseModel
-
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-
 from flowfile_core.flowfile.graph_tree.models import BranchInfo, InputInfo
 
 
@@ -13,35 +10,39 @@ def calculate_depth(node_id: int, node_info: dict[int, BranchInfo], visited: set
     if node_id in visited:
         return node_info[node_id].depth
     visited.add(node_id)
-    
+
     max_input_depth = -1
     inputs = node_info[node_id].inputs
-    
+
     for main_id in inputs.main:
         max_input_depth = max(max_input_depth, calculate_depth(main_id, node_info, visited))
     if inputs.left:
         max_input_depth = max(max_input_depth, calculate_depth(inputs.left, node_info, visited))
     if inputs.right:
         max_input_depth = max(max_input_depth, calculate_depth(inputs.right, node_info, visited))
-    
+
     node_info[node_id].depth = max_input_depth + 1
     return node_info[node_id].depth
 
 
 # Trace paths from each root
-def trace_path(node_id: int, node_info: dict[int, BranchInfo], merge_points: dict[int, list[int]],
-               current_path: list[int] | None = None):
+def trace_path(
+    node_id: int,
+    node_info: dict[int, BranchInfo],
+    merge_points: dict[int, list[int]],
+    current_path: list[int] | None = None,
+):
     """Define the trace of each node path"""
     if current_path is None:
         current_path = []
-    
+
     current_path = current_path + [node_id]
     outputs = node_info[node_id].outputs
-    
+
     if not outputs:
         # End of path
         return [current_path]
-    
+
     # If this node has multiple outputs or connects to a merge point, branch
     all_paths = []
     for output_id in outputs:
@@ -64,7 +65,7 @@ def build_node_info(nodes: list[FlowNode]) -> dict[int, BranchInfo]:
         # Get node label
         operation = node.node_type.replace("_", " ").title() if node.node_type else "Unknown"
         label = f"{operation} (id={node_id})"
-        if hasattr(node, 'setting_input') and hasattr(node.setting_input, 'description'):
+        if hasattr(node, "setting_input") and hasattr(node.setting_input, "description"):
             if node.setting_input.description:
                 desc = node.setting_input.description
                 if len(desc) > 20:  # Truncate long descriptions
@@ -75,18 +76,14 @@ def build_node_info(nodes: list[FlowNode]) -> dict[int, BranchInfo]:
         inputs = InputInfo(
             main=[n.node_id for n in (node.node_inputs.main_inputs or [])],
             left=node.node_inputs.left_input.node_id if node.node_inputs.left_input else None,
-            right=node.node_inputs.right_input.node_id if node.node_inputs.right_input else None
+            right=node.node_inputs.right_input.node_id if node.node_inputs.right_input else None,
         )
         outputs = [n.node_id for n in node.leads_to_nodes]
 
         node_info[node_id] = BranchInfo(
-            label=label,
-            short_label=f"{operation} ({node_id})",
-            inputs=inputs,
-            outputs=outputs,
-            depth=0
+            label=label, short_label=f"{operation} ({node_id})", inputs=inputs, outputs=outputs, depth=0
         )
-    
+
     return node_info
 
 
@@ -112,19 +109,20 @@ def define_node_connections(node_info: dict[int, BranchInfo]) -> dict[int, list[
             if output_id not in merge_points:
                 merge_points[output_id] = []
             merge_points[output_id].append(node_id)
-    
+
     return merge_points
 
 
-def build_flow_paths(node_info: dict[int, BranchInfo], flow_starts: list[FlowNode],
-                     merge_points: dict[int, list[int]]):
+def build_flow_paths(node_info: dict[int, BranchInfo], flow_starts: list[FlowNode], merge_points: dict[int, list[int]]):
     """Build the flow paths to be drawn"""
 
-
     # Find all root nodes (no inputs)
-    root_nodes = [nid for nid, info in node_info.items()
-                  if not info.inputs.main and not info.inputs.left and not info.inputs.right]
-    
+    root_nodes = [
+        nid
+        for nid, info in node_info.items()
+        if not info.inputs.main and not info.inputs.left and not info.inputs.right
+    ]
+
     if not root_nodes and flow_starts:
         root_nodes = [n.node_id for n in flow_starts]
     paths = []  # List of paths through the graph
@@ -136,7 +134,7 @@ def build_flow_paths(node_info: dict[int, BranchInfo], flow_starts: list[FlowNod
     return paths
 
 
-def group_paths(paths:list, merge_points:dict):
+def group_paths(paths: list, merge_points: dict):
     """Groups each node path."""
     paths_by_merge = {}
     standalone_paths = []
@@ -152,12 +150,14 @@ def group_paths(paths:list, merge_points:dict):
     return paths_by_merge, standalone_paths
 
 
-def draw_merged_paths(node_info: dict[int, BranchInfo],
-                      merge_points: dict[int, list[int]],
-                      paths_by_merge: dict[int, list[list[int]]],
-                      merge_drawn: set,
-                      drawn_nodes: set,
-                      lines: list[str]):
+def draw_merged_paths(
+    node_info: dict[int, BranchInfo],
+    merge_points: dict[int, list[int]],
+    paths_by_merge: dict[int, list[list[int]]],
+    merge_drawn: set,
+    drawn_nodes: set,
+    lines: list[str],
+):
     """Draws paths for each node that merges."""
     for merge_id, merge_paths in paths_by_merge.items():
         if merge_id in merge_drawn:
@@ -171,8 +171,7 @@ def draw_merged_paths(node_info: dict[int, BranchInfo],
             source_path = None
             for path in merge_paths:
                 if source_id in path:
-
-                    source_path = path[:path.index(source_id) + 1]
+                    source_path = path[: path.index(source_id) + 1]
                     break
 
             if source_path:
@@ -215,14 +214,15 @@ def draw_merged_paths(node_info: dict[int, BranchInfo],
     return paths_by_merge
 
 
-def draw_standalone_paths(drawn_nodes: set[int], standalone_paths: list[list[int]], lines: list[str],
-                          node_info: dict[int, BranchInfo]):
-    """ Draws paths that do not merge."""
+def draw_standalone_paths(
+    drawn_nodes: set[int], standalone_paths: list[list[int]], lines: list[str], node_info: dict[int, BranchInfo]
+):
+    """Draws paths that do not merge."""
     # Draw standalone paths
     for path in standalone_paths:
         if all(nid in drawn_nodes for nid in path):
             continue
-        
+
         line_parts = []
         for i, node_id in enumerate(path):
             if node_id not in drawn_nodes:
@@ -231,12 +231,12 @@ def draw_standalone_paths(drawn_nodes: set[int], standalone_paths: list[list[int
                 else:
                     line_parts.append(f" ──> {node_info[node_id].short_label}")
                 drawn_nodes.add(node_id)
-        
+
         if line_parts:
             lines.append("".join(line_parts))
 
 
-def add_un_drawn_nodes(drawn_nodes: set[int], node_info: dict[int, BranchInfo],  lines: list[str]):
+def add_un_drawn_nodes(drawn_nodes: set[int], node_info: dict[int, BranchInfo], lines: list[str]):
     """Adds isolated nodes if exists."""
     # Add any remaining undrawn nodes
 

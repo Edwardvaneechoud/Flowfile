@@ -4,11 +4,12 @@ Utility to generate comprehensive type stubs for Expr and Column classes.
 This script generates a complete type stub file (.pyi) for the Expr and related classes
 that includes both native methods and any methods dynamically added.
 """
-import os
+
 import inspect
+import os
 import re
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union, get_type_hints
+from typing import Union
 
 
 def format_type_annotation(annotation_obj) -> str:
@@ -23,7 +24,7 @@ def format_type_annotation(annotation_obj) -> str:
     if isinstance(annotation_obj, type):
         module = annotation_obj.__module__
         name = annotation_obj.__name__
-        return name if module == 'builtins' else name
+        return name if module == "builtins" else name
 
     # Handle strings
     if isinstance(annotation_obj, str):
@@ -31,15 +32,15 @@ def format_type_annotation(annotation_obj) -> str:
         class_match = re.match(r"<class '([^']+)'>", annotation_obj)
         if class_match:
             full_path = class_match.group(1)
-            return "None" if full_path == 'NoneType' or full_path.endswith('.NoneType') else full_path.split('.')[-1]
+            return "None" if full_path == "NoneType" or full_path.endswith(".NoneType") else full_path.split(".")[-1]
         return annotation_obj
 
     # For other cases, convert to string and clean up
     str_rep = str(annotation_obj).replace("<class '", "").replace("'>", "")
-    return "None" if str_rep == 'NoneType' or str_rep.endswith('.NoneType') else str_rep
+    return "None" if str_rep == "NoneType" or str_rep.endswith(".NoneType") else str_rep
 
 
-def process_method_signature(method, name, class_name) -> Tuple[str, str, List[str]]:
+def process_method_signature(method, name, class_name) -> tuple[str, str, list[str]]:
     """
     Process a method and generate its stub signature.
 
@@ -56,7 +57,7 @@ def process_method_signature(method, name, class_name) -> Tuple[str, str, List[s
         # Process parameters - skip 'self'
         processed_params = []
         for i, (param_name, param) in enumerate(sig.parameters.items()):
-            if i == 0 and param_name == 'self':
+            if i == 0 and param_name == "self":
                 continue
 
             # Format parameter with type annotation
@@ -89,20 +90,44 @@ def process_method_signature(method, name, class_name) -> Tuple[str, str, List[s
         return_type = "Any"
         if sig.return_annotation is not inspect.Parameter.empty:
             return_type = format_type_annotation(sig.return_annotation)
-        elif name in ["__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
-                      "__mod__", "__pow__", "__and__", "__or__", "__eq__", "__ne__",
-                      "__gt__", "__lt__", "__ge__", "__le__", "__invert__",
-                      "sum", "mean", "min", "max", "count", "first", "last",
-                      "is_null", "is_not_null", "filter", "alias", "fill_null", "fill_nan",
-                      "over", "sort", "cast"]:
+        elif name in [
+            "__add__",
+            "__sub__",
+            "__mul__",
+            "__truediv__",
+            "__floordiv__",
+            "__mod__",
+            "__pow__",
+            "__and__",
+            "__or__",
+            "__eq__",
+            "__ne__",
+            "__gt__",
+            "__lt__",
+            "__ge__",
+            "__le__",
+            "__invert__",
+            "sum",
+            "mean",
+            "min",
+            "max",
+            "count",
+            "first",
+            "last",
+            "is_null",
+            "is_not_null",
+            "filter",
+            "alias",
+            "fill_null",
+            "fill_nan",
+            "over",
+            "sort",
+            "cast",
+        ]:
             return_type = f"'{class_name}'"
         elif name in ["str", "dt", "name"] and class_name == "Expr":
             # Special properties
-            property_types = {
-                "str": "StringMethods",
-                "dt": "DateTimeMethods",
-                "name": "ExprNameNameSpace"
-            }
+            property_types = {"str": "StringMethods", "dt": "DateTimeMethods", "name": "ExprNameNameSpace"}
             return_type = property_types.get(name, "Any")
 
         # Build the method signature
@@ -112,7 +137,7 @@ def process_method_signature(method, name, class_name) -> Tuple[str, str, List[s
         # Extract docstring if available
         docstring = ""
         if method.__doc__:
-            doc_lines = method.__doc__.strip().split('\n')
+            doc_lines = method.__doc__.strip().split("\n")
             docstring = f"    # {doc_lines[0].strip()}"
 
         # Add an empty line after each method for readability
@@ -122,12 +147,13 @@ def process_method_signature(method, name, class_name) -> Tuple[str, str, List[s
     except Exception as e:
         return f"    # Error generating stub for {name}: {str(e)}", "", []
 
+
 def generate_expr_type_stub(
-        expr_module,
-        output_file: Optional[str] = None,
-        include_constructors: bool = True,
-        include_inherited: bool = True,
-        include_polars_methods: bool = True
+    expr_module,
+    output_file: str | None = None,
+    include_constructors: bool = True,
+    include_inherited: bool = True,
+    include_polars_methods: bool = True,
 ) -> str:
     """
     Generate a comprehensive type stub file for Expr and related classes.
@@ -137,20 +163,19 @@ def generate_expr_type_stub(
     if output_file is None:
         output_file = os.path.join(os.path.dirname(__file__), "flowfile_frame", "expr.pyi")
 
-
     # Extract classes from the module
     class_map = {
-        "Expr": getattr(expr_module, "Expr"),
-        "Column": getattr(expr_module, "Column"),
-        "StringMethods": getattr(expr_module, "StringMethods"),
-        "DateTimeMethods": getattr(expr_module, "DateTimeMethods"),
-        "When": getattr(expr_module, "When")
+        "Expr": expr_module.Expr,
+        "Column": expr_module.Column,
+        "StringMethods": expr_module.StringMethods,
+        "DateTimeMethods": expr_module.DateTimeMethods,
+        "When": expr_module.When,
     }
 
     # Discover top-level functions dynamically
     top_level_functions = []
     for name, obj in inspect.getmembers(expr_module):
-        if inspect.isfunction(obj) and not name.startswith('_') and obj.__module__ == expr_module.__name__:
+        if inspect.isfunction(obj) and not name.startswith("_") and obj.__module__ == expr_module.__name__:
             top_level_functions.append(name)
     # Start building the stub file content
     content = [
@@ -176,7 +201,6 @@ def generate_expr_type_stub(
         "    T = TypeVar('T')",
         "    P = ParamSpec('P')",
         "    from flowfile_core.schemas import transform_schema",
-
         "import flowfile_frame",
         "from flowfile_frame.selectors import Selector",
         "from flowfile_frame.expr_name import ExprNameNameSpace",
@@ -187,7 +211,7 @@ def generate_expr_type_stub(
         "ExprOrStr = Union['Expr', str]",
         "ExprOrStrList = List[ExprOrStr]",
         "ExprStrOrList = Union[ExprOrStr, ExprOrStrList]",
-        ""
+        "",
     ]
 
     # Discover polars Expr methods dynamically
@@ -212,7 +236,7 @@ def generate_expr_type_stub(
         attrs_added = False
         for name, value in vars(cls).items():
             if not callable(value) and not isinstance(value, property):
-                type_annotation = vars(cls)['__annotations__'].get(name, "Any")
+                type_annotation = vars(cls)["__annotations__"].get(name, "Any")
 
                 attrs_added = True
                 class_lines.append(f"    {name}: {type_annotation}")
@@ -224,7 +248,7 @@ def generate_expr_type_stub(
         existing_methods = set()
         for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
             # Skip private methods unless it's __init__
-            if name.startswith('_') and name != '__init__' and not include_constructors:
+            if name.startswith("_") and name != "__init__" and not include_constructors:
                 continue
             # Skip inherited methods if not requested
             if not include_inherited and method.__module__ != cls.__module__:
@@ -241,7 +265,6 @@ def generate_expr_type_stub(
         # If it's the Expr class, add common polars.Expr methods
         if include_polars_methods and cls_name == "Expr":
             for method_name in common_polars_methods:
-
                 if method_name not in existing_methods:
                     class_lines.append(f"    def {method_name}(self, *args, **kwargs) -> 'Expr': ...")
                     class_lines.append("")
@@ -290,7 +313,7 @@ def generate_expr_type_stub(
                 func_def = f"def {func_name}({params_str}) -> {return_type}: ..."
 
                 if func.__doc__:
-                    doc_lines = func.__doc__.strip().split('\n')
+                    doc_lines = func.__doc__.strip().split("\n")
                     content.append(f"# {doc_lines[0].strip()}")
 
                 content.append(func_def)
@@ -312,9 +335,9 @@ if __name__ == "__main__":
     import argparse
     from importlib import import_module
 
-    parser = argparse.ArgumentParser(description='Generate comprehensive type stub file for Expr')
-    parser.add_argument('--output', '-o', help='Output file path for the stub file')
-    parser.add_argument('--module', '-m', default='flowfile_frame.expr', help='Module containing Expr class')
+    parser = argparse.ArgumentParser(description="Generate comprehensive type stub file for Expr")
+    parser.add_argument("--output", "-o", help="Output file path for the stub file")
+    parser.add_argument("--module", "-m", default="flowfile_frame.expr", help="Module containing Expr class")
     args = parser.parse_args()
 
     try:
@@ -322,10 +345,7 @@ if __name__ == "__main__":
         module = import_module(args.module)
 
         # Generate the type stub
-        output_file = generate_expr_type_stub(
-            expr_module=module,
-            output_file=args.output
-        )
+        output_file = generate_expr_type_stub(expr_module=module, output_file=args.output)
 
         print(f"Type stub file generated successfully: {output_file}")
 

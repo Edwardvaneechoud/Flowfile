@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 router = APIRouter()
 
 
-@router.get("/", tags=['admin'])
+@router.get("/", tags=["admin"])
 async def docs_redirect():
-    """ Redirects to the documentation page."""
-    return RedirectResponse(url='/docs')
+    """Redirects to the documentation page."""
+    return RedirectResponse(url="/docs")

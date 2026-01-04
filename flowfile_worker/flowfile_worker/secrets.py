@@ -1,12 +1,15 @@
 """
 Simplified secure storage module for FlowFile worker to read credentials and secrets.
 """
-from cryptography.fernet import Fernet
-import os
-from pathlib import Path
+
 import json
 import logging
+import os
+from pathlib import Path
+
+from cryptography.fernet import Fernet
 from pydantic import SecretStr
+
 from flowfile_worker.configs import TEST_MODE
 
 # Set up logging
@@ -79,7 +82,7 @@ def get_docker_secret_key():
     secret_path = "/run/secrets/flowfile_master_key"
     if os.path.exists(secret_path):
         try:
-            with open(secret_path, "r") as f:
+            with open(secret_path) as f:
                 return f.read().strip()
         except Exception as e:
             logger.error(f"Failed to read master key from Docker secret: {e}")
@@ -105,7 +108,7 @@ def get_master_key() -> str:
     """
     # First check for test mode
     if TEST_MODE:
-        return b'06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4='.decode()
+        return b"06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4=".decode()
 
     # Next check if running in Docker
     if os.environ.get("RUNNING_IN_DOCKER") == "true":

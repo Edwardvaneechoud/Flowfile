@@ -1,17 +1,33 @@
-import polars as pl
+from collections.abc import Callable
 from functools import wraps
-from typing import Optional, TypeVar, Type, Callable
-from flowfile_frame.utils import _get_function_source
-from flowfile_frame.config import logger
+from typing import TypeVar
 
-T = TypeVar('T')
-FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')
+import polars as pl
+
+from flowfile_frame.config import logger
+from flowfile_frame.utils import _get_function_source
+
+T = TypeVar("T")
+FlowFrameT = TypeVar("FlowFrameT", bound="FlowFrame")
 
 PASSTHROUGH_METHODS = {
-    'collect', 'collect_async', 'profile', 'describe', 'explain',
-    'show_graph', 'fetch', 'collect_schema', 'columns', 'dtypes',
-    'schema', 'width', 'estimated_size', 'n_chunks', 'is_empty',
-    'chunk_lengths', 'get_meta'
+    "collect",
+    "collect_async",
+    "profile",
+    "describe",
+    "explain",
+    "show_graph",
+    "fetch",
+    "collect_schema",
+    "columns",
+    "dtypes",
+    "schema",
+    "width",
+    "estimated_size",
+    "n_chunks",
+    "is_empty",
+    "chunk_lengths",
+    "get_meta",
 }
 
 
@@ -33,31 +49,68 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
     """
     # Determine if the original method returns a LazyFrame based on known method names
     lazyframe_returning_methods = {
-        "drop", "select", "with_columns", "sort", "filter", "join", "head", "tail",
-        "limit", "drop_nulls", "fill_null", "with_row_index", "group_by", "explode",
-        "unique", "slice", "shift", "reverse", "max", "min", "sum", "mean", "median",
-        "std", "var", "drop_nans", "fill_nan", "interpolate", "null_count", "quantile",
-        "unpivot", "melt", "first", "last"
+        "drop",
+        "select",
+        "with_columns",
+        "sort",
+        "filter",
+        "join",
+        "head",
+        "tail",
+        "limit",
+        "drop_nulls",
+        "fill_null",
+        "with_row_index",
+        "group_by",
+        "explode",
+        "unique",
+        "slice",
+        "shift",
+        "reverse",
+        "max",
+        "min",
+        "sum",
+        "mean",
+        "median",
+        "std",
+        "var",
+        "drop_nans",
+        "fill_nan",
+        "interpolate",
+        "null_count",
+        "quantile",
+        "unpivot",
+        "melt",
+        "first",
+        "last",
     }
 
     non_lazyframe_methods = {
-        "collect", "collect_schema", "fetch", "columns", "dtypes", "schema", "width",
-        "describe", "explain", "profile", "show_graph"
+        "collect",
+        "collect_schema",
+        "fetch",
+        "columns",
+        "dtypes",
+        "schema",
+        "width",
+        "describe",
+        "explain",
+        "profile",
+        "show_graph",
     }
 
-    returns_lazyframe = (
-            method_name in lazyframe_returning_methods or
-            (method_name not in non_lazyframe_methods and not method_name.startswith("_"))
+    returns_lazyframe = method_name in lazyframe_returning_methods or (
+        method_name not in non_lazyframe_methods and not method_name.startswith("_")
     )
 
     @wraps(original_method)
-    def wrapper(self, *args, description: Optional[str] = None, **kwargs):
+    def wrapper(self, *args, description: str | None = None, **kwargs):
         # Import here to avoid circular imports
         from flowfile_frame.flow_frame import generate_node_id
+
         new_node_id = generate_node_id()
 
-        if not all([True if not hasattr(arg, "convertable_to_code") else getattr(arg, 'convertable_to_code') for arg in
-                    args]):
+        if not all([True if not hasattr(arg, "convertable_to_code") else arg.convertable_to_code for arg in args]):
             logger.debug("Warning, could not create a good node")
             return self.__class__(getattr(self.data, method_name)(arg.expr for arg in args), flow_graph=self.flow_graph)
 
@@ -72,7 +125,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
                 # Try to get function source
                 try:
                     source, is_module_level = _get_function_source(arg)
-                    if source and hasattr(arg, '__name__') and arg.__name__ != '<lambda>':
+                    if source and hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
                         function_sources.append(source)
                         # Use the function name in the representation
                         args_representations.append(arg.__name__)
@@ -89,7 +142,7 @@ def create_lazyframe_method_wrapper(method_name: str, original_method: Callable)
                 # Try to get function source
                 try:
                     source, is_module_level = _get_function_source(value)
-                    if source and hasattr(value, '__name__') and value.__name__ != '<lambda>':
+                    if source and hasattr(value, "__name__") and value.__name__ != "<lambda>":
                         function_sources.append(source)
                         kwargs_representations.append(f"{key}={value.__name__}")
                     else:
@@ -166,8 +219,7 @@ def add_lazyframe_methods(cls):
 
     # Skip properties and private methods
     skip_methods = {
-        name for name in dir(pl.LazyFrame)
-        if name.startswith('_') or isinstance(getattr(pl.LazyFrame, name), property)
+        name for name in dir(pl.LazyFrame) if name.startswith("_") or isinstance(getattr(pl.LazyFrame, name), property)
     }
 
     # Add all public LazyFrame methods that don't already exist
@@ -176,8 +228,8 @@ def add_lazyframe_methods(cls):
             continue
         attr = getattr(pl.LazyFrame, name)
         if name in PASSTHROUGH_METHODS:
-            def create_passthrough_method(method_name, method_attr):
 
+            def create_passthrough_method(method_name, method_attr):
                 @wraps(method_attr)
                 def passthrough_method(self, *args, **kwargs):
                     return getattr(self.data, method_name)(*args, **kwargs)
@@ -193,8 +245,9 @@ def add_lazyframe_methods(cls):
                 setattr(cls, name, wrapped_method)
 
     overlap = {
-        name for name in existing_methods
-        if name in dir(pl.LazyFrame) and not name.startswith('_') and callable(getattr(pl.LazyFrame, name))
+        name
+        for name in existing_methods
+        if name in dir(pl.LazyFrame) and not name.startswith("_") and callable(getattr(pl.LazyFrame, name))
     }
     if overlap:
         logger.debug(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")

@@ -1,6 +1,8 @@
-import polars as pl
-from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DatabaseWriteSettings
 from io import BytesIO
+
+import polars as pl
+
+from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings, DatabaseWriteSettings
 
 
 def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWriteSettings):
@@ -11,9 +13,11 @@ def write_df_to_database(df: pl.DataFrame, database_write_settings: DatabaseWrit
         database_write_settings (DatabaseWriteSettings): The settings for the database connection and table.
     """
     # Write the DataFrame to the database
-    df.write_database(table_name=database_write_settings.table_name,
-                      connection=database_write_settings.connection.create_uri(),
-                      if_table_exists=database_write_settings.if_exists)
+    df.write_database(
+        table_name=database_write_settings.table_name,
+        connection=database_write_settings.connection.create_uri(),
+        if_table_exists=database_write_settings.if_exists,
+    )
     return True
 
 
@@ -53,4 +57,3 @@ def read_sql_source(database_read_settings: DatabaseReadSettings):
     # Read the query into a DataFrame
     df = read_query_as_pd_df(database_read_settings.query, database_read_settings.connection.create_uri())
     return df
-

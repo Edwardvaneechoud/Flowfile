@@ -1,12 +1,17 @@
 # Fixed custom_node.py with proper type hints
 
+from typing import Any, TypeVar
+
 import polars as pl
 from pydantic import BaseModel
-from typing import Any, Dict, Optional, TypeVar, Set
-from flowfile_core.flowfile.node_designer.ui_components import (FlowfileInComponent, IncomingColumns, Section,
-                                                                SecretSelector)
+
+from flowfile_core.flowfile.node_designer.ui_components import (
+    FlowfileInComponent,
+    IncomingColumns,
+    SecretSelector,
+    Section,
+)
 from flowfile_core.schemas.schemas import NodeTemplate, NodeTypeLiteral, TransformTypeLiteral
-from pydantic import SecretStr
 
 
 def to_frontend_schema(model_instance: BaseModel) -> dict:
@@ -24,9 +29,9 @@ def to_frontend_schema(model_instance: BaseModel) -> dict:
         A dictionary representation of the model.
     """
     result = {}
-    extra_fields = getattr(model_instance, '__pydantic_extra__', {})
+    extra_fields = getattr(model_instance, "__pydantic_extra__", {})
     model_fields = {k: getattr(model_instance, k) for k in model_instance.model_fields.keys()}
-    for key, value in (extra_fields|model_fields).items():
+    for key, value in (extra_fields | model_fields).items():
         result[key] = _convert_value(value)
     return result
 
@@ -36,25 +41,18 @@ def _convert_value(value: Any) -> Any:
     Helper function to convert any value to a frontend-ready format.
     """
     if isinstance(value, Section):
-        section_data = value.model_dump(
-            include={'title', 'description', 'hidden'},
-            exclude_none=True
-        )
+        section_data = value.model_dump(include={"title", "description", "hidden"}, exclude_none=True)
         section_data["component_type"] = "Section"
-        section_data["components"] = {
-            key: _convert_value(comp)
-            for key, comp in value.get_components().items()
-        }
+        section_data["components"] = {key: _convert_value(comp) for key, comp in value.get_components().items()}
         return section_data
 
     elif isinstance(value, FlowfileInComponent):
         component_dict = value.model_dump(exclude_none=True)
-        if 'options' in component_dict:
-            if component_dict['options'] is IncomingColumns or (
-                    isinstance(component_dict['options'], type) and
-                    issubclass(component_dict['options'], IncomingColumns)
+        if "options" in component_dict:
+            if component_dict["options"] is IncomingColumns or (
+                isinstance(component_dict["options"], type) and issubclass(component_dict["options"], IncomingColumns)
             ):
-                component_dict['options'] = {"__type__": "IncomingColumns"}
+                component_dict["options"] = {"__type__": "IncomingColumns"}
         return component_dict
     elif isinstance(value, BaseModel):
         return to_frontend_schema(value)
@@ -69,7 +67,7 @@ def _convert_value(value: Any) -> Any:
 
 
 # Type variable for the Section factory
-T = TypeVar('T', bound=Section)
+T = TypeVar("T", bound=Section)
 
 
 def create_section(**components: FlowfileInComponent) -> Section:
@@ -106,15 +104,16 @@ class NodeSettings(BaseModel):
             main_config = main_config_section
             advanced_options = advanced_config_section
     """
+
     class Config:
-        extra = 'allow'
+        extra = "allow"
         arbitrary_types_allowed = True
 
     def has_sections(self) -> bool:
         """Check if this settings class has any sections defined."""
         if self.model_fields:
             return True
-        extra = getattr(self, '__pydantic_extra__', {})
+        extra = getattr(self, "__pydantic_extra__", {})
         return bool(extra)
 
     def is_empty(self) -> bool:
@@ -128,7 +127,7 @@ class NodeSettings(BaseModel):
         """
         super().__init__(**sections)
 
-    def populate_values(self, values: Dict[str, Any]) -> 'NodeSettings':
+    def populate_values(self, values: dict[str, Any]) -> "NodeSettings":
         """
         Populates the settings with values received from the frontend.
 
@@ -147,7 +146,7 @@ class NodeSettings(BaseModel):
         all_sections = {}
 
         # Get extra fields
-        extra_fields = getattr(self, '__pydantic_extra__', {})
+        extra_fields = getattr(self, "__pydantic_extra__", {})
         all_sections.update(extra_fields)
 
         # Get defined fields that are Sections
@@ -185,7 +184,7 @@ class NodeSettings(BaseModel):
                 return component
 
         # Check pydantic extra fields
-        extras = getattr(self, '__pydantic_extra__', {}) or {}
+        extras = getattr(self, "__pydantic_extra__", {}) or {}
         if field_name in extras:
             component = extras[field_name]
             if isinstance(component, FlowfileInComponent):
@@ -205,7 +204,7 @@ class NodeSettings(BaseModel):
 
         return None
 
-    def get_all_components(self) -> Dict[str, FlowfileInComponent]:
+    def get_all_components(self) -> dict[str, FlowfileInComponent]:
         """
         Returns all UI components in the settings, including those nested in sections.
 
@@ -223,7 +222,7 @@ class NodeSettings(BaseModel):
                 components.update(value.get_components())
 
         # Get from extra fields
-        extras = getattr(self, '__pydantic_extra__', {}) or {}
+        extras = getattr(self, "__pydantic_extra__", {}) or {}
         for field_name, value in extras.items():
             if isinstance(value, FlowfileInComponent):
                 components[field_name] = value
@@ -275,13 +274,13 @@ class SectionBuilder:
         advanced_section = builder.build()
     """
 
-    def __init__(self, title: Optional[str] = None, description: Optional[str] = None, hidden: bool = False):
+    def __init__(self, title: str | None = None, description: str | None = None, hidden: bool = False):
         self._section = Section(title=title, description=description, hidden=hidden)
 
-    def add_component(self, name: str, component: FlowfileInComponent) -> 'SectionBuilder':
+    def add_component(self, name: str, component: FlowfileInComponent) -> "SectionBuilder":
         """Add a component to the section."""
         setattr(self._section, name, component)
-        extra = getattr(self._section, '__pydantic_extra__', {})
+        extra = getattr(self._section, "__pydantic_extra__", {})
         extra[name] = component
         return self
 
@@ -307,10 +306,10 @@ class NodeSettingsBuilder:
     def __init__(self):
         self._settings = NodeSettings()
 
-    def add_section(self, name: str, section: Section) -> 'NodeSettingsBuilder':
+    def add_section(self, name: str, section: Section) -> "NodeSettingsBuilder":
         """Add a section to the node settings."""
         setattr(self._settings, name, section)
-        extra = getattr(self._settings, '__pydantic_extra__', {})
+        extra = getattr(self._settings, "__pydantic_extra__", {})
         extra[name] = section
         return self
 
@@ -326,27 +325,28 @@ class CustomNodeBase(BaseModel):
     To create a new node, you should inherit from this class and define its
     attributes and the `process` method.
     """
+
     # Core node properties
     node_name: str
     node_category: str = "Custom"
     node_icon: str = "user-defined-icon.png"
-    settings_schema: Optional[NodeSettings] = None
+    settings_schema: NodeSettings | None = None
 
     # I/O configuration
     number_of_inputs: int = 1
     number_of_outputs: int = 1
 
     # Display properties in the UI
-    node_group: Optional[str] = "custom"
-    title: Optional[str] = "Custom Node"
-    intro: Optional[str] = "A custom node for data processing"
+    node_group: str | None = "custom"
+    title: str | None = "Custom Node"
+    intro: str | None = "A custom node for data processing"
 
     # Behavior properties
     node_type: NodeTypeLiteral = "process"
     transform_type: TransformTypeLiteral = "wide"
 
-    _user_id: Optional[int] = None
-    accessed_secrets: Set[str] = set()
+    _user_id: int | None = None
+    accessed_secrets: set[str] = set()
 
     @property
     def item(self):
@@ -360,7 +360,7 @@ class CustomNodeBase(BaseModel):
         """
         Initialize the node, optionally populating settings from initial values.
         """
-        initial_values = data.pop('initial_values', None)
+        initial_values = data.pop("initial_values", None)
         super().__init__(**data)
         if self.settings_schema and initial_values:
             self.settings_schema.populate_values(initial_values)
@@ -376,7 +376,7 @@ class CustomNodeBase(BaseModel):
         self._user_id = user_id
         self.accessed_secrets = set()
 
-    def get_accessed_secrets(self) -> Set[str]:
+    def get_accessed_secrets(self) -> set[str]:
         """
         Returns the set of secret values accessed during this execution.
         Used by the output scanner to detect accidental leaks.
@@ -429,20 +429,20 @@ class CustomNodeBase(BaseModel):
         return schema
 
     @classmethod
-    def from_frontend_schema(cls, schema: dict) -> 'CustomNodeBase':
+    def from_frontend_schema(cls, schema: dict) -> "CustomNodeBase":
         """
         Create a node instance from a frontend schema.
 
         This is used when loading a node from a saved flow.
         """
-        settings_values = schema.pop('settings_schema', {})
+        settings_values = schema.pop("settings_schema", {})
         node = cls(**schema)
         if settings_values and node.settings_schema:
             node.settings_schema.populate_values(settings_values)
         return node
 
     @classmethod
-    def from_settings(cls, settings_values: dict) -> 'CustomNodeBase':
+    def from_settings(cls, settings_values: dict) -> "CustomNodeBase":
         """
         Create a node instance with just its settings values.
 
@@ -453,7 +453,7 @@ class CustomNodeBase(BaseModel):
             node.settings_schema.populate_values(settings_values)
         return node
 
-    def update_settings(self, values: Dict[str, Any]) -> 'CustomNodeBase':
+    def update_settings(self, values: dict[str, Any]) -> "CustomNodeBase":
         """
         Update the settings with new values from the frontend.
         """
@@ -493,5 +493,5 @@ class CustomNodeBase(BaseModel):
             drawer_intro=self.intro,
             node_type=self.node_type,
             transform_type=self.transform_type,
-            custom_node=True
+            custom_node=True,
         )

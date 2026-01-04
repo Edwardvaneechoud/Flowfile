@@ -1,21 +1,20 @@
 import polars as pl
 
-
 dtype_to_pl = {
-    'int': pl.Int64,
-    'integer': pl.Int64,
-    'char': pl.String,
-    'fixed decimal': pl.Float32,
-    'double': pl.Float64,
-    'float': pl.Float64,
-    'bool': pl.Boolean,
-    'byte': pl.UInt8,
-    'bit': pl.Binary,
-    'date': pl.Date,
-    'datetime': pl.Datetime,
-    'string': pl.String,
-    'str': pl.String,
-    'time': pl.Time,
+    "int": pl.Int64,
+    "integer": pl.Int64,
+    "char": pl.String,
+    "fixed decimal": pl.Float32,
+    "double": pl.Float64,
+    "float": pl.Float64,
+    "bool": pl.Boolean,
+    "byte": pl.UInt8,
+    "bit": pl.Binary,
+    "date": pl.Date,
+    "datetime": pl.Datetime,
+    "string": pl.String,
+    "str": pl.String,
+    "time": pl.Time,
 }
 
 
@@ -27,19 +26,17 @@ def safe_eval_pl_type(type_string: str):
     # Define allowed names in the evaluation namespace
     safe_dict = {
         # Polars module and types
-        'pl': pl,
-
+        "pl": pl,
         # Basic Python built-ins for literals
-        'int': int,
-        'str': str,
-        'float': float,
-        'bool': bool,
-        'list': list,
-        'dict': dict,
-        'tuple': tuple,
-
+        "int": int,
+        "str": str,
+        "float": float,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
         # Disable dangerous built-ins
-        '__builtins__': {},
+        "__builtins__": {},
     }
 
     try:
@@ -52,10 +49,10 @@ dtype_to_pl_str = {k: v.__name__ for k, v in dtype_to_pl.items()}
 
 
 def get_polars_type(dtype: str):
-    if 'pl.' in dtype:
+    if "pl." in dtype:
         try:
             return safe_eval_pl_type(dtype)
-        except Exception as e:
+        except Exception:
             return pl.String
     pl_datetype = dtype_to_pl.get(dtype.lower())
     if pl_datetype is not None:
@@ -68,8 +65,7 @@ def get_polars_type(dtype: str):
 
 def cast_str_to_polars_type(dtype: str) -> pl.DataType:
     pl_type = get_polars_type(dtype)
-    if hasattr(pl_type, '__call__'):
+    if callable(pl_type):
         return pl_type()
     else:
         return pl_type
-

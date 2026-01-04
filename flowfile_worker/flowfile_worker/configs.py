@@ -1,15 +1,15 @@
 # flowfile_worker.configs
 
-import logging
-import platform
 import argparse
+import logging
 import os
+import platform
+
 from connectorx import __version__
 
-
 # Configure logging
-logging.basicConfig(format='%(asctime)s: %(message)s')
-logger = logging.getLogger('FlowfileWorker')
+logging.basicConfig(format="%(asctime)s: %(message)s")
+logger = logging.getLogger("FlowfileWorker")
 logger.setLevel(logging.INFO)
 
 # Constants for worker and core configuration
@@ -17,18 +17,14 @@ DEFAULT_SERVICE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0
 DEFAULT_SERVICE_PORT = 63579
 DEFAULT_CORE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
 DEFAULT_CORE_PORT = 63578
-TEST_MODE = True if 'TEST_MODE' in os.environ else False
+TEST_MODE = True if "TEST_MODE" in os.environ else False
 
 
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Worker Server")
-    parser.add_argument(
-        "--host", type=str, default=DEFAULT_SERVICE_HOST, help="Host to bind worker to"
-    )
-    parser.add_argument(
-        "--port", type=int, default=DEFAULT_SERVICE_PORT, help="Port to bind worker to"
-    )
+    parser.add_argument("--host", type=str, default=DEFAULT_SERVICE_HOST, help="Host to bind worker to")
+    parser.add_argument("--port", type=int, default=DEFAULT_SERVICE_PORT, help="Port to bind worker to")
     parser.add_argument(
         "--core-host",
         type=str,
@@ -47,14 +43,10 @@ def parse_args():
 
     # Validate arguments
     if args.port < 1 or args.port > 65535:
-        raise ValueError(
-            f"Invalid port number: {args.port}. Port must be between 1 and 65535."
-        )
+        raise ValueError(f"Invalid port number: {args.port}. Port must be between 1 and 65535.")
 
     if args.core_port < 1 or args.core_port > 65535:
-        raise ValueError(
-            f"Invalid core port number: {args.core_port}. Port must be between 1 and 65535."
-        )
+        raise ValueError(f"Invalid core port number: {args.core_port}. Port must be between 1 and 65535.")
 
     # Check if hosts are valid (basic check)
     if not args.host:

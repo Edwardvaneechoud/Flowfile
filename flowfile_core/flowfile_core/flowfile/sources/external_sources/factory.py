@@ -16,4 +16,3 @@ def data_source_factory(source_type: str, **kwargs) -> CustomExternalSource:
         return CustomExternalSource(**kwargs)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
-
