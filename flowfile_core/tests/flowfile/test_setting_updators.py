@@ -71,7 +71,6 @@ class TestCrossJoinSettingGenerator:
         # Get the node and verify settings were generated
         node = basic_flow.get_node(3)
         node_data = node.get_node_data(basic_flow.flow_id)
-        breakpoint()
         assert node_data.setting_input is not None
         assert isinstance(node_data.setting_input, input_schema.NodeCrossJoin)
 
@@ -625,6 +624,21 @@ class TestCrossJoinExecution:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
+        # Add cross_join settings (the setting generator doesn't run automatically in tests)
+        cross_join_input = transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='id', new_name='id'),
+                transform_schema.SelectInput(old_name='value', new_name='value'),
+            ]),
+            right_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='id', new_name='right_id'),
+                transform_schema.SelectInput(old_name='value', new_name='right_value'),
+            ]),
+        )
+        basic_flow.add_cross_join(input_schema.NodeCrossJoin(
+            flow_id=1, node_id=3, cross_join_input=cross_join_input
+        ))
+
         node = basic_flow.get_node(3)
         basic_flow.run_graph()
         result = node.get_resulting_data()
@@ -646,7 +660,21 @@ class TestCrossJoinExecution:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(1, 3))
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
+        # Add cross_join settings
+        cross_join_input = transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='a', new_name='a'),
+            ]),
+            right_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='b', new_name='b'),
+            ]),
+        )
+        basic_flow.add_cross_join(input_schema.NodeCrossJoin(
+            flow_id=1, node_id=3, cross_join_input=cross_join_input
+        ))
+
         node = basic_flow.get_node(3)
+        basic_flow.run_graph()
         result1 = node.get_resulting_data()
         assert set(result1.columns) == {'a', 'b'}
 
