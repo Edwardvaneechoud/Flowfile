@@ -1,6 +1,7 @@
 # Fixed custom_node.py with proper type hints
 
-from typing import Any, TypeVar
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import polars as pl
 from pydantic import BaseModel
@@ -12,6 +13,11 @@ from flowfile_core.flowfile.node_designer.ui_components import (
     Section,
 )
 from flowfile_core.schemas.schemas import NodeTemplate, NodeTypeLiteral, TransformTypeLiteral
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.node_designer.custom_node_code_generator import (
+        CustomNodeCodeGenerator,
+    )
 
 
 def to_frontend_schema(model_instance: BaseModel) -> dict:
@@ -495,3 +501,49 @@ class CustomNodeBase(BaseModel):
             transform_type=self.transform_type,
             custom_node=True,
         )
+
+    def to_code(
+        self,
+        include_example: bool = True,
+        settings_values: dict[str, Any] | None = None,
+        source_file_path: Path | None = None,
+    ) -> str:
+        """
+        Generate executable Python code for this custom node.
+
+        This method converts the node definition into a standalone Python script
+        that can be executed outside the FlowFile visual interface. The generated
+        code maintains a dependency on Flowfile but is fully executable.
+
+        Args:
+            include_example: If True, includes example usage with sample data
+                showing how to instantiate and run the node.
+            settings_values: Optional dictionary of settings values to embed
+                in the generated code. If not provided, uses the current
+                settings values from the node.
+            source_file_path: Optional path to the source file containing
+                the node class definition. Used to extract the original
+                class source code.
+
+        Returns:
+            A string containing executable Python code.
+
+        Example:
+            >>> node = FixedColumn.from_settings({
+            ...     "main_section": {"standard_input": "Hello", "column_name": "greeting"}
+            ... })
+            >>> code = node.to_code(include_example=True)
+            >>> print(code)
+            # Prints a complete Python script with imports, class definition,
+            # and example usage
+        """
+        from flowfile_core.flowfile.node_designer.custom_node_code_generator import (
+            CustomNodeCodeGenerator,
+        )
+
+        generator = CustomNodeCodeGenerator(
+            node=self,
+            settings_values=settings_values,
+            source_file_path=source_file_path,
+        )
+        return generator.generate(include_example=include_example)

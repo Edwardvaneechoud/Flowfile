@@ -13,6 +13,9 @@ from flowfile_core.types import Types
 
 from .custom_node import CustomNodeBase, NodeSettings
 
+# Import code generation utilities
+from .custom_node_code_generator import CustomNodeCodeGenerator, generate_node_code
+
 # Import all UI components so they can be used directly
 from .ui_components import (
     AvailableSecrets,
@@ -32,6 +35,9 @@ from .ui_components import (
 __all__ = [
     # Core Node Class
     "CustomNodeBase",
+    # Code Generation
+    "CustomNodeCodeGenerator",
+    "generate_node_code",
     # UI Components & Layout
     "Section",
     "TextInput",

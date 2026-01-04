@@ -45,6 +45,13 @@ class SaveCustomNodeRequest(BaseModel):
     code: str
 
 
+class ExportNodeCodeRequest(BaseModel):
+    """Request model for exporting node code."""
+    file_name: str
+    settings: dict | None = None  # Optional current settings to embed
+    include_example: bool = True
+
+
 @router.get("/custom-node-schema", summary="Get a simple UI schema")
 def get_simple_custom_object(flow_id: int, node_id: int):
     """
@@ -370,6 +377,101 @@ def delete_custom_node(file_name: str) -> Dict[str, Any]:
         "file_name": safe_name,
         "message": f"Node '{safe_name}' deleted successfully"
     }
+
+
+@router.post("/export-custom-node-code", summary="Export custom node as Python code")
+def export_custom_node_code(request: ExportNodeCodeRequest) -> Dict[str, Any]:
+    """
+    Export a custom node as standalone Python code.
+
+    This endpoint generates a complete Python script that includes:
+    - Module docstring with node metadata
+    - All required imports
+    - The full class definition
+    - Example usage code (optional)
+
+    The generated code maintains a dependency on Flowfile but can be
+    executed as a standalone Python script.
+
+    Args:
+        request: ExportNodeCodeRequest containing:
+            - file_name: The name of the custom node file
+            - settings: Optional settings values to embed in the example
+            - include_example: Whether to include example usage code
+
+    Returns:
+        Dictionary with:
+            - success: Boolean indicating success
+            - code: The generated Python script
+            - file_name: The sanitized file name
+    """
+    # Sanitize file name
+    file_name = request.file_name
+    if not file_name.endswith('.py'):
+        file_name += '.py'
+
+    safe_name = re.sub(r'[^a-zA-Z0-9_.]', '_', file_name)
+    file_path = storage.user_defined_nodes_directory / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Node file '{safe_name}' not found")
+
+    # Get the node from the store
+    node_type_key = safe_name[:-3].lower()  # Remove .py and lowercase
+
+    # Try to find the node class
+    node_class = None
+
+    # First try the direct file stem
+    if safe_name[:-3] in CUSTOM_NODE_STORE:
+        node_class = CUSTOM_NODE_STORE[safe_name[:-3]]
+    else:
+        # Try to load from file if not in store
+        try:
+            node_class = load_single_node_from_file(file_path)
+        except Exception as e:
+            logger.warning(f"Failed to load node from file: {e}")
+
+        # If still not found, try by node_name
+        if not node_class:
+            info = _extract_node_info_from_file(file_path)
+            if info.node_name:
+                node_type_key = info.node_name.lower().replace(' ', '_')
+                node_class = CUSTOM_NODE_STORE.get(node_type_key)
+
+    if not node_class:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not load node class from '{safe_name}'. "
+                   f"Ensure the file contains a valid CustomNodeBase subclass."
+        )
+
+    try:
+        # Create a node instance
+        if request.settings:
+            node_instance = node_class.from_settings(request.settings)
+        else:
+            node_instance = node_class()
+
+        # Generate the code
+        code = node_instance.to_code(
+            include_example=request.include_example,
+            settings_values=request.settings,
+            source_file_path=file_path,
+        )
+
+        return {
+            "success": True,
+            "code": code,
+            "file_name": safe_name,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to generate code for node '{safe_name}': {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate code: {str(e)}"
+        )
 
 
 # ==================== Custom Icon Endpoints ====================
