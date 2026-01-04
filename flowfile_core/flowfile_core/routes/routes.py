@@ -82,7 +82,10 @@ def _is_sensitive_system_path(path: Path) -> bool:
 
 
 def _validate_file_path(user_path: str) -> Optional[Path]:
-    """Validate a file path is safe and within allowed_base.
+    """Validate a file path, blocking path traversal and sensitive directories.
+
+    This is less restrictive than sandbox mode - it allows project directories
+    but blocks sensitive system paths and path traversal patterns.
 
     Args:
         user_path: User-provided path string
@@ -91,28 +94,18 @@ def _validate_file_path(user_path: str) -> Optional[Path]:
         Validated absolute Path, or None if unsafe.
     """
     try:
-        # Block path traversal patterns early
+        # Block path traversal patterns
         if '..' in user_path:
             return None
-        allowed_base = Path(storage.user_data_directory)
-        # Resolve the allowed base directory
-        base_resolved = allowed_base.resolve()
 
-        # Resolve the user's path
-        if os.path.isabs(user_path):
-            target = Path(user_path).resolve()
-        else:
-            # Relative paths are joined with the base
-            target = (allowed_base / user_path).resolve()
-        target.relative_to(base_resolved)
+        path = Path(user_path).expanduser().resolve()
 
-        if _is_sensitive_system_path(target):
+        # Block sensitive system directories
+        if _is_sensitive_system_path(path):
             return None
 
-        return target
-
+        return path
     except (ValueError, RuntimeError, OSError):
-        # ValueError is raised by relative_to() if path is outside base
         return None
 
 def get_node_model(setting_name_ref: str):
