@@ -237,6 +237,7 @@
   --node-bg: var(--color-background-secondary);
 
   /* Element Plus dark mode overrides */
+  --el-color-white: var(--color-background-primary);
   --el-bg-color: var(--color-background-primary);
   --el-bg-color-page: var(--color-background-secondary);
   --el-bg-color-overlay: var(--color-background-tertiary);

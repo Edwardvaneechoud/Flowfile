@@ -306,13 +306,30 @@ button {
 }
 
 /* ========== Element Plus Collapse ========== */
+.el-collapse {
+  --el-collapse-border-color: var(--color-border-primary);
+  --el-collapse-header-background-color: var(--color-background-primary);
+  --el-collapse-header-font-color: var(--color-text-primary);
+  --el-collapse-content-background-color: var(--color-background-primary);
+  --el-collapse-content-font-color: var(--color-text-primary);
+  border-color: var(--color-border-primary);
+}
+
 .el-collapse-item__header {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .el-collapse-item__content {
   font-size: var(--font-size-sm);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+
+.el-collapse-item__wrap {
+  background-color: var(--color-background-primary);
 }
 
 /* ========== Element Plus Menu Styling ========== */
