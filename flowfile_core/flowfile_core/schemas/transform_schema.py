@@ -241,6 +241,10 @@ class SelectInputs(BaseModel):
         """Creates a SelectInputs object from a Polars DataFrame's columns."""
         return cls(renames=[SelectInput(old_name=c) for c in df.columns])
 
+    def remove_select_input(self, old_key: str) -> None:
+        """Removes a SelectInput from the list based on its original name."""
+        self.renames = [rename for rename in self.renames if rename.old_name != old_key]
+
 
 class JoinInputs(SelectInputs):
     """Data model for join-specific select inputs (extends SelectInputs)."""
