@@ -800,8 +800,11 @@ onMounted(() => {
     // Get the updated state from the store
     itemState.value = { ...itemStore.items[props.id] };
 
-    // Re-apply sticky position if not "free"
-    if (itemState.value.stickynessPosition && itemState.value.stickynessPosition !== "free") {
+    // Ensure stickynessPosition is restored from initial state (props.initialPosition)
+    // This guarantees sticky items like logViewer snap back to their original position
+    const initialStickyPosition = itemStore.initialItemStates[props.id]?.stickynessPosition || props.initialPosition;
+    if (initialStickyPosition && initialStickyPosition !== "free") {
+      itemState.value.stickynessPosition = initialStickyPosition;
       nextTick(() => {
         applyStickyPosition();
       });
