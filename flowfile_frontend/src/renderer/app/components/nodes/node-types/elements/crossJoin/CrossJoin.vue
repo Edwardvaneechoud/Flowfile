@@ -18,7 +18,7 @@
           :show-title="true"
           :show-data="true"
           title="Right data"
-          @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, true)"
+          @update-select-inputs="(updatedInputs) => updateSelectInputsHandler(updatedInputs, false)"
         />
       </div>
     </generic-node-settings>
