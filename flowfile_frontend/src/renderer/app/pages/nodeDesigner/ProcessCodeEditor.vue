@@ -1,6 +1,11 @@
 <template>
   <div class="code-editor-section">
-    <h4>Process Method</h4>
+    <div class="code-editor-header">
+      <h4>Process Method</h4>
+      <button class="help-btn" @click="showHelp = true" title="Show help">
+        <i class="fa-solid fa-circle-question"></i>
+      </button>
+    </div>
     <p class="code-hint">
       Write your data transformation logic. Access settings via
       <code>self.settings_schema.section_name.component_name.value</code>
@@ -17,12 +22,16 @@
         @update:model-value="emit('update:modelValue', $event)"
       />
     </div>
+
+    <ProcessCodeHelpModal :show="showHelp" @close="showHelp = false" />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { Codemirror } from "vue-codemirror";
 import type { Extension } from "@codemirror/state";
+import ProcessCodeHelpModal from "./ProcessCodeHelpModal.vue";
 
 defineProps<{
   modelValue: string;
@@ -32,6 +41,8 @@ defineProps<{
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
 }>();
+
+const showHelp = ref(false);
 </script>
 
 <style scoped>
@@ -44,11 +55,43 @@ const emit = defineEmits<{
   border-radius: 8px;
 }
 
-.code-editor-section h4 {
-  margin: 0 0 0.5rem 0;
+.code-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.code-editor-header h4 {
+  margin: 0;
   font-size: 1rem;
   font-weight: 600;
   color: var(--text-primary, #1a1a2e);
+}
+
+.help-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 4px;
+  color: var(--text-secondary, #6c757d);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.help-btn:hover {
+  background: var(--color-accent, #0891b2);
+  border-color: var(--color-accent, #0891b2);
+  color: white;
+}
+
+.help-btn i {
+  font-size: 0.875rem;
 }
 
 .code-hint {
