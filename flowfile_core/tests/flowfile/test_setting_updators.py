@@ -111,8 +111,8 @@ class TestCrossJoinSettingGenerator:
 class TestCrossJoinSettingUpdator:
     """Tests for cross join setting updator."""
 
-    def test_cross_join_updator_removes_missing_columns(self, basic_flow: FlowGraph):
-        """Test that columns no longer in input are removed from settings."""
+    def test_cross_join_updator_marks_missing_columns_unavailable(self, basic_flow: FlowGraph):
+        """Test that columns no longer in input are marked as unavailable (not removed)."""
         # Initial setup with multiple columns
         create_manual_input_node(basic_flow, 1, [{'id': 1, 'name': 'Alice', 'extra': 'X'}])
         create_manual_input_node(basic_flow, 2, [{'code': 'A', 'value': 100}])
@@ -128,8 +128,9 @@ class TestCrossJoinSettingUpdator:
         initial_data = node.get_node_data(basic_flow.flow_id)
 
         # Verify initial left columns include 'extra'
-        left_cols = [r.old_name for r in initial_data.setting_input.cross_join_input.left_select.renames]
+        left_cols = {r.old_name: r for r in initial_data.setting_input.cross_join_input.left_select.renames}
         assert 'extra' in left_cols
+        assert left_cols['extra'].is_available is True
 
         # Update left input to remove 'extra' column
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -141,11 +142,14 @@ class TestCrossJoinSettingUpdator:
         # Get updated node data - this should trigger the updator
         updated_data = node.get_node_data(basic_flow.flow_id)
 
-        # Verify 'extra' column is removed
-        left_cols_after = [r.old_name for r in updated_data.setting_input.cross_join_input.left_select.renames]
-        assert 'extra' not in left_cols_after
+        # Verify 'extra' column is still there but marked as unavailable
+        left_cols_after = {r.old_name: r for r in updated_data.setting_input.cross_join_input.left_select.renames}
+        assert 'extra' in left_cols_after
+        assert left_cols_after['extra'].is_available is False
         assert 'id' in left_cols_after
+        assert left_cols_after['id'].is_available is True
         assert 'name' in left_cols_after
+        assert left_cols_after['name'].is_available is True
 
     def test_cross_join_updator_adds_new_columns(self, basic_flow: FlowGraph):
         """Test that new columns in input are added to settings."""
@@ -232,8 +236,8 @@ class TestCrossJoinSettingUpdator:
 class TestJoinSettingUpdator:
     """Tests for regular join setting updator."""
 
-    def test_join_updator_removes_missing_left_columns(self, basic_flow: FlowGraph):
-        """Test that columns removed from left input are removed from settings."""
+    def test_join_updator_marks_missing_left_columns_unavailable(self, basic_flow: FlowGraph):
+        """Test that columns removed from left input are marked as unavailable."""
         # Initial setup
         create_manual_input_node(basic_flow, 1, [{'id': 1, 'name': 'Alice', 'extra': 'X'}])
         create_manual_input_node(basic_flow, 2, [{'id': 1, 'value': 100}])
@@ -256,13 +260,16 @@ class TestJoinSettingUpdator:
 
         updated_data = node.get_node_data(basic_flow.flow_id)
 
-        left_cols = [r.old_name for r in updated_data.setting_input.join_input.left_select.renames]
-        assert 'extra' not in left_cols
+        left_cols = {r.old_name: r for r in updated_data.setting_input.join_input.left_select.renames}
+        assert 'extra' in left_cols
+        assert left_cols['extra'].is_available is False
         assert 'id' in left_cols
+        assert left_cols['id'].is_available is True
         assert 'name' in left_cols
+        assert left_cols['name'].is_available is True
 
-    def test_join_updator_removes_missing_right_columns(self, basic_flow: FlowGraph):
-        """Test that columns removed from right input are removed from settings."""
+    def test_join_updator_marks_missing_right_columns_unavailable(self, basic_flow: FlowGraph):
+        """Test that columns removed from right input are marked as unavailable."""
         create_manual_input_node(basic_flow, 1, [{'id': 1, 'name': 'Alice'}])
         create_manual_input_node(basic_flow, 2, [{'id': 1, 'value': 100, 'extra': 'Y'}])
 
@@ -284,10 +291,13 @@ class TestJoinSettingUpdator:
 
         updated_data = node.get_node_data(basic_flow.flow_id)
 
-        right_cols = [r.old_name for r in updated_data.setting_input.join_input.right_select.renames]
-        assert 'extra' not in right_cols
+        right_cols = {r.old_name: r for r in updated_data.setting_input.join_input.right_select.renames}
+        assert 'extra' in right_cols
+        assert right_cols['extra'].is_available is False
         assert 'id' in right_cols
+        assert right_cols['id'].is_available is True
         assert 'value' in right_cols
+        assert right_cols['value'].is_available is True
 
     def test_join_updator_no_duplicates_with_overlapping_columns(self, basic_flow: FlowGraph):
         """Test that no duplicate columns appear when both join inputs have same column name."""
@@ -486,12 +496,54 @@ class TestSettingUpdatorWithIsAvailableFalse:
         assert 'exists' in left_cols
         assert left_cols['exists'].is_available is True
 
-        # 'removed' should be removed entirely (not just marked unavailable)
-        assert 'removed' not in left_cols
+        # 'removed' should still be in select but marked as unavailable
+        assert 'removed' in left_cols
+        assert left_cols['removed'].is_available is False
 
         # 'new_col' should be added
         assert 'new_col' in left_cols
         assert left_cols['new_col'].is_available is True
+
+    def test_column_renamed_in_input_keeps_old_column_unavailable(self):
+        """Test that when input column is renamed, the old column stays but is marked unavailable."""
+        from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
+        from flowfile_core.schemas.output_model import NodeData, InputOverview
+
+        # Initial state: settings have "Column 1" selected
+        existing_cross_join = transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='Column 1', new_name='Column 1', is_available=True),
+            ]),
+            right_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='other', new_name='other', is_available=True),
+            ]),
+        )
+
+        # Now input has "Column 2" instead of "Column 1" (column was renamed)
+        node_data = NodeData(
+            flow_id=1,
+            node_id=1,
+            node_type='cross_join',
+            setting_input=input_schema.NodeCrossJoin(
+                flow_id=1,
+                node_id=1,
+                cross_join_input=existing_cross_join,
+            ),
+            main_input=InputOverview(columns=['Column 2']),  # Column 1 renamed to Column 2
+            right_input=InputOverview(columns=['other']),
+        )
+
+        cross_join_updator(node_data)
+
+        left_cols = {r.old_name: r for r in node_data.setting_input.cross_join_input.left_select.renames}
+
+        # 'Column 1' should still be in select but marked as unavailable
+        assert 'Column 1' in left_cols
+        assert left_cols['Column 1'].is_available is False
+
+        # 'Column 2' should be added as new column
+        assert 'Column 2' in left_cols
+        assert left_cols['Column 2'].is_available is True
 
 
 class TestAddNewSelectColumn:

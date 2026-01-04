@@ -90,18 +90,12 @@ def join(node_data: NodeData):
         right_columns = set(node_data.right_input.columns)
         left_select = setting_input.join_input.left_select
         right_select = setting_input.join_input.right_select
-        # Remove columns that no longer exist in input
-        for ls in list(left_select.renames):
-            if ls.old_name not in left_columns:
-                left_select.remove_select_input(ls.old_name)
-            else:
-                ls.is_available = True
-        for rs in list(right_select.renames):
-            if rs.old_name not in right_columns:
-                right_select.remove_select_input(rs.old_name)
-            else:
-                rs.is_available = True
-        # Check ALL columns in renames (not just is_available=True) to prevent duplicates
+        # Update is_available based on whether column exists in input
+        for ls in left_select.renames:
+            ls.is_available = ls.old_name in left_columns
+        for rs in right_select.renames:
+            rs.is_available = rs.old_name in right_columns
+        # Check ALL columns in renames to prevent duplicates
         existing_columns_left = set(r.old_name for r in left_select.renames)
         existing_columns_right = set(r.old_name for r in right_select.renames)
         missing_incoming_left_columns = [ilc for ilc in left_columns if ilc not in existing_columns_left]
@@ -127,18 +121,12 @@ def cross_join(node_data: NodeData):
         right_columns = set(node_data.right_input.columns)
         left_select = setting_input.cross_join_input.left_select
         right_select = setting_input.cross_join_input.right_select
-        # Remove columns that no longer exist in input
-        for ls in list(left_select.renames):
-            if ls.old_name not in left_columns:
-                left_select.remove_select_input(ls.old_name)
-            else:
-                ls.is_available = True
-        for rs in list(right_select.renames):
-            if rs.old_name not in right_columns:
-                right_select.remove_select_input(rs.old_name)
-            else:
-                rs.is_available = True
-        # Check ALL columns in renames (not just is_available=True) to prevent duplicates
+        # Update is_available based on whether column exists in input
+        for ls in left_select.renames:
+            ls.is_available = ls.old_name in left_columns
+        for rs in right_select.renames:
+            rs.is_available = rs.old_name in right_columns
+        # Check ALL columns in renames to prevent duplicates
         existing_columns_left = set(r.old_name for r in left_select.renames)
         existing_columns_right = set(r.old_name for r in right_select.renames)
         missing_incoming_left_columns = [ilc for ilc in left_columns if ilc not in existing_columns_left]
@@ -176,18 +164,12 @@ def fuzzy_match(node_data: NodeData):
         right_select = setting_input.join_input.right_select
         for fuzzy_map in setting_input.join_input.join_mapping:
             fuzzy_map.valid = check_if_fuzzy_match_is_valid(left_columns, right_columns, fuzzy_map)
-        # Remove columns that no longer exist in input
-        for ls in list(left_select.renames):
-            if ls.old_name not in left_columns:
-                left_select.remove_select_input(ls.old_name)
-            else:
-                ls.is_available = True
-        for rs in list(right_select.renames):
-            if rs.old_name not in right_columns:
-                right_select.remove_select_input(rs.old_name)
-            else:
-                rs.is_available = True
-        # Check ALL columns in renames (not just is_available=True) to prevent duplicates
+        # Update is_available based on whether column exists in input
+        for ls in left_select.renames:
+            ls.is_available = ls.old_name in left_columns
+        for rs in right_select.renames:
+            rs.is_available = rs.old_name in right_columns
+        # Check ALL columns in renames to prevent duplicates
         existing_columns_left = set(r.old_name for r in left_select.renames)
         existing_columns_right = set(r.old_name for r in right_select.renames)
         missing_incoming_left_columns = [ilc for ilc in left_columns if ilc not in existing_columns_left]
