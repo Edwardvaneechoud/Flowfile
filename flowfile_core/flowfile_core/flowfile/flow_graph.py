@@ -742,6 +742,8 @@ class FlowGraph:
         ) -> str:
             """Build a filter expression string from a BasicFilter object.
 
+            Uses the Flowfile expression language that is compatible with polars_expr_transformer.
+
             Args:
                 basic_filter: The basic filter configuration.
                 field_data_type: The data type of the field (optional, for smart quoting).
@@ -764,7 +766,7 @@ class FlowGraph:
                 # Fallback for legacy string operators
                 operator = FilterOperator.from_symbol(str(basic_filter.operator))
 
-            # Build expression based on operator
+            # Build expression based on operator using Flowfile expression language
             if operator == FilterOperator.EQUALS:
                 if should_quote:
                     return f'{field}="{value}"'
@@ -796,39 +798,58 @@ class FlowGraph:
                 return f"{field}<={value}"
 
             elif operator == FilterOperator.CONTAINS:
-                return f'{field}.str.contains("{value}")'
+                # Use Flowfile function: contains([column], "value")
+                return f'contains({field}, "{value}")'
 
             elif operator == FilterOperator.NOT_CONTAINS:
-                return f'{field}.str.contains("{value}").not_()'
+                # Use Flowfile function with negation: does_not_equal(contains([column], "value"), true)
+                # Or use: contains([column], "value") = false
+                return f'contains({field}, "{value}") = false'
 
             elif operator == FilterOperator.STARTS_WITH:
-                return f'{field}.str.starts_with("{value}")'
+                # Use left() function to check prefix: left([column], length) = "value"
+                return f'left({field}, {len(value)}) = "{value}"'
 
             elif operator == FilterOperator.ENDS_WITH:
-                return f'{field}.str.ends_with("{value}")'
+                # Use right() function to check suffix: right([column], length) = "value"
+                return f'right({field}, {len(value)}) = "{value}"'
 
             elif operator == FilterOperator.IS_NULL:
-                return f"{field}.is_null()"
+                # Use Flowfile function: is_empty([column])
+                return f"is_empty({field})"
 
             elif operator == FilterOperator.IS_NOT_NULL:
-                return f"{field}.is_not_null()"
+                # Use Flowfile function: is_not_empty([column])
+                return f"is_not_empty({field})"
 
             elif operator == FilterOperator.IN:
-                # Parse comma-separated values
+                # For IN, check if value is in the list using multiple equals with OR
+                # Or use: "value" in [column] syntax if supported
                 values = [v.strip() for v in value.split(",")]
+                if len(values) == 1:
+                    if should_quote:
+                        return f'{field}="{values[0]}"'
+                    return f"{field}={values[0]}"
+                # Build OR expression: ([field]="v1") | ([field]="v2") | ...
                 if should_quote:
-                    values_str = ", ".join(f'"{v}"' for v in values)
+                    conditions = [f'({field}="{v}")' for v in values]
                 else:
-                    values_str = ", ".join(values)
-                return f"{field}.is_in([{values_str}])"
+                    conditions = [f"({field}={v})" for v in values]
+                return " | ".join(conditions)
 
             elif operator == FilterOperator.NOT_IN:
+                # For NOT IN, negate the IN logic using multiple not equals with AND
                 values = [v.strip() for v in value.split(",")]
+                if len(values) == 1:
+                    if should_quote:
+                        return f'{field}!="{values[0]}"'
+                    return f"{field}!={values[0]}"
+                # Build AND expression: ([field]!="v1") & ([field]!="v2") & ...
                 if should_quote:
-                    values_str = ", ".join(f'"{v}"' for v in values)
+                    conditions = [f'({field}!="{v}")' for v in values]
                 else:
-                    values_str = ", ".join(values)
-                return f"{field}.is_in([{values_str}]).not_()"
+                    conditions = [f"({field}!={v})" for v in values]
+                return " & ".join(conditions)
 
             elif operator == FilterOperator.BETWEEN:
                 if value2 is None:
