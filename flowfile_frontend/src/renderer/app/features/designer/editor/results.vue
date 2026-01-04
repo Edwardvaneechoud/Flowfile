@@ -151,7 +151,7 @@ const navigateToNode = (nodeId: string) => {
 .flow-summary {
   margin-left: 10px;
   font-weight: bold;
-  color: #333;
+  color: var(--color-text-primary);
 }
 .node-card {
   padding: 15px;
@@ -191,13 +191,13 @@ const navigateToNode = (nodeId: string) => {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #303133;
+  color: var(--color-text-primary);
 }
 
 .node-description {
   margin: 0;
   font-size: 14px;
-  color: #606266;
+  color: var(--color-text-secondary);
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;

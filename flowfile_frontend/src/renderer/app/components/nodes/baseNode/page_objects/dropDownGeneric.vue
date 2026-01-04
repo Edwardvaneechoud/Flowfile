@@ -65,7 +65,7 @@ watch(localSelectedValue, (newVal) => {
 .label {
   font-weight: bold;
   margin-bottom: 8px;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .select-wrapper {

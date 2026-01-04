@@ -130,18 +130,18 @@ defineExpose({ insertTextAtCursor });
 .validation-error {
   margin-top: 8px;
   padding: 8px;
-  color: #ff5555;
+  color: var(--color-error, #ff5555);
   background-color: rgba(255, 85, 85, 0.1);
   border-radius: 4px;
 }
 
-/* Polars-specific syntax highlighting */
+/* Polars-specific syntax highlighting - component specific */
 .cm-variable.cm-polars {
-  color: #50fa7b; /* Polars namespace */
+  color: #50fa7b;
 }
 
 .cm-property.cm-polars {
-  color: #8be9fd; /* Polars methods */
+  color: #8be9fd;
 }
 
 .cm-keyword {

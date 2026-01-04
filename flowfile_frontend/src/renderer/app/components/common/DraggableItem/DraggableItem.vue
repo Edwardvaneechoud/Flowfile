@@ -798,9 +798,9 @@ onBeforeUnmount(() => {
   margin: 0 2px;
   font-size: 16px;
   cursor: pointer;
-  color: #333;
+  color: var(--color-text-primary);
   position: relative;
-  background-color: #b6c1ff;
+  background-color: var(--color-background-tertiary);
   border-radius: 4px;
   width: 25px;
   height: 25px;
@@ -811,8 +811,8 @@ onBeforeUnmount(() => {
   top: calc(100% + 5px);
   left: 50%;
   transform: translateX(-50%);
-  background-color: #333;
-  color: #fff;
+  background-color: var(--color-gray-800);
+  color: var(--color-text-inverse);
   padding: 4px 8px;
   border-radius: 4px;
   white-space: nowrap;
@@ -833,7 +833,7 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   border-width: 4px;
   border-style: solid;
-  border-color: transparent transparent #333 transparent;
+  border-color: transparent transparent var(--color-gray-800) transparent;
   opacity: 0;
   visibility: hidden;
   transition:
@@ -851,12 +851,12 @@ onBeforeUnmount(() => {
   font-size: 16px;
 }
 .minimal-button:hover {
-  color: #000;
-  background-color: #9facff;
+  color: var(--color-text-primary);
+  background-color: var(--color-background-hover);
 }
 .group-badge {
-  background-color: #074273;
-  color: white;
+  background-color: var(--color-accent);
+  color: var(--color-text-inverse);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 11px;
@@ -869,7 +869,7 @@ onBeforeUnmount(() => {
   flex-grow: 1;
   padding: 0 8px;
   font-size: 14px;
-  color: #333;
+  color: var(--color-text-primary);
 }
 .overlay.minimized {
   width: auto !important;
@@ -883,14 +883,15 @@ onBeforeUnmount(() => {
   height: auto;
   max-height: 100%;
   box-sizing: border-box;
-  background-color: #f9f9f9;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  background-color: var(--color-background-primary);
+  box-shadow: var(--shadow-md);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   cursor: move;
   transition: border-color 0.2s;
   overflow: hidden;
+  border: 1px solid var(--color-border-primary);
 }
 .no-transition {
   transition: none !important;
@@ -903,7 +904,8 @@ onBeforeUnmount(() => {
   padding: 4px;
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
-  background: linear-gradient(135deg, #2189791d 0%, #15a2da25 100%);
+  background: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
   min-height: 35px;
   box-sizing: border-box;
   overflow: hidden;

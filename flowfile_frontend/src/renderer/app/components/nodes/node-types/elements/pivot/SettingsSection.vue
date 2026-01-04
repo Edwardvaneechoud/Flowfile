@@ -51,7 +51,7 @@ const emitRemove = (item: string) => {
 .remove-btn {
   margin-left: 8px;
   cursor: pointer;
-  color: #100f0f72;
+  color: var(--color-text-secondary);
   font-weight: bold;
 }
 </style>

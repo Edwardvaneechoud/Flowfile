@@ -421,7 +421,8 @@ onMounted(async () => {
 .custom-node {
   border-radius: 4px;
   padding: 1px;
-  background-color: white;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -450,18 +451,19 @@ onMounted(async () => {
   width: auto;
   padding: 2px 4px;
   cursor: pointer;
-  background-color: rgba(185, 185, 185, 0.117);
+  background-color: var(--color-background-secondary);
   font-family: var(--font-family-base);
   display: flex;
   align-items: flex-start;
   gap: 4px;
   border-radius: 4px;
+  color: var(--color-text-primary);
 }
 
 .edit-icon {
   opacity: 0;
   transition: opacity 0.2s;
-  color: #0f275f;
+  color: var(--color-accent);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -473,7 +475,7 @@ onMounted(async () => {
 }
 
 .edit-icon:hover {
-  color: #051233;
+  color: var(--color-accent-hover);
 }
 
 .description-text {
@@ -487,9 +489,9 @@ onMounted(async () => {
 .edit-overlay {
   position: fixed;
   z-index: 1000;
-  background: white;
+  background: var(--color-background-primary);
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
 }
 
 .description-input {
@@ -497,11 +499,12 @@ onMounted(async () => {
   height: 75px;
   resize: both;
   padding: 4px;
-  border: 1px solid #0f275f;
+  border: 1px solid var(--color-accent);
   border-radius: 4px;
   font-size: small;
   font-family: var(--font-family-base);
-  background-color: white;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .handle-input {
@@ -517,9 +520,10 @@ onMounted(async () => {
 .context-menu {
   position: fixed;
   z-index: 10000;
-  background-color: white;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
   padding: 4px 0;
   min-width: 120px;
   font-family: var(--font-family-base);
@@ -534,14 +538,15 @@ onMounted(async () => {
   font-size: 13px;
   transition: background-color 0.2s;
   font-family: var(--font-family-base);
+  color: var(--color-text-primary);
 }
 
 .context-menu-item:hover {
-  background-color: #f5f5f5;
+  background-color: var(--color-background-hover);
 }
 
 .context-menu-item svg {
-  color: #555;
+  color: var(--color-text-secondary);
 }
 
 .context-menu-item span {

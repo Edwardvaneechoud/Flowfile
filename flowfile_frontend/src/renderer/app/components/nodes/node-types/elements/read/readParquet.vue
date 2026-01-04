@@ -34,6 +34,6 @@ defineProps<{
 
 .message p {
   font-size: 16px;
-  color: #333;
+  color: var(--color-text-primary);
 }
 </style>

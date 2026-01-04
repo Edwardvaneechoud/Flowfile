@@ -56,7 +56,7 @@ defineProps({
 
 .tooltip-text {
   visibility: hidden;
-  background-color: #333;
+  background-color: var(--color-text-primary);
   color: #fff;
   text-align: center;
   border-radius: 4px;

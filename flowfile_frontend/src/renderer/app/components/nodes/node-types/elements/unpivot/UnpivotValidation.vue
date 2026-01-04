@@ -33,7 +33,7 @@ const showValidationMessages = computed(() => {
 
 <style scoped>
 .validation-wrapper {
-  background-color: #ffffff;
+  background-color: var(--color-background-primary);
 }
 
 .error-message {

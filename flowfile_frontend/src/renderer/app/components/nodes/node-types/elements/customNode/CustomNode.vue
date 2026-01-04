@@ -206,30 +206,30 @@ defineExpose({
 <style scoped>
 .custom-node-wrapper {
   padding: 1.5rem;
-  background-color: #f9fafb; /* bg-gray-50 */
+  background-color: var(--color-background-primary);
 }
 
 .node-header {
   padding-bottom: 1rem;
-  border-bottom: 1px solid #e5e7eb; /* border-gray-200 */
+  border-bottom: 1px solid var(--color-border-primary);
   margin-bottom: 1.5rem;
 }
 
 .node-title {
-  font-size: 1.25rem; /* text-xl */
-  font-weight: 700; /* font-bold */
-  color: #1f2937; /* text-gray-800 */
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 
 .node-category {
-  font-size: 0.875rem; /* text-sm */
-  color: #6b7280; /* text-gray-500 */
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
   margin-top: 0.25rem;
 }
 
 .section-description {
   font-size: 0.875rem;
-  color: #6b7280; /* text-gray-500 */
+  color: var(--color-text-secondary);
   margin-top: 0.25rem;
   margin-bottom: 1.25rem;
   padding-left: 0.5rem;
@@ -238,6 +238,6 @@ defineExpose({
 .components-container {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem; /* space-y-5 */
+  gap: 1.25rem;
 }
 </style>
