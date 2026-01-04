@@ -23,7 +23,9 @@ from flowfile_core.routes.user_defined_components import router as user_defined_
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 storage.cleanup_directories()
 
-os.environ["FLOWFILE_MODE"] = "electron"
+# Set default mode to electron if not already set (allows Docker mode override)
+if "FLOWFILE_MODE" not in os.environ:
+    os.environ["FLOWFILE_MODE"] = "electron"
 
 should_exit = False
 server_instance = None
