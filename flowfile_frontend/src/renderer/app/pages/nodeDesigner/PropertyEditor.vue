@@ -169,7 +169,7 @@
             />
           </div>
           <div class="form-field">
-            <label>Multiple Selection</label>
+            <label>Allow Multiple Selection</label>
             <input
               :checked="component.multiple"
               type="checkbox"
@@ -335,7 +335,7 @@ function insertVariable() {
 
 <style scoped>
 .property-form h4 {
-  margin: 0 0 1rem 0;
+  margin: 1rem 0 1rem 0;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--border-color);
 }
