@@ -25,7 +25,7 @@ import { ref, shallowRef, defineExpose, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
+import { autocompletion, completionKeymap, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore } from "@codemirror/commands";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 
@@ -88,9 +88,10 @@ const extensions: Extension[] = [
   EditorState.tabSize.of(4),
   autocompletion({
     override: [polarsCompletions],
-    defaultKeymap: false, // Disable default keymap
+    defaultKeymap: false, // Disable default keymap to use custom tabKeymap
     closeOnBlur: false,
   }),
+  keymap.of(completionKeymap),
   tabKeymap,
 ];
 

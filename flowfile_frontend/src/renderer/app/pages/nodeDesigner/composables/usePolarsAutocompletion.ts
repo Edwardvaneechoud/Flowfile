@@ -5,7 +5,7 @@ import { EditorView, keymap } from '@codemirror/view';
 import { EditorState, Extension } from '@codemirror/state';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { autocompletion, CompletionContext, CompletionResult, acceptCompletion } from '@codemirror/autocomplete';
+import { autocompletion, completionKeymap, CompletionContext, CompletionResult, acceptCompletion } from '@codemirror/autocomplete';
 import { indentMore } from '@codemirror/commands';
 import type { DesignerSection } from '../types';
 import { toSnakeCase } from './useCodeGeneration';
@@ -147,6 +147,25 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     const beforeCursor = context.state.doc.sliceString(0, context.pos);
     const sections = getSections();
 
+    // Check for SecretStr method completion (after .secret_value.)
+    const secretStrMethodMatch = beforeCursor.match(/\.secret_value\.(\w*)$/);
+    if (secretStrMethodMatch) {
+      const typed = secretStrMethodMatch[1];
+      return {
+        from: context.pos - typed.length,
+        options: [
+          {
+            label: 'get_secret_value',
+            type: 'method',
+            info: 'Get the decrypted secret value as a string',
+            apply: 'get_secret_value()',
+            detail: 'SecretStr',
+          },
+        ],
+        validFor: /^\w*$/,
+      };
+    }
+
     // Check for ".value" or ".secret_value" completion after a component field
     for (const section of sections) {
       const sectionName = section.name || toSnakeCase(section.title || 'section');
@@ -286,6 +305,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       defaultKeymap: false,
       closeOnBlur: false,
     }),
+    keymap.of(completionKeymap),
     tabKeymap,
   ];
 
