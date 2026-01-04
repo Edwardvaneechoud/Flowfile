@@ -47,17 +47,6 @@ export function useCodeGeneration() {
       });
     });
 
-    // Collect secret fields for generating access comments
-    const secretFields: { section: string; field: string }[] = [];
-
-    // Collect all fields for generating variable assignments
-    const allFields: {
-      section: string;
-      field: string;
-      componentType: string;
-      multiple?: boolean;
-    }[] = [];
-
     // Generate sections code
     let sectionsCode = '';
     sections.forEach((section) => {
@@ -69,15 +58,6 @@ export function useCodeGeneration() {
 
       section.components.forEach((comp) => {
         const fieldName = toSnakeCase(comp.field_name);
-        if (comp.component_type === 'SecretSelector') {
-          secretFields.push({ section: sectionName, field: fieldName });
-        }
-        allFields.push({
-          section: sectionName,
-          field: fieldName,
-          componentType: comp.component_type,
-          multiple: comp.multiple,
-        });
         sectionsCode += `    ${fieldName}=${comp.component_type}(\n`;
         sectionsCode += `        label="${comp.label || fieldName}",\n`;
 
@@ -162,48 +142,6 @@ export function useCodeGeneration() {
     });
     processBody = reindentedLines.join('\n');
 
-    // Helper function to get Python type for a component
-    function getTypeForComponent(
-      componentType: string,
-      multiple?: boolean
-    ): string {
-      switch (componentType) {
-        case 'TextInput':
-          return 'str';
-        case 'NumericInput':
-        case 'SliderInput':
-          return 'float';
-        case 'ToggleSwitch':
-          return 'bool';
-        case 'SingleSelect':
-          return 'str';
-        case 'MultiSelect':
-          return 'list[str]';
-        case 'ColumnSelector':
-          return multiple ? 'list[str]' : 'str';
-        case 'SecretSelector':
-          return 'SecretStr';
-        default:
-          return 'Any';
-      }
-    }
-
-    // Generate variable assignments for the process method
-    let variableAssignments = '';
-    if (allFields.length > 0) {
-      variableAssignments = '        # Get settings values\n';
-      allFields.forEach(({ section, field, componentType, multiple }) => {
-        const pyType = getTypeForComponent(componentType, multiple);
-        if (componentType === 'SecretSelector') {
-          // For secrets, use .secret_value and add a comment
-          variableAssignments += `        ${field}: ${pyType} = self.settings_schema.${section}.${field}.secret_value\n`;
-        } else {
-          variableAssignments += `        ${field}: ${pyType} = self.settings_schema.${section}.${field}.value\n`;
-        }
-      });
-      variableAssignments += '\n';
-    }
-
     // Generate node class
     const nodeCode = `
 
@@ -217,12 +155,12 @@ class ${nodeName}(CustomNodeBase):
     settings_schema: ${nodeSettingsName} = ${nodeSettingsName}()
 
     def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
-${variableAssignments}${processBody}
+${processBody}
 `;
 
-    // Add SecretStr import if there are secret fields
+    // Add SecretStr import if SecretStr is used in the process code
     const secretStrImport =
-      secretFields.length > 0 ? 'from pydantic import SecretStr\n' : '';
+      processCode.includes('SecretStr') ? 'from pydantic import SecretStr\n' : '';
 
     // Combine all parts
     const fullCode = `# Auto-generated custom node
