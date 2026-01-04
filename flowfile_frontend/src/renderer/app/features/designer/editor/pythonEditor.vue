@@ -26,7 +26,7 @@ import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
-import { indentMore } from "@codemirror/commands";
+import { indentMore, indentLess } from "@codemirror/commands";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 
 const props = defineProps({
@@ -61,6 +61,12 @@ const tabKeymap = keymap.of([
       }
       // If no completion is active, perform normal tab indentation
       return indentMore(view);
+    },
+  },
+  {
+    key: "Shift-Tab",
+    run: (view: EditorView): boolean => {
+      return indentLess(view);
     },
   },
 ]);

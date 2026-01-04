@@ -6,7 +6,7 @@ import { EditorState, Extension, Prec } from '@codemirror/state';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion, completionKeymap, CompletionContext, CompletionResult, acceptCompletion } from '@codemirror/autocomplete';
-import { indentMore } from '@codemirror/commands';
+import { indentMore, indentLess } from '@codemirror/commands';
 import type { DesignerSection } from '../types';
 import { toSnakeCase } from './useCodeGeneration';
 
@@ -312,7 +312,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     };
   }
 
-  // Tab keymap for accepting completions
+  // Tab keymap for accepting completions and indentation
   const tabKeymap = keymap.of([
     {
       key: 'Tab',
@@ -321,6 +321,12 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
           return true;
         }
         return indentMore(view);
+      },
+    },
+    {
+      key: 'Shift-Tab',
+      run: (view: EditorView): boolean => {
+        return indentLess(view);
       },
     },
   ]);
