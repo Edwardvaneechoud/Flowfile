@@ -89,7 +89,7 @@
 import { ref, onMounted } from 'vue';
 import axios from 'axios';
 import type { IconInfo } from './types';
-import { getImageUrl, getCustomIconUrl as getCustomIconUrlUtil } from '../../features/designer/utils';
+import { getImageUrl, getCustomIconUrl as getCustomIconUrlUtil, getDefaultIconUrl } from '../../features/designer/utils';
 
 const props = defineProps<{
   modelValue: string;
@@ -189,7 +189,7 @@ function getBuiltinIconUrl(iconName: string): string {
 
 function handleImageError(event: Event) {
   const img = event.target as HTMLImageElement;
-  img.src = getBuiltinIconUrl('default.png');
+  img.src = getDefaultIconUrl();
 }
 
 onMounted(() => {

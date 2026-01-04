@@ -3,44 +3,44 @@ import { NodeTemplate } from "./types";
 
 // List of built-in icons that are bundled with the app
 const BUILTIN_ICONS = new Set([
-  'default.png',
-  'user-defined-icon.png',
-  'add_id_column.png',
-  'aggregate.png',
-  'cast.png',
+  'Output2.png',
+  'airbyte.png',
+  'cloud_storage_reader.png',
+  'cloud_storage_writer.png',
   'cross_join.png',
-  'custom_formula.png',
-  'drop_duplicates.png',
+  'database_reader.svg',
+  'database_writer.svg',
+  'explore_data.png',
   'external_source.png',
   'filter.png',
   'formula.png',
   'fuzzy_match.png',
+  'google_sheet.png',
+  'graph_solver.png',
   'group_by.png',
-  'import_file.png',
-  'interval_join.png',
+  'input_data.png',
   'join.png',
-  'limit.png',
-  'macro_input.png',
-  'macro_output.png',
-  'melt.png',
-  'mock.png',
-  'multi_input.png',
+  'manual_input.png',
+  'old_join.png',
   'output.png',
   'pivot.png',
+  'polars_code.png',
+  'record_count.png',
   'record_id.png',
-  'remove_columns.png',
-  'rename_columns.png',
   'sample.png',
   'select.png',
   'sort.png',
-  'text_transformation.png',
-  'transpose.png',
+  'summarize.png',
+  'text_to_rows.png',
   'union.png',
-  'unique_values.png',
-  'write_file.png',
-  'write_output.png',
-  'write_to_database.png',
+  'unique.png',
+  'unpivot.png',
+  'user-defined-icon.png',
+  'view.png',
 ]);
+
+// Default fallback icon
+const DEFAULT_ICON = 'user-defined-icon.png';
 
 /**
  * Check if an icon is a built-in icon
@@ -55,7 +55,7 @@ export const isBuiltinIcon = (name: string): boolean => {
  */
 export const getImageUrl = (name: string): string => {
   if (!name) {
-    return new URL(`./assets/icons/default.png`, import.meta.url).href;
+    return new URL(`./assets/icons/${DEFAULT_ICON}`, import.meta.url).href;
   }
 
   // If it's a built-in icon, use the static asset
@@ -65,6 +65,13 @@ export const getImageUrl = (name: string): string => {
 
   // Otherwise, it's a custom icon served from the backend API
   return `/user_defined_components/icon/${name}`;
+};
+
+/**
+ * Get the URL for the default fallback icon
+ */
+export const getDefaultIconUrl = (): string => {
+  return new URL(`./assets/icons/${DEFAULT_ICON}`, import.meta.url).href;
 };
 
 /**
