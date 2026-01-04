@@ -28,13 +28,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from tools.migrate.migrate import migrate_flowfile, migrate_directory
+from tools.migrate.migrate import migrate_directory, migrate_flowfile
 
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='flowfile-migrate',
-        description='Migrate old .flowfile pickles to YAML format',
+        prog="flowfile-migrate",
+        description="Migrate old .flowfile pickles to YAML format",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -42,40 +42,26 @@ Examples:
   %(prog)s ./flows/                      Migrate all files in directory
   %(prog)s flow.flowfile -o flow.yaml    Specify output path
   %(prog)s ./flows/ --format json        Output as JSON instead of YAML
-        """
+        """,
     )
 
-    parser.add_argument(
-        'path',
-        type=Path,
-        help='Path to .flowfile or directory containing .flowfile files'
-    )
+    parser.add_argument("path", type=Path, help="Path to .flowfile or directory containing .flowfile files")
 
     parser.add_argument(
-        '-o', '--output',
+        "-o",
+        "--output",
         type=Path,
         default=None,
-        help='Output path (file or directory). Default: same location with new extension'
+        help="Output path (file or directory). Default: same location with new extension",
     )
 
     parser.add_argument(
-        '-f', '--format',
-        choices=['yaml', 'json'],
-        default='yaml',
-        help='Output format (default: yaml)'
+        "-f", "--format", choices=["yaml", "json"], default="yaml", help="Output format (default: yaml)"
     )
 
-    parser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        help='Verbose output'
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
 
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Show what would be migrated without actually migrating'
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be migrated without actually migrating")
 
     args = parser.parse_args()
 
@@ -88,18 +74,18 @@ Examples:
     if args.dry_run:
         if args.path.is_file():
             print(f"Would migrate: {args.path}")
-            suffix = '.yaml' if args.format == 'yaml' else '.json'
+            suffix = ".yaml" if args.format == "yaml" else ".json"
             output = args.output or args.path.with_suffix(suffix)
             print(f"  → {output}")
         else:
-            flowfiles = list(args.path.glob('**/*.flowfile'))
+            flowfiles = list(args.path.glob("**/*.flowfile"))
             print(f"Would migrate {len(flowfiles)} file(s):")
             for f in flowfiles:
                 print(f"  - {f}")
         sys.exit(0)
 
     # Check for yaml dependency
-    if args.format == 'yaml':
+    if args.format == "yaml":
         try:
             import yaml
         except ImportError:
@@ -121,11 +107,12 @@ Examples:
         print(f"Error: {e}", file=sys.stderr)
         if args.verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 
     print("\nMigration complete!")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

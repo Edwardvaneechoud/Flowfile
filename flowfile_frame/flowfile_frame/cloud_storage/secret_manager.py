@@ -1,21 +1,17 @@
-from typing import List
-
-from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
-from flowfile_core.flowfile.database_connection_manager.db_connections import (store_cloud_connection,
-                                                                               get_all_cloud_connections_interface,
-                                                                               delete_cloud_connection)
+from flowfile_core.auth.jwt import create_access_token, get_current_user_sync
 from flowfile_core.database.connection import get_db_context
-from flowfile_core.auth.jwt import  get_current_user_sync, create_access_token
-from asyncio import run
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    delete_cloud_connection,
+    get_all_cloud_connections_interface,
+    store_cloud_connection,
+)
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 
 
 def get_current_user_id() -> int | None:
     access_token = create_access_token(data={"sub": "local_user"})
     with get_db_context() as db:
-        current_user_id = get_current_user_sync(
-            access_token,
-            db
-        ).id
+        current_user_id = get_current_user_sync(access_token, db).id
     return current_user_id
 
 
@@ -32,15 +28,8 @@ def create_cloud_storage_connection(connection: FullCloudStorageConnection) -> N
     access_token = create_access_token(data={"sub": "local_user"})
 
     with get_db_context() as db:
-        current_user_id = get_current_user_sync(
-            access_token,
-            db
-        ).id
-        store_cloud_connection(
-            db,
-            connection,
-            current_user_id
-        )
+        current_user_id = get_current_user_sync(access_token, db).id
+        store_cloud_connection(db, connection, current_user_id)
 
 
 def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageConnection) -> None:
@@ -58,12 +47,9 @@ def create_cloud_storage_connection_if_not_exists(connection: FullCloudStorageCo
         create_cloud_storage_connection(connection)
 
 
-def get_all_available_cloud_storage_connections() -> List[FullCloudStorageConnectionInterface]:
+def get_all_available_cloud_storage_connections() -> list[FullCloudStorageConnectionInterface]:
     with get_db_context() as db:
-        all_connections = get_all_cloud_connections_interface(
-            db,
-            get_current_user_id()
-        )
+        all_connections = get_all_cloud_connections_interface(db, get_current_user_id())
     return all_connections
 
 

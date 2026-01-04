@@ -1,7 +1,7 @@
-from typing import TypedDict, List
-
+from typing import TypedDict
 
 # === Transform Schema YAML Types ===
+
 
 class SelectInputYaml(TypedDict, total=False):
     old_name: str
@@ -11,7 +11,7 @@ class SelectInputYaml(TypedDict, total=False):
 
 
 class JoinInputsYaml(TypedDict):
-    select: List[SelectInputYaml]
+    select: list[SelectInputYaml]
 
 
 class JoinMapYaml(TypedDict):
@@ -20,7 +20,7 @@ class JoinMapYaml(TypedDict):
 
 
 class JoinInputYaml(TypedDict):
-    join_mapping: List[JoinMapYaml]
+    join_mapping: list[JoinMapYaml]
     left_select: JoinInputsYaml
     right_select: JoinInputsYaml
     how: str
@@ -42,7 +42,7 @@ class FuzzyMappingYaml(TypedDict, total=False):
 
 
 class FuzzyMatchInputYaml(TypedDict):
-    join_mapping: List[FuzzyMappingYaml]
+    join_mapping: list[FuzzyMappingYaml]
     left_select: JoinInputsYaml
     right_select: JoinInputsYaml
     how: str
@@ -51,20 +51,21 @@ class FuzzyMatchInputYaml(TypedDict):
 
 # === Input Schema YAML Types ===
 
+
 class OutputSettingsYaml(TypedDict, total=False):
     name: str
     directory: str
     file_type: str
     write_mode: str
     abs_file_path: str
-    fields: List[str]
+    fields: list[str]
     table_settings: dict
 
 
 class NodeSelectYaml(TypedDict):
     cache_results: bool
     keep_missing: bool
-    select_input: List[SelectInputYaml]
+    select_input: list[SelectInputYaml]
     sorted_by: str
 
 

@@ -1,26 +1,27 @@
-import pytest
-import requests
-import time
-import shutil
 import os
+import platform
+import shutil
 import sys
+import time
 from pathlib import Path
 from unittest.mock import patch
-from typing import Optional
-import platform
+
+import pytest
+import requests
+
+import flowfile as ff
+from flowfile import col, open_graph_in_editor
 
 # Assuming the api module is importable as flowfile.api
 from flowfile.api import (
+    FLOWFILE_BASE_URL,
+    build_server_command,
+    get_auth_token,
     is_flowfile_running,
+    is_poetry_environment,
     start_flowfile_server_process,
     stop_flowfile_server_process,
-    get_auth_token,
-    is_poetry_environment,
-    build_server_command,
-    FLOWFILE_BASE_URL,
 )
-import flowfile as ff
-from flowfile import col, open_graph_in_editor
 
 
 def find_parent_directory(target_dir_name, start_path=None):
@@ -55,7 +56,7 @@ def _get_active_flows():
     return requests.get(f"{FLOWFILE_BASE_URL}/active_flowfile_sessions/", headers=headers).json()
 
 
-def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> Optional[int]:
+def _get_flow_id_on_flow_location(flow_name: str = '_test_pipeline.yml') -> int | None:
     active_flows = _get_active_flows()
     for flow in active_flows:
         flow_path: str = flow.get('path')

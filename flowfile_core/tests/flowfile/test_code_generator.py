@@ -1,20 +1,21 @@
-import pytest
-from typing import List, Tuple
-import polars as pl
-from polars.testing import assert_frame_equal
 from pathlib import Path
 from uuid import uuid4
 
+import polars as pl
+import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
+from polars.testing import assert_frame_equal
 
-from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
+from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 try:
     import os
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 except ModuleNotFoundError:
     import os
@@ -22,7 +23,8 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import is_docker_available
+
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 
 
@@ -59,7 +61,7 @@ def verify_if_execute(code: str):
         raise Exception(f"Code execution should not raise an exception:\n {e}")
 
 
-def get_result_from_generated_code(code: str) -> pl.DataFrame | pl.LazyFrame | List[pl.DataFrame | pl.LazyFrame] | None:
+def get_result_from_generated_code(code: str) -> pl.DataFrame | pl.LazyFrame | list[pl.DataFrame | pl.LazyFrame] | None:
     exec_globals = {}
     exec(code, exec_globals)
     return exec_globals['run_etl_pipeline']()
@@ -662,11 +664,11 @@ def test_join_operation_right(join_input_dataset):
     assert_frame_equal(result, expected_df, check_column_order=False, check_row_order=False)
 
 
-def create_comprehensive_join_scenarios() -> List[Tuple[str, input_schema.NodeJoin]]:
+def create_comprehensive_join_scenarios() -> list[tuple[str, input_schema.NodeJoin]]:
     """Generate comprehensive join test scenarios including complex cases"""
 
-    join_scenarios: List[Tuple[str, input_schema.NodeJoin]] = []
-    how_options: List[transform_schema.JoinStrategy] = ["left", "right", "inner", "outer"]
+    join_scenarios: list[tuple[str, input_schema.NodeJoin]] = []
+    how_options: list[transform_schema.JoinStrategy] = ["left", "right", "inner", "outer"]
 
     def add_scenario(name: str, join_input: transform_schema.JoinInput) -> None:
         join_scenarios.append((
@@ -959,11 +961,11 @@ def create_comprehensive_join_scenarios() -> List[Tuple[str, input_schema.NodeJo
     return join_scenarios
 
 
-def create_comprehensive_anti_semi_join_scenarios() -> List[Tuple[str, input_schema.NodeJoin]]:
+def create_comprehensive_anti_semi_join_scenarios() -> list[tuple[str, input_schema.NodeJoin]]:
     """Generate comprehensive join test scenarios including complex cases"""
 
-    join_scenarios: List[Tuple[str, input_schema.NodeJoin]] = []
-    how_options: List[transform_schema.JoinStrategy] = ["semi", "anti"]
+    join_scenarios: list[tuple[str, input_schema.NodeJoin]] = []
+    how_options: list[transform_schema.JoinStrategy] = ["semi", "anti"]
 
     def add_scenario(name: str, join_input: transform_schema.JoinInput) -> None:
         join_scenarios.append((
@@ -2211,15 +2213,15 @@ def test_multiple_output_formats(tmp_path):
     verify_if_execute(code)
     try:
         pl.read_csv(str(tmp_path) + os.sep + "output.csv", separator="|")
-    except Exception as e:
+    except Exception:
         raise Exception("Could not read the CSV file that should have been written")
     try:
         pl.read_excel(str(tmp_path) + os.sep + "output.xlsx", sheet_name='Results')
-    except Exception as e:
+    except Exception:
         raise Exception("Could not read the xlsx file that should have been written")
     try:
         pl.read_parquet(str(tmp_path) + os.sep + "output.parquet")
-    except Exception as e:
+    except Exception:
         raise Exception("Could not read the parquet file that should have been written")
 
 
@@ -2279,7 +2281,7 @@ def test_csv_read_utf_8():
     flow = create_basic_flow()
     flowfile_core_path = find_parent_directory('Flowfile')
 
-    file_path = str((Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.csv'))
+    file_path = str(Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.csv')
     # Add parquet read node
     read_node = input_schema.NodeRead(
         flow_id=1,
@@ -2337,7 +2339,7 @@ def test_excel_read():
     flowfile_core_path = find_parent_directory('Flowfile')
 
     file_path = str(
-        (Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx'))
+        Path(flowfile_core_path) / 'flowfile_core' / 'tests' / 'support_files' / 'data' / 'fake_data.xlsx')
     # Add Excel read node
     read_node = input_schema.NodeRead(
         flow_id=1,

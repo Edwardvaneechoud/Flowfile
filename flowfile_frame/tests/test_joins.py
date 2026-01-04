@@ -1,6 +1,7 @@
-import pytest
-from flowfile_frame import FlowFrame, col, lit, create_flow_graph, when, len as fl_len
 import polars as pl
+import pytest
+
+from flowfile_frame import FlowFrame, col, create_flow_graph, lit, when
 
 
 class TestJoins:

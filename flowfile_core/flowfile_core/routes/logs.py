@@ -1,18 +1,19 @@
 import asyncio
 import json
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
+
 import aiofiles
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from flowfile_core import ServerRun
-from flowfile_core import flow_file_handler
+from flowfile_core import ServerRun, flow_file_handler
+from flowfile_core.auth.jwt import get_current_active_user, get_current_user_from_query
+
 # Core modules
 from flowfile_core.configs import logger
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
-from flowfile_core.auth.jwt import get_current_active_user, get_current_user_from_query
 
 # Schema and models
 from flowfile_core.schemas import schemas
@@ -20,7 +21,7 @@ from flowfile_core.schemas import schemas
 router = APIRouter()
 
 
-@router.post("/clear-logs", tags=['flow_logging'])
+@router.post("/clear-logs", tags=["flow_logging"])
 async def clear_logs(current_user=Depends(get_current_active_user)):
     clear_all_flow_logs()
     return {"message": "All flow logs have been cleared."}
@@ -31,7 +32,7 @@ async def format_sse_message(data: str) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
-@router.post("/logs/{flow_id}", tags=['flow_logging'])
+@router.post("/logs/{flow_id}", tags=["flow_logging"])
 async def add_log(flow_id: int, log_message: str):
     """Adds a log message to the log file for a given flow_id."""
     flow = flow_file_handler.get_flow(flow_id)
@@ -41,35 +42,32 @@ async def add_log(flow_id: int, log_message: str):
     return {"message": "Log added successfully"}
 
 
-@router.post("/raw_logs", tags=['flow_logging'])
+@router.post("/raw_logs", tags=["flow_logging"])
 async def add_raw_log(raw_log_input: schemas.RawLogInput):
     """Adds a log message to the log file for a given flow_id."""
-    logger.info('Adding raw logs')
+    logger.info("Adding raw logs")
     flow = flow_file_handler.get_flow(raw_log_input.flowfile_flow_id)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
     flow.flow_logger.get_log_filepath()
     flow_logger = flow.flow_logger
     flow_logger.get_log_filepath()
-    if raw_log_input.log_type == 'INFO':
-        flow_logger.info(raw_log_input.log_message,
-                         extra=raw_log_input.extra)
-    elif raw_log_input.log_type == 'ERROR':
-        flow_logger.error(raw_log_input.log_message,
-                          extra=raw_log_input.extra)
+    if raw_log_input.log_type == "INFO":
+        flow_logger.info(raw_log_input.log_message, extra=raw_log_input.extra)
+    elif raw_log_input.log_type == "ERROR":
+        flow_logger.error(raw_log_input.log_message, extra=raw_log_input.extra)
     return {"message": "Log added successfully"}
 
 
 async def stream_log_file(
     log_file_path: Path,
     is_running_callable: callable,
-    idle_timeout: int = 60  # timeout in seconds
+    idle_timeout: int = 60,  # timeout in seconds
 ) -> AsyncGenerator[str, None]:
     logger.info(f"Streaming log file: {log_file_path}")
     last_active = time.monotonic()
     try:
-        async with aiofiles.open(log_file_path, "r") as file:
-
+        async with aiofiles.open(log_file_path) as file:
             # Ensure we start at the beginning
             await file.seek(0)
             while is_running_callable():
@@ -77,7 +75,6 @@ async def stream_log_file(
                 if ServerRun.exit:
                     yield await format_sse_message("Server is shutting down. Closing connection.")
                     break
-
 
                 line = await file.readline()
                 if line:
@@ -113,21 +110,17 @@ async def stream_log_file(
         raise HTTPException(status_code=500, detail=f"Error reading log file: {e}")
 
 
-@router.get("/logs/{flow_id}", tags=['flow_logging'])
-async def stream_logs(
-    flow_id: int,
-    idle_timeout: int = 300,
-    current_user=Depends(get_current_user_from_query)
-):
+@router.get("/logs/{flow_id}", tags=["flow_logging"])
+async def stream_logs(flow_id: int, idle_timeout: int = 300, current_user=Depends(get_current_user_from_query)):
     """
     Streams logs for a given flow_id using Server-Sent Events.
     Requires authentication via token in query parameter.
     The connection will close gracefully if the server shuts down.
     """
     logger.info(f"Starting log stream for flow_id: {flow_id} by user: {current_user.username}")
-    await asyncio.sleep(.3)
+    await asyncio.sleep(0.3)
     flow = flow_file_handler.get_flow(flow_id)
-    logger.info('Streaming logs')
+    logger.info("Streaming logs")
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
 
@@ -153,6 +146,5 @@ async def stream_logs(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/event-stream",
-        }
+        },
     )
-

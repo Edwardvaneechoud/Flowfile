@@ -1,27 +1,32 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Union, TYPE_CHECKING, List, TypeVar, Callable, Sequence, Literal
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-
 # --- TYPE CHECKING IMPORTS ---
 if TYPE_CHECKING:
-    from flowfile_frame.expr import Expr, _get_expr_and_repr, col, lit
-    from polars._typing import IntoExprColumn, NullBehavior, ListToStructWidthStrategy
     from datetime import date, datetime, time
+
+    from polars._typing import IntoExprColumn, ListToStructWidthStrategy, NullBehavior
+
+    from flowfile_frame.expr import Expr
 
 
 class ExprListNameSpace:
     """Namespace for list related expressions."""
 
-    def __init__(self, parent_expr: 'Expr', parent_repr_str: str):
+    def __init__(self, parent_expr: Expr, parent_repr_str: str):
         self.parent = parent_expr
         self.expr = parent_expr.expr.list if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
 
-    def _create_next_expr(self, *args, method_name: str, result_expr: Optional[pl.Expr], is_complex: bool = True, **kwargs) -> 'Expr':
+    def _create_next_expr(
+        self, *args, method_name: str, result_expr: pl.Expr | None, is_complex: bool = True, **kwargs
+    ) -> Expr:
         from flowfile_frame.expr import Expr
+
         """Creates a new Expr instance, appending method call to repr string."""
         args_repr = ", ".join(repr(a) for a in args)
         kwargs_repr = ", ".join(f"{k}={repr(v)}" for k, v in kwargs.items())
@@ -46,7 +51,7 @@ class ExprListNameSpace:
             selector=None,
             agg_func=self.parent.agg_func,
             is_complex=is_complex,
-            convertable_to_code=self.parent.convertable_to_code
+            convertable_to_code=self.parent.convertable_to_code,
         )
         return new_expr_instance
 
@@ -67,13 +72,13 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="drop_nulls", result_expr=res_expr)
 
     def sample(
-            self,
-            n: int | IntoExprColumn | None = None,
-            *,
-            fraction: float | IntoExprColumn | None = None,
-            with_replacement: bool = False,
-            shuffle: bool = False,
-            seed: int | None = None,
+        self,
+        n: int | IntoExprColumn | None = None,
+        *,
+        fraction: float | IntoExprColumn | None = None,
+        with_replacement: bool = False,
+        shuffle: bool = False,
+        seed: int | None = None,
     ) -> Expr:
         if n is not None and fraction is not None:
             raise ValueError("cannot specify both `n` and `fraction`")
@@ -82,15 +87,15 @@ class ExprListNameSpace:
         if self.expr is not None:
             try:
                 if fraction is not None:
-                    expr_fraction = fraction.expr if hasattr(fraction, 'expr') else fraction
-                    res_expr = self.expr.sample(n=None, fraction=expr_fraction,
-                                                with_replacement=with_replacement,
-                                                shuffle=shuffle, seed=seed)
+                    expr_fraction = fraction.expr if hasattr(fraction, "expr") else fraction
+                    res_expr = self.expr.sample(
+                        n=None, fraction=expr_fraction, with_replacement=with_replacement, shuffle=shuffle, seed=seed
+                    )
                 else:
-                    expr_n = n.expr if hasattr(n, 'expr') else (1 if n is None else n)
-                    res_expr = self.expr.sample(n=expr_n, fraction=None,
-                                                with_replacement=with_replacement,
-                                                shuffle=shuffle, seed=seed)
+                    expr_n = n.expr if hasattr(n, "expr") else (1 if n is None else n)
+                    res_expr = self.expr.sample(
+                        n=expr_n, fraction=None, with_replacement=with_replacement, shuffle=shuffle, seed=seed
+                    )
             except Exception as e:
                 print(f"Warning: Could not create polars expression for list.sample(): {e}")
 
@@ -101,7 +106,7 @@ class ExprListNameSpace:
             fraction=fraction,
             with_replacement=with_replacement,
             shuffle=shuffle,
-            seed=seed
+            seed=seed,
         )
 
     def sum(self) -> Expr:
@@ -134,7 +139,9 @@ class ExprListNameSpace:
 
     def sort(self, *, descending: bool = False, nulls_last: bool = False) -> Expr:
         res_expr = self.expr.sort(descending=descending, nulls_last=nulls_last) if self.expr is not None else None
-        return self._create_next_expr(method_name="sort", result_expr=res_expr, descending=descending, nulls_last=nulls_last)
+        return self._create_next_expr(
+            method_name="sort", result_expr=res_expr, descending=descending, nulls_last=nulls_last
+        )
 
     def reverse(self) -> Expr:
         res_expr = self.expr.reverse() if self.expr is not None else None
@@ -163,7 +170,7 @@ class ExprListNameSpace:
         elif isinstance(other, list):
             if len(other) > 0 and isinstance(other[0], (Expr, str, pl.Series)):
                 # List of expressions
-                other_expr = [o.expr if hasattr(o, 'expr') else (pl.col(o) if isinstance(o, str) else o) for o in other]
+                other_expr = [o.expr if hasattr(o, "expr") else (pl.col(o) if isinstance(o, str) else o) for o in other]
             else:
                 # List of values
                 other_expr = pl.lit(other)
@@ -183,7 +190,7 @@ class ExprListNameSpace:
         return self._create_next_expr(other, method_name="concat", result_expr=res_expr)
 
     def get(self, index: int | Expr | str, *, null_on_oob: bool = False) -> Expr:
-        index_expr = index.expr if hasattr(index, 'expr') else index
+        index_expr = index.expr if hasattr(index, "expr") else index
         res_expr = self.expr.get(index_expr, null_on_oob=null_on_oob) if self.expr is not None else None
         return self._create_next_expr(index, method_name="get", result_expr=res_expr, null_on_oob=null_on_oob)
 
@@ -191,15 +198,15 @@ class ExprListNameSpace:
         indices_expr = indices
         if isinstance(indices, list):
             indices_expr = pl.Series(indices)
-        elif hasattr(indices, 'expr'):
+        elif hasattr(indices, "expr"):
             indices_expr = indices.expr
 
         res_expr = self.expr.gather(indices_expr, null_on_oob=null_on_oob) if self.expr is not None else None
         return self._create_next_expr(indices, method_name="gather", result_expr=res_expr, null_on_oob=null_on_oob)
 
     def gather_every(self, n: int | IntoExprColumn, offset: int | IntoExprColumn = 0) -> Expr:
-        n_expr = n.expr if hasattr(n, 'expr') else n
-        offset_expr = offset.expr if hasattr(offset, 'expr') else offset
+        n_expr = n.expr if hasattr(n, "expr") else n
+        offset_expr = offset.expr if hasattr(offset, "expr") else offset
 
         res_expr = self.expr.gather_every(n_expr, offset_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="gather_every", result_expr=res_expr, offset=offset)
@@ -213,12 +220,12 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="last", result_expr=res_expr)
 
     def contains(self, item: float | str | bool | int | date | datetime | time | IntoExprColumn) -> Expr:
-        item_expr = item.expr if hasattr(item, 'expr') else item
+        item_expr = item.expr if hasattr(item, "expr") else item
         res_expr = self.expr.contains(item_expr) if self.expr is not None else None
         return self._create_next_expr(item, method_name="contains", result_expr=res_expr)
 
     def join(self, separator: IntoExprColumn, *, ignore_nulls: bool = True) -> Expr:
-        separator_expr = separator.expr if hasattr(separator, 'expr') else separator
+        separator_expr = separator.expr if hasattr(separator, "expr") else separator
         res_expr = self.expr.join(separator_expr, ignore_nulls=ignore_nulls) if self.expr is not None else None
         return self._create_next_expr(separator, method_name="join", result_expr=res_expr, ignore_nulls=ignore_nulls)
 
@@ -235,24 +242,24 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="diff", result_expr=res_expr, n=n, null_behavior=null_behavior)
 
     def shift(self, n: int | IntoExprColumn = 1) -> Expr:
-        n_expr = n.expr if hasattr(n, 'expr') else n
+        n_expr = n.expr if hasattr(n, "expr") else n
         res_expr = self.expr.shift(n_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="shift", result_expr=res_expr)
 
     def slice(self, offset: int | str | Expr, length: int | str | Expr | None = None) -> Expr:
-        offset_expr = offset.expr if hasattr(offset, 'expr') else offset
-        length_expr = length.expr if hasattr(length, 'expr') and length is not None else length
+        offset_expr = offset.expr if hasattr(offset, "expr") else offset
+        length_expr = length.expr if hasattr(length, "expr") and length is not None else length
 
         res_expr = self.expr.slice(offset_expr, length_expr) if self.expr is not None else None
         return self._create_next_expr(offset, length, method_name="slice", result_expr=res_expr)
 
     def head(self, n: int | str | Expr = 5) -> Expr:
-        n_expr = n.expr if hasattr(n, 'expr') else n
+        n_expr = n.expr if hasattr(n, "expr") else n
         res_expr = self.expr.head(n_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="head", result_expr=res_expr)
 
     def tail(self, n: int | str | Expr = 5) -> Expr:
-        n_expr = n.expr if hasattr(n, 'expr') else n
+        n_expr = n.expr if hasattr(n, "expr") else n
         res_expr = self.expr.tail(n_expr) if self.expr is not None else None
         return self._create_next_expr(n, method_name="tail", result_expr=res_expr)
 
@@ -261,7 +268,7 @@ class ExprListNameSpace:
         return self._create_next_expr(method_name="explode", result_expr=res_expr)
 
     def count_matches(self, element: Any) -> Expr:
-        element_expr = element.expr if hasattr(element, 'expr') else element
+        element_expr = element.expr if hasattr(element, "expr") else element
         res_expr = self.expr.count_matches(element_expr) if self.expr is not None else None
         return self._create_next_expr(element, method_name="count_matches", result_expr=res_expr)
 
@@ -270,10 +277,10 @@ class ExprListNameSpace:
         return self._create_next_expr(width, method_name="to_array", result_expr=res_expr)
 
     def to_struct(
-            self,
-            n_field_strategy: ListToStructWidthStrategy = "first_non_null",
-            fields: Sequence[str] | Callable[[int], str] | None = None,
-            upper_bound: int = 0,
+        self,
+        n_field_strategy: ListToStructWidthStrategy = "first_non_null",
+        fields: Sequence[str] | Callable[[int], str] | None = None,
+        upper_bound: int = 0,
     ) -> Expr:
         res_expr = None
 
@@ -283,9 +290,7 @@ class ExprListNameSpace:
                     res_expr = self.expr.to_struct(fields=fields)
                 else:
                     res_expr = self.expr.to_struct(
-                        n_field_strategy=n_field_strategy,
-                        fields=fields,
-                        upper_bound=upper_bound
+                        n_field_strategy=n_field_strategy, fields=fields, upper_bound=upper_bound
                     )
             except Exception as e:
                 print(f"Warning: Could not create polars expression for list.to_struct(): {e}")
@@ -299,26 +304,26 @@ class ExprListNameSpace:
         )
 
     def eval(self, expr: Expr, *, parallel: bool = False) -> Expr:
-        expr_inner = expr.expr if hasattr(expr, 'expr') else expr
+        expr_inner = expr.expr if hasattr(expr, "expr") else expr
         res_expr = self.expr.eval(expr_inner, parallel=parallel) if self.expr is not None else None
         return self._create_next_expr(expr, method_name="eval", result_expr=res_expr, parallel=parallel)
 
     def set_union(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, 'expr') else other
+        other_expr = other.expr if hasattr(other, "expr") else other
         res_expr = self.expr.set_union(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_union", result_expr=res_expr)
 
     def set_difference(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, 'expr') else other
+        other_expr = other.expr if hasattr(other, "expr") else other
         res_expr = self.expr.set_difference(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_difference", result_expr=res_expr)
 
     def set_intersection(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, 'expr') else other
+        other_expr = other.expr if hasattr(other, "expr") else other
         res_expr = self.expr.set_intersection(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_intersection", result_expr=res_expr)
 
     def set_symmetric_difference(self, other: Any) -> Expr:
-        other_expr = other.expr if hasattr(other, 'expr') else other
+        other_expr = other.expr if hasattr(other, "expr") else other
         res_expr = self.expr.set_symmetric_difference(other_expr) if self.expr is not None else None
         return self._create_next_expr(other, method_name="set_symmetric_difference", result_expr=res_expr)

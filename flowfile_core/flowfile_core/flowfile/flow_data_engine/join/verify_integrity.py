@@ -1,17 +1,15 @@
-
-from typing import List
-from flowfile_core.schemas import transform_schema
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.schemas import transform_schema
 
 
 def verify_join_select_integrity(
-        join_input:
-        transform_schema.JoinInput |
-        transform_schema.CrossJoinInput |
-        transform_schema.FuzzyMatchInput |
-        transform_schema.JoinInputsManager,
-        left_columns: List[str],
-        right_columns: List[str]):
+    join_input: transform_schema.JoinInput
+    | transform_schema.CrossJoinInput
+    | transform_schema.FuzzyMatchInput
+    | transform_schema.JoinInputsManager,
+    left_columns: list[str],
+    right_columns: list[str],
+):
     """
     Verify column availability for join selection and update availability flags.
 
@@ -32,10 +30,11 @@ def verify_join_select_integrity(
             c.is_available = True
 
 
-def verify_join_map_integrity(join_input: transform_schema.JoinInput | transform_schema.FuzzyMatchInput | transform_schema.JoinInputManager,
-                              left_columns: List[FlowfileColumn],
-                              right_columns: List[FlowfileColumn]
-                              ):
+def verify_join_map_integrity(
+    join_input: transform_schema.JoinInput | transform_schema.FuzzyMatchInput | transform_schema.JoinInputManager,
+    left_columns: list[FlowfileColumn],
+    right_columns: list[FlowfileColumn],
+):
     """
     Verify data type compatibility for join mappings between tables.
 

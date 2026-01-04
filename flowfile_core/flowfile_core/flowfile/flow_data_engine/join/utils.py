@@ -1,22 +1,24 @@
 # Standard library imports
-from typing import Dict, Tuple, TypeVar
+from typing import TypeVar
 
 # Third-party imports
 import polars as pl
 
-from flowfile_core.schemas import (
-    transform_schema as transform_schemas
-)
+from flowfile_core.schemas import transform_schema as transform_schemas
 
-T = TypeVar('T', pl.DataFrame, pl.LazyFrame)
+T = TypeVar("T", pl.DataFrame, pl.LazyFrame)
 
 
-def rename_df_table_for_join(left_df: T, right_df: T,  join_key_rename: transform_schemas.FullJoinKeyResponse) -> Tuple[T, T]:
-    return (left_df.rename({r[0]: r[1] for r in join_key_rename.left.join_key_renames}),
-            right_df.rename({r[0]: r[1] for r in join_key_rename.right.join_key_renames}))
+def rename_df_table_for_join(
+    left_df: T, right_df: T, join_key_rename: transform_schemas.FullJoinKeyResponse
+) -> tuple[T, T]:
+    return (
+        left_df.rename({r[0]: r[1] for r in join_key_rename.left.join_key_renames}),
+        right_df.rename({r[0]: r[1] for r in join_key_rename.right.join_key_renames}),
+    )
 
 
-def get_undo_rename_mapping_join(join_input: transform_schemas.JoinInputManager) -> Dict[str, str]:
+def get_undo_rename_mapping_join(join_input: transform_schemas.JoinInputManager) -> dict[str, str]:
     join_key_rename = join_input.get_join_key_renames(True)
     return {r[1]: r[0] for r in join_key_rename.right.join_key_renames + join_key_rename.left.join_key_renames}
 

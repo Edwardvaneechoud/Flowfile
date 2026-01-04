@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -12,107 +13,106 @@ class Expression(BaseModel):
     expression: str  # Example attribute
 
 
-AnalyticTypeLit = Literal['measure', 'dimension']
+AnalyticTypeLit = Literal["measure", "dimension"]
 
 
 class IField(BaseModel):
     fid: str
     name: str
-    basename: Optional[str] = None
+    basename: str | None = None
     semanticType: str
     analyticType: AnalyticTypeLit
-    cmp: Optional[str] = None
-    geoRole: Optional[GeoRole] = None
-    computed: Optional[bool] = None
-    expression: Optional[str] = None
-    timeUnit: Optional[str] = None
-    path: Optional[List[str]] = None
-    offset: Optional[int] = None
-    aggName: Optional[str] = None
-    aggregated: Optional[bool] = None
+    cmp: str | None = None
+    geoRole: GeoRole | None = None
+    computed: bool | None = None
+    expression: str | None = None
+    timeUnit: str | None = None
+    path: list[str] | None = None
+    offset: int | None = None
+    aggName: str | None = None
+    aggregated: bool | None = None
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def set_default_aggname(self):
-        if self.aggName is None and self.analyticType == 'measure':
+        if self.aggName is None and self.analyticType == "measure":
             self.aggName = "sum"
         return self
 
     def model_dump_dict(self):
         d = self.model_dump(exclude_none=True)
-        d['offset'] = None
+        d["offset"] = None
         return d
 
 
 class ViewField(IField):
-    sort: Optional[str] = None
+    sort: str | None = None
 
 
 class FilterField(ViewField):
     rule: Any
-    enableAgg: Optional[bool] = False
+    enableAgg: bool | None = False
 
 
 class DraggableFieldState(BaseModel):
-    dimensions: List[ViewField]
-    measures: List[ViewField]
-    rows: List[ViewField]
-    columns: List[ViewField]
-    color: List[ViewField]
-    opacity: List[ViewField]
-    size: List[ViewField]
-    shape: List[ViewField]
-    theta: List[ViewField]
-    radius: List[ViewField]
-    longitude: List[ViewField]
-    latitude: List[ViewField]
-    geoId: List[ViewField]
-    details: List[ViewField]
-    filters: List[FilterField]
-    text: List[ViewField]
+    dimensions: list[ViewField]
+    measures: list[ViewField]
+    rows: list[ViewField]
+    columns: list[ViewField]
+    color: list[ViewField]
+    opacity: list[ViewField]
+    size: list[ViewField]
+    shape: list[ViewField]
+    theta: list[ViewField]
+    radius: list[ViewField]
+    longitude: list[ViewField]
+    latitude: list[ViewField]
+    geoId: list[ViewField]
+    details: list[ViewField]
+    filters: list[FilterField]
+    text: list[ViewField]
 
 
 class ConfigScale(BaseModel):
-    rangeMax: Optional[int]
-    rangeMin: Optional[int]
-    domainMin: Optional[int]
-    domainMax: Optional[int]
+    rangeMax: int | None
+    rangeMin: int | None
+    domainMin: int | None
+    domainMax: int | None
 
 
 class MutField(BaseModel):
     fid: str
-    key: Optional[str] = None
-    name: Optional[str] = None
-    basename: Optional[str] = None
-    disable: Optional[bool] = False
+    key: str | None = None
+    name: str | None = None
+    basename: str | None = None
+    disable: bool | None = False
     semanticType: str
     analyticType: AnalyticTypeLit
-    path: Optional[List[str]] = None
-    offset: Optional[int] = None
+    path: list[str] | None = None
+    offset: int | None = None
 
 
 class DataModel(BaseModel):
-    data: List[Dict[str, Any]]
-    fields: List[MutField]
+    data: list[dict[str, Any]]
+    fields: list[MutField]
 
 
-class IVisualConfigNew (BaseModel):
+class IVisualConfigNew(BaseModel):
     defaultAggregated: bool
-    geoms: List[str]
-    coordSystem: Optional[str]
+    geoms: list[str]
+    coordSystem: str | None
     limit: int = None
-    folds: Optional[List[str]] = []
-    timezoneDisplayOffset: Optional[int] = None
+    folds: list[str] | None = []
+    timezoneDisplayOffset: int | None = None
 
 
 class Chart(BaseModel):
     visId: str
-    name: Optional[str]
+    name: str | None
     encodings: DraggableFieldState
     config: IVisualConfigNew
 
 
-class GraphicWalkerInput (BaseModel):
+class GraphicWalkerInput(BaseModel):
     dataModel: DataModel = Field(default_factory=lambda: DataModel(data=[], fields=[]))
     is_initial: bool = True
-    specList: Optional[List[Any]] = None
-
+    specList: list[Any] | None = None

@@ -3,31 +3,27 @@ from multiprocessing import Queue
 
 import polars as pl
 import pytest
-from pydantic import SecretStr
 
 from flowfile_worker import mp_context
-from flowfile_worker.external_sources.s3_source.models import (CloudStorageWriteSettings,
-                                                               FullCloudStorageConnection,
-                                                               WriteSettings,
-                                                               )
+from flowfile_worker.external_sources.s3_source.models import (
+    CloudStorageWriteSettings,
+    WriteSettings,
+)
 from flowfile_worker.funcs import write_to_cloud_storage
-from flowfile_worker.secrets import encrypt_secret
 
 logger = getLogger(__name__)
 
 
 try:
     # noinspection PyUnresolvedReferences
-    from tests.utils import is_docker_available, cloud_storage_connection_settings
     from test_utils.s3.fixtures import get_minio_client
+    from tests.utils import cloud_storage_connection_settings, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_worker/tests/utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("test_utils/s3/fixtures.py")))
     # noinspection PyUnresolvedReferences
-    from utils import is_docker_available, cloud_storage_connection_settings
-    from test_utils.s3.fixtures import get_minio_client
 
 
 def test_write_to_cloud_storage(cloud_storage_connection_settings):

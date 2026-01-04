@@ -1,18 +1,17 @@
-import flowfile_frame as ff
-from pathlib import Path
+
 import pytest
+
+import flowfile_frame as ff
 
 try:
     # noinspection PyUnresolvedReferences
-    from tests.utils import is_docker_available
-    from tests.utils import find_parent_directory
+    from tests.utils import find_parent_directory, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_frame/tests/utils.py")))
     # noinspection PyUnresolvedReferences
-    from utils import is_docker_available
-    from utils import find_parent_directory
+    from utils import find_parent_directory, is_docker_available
 
 
 def create_flow_frame_with_parquet_read() -> ff.FlowFrame:

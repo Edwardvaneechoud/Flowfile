@@ -1,19 +1,20 @@
-from typing import Dict, Set, List
-
-from flowfile_core.flowfile.analytics.graphic_walker import (get_initial_gf_data_from_ff,
-                                                             convert_ff_columns_to_gw_fields)
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
-from flowfile_core.schemas.input_schema import NodeExploreData
-from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import GraphicWalkerInput, DataModel, MutField, ViewField
 from flowfile_core.configs import logger
+from flowfile_core.flowfile.analytics.graphic_walker import convert_ff_columns_to_gw_fields, get_initial_gf_data_from_ff
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from flowfile_core.schemas.analysis_schemas.graphic_walker_schemas import (
+    DataModel,
+    GraphicWalkerInput,
+    MutField,
+    ViewField,
+)
+from flowfile_core.schemas.input_schema import NodeExploreData
 
 
 class AnalyticsProcessor:
-
     @staticmethod
     def process_graphic_walker_input(node_step: FlowNode) -> NodeExploreData:
         node_explore_data: NodeExploreData = node_step.setting_input
-        if hasattr(node_explore_data, 'graphic_walker_input'):
+        if hasattr(node_explore_data, "graphic_walker_input"):
             graphic_walker_input = node_explore_data.graphic_walker_input
         else:
             logger.error("NodeExploreData is not an instance of GraphicWalkerInput.")
@@ -24,8 +25,9 @@ class AnalyticsProcessor:
         return node_explore_data
 
     @staticmethod
-    def create_graphic_walker_input(node_step: FlowNode,
-                                    graphic_walker_input: GraphicWalkerInput = None) -> GraphicWalkerInput:
+    def create_graphic_walker_input(
+        node_step: FlowNode, graphic_walker_input: GraphicWalkerInput = None
+    ) -> GraphicWalkerInput:
         if not node_step.results.analysis_data_generator:
             node_step.get_predicted_schema()
             fields = convert_ff_columns_to_gw_fields(node_step.get_predicted_schema())
@@ -42,17 +44,17 @@ class AnalyticsProcessor:
         return graphic_walker_input
 
 
-def check_if_field_in_spec_list_encodings(spec_list: Dict, field_name: str) -> bool:
-    for encoding in spec_list['encodings']['dimensions'].values():
-        if field_name in encoding['fid']:
+def check_if_field_in_spec_list_encodings(spec_list: dict, field_name: str) -> bool:
+    for encoding in spec_list["encodings"]["dimensions"].values():
+        if field_name in encoding["fid"]:
             return True
-    for encoding in spec_list['encodings']['measures'].values():
-        if field_name in encoding['fid']:
+    for encoding in spec_list["encodings"]["measures"].values():
+        if field_name in encoding["fid"]:
             return True
     return False
 
 
-def get_existing_encoding_fields(spec_list: Dict) -> Set[str]:
+def get_existing_encoding_fields(spec_list: dict) -> set[str]:
     """
     Get the existing encoding fields from the spec_list.
 
@@ -62,8 +64,8 @@ def get_existing_encoding_fields(spec_list: Dict) -> Set[str]:
     Returns:
         Set[str]: A set of existing encoding fields.
     """
-    dimensions = {encoding['fid'] for encoding in spec_list['encodings']['dimensions']}
-    measures = {encoding['fid'] for encoding in spec_list['encodings']['measures']}
+    dimensions = {encoding["fid"] for encoding in spec_list["encodings"]["dimensions"]}
+    measures = {encoding["fid"] for encoding in spec_list["encodings"]["measures"]}
     return dimensions.union(measures)
 
 
@@ -72,7 +74,7 @@ def transform_mut_field_to_view_field(mut_field: MutField) -> ViewField:
     return view_field
 
 
-def add_field_to_spec_list(spec_list: Dict, mut_field: MutField) -> None:
+def add_field_to_spec_list(spec_list: dict, mut_field: MutField) -> None:
     """
     Add a field to the spec_list.
 
@@ -84,13 +86,13 @@ def add_field_to_spec_list(spec_list: Dict, mut_field: MutField) -> None:
         None
     """
     view_field = transform_mut_field_to_view_field(mut_field)
-    if mut_field.analyticType == 'measure':
-        spec_list['encodings']['measures'].append(view_field.model_dump_dict())
+    if mut_field.analyticType == "measure":
+        spec_list["encodings"]["measures"].append(view_field.model_dump_dict())
     else:
-        spec_list['encodings']['dimensions'].append(view_field.model_dump_dict())
+        spec_list["encodings"]["dimensions"].append(view_field.model_dump_dict())
 
 
-def validate_spec_list_with_data_model_types(spec_list: Dict, data_model: DataModel) -> None:
+def validate_spec_list_with_data_model_types(spec_list: dict, data_model: DataModel) -> None:
     """
     Validate the spec_list with the data model types.
 
@@ -109,7 +111,7 @@ def validate_spec_list_with_data_model_types(spec_list: Dict, data_model: DataMo
             add_field_to_spec_list(spec_list, field)
 
 
-def validate_spec_lists_with_data_model(spec_lists: List[Dict], data_model: DataModel) -> None:
+def validate_spec_lists_with_data_model(spec_lists: list[dict], data_model: DataModel) -> None:
     """
     Validate the spec lists with the data model.
 

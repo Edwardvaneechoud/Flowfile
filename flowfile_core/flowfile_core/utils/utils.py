@@ -1,14 +1,14 @@
 import re
 from itertools import chain
-from typing import List, Dict
+
 
 def camel_case_to_snake_case(text: str) -> str:
     # Use a regular expression to find capital letters and replace them with _ followed by the lowercase letter
-    transformed_text = re.sub(r'(?<!^)(?=[A-Z])', '_', text).lower()
+    transformed_text = re.sub(r"(?<!^)(?=[A-Z])", "_", text).lower()
     return transformed_text
 
 
-def ensure_similarity_dicts(datas: List[Dict], respect_order: bool = True):
+def ensure_similarity_dicts(datas: list[dict], respect_order: bool = True):
     all_cols = (data.keys() for data in datas)
     if not respect_order:
         unique_cols = set(chain(*all_cols))

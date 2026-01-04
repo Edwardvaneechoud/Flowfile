@@ -8,42 +8,39 @@ This module tests:
 - NodeSettings helper methods (get_value, get_all_components)
 - End-to-end integration with flow graphs using real database
 """
-import pytest
-import polars as pl
-from polars.testing import assert_frame_equal
-from typing import Dict, List
-from pydantic import SecretStr
 import uuid
 
-from flowfile_core.flowfile.node_designer import (
-    CustomNodeBase,
-    NodeSettings,
-    Section,
-    TextInput,
-    NumericInput,
-    ToggleSwitch,
-    SecretSelector,
-    AvailableSecrets,
-)
-from flowfile_core.flowfile.node_designer.ui_components import FlowfileInComponent
+import polars as pl
+import pytest
+from pydantic import SecretStr
 
-# Database and secret manager imports
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.database import models as db_models
-from flowfile_core.secret_manager.secret_manager import (
-    store_secret,
-    get_encrypted_secret,
-    decrypt_secret,
-    encrypt_secret,
-)
 from flowfile_core.auth.models import SecretInput
 
 # Flow graph imports for integration tests
 from flowfile_core.configs.node_store import add_to_custom_node_store
+from flowfile_core.database import models as db_models
+
+# Database and secret manager imports
+from flowfile_core.database.connection import get_db_context
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.flowfile.node_designer import (
+    AvailableSecrets,
+    CustomNodeBase,
+    NodeSettings,
+    NumericInput,
+    SecretSelector,
+    Section,
+    TextInput,
+    ToggleSwitch,
+)
 from flowfile_core.schemas import input_schema, schemas
-
+from flowfile_core.secret_manager.secret_manager import (
+    decrypt_secret,
+    encrypt_secret,
+    get_encrypted_secret,
+    store_secret,
+)
 
 # =============================================================================
 # Test Utilities
@@ -65,7 +62,7 @@ def create_graph(flow_id: int = 1, execution_mode: str = 'Development') -> FlowG
     return handler.get_flow(flow_id)
 
 
-def add_manual_input(graph: FlowGraph, data: List[Dict], node_id: int = 1) -> FlowGraph:
+def add_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1) -> FlowGraph:
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
         node_id=node_id,
@@ -85,7 +82,7 @@ def add_custom_node_to_graph(
         graph: FlowGraph,
         custom_node_class: type,
         node_id: int,
-        settings: Dict,
+        settings: dict,
         user_id: int = None
 ) -> FlowGraph:
     """Helper to add a custom node to a graph with settings."""
