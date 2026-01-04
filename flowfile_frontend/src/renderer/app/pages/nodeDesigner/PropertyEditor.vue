@@ -395,6 +395,13 @@ function insertVariable() {
   gap: var(--spacing-3, 0.75rem);
 }
 
+.property-editor {
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--bg-secondary, #f8f9fa);
+}
+
 .property-group-title {
   font-size: var(--font-size-xs, 0.75rem);
   font-weight: var(--font-weight-semibold, 600);
