@@ -127,10 +127,12 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     safe_name = Path(file.filename).name.replace("..", "")
     if not safe_name:
         raise HTTPException(400, 'Invalid filename')
-    file_location = f"uploads/{safe_name}"
+    uploads_dir = Path("uploads")
+    uploads_dir.mkdir(exist_ok=True)
+    file_location = uploads_dir / safe_name
     with open(file_location, "wb+") as file_object:
         file_object.write(file.file.read())
-    return JSONResponse(content={"filename": safe_name, "filepath": file_location})
+    return JSONResponse(content={"filename": safe_name, "filepath": str(file_location)})
 
 
 @router.get('/files/files_in_local_directory/', response_model=List[FileInfo], tags=['file manager'])
@@ -147,7 +149,17 @@ async def get_local_files(directory: str) -> List[FileInfo]:
         HTTPException: 404 if the directory does not exist.
         HTTPException: 403 if access is denied (path outside sandbox).
     """
-    files = get_files_from_directory(directory, sandbox_root=storage.user_data_directory)
+    # Validate path is within sandbox before proceeding
+    explorer = SecureFileExplorer(
+        start_path=storage.user_data_directory,
+        sandbox_root=storage.user_data_directory
+    )
+    validated_path = explorer.get_absolute_path(directory)
+    if validated_path is None:
+        raise HTTPException(403, 'Access denied or directory does not exist')
+    if not validated_path.exists() or not validated_path.is_dir():
+        raise HTTPException(404, 'Directory does not exist')
+    files = get_files_from_directory(str(validated_path), sandbox_root=storage.user_data_directory)
     if files is None:
         raise HTTPException(403, 'Access denied or directory does not exist')
     return files
@@ -586,7 +598,15 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
 def get_list_of_saved_flows(path: str):
     """Scans a directory for saved flow files (`.flowfile`)."""
     try:
-        return get_files_from_directory(path, types=['flowfile'], sandbox_root=storage.user_data_directory)
+        # Validate path is within sandbox before proceeding
+        explorer = SecureFileExplorer(
+            start_path=storage.user_data_directory,
+            sandbox_root=storage.user_data_directory
+        )
+        validated_path = explorer.get_absolute_path(path)
+        if validated_path is None:
+            return []
+        return get_files_from_directory(str(validated_path), types=['flowfile'], sandbox_root=storage.user_data_directory)
     except:
         return []
 
