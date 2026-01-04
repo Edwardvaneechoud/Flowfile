@@ -70,8 +70,8 @@ class TestCrossJoinSettingGenerator:
 
         # Get the node and verify settings were generated
         node = basic_flow.get_node(3)
-        node_data = node.get_node_data()
-
+        node_data = node.get_node_data(basic_flow.flow_id)
+        breakpoint()
         assert node_data.setting_input is not None
         assert isinstance(node_data.setting_input, input_schema.NodeCrossJoin)
 
@@ -96,7 +96,7 @@ class TestCrossJoinSettingGenerator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
         node = basic_flow.get_node(3)
-        node_data = node.get_node_data()
+        node_data = node.get_node_data(basic_flow.flow_id)
 
         cross_join_input = node_data.setting_input.cross_join_input
         left_new_names = [r.new_name for r in cross_join_input.left_select.renames]
@@ -125,7 +125,7 @@ class TestCrossJoinSettingUpdator:
 
         # Get initial node data
         node = basic_flow.get_node(3)
-        initial_data = node.get_node_data()
+        initial_data = node.get_node_data(basic_flow.flow_id)
 
         # Verify initial left columns include 'extra'
         left_cols = [r.old_name for r in initial_data.setting_input.cross_join_input.left_select.renames]
@@ -139,7 +139,7 @@ class TestCrossJoinSettingUpdator:
         ))
 
         # Get updated node data - this should trigger the updator
-        updated_data = node.get_node_data()
+        updated_data = node.get_node_data(basic_flow.flow_id)
 
         # Verify 'extra' column is removed
         left_cols_after = [r.old_name for r in updated_data.setting_input.cross_join_input.left_select.renames]
@@ -161,7 +161,7 @@ class TestCrossJoinSettingUpdator:
 
         # Get initial data
         node = basic_flow.get_node(3)
-        node.get_node_data()
+        node.get_node_data(basic_flow.flow_id)
 
         # Update left input to add 'new_col' column
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -171,7 +171,7 @@ class TestCrossJoinSettingUpdator:
         ))
 
         # Get updated node data
-        updated_data = node.get_node_data()
+        updated_data = node.get_node_data(basic_flow.flow_id)
 
         left_cols = [r.old_name for r in updated_data.setting_input.cross_join_input.left_select.renames]
         assert 'new_col' in left_cols
@@ -191,7 +191,7 @@ class TestCrossJoinSettingUpdator:
 
         # Get node data multiple times to trigger updator
         node = basic_flow.get_node(3)
-        node_data = node.get_node_data()
+        node_data = node.get_node_data(basic_flow.flow_id)
 
         # Verify no duplicates in left select
         left_old_names = [r.old_name for r in node_data.setting_input.cross_join_input.left_select.renames]
@@ -220,7 +220,7 @@ class TestCrossJoinSettingUpdator:
 
         # Call get_node_data multiple times
         for _ in range(5):
-            node_data = node.get_node_data()
+            node_data = node.get_node_data(basic_flow.flow_id)
 
         left_old_names = [r.old_name for r in node_data.setting_input.cross_join_input.left_select.renames]
         right_old_names = [r.old_name for r in node_data.setting_input.cross_join_input.right_select.renames]
@@ -245,7 +245,7 @@ class TestJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
         node = basic_flow.get_node(3)
-        node.get_node_data()
+        node.get_node_data(basic_flow.flow_id)
 
         # Update left input to remove 'extra'
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -254,7 +254,7 @@ class TestJoinSettingUpdator:
             raw_data_format=input_schema.RawData.from_pylist([{'id': 1, 'name': 'Alice'}])
         ))
 
-        updated_data = node.get_node_data()
+        updated_data = node.get_node_data(basic_flow.flow_id)
 
         left_cols = [r.old_name for r in updated_data.setting_input.join_input.left_select.renames]
         assert 'extra' not in left_cols
@@ -273,7 +273,7 @@ class TestJoinSettingUpdator:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
         node = basic_flow.get_node(3)
-        node.get_node_data()
+        node.get_node_data(basic_flow.flow_id)
 
         # Update right input to remove 'extra'
         basic_flow.add_manual_input(input_schema.NodeManualInput(
@@ -282,7 +282,7 @@ class TestJoinSettingUpdator:
             raw_data_format=input_schema.RawData.from_pylist([{'id': 1, 'value': 100}])
         ))
 
-        updated_data = node.get_node_data()
+        updated_data = node.get_node_data(basic_flow.flow_id)
 
         right_cols = [r.old_name for r in updated_data.setting_input.join_input.right_select.renames]
         assert 'extra' not in right_cols
@@ -304,7 +304,7 @@ class TestJoinSettingUpdator:
 
         # Call multiple times to ensure updator doesn't create duplicates
         for _ in range(3):
-            node_data = node.get_node_data()
+            node_data = node.get_node_data(basic_flow.flow_id)
 
         left_old_names = [r.old_name for r in node_data.setting_input.join_input.left_select.renames]
         right_old_names = [r.old_name for r in node_data.setting_input.join_input.right_select.renames]
@@ -427,7 +427,6 @@ class TestCrossJoinExecution:
             {'id': 10, 'value': 'right1'},
             {'id': 20, 'value': 'right2'},
         ])
-
         basic_flow.add_node_promise(input_schema.NodePromise(
             flow_id=1, node_id=3, node_type='cross_join'
         ))
@@ -435,6 +434,7 @@ class TestCrossJoinExecution:
         add_connection(basic_flow, input_schema.NodeConnection.create_from_simple_input(2, 3, "right"))
 
         node = basic_flow.get_node(3)
+        basic_flow.run_graph()
         result = node.get_resulting_data()
 
         # Cross join of 2 rows x 2 rows = 4 rows
