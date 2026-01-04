@@ -362,7 +362,7 @@ class TestDockerE2EWithoutAdminCredentials:
         container = docker_client.containers.run(
             image=docker_image.id,
             detach=True,
-            ports={f'{FLOWFILE_CORE_PORT}/tcp': FLOWFILE_CORE_PORT + 1},  # Different port
+            ports={f'{FLOWFILE_CORE_PORT}/tcp': 63590},  # Use unique port to avoid conflicts
             environment=environment,
             volumes=volumes,
             name=f"flowfile-e2e-no-admin-{int(time.time())}",
