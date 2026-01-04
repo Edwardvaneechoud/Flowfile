@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict
+from enum import Enum
 from typing import Any, Literal, NamedTuple
 
 import polars as pl
@@ -9,13 +10,92 @@ from polars import selectors
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from flowfile_core.schemas.yaml_types import (
+    BasicFilterYaml,
     CrossJoinInputYaml,
+    FilterInputYaml,
     FuzzyMatchInputYaml,
     JoinInputsYaml,
     JoinInputYaml,
     SelectInputYaml,
 )
 from flowfile_core.types import DataType, DataTypeStr
+
+
+class FilterOperator(str, Enum):
+    """Supported filter comparison operators."""
+
+    EQUALS = "equals"
+    NOT_EQUALS = "not_equals"
+    GREATER_THAN = "greater_than"
+    GREATER_THAN_OR_EQUALS = "greater_than_or_equals"
+    LESS_THAN = "less_than"
+    LESS_THAN_OR_EQUALS = "less_than_or_equals"
+    CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
+    STARTS_WITH = "starts_with"
+    ENDS_WITH = "ends_with"
+    IS_NULL = "is_null"
+    IS_NOT_NULL = "is_not_null"
+    IN = "in"
+    NOT_IN = "not_in"
+    BETWEEN = "between"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @classmethod
+    def from_symbol(cls, symbol: str) -> "FilterOperator":
+        """Convert UI symbol to FilterOperator enum."""
+        symbol_mapping = {
+            "=": cls.EQUALS,
+            "==": cls.EQUALS,
+            "!=": cls.NOT_EQUALS,
+            "<>": cls.NOT_EQUALS,
+            ">": cls.GREATER_THAN,
+            ">=": cls.GREATER_THAN_OR_EQUALS,
+            "<": cls.LESS_THAN,
+            "<=": cls.LESS_THAN_OR_EQUALS,
+            "contains": cls.CONTAINS,
+            "not_contains": cls.NOT_CONTAINS,
+            "starts_with": cls.STARTS_WITH,
+            "ends_with": cls.ENDS_WITH,
+            "is_null": cls.IS_NULL,
+            "is_not_null": cls.IS_NOT_NULL,
+            "in": cls.IN,
+            "not_in": cls.NOT_IN,
+            "between": cls.BETWEEN,
+        }
+        if symbol in symbol_mapping:
+            return symbol_mapping[symbol]
+        # Try to match by value directly
+        try:
+            return cls(symbol)
+        except ValueError:
+            raise ValueError(f"Unknown filter operator symbol: {symbol}")
+
+    def to_symbol(self) -> str:
+        """Convert FilterOperator to UI-friendly symbol."""
+        symbol_mapping = {
+            FilterOperator.EQUALS: "=",
+            FilterOperator.NOT_EQUALS: "!=",
+            FilterOperator.GREATER_THAN: ">",
+            FilterOperator.GREATER_THAN_OR_EQUALS: ">=",
+            FilterOperator.LESS_THAN: "<",
+            FilterOperator.LESS_THAN_OR_EQUALS: "<=",
+            FilterOperator.CONTAINS: "contains",
+            FilterOperator.NOT_CONTAINS: "not_contains",
+            FilterOperator.STARTS_WITH: "starts_with",
+            FilterOperator.ENDS_WITH: "ends_with",
+            FilterOperator.IS_NULL: "is_null",
+            FilterOperator.IS_NOT_NULL: "is_not_null",
+            FilterOperator.IN: "in",
+            FilterOperator.NOT_IN: "not_in",
+            FilterOperator.BETWEEN: "between",
+        }
+        return symbol_mapping.get(self, self.value)
+
+
+FilterModeLiteral = Literal["basic", "advanced"]
 
 FuzzyMap = FuzzyMapping
 
@@ -176,37 +256,162 @@ class FunctionInput(BaseModel):
 
 
 class BasicFilter(BaseModel):
-    """Defines a simple, single-condition filter (e.g., 'column' 'equals' 'value')."""
+    """Defines a simple, single-condition filter (e.g., 'column' 'equals' 'value').
 
-    field: str | None = ""
-    filter_type: str | None = ""
-    filter_value: str | None = ""
+    Attributes:
+        field: The column name to filter on.
+        operator: The comparison operator (FilterOperator enum value or symbol).
+        value: The value to compare against.
+        value2: Second value for BETWEEN operator (optional).
+    """
 
-    def __init__(self, field: str = None, filter_type: str = None, filter_value: str = None, **data):
+    field: str = ""
+    operator: FilterOperator | str = FilterOperator.EQUALS
+    value: str = ""
+    value2: str | None = None  # For BETWEEN operator
+
+    # Keep old field names for backward compatibility
+    filter_type: str | None = None
+    filter_value: str | None = None
+
+    def __init__(
+        self,
+        field: str = None,
+        operator: FilterOperator | str = None,
+        value: str = None,
+        value2: str = None,
+        # Backward compatibility parameters
+        filter_type: str = None,
+        filter_value: str = None,
+        **data,
+    ):
+        # Handle backward compatibility
+        if filter_type is not None and operator is None:
+            data["operator"] = filter_type
+        elif operator is not None:
+            data["operator"] = operator
+
+        if filter_value is not None and value is None:
+            data["value"] = filter_value
+        elif value is not None:
+            data["value"] = value
+
         if field is not None:
             data["field"] = field
-        if filter_type is not None:
-            data["filter_type"] = filter_type
-        if filter_value is not None:
-            data["filter_value"] = filter_value
+        if value2 is not None:
+            data["value2"] = value2
+
         super().__init__(**data)
+
+    @model_validator(mode="after")
+    def normalize_operator(self):
+        """Normalize the operator to FilterOperator enum."""
+        if isinstance(self.operator, str):
+            try:
+                self.operator = FilterOperator.from_symbol(self.operator)
+            except ValueError:
+                # Keep as string if conversion fails (for backward compat)
+                pass
+        return self
+
+    def get_operator(self) -> FilterOperator:
+        """Get the operator as FilterOperator enum."""
+        if isinstance(self.operator, FilterOperator):
+            return self.operator
+        return FilterOperator.from_symbol(self.operator)
+
+    def to_yaml_dict(self) -> BasicFilterYaml:
+        """Serialize for YAML output."""
+        result: BasicFilterYaml = {
+            "field": self.field,
+            "operator": self.operator.value if isinstance(self.operator, FilterOperator) else self.operator,
+            "value": self.value,
+        }
+        if self.value2:
+            result["value2"] = self.value2
+        return result
+
+    @classmethod
+    def from_yaml_dict(cls, data: dict) -> "BasicFilter":
+        """Load from YAML format."""
+        return cls(
+            field=data.get("field", ""),
+            operator=data.get("operator", FilterOperator.EQUALS),
+            value=data.get("value", ""),
+            value2=data.get("value2"),
+        )
 
 
 class FilterInput(BaseModel):
-    """Defines the settings for a filter operation, supporting basic or advanced (expression-based) modes."""
+    """Defines the settings for a filter operation, supporting basic or advanced (expression-based) modes.
 
-    advanced_filter: str | None = ""
+    Attributes:
+        mode: The filter mode - "basic" or "advanced".
+        basic_filter: The basic filter configuration (used when mode="basic").
+        advanced_filter: The advanced filter expression string (used when mode="advanced").
+    """
+
+    mode: FilterModeLiteral = "basic"
     basic_filter: BasicFilter | None = None
-    filter_type: str | None = "basic"
+    advanced_filter: str = ""
 
-    def __init__(self, advanced_filter: str = None, basic_filter: BasicFilter = None, filter_type: str = None, **data):
+    # Keep old field name for backward compatibility
+    filter_type: str | None = None
+
+    def __init__(
+        self,
+        mode: FilterModeLiteral = None,
+        basic_filter: BasicFilter = None,
+        advanced_filter: str = None,
+        # Backward compatibility
+        filter_type: str = None,
+        **data,
+    ):
+        # Handle backward compatibility: filter_type -> mode
+        if filter_type is not None and mode is None:
+            data["mode"] = filter_type
+        elif mode is not None:
+            data["mode"] = mode
+
         if advanced_filter is not None:
             data["advanced_filter"] = advanced_filter
         if basic_filter is not None:
             data["basic_filter"] = basic_filter
-        if filter_type is not None:
-            data["filter_type"] = filter_type
+
         super().__init__(**data)
+
+    @model_validator(mode="after")
+    def ensure_basic_filter(self):
+        """Ensure basic_filter exists when mode is basic."""
+        if self.mode == "basic" and self.basic_filter is None:
+            self.basic_filter = BasicFilter()
+        return self
+
+    def is_advanced(self) -> bool:
+        """Check if filter is in advanced mode."""
+        return self.mode == "advanced"
+
+    def to_yaml_dict(self) -> FilterInputYaml:
+        """Serialize for YAML output."""
+        result: FilterInputYaml = {"mode": self.mode}
+        if self.mode == "basic" and self.basic_filter:
+            result["basic_filter"] = self.basic_filter.to_yaml_dict()
+        elif self.mode == "advanced" and self.advanced_filter:
+            result["advanced_filter"] = self.advanced_filter
+        return result
+
+    @classmethod
+    def from_yaml_dict(cls, data: dict) -> "FilterInput":
+        """Load from YAML format."""
+        mode = data.get("mode", "basic")
+        basic_filter = None
+        if "basic_filter" in data:
+            basic_filter = BasicFilter.from_yaml_dict(data["basic_filter"])
+        return cls(
+            mode=mode,
+            basic_filter=basic_filter,
+            advanced_filter=data.get("advanced_filter", ""),
+        )
 
 
 class SelectInputs(BaseModel):

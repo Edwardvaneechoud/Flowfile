@@ -275,15 +275,121 @@ export interface FormulaInput {
 // Filter Types
 // ============================================================================
 
-export interface BasicFilter {
-  field: string
-  filter_type: string
-  filter_value: string
+/**
+ * Supported filter comparison operators.
+ */
+export type FilterOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'greater_than'
+  | 'greater_than_or_equals'
+  | 'less_than'
+  | 'less_than_or_equals'
+  | 'contains'
+  | 'not_contains'
+  | 'starts_with'
+  | 'ends_with'
+  | 'is_null'
+  | 'is_not_null'
+  | 'in'
+  | 'not_in'
+  | 'between'
+
+/**
+ * Mapping from UI-friendly labels to FilterOperator values.
+ */
+export const FILTER_OPERATOR_LABELS: Record<string, FilterOperator> = {
+  Equals: 'equals',
+  'Does not equal': 'not_equals',
+  'Greater than': 'greater_than',
+  'Greater than or equals': 'greater_than_or_equals',
+  'Less than': 'less_than',
+  'Less than or equals': 'less_than_or_equals',
+  Contains: 'contains',
+  'Does not contain': 'not_contains',
+  'Starts with': 'starts_with',
+  'Ends with': 'ends_with',
+  'Is null': 'is_null',
+  'Is not null': 'is_not_null',
+  In: 'in',
+  'Not in': 'not_in',
+  Between: 'between',
 }
 
+/**
+ * Reverse mapping from FilterOperator to label.
+ */
+export const FILTER_OPERATOR_REVERSE_LABELS: Record<FilterOperator, string> = {
+  equals: 'Equals',
+  not_equals: 'Does not equal',
+  greater_than: 'Greater than',
+  greater_than_or_equals: 'Greater than or equals',
+  less_than: 'Less than',
+  less_than_or_equals: 'Less than or equals',
+  contains: 'Contains',
+  not_contains: 'Does not contain',
+  starts_with: 'Starts with',
+  ends_with: 'Ends with',
+  is_null: 'Is null',
+  is_not_null: 'Is not null',
+  in: 'In',
+  not_in: 'Not in',
+  between: 'Between',
+}
+
+/**
+ * Get the label for a filter operator.
+ */
+export function getFilterOperatorLabel(operator: FilterOperator): string {
+  return FILTER_OPERATOR_REVERSE_LABELS[operator] || operator
+}
+
+/**
+ * Operators that require a value input.
+ */
+export const OPERATORS_WITH_VALUE: FilterOperator[] = [
+  'equals',
+  'not_equals',
+  'greater_than',
+  'greater_than_or_equals',
+  'less_than',
+  'less_than_or_equals',
+  'contains',
+  'not_contains',
+  'starts_with',
+  'ends_with',
+  'in',
+  'not_in',
+  'between',
+]
+
+/**
+ * Operators that require a second value (value2).
+ */
+export const OPERATORS_WITH_VALUE2: FilterOperator[] = ['between']
+
+/**
+ * Operators that don't require any value.
+ */
+export const OPERATORS_NO_VALUE: FilterOperator[] = ['is_null', 'is_not_null']
+
+export interface BasicFilter {
+  field: string
+  operator: FilterOperator | string
+  value: string
+  value2?: string // For BETWEEN operator
+  // Legacy fields for backward compatibility
+  filter_type?: string
+  filter_value?: string
+}
+
+export type FilterMode = 'basic' | 'advanced'
+
 export interface FilterInput {
-  advanced_filter?: string
+  mode: FilterMode
   basic_filter?: BasicFilter
+  advanced_filter?: string
+  // Legacy field for backward compatibility
   filter_type?: string
 }
 

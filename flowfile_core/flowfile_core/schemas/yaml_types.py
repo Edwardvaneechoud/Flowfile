@@ -3,6 +3,19 @@ from typing import TypedDict
 # === Transform Schema YAML Types ===
 
 
+class BasicFilterYaml(TypedDict, total=False):
+    field: str
+    operator: str
+    value: str
+    value2: str  # For BETWEEN operator
+
+
+class FilterInputYaml(TypedDict, total=False):
+    mode: str  # "basic" or "advanced"
+    basic_filter: BasicFilterYaml
+    advanced_filter: str
+
+
 class SelectInputYaml(TypedDict, total=False):
     old_name: str
     new_name: str
