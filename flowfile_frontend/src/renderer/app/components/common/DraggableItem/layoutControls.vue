@@ -65,18 +65,15 @@ const hasDragged = ref(false);
 const dragStart = ref({ x: 0, y: 0 });
 const initialPosition = ref({ x: 0, y: 0 });
 
-// --- NEW: Function to handle window resizing ---
+// --- Function to handle window resizing ---
+// Always reset to bottom-right corner on resize to ensure it's always accessible
 const handleViewportResize = () => {
   const buttonSize = 45;
-  const boundaryMargin = 10; // Margin from the edge of the viewport
-  position.value.x = Math.max(
-    boundaryMargin,
-    Math.min(window.innerWidth - buttonSize - boundaryMargin, position.value.x),
-  );
-  position.value.y = Math.max(
-    boundaryMargin,
-    Math.min(window.innerHeight - buttonSize - boundaryMargin, position.value.y),
-  );
+  const boundaryMargin = 10;
+  // Always position in bottom-right corner on resize for consistent UX
+  position.value.x = window.innerWidth - buttonSize - boundaryMargin;
+  position.value.y = window.innerHeight - buttonSize - boundaryMargin;
+  savePosition();
 };
 
 // --- NEW: Computed property for dynamic panel positioning ---
@@ -102,15 +99,32 @@ const panelStyle = computed(() => {
   return style;
 });
 
-// Load saved position from localStorage
+// Load saved position from localStorage - but always ensure it's in valid bounds
 onMounted(() => {
+  const buttonSize = 45;
+  const boundaryMargin = 10;
   const savedPosition = localStorage.getItem("layoutControlsPosition");
+
   if (savedPosition) {
     const parsed = JSON.parse(savedPosition);
-    position.value = parsed;
-    handleViewportResize(); // Run once on load to ensure it's within bounds
+    // Validate the saved position is within current viewport bounds
+    const maxX = window.innerWidth - buttonSize - boundaryMargin;
+    const maxY = window.innerHeight - buttonSize - boundaryMargin;
+
+    if (parsed.x <= maxX && parsed.y <= maxY && parsed.x >= boundaryMargin && parsed.y >= boundaryMargin) {
+      position.value = parsed;
+    } else {
+      // Reset to bottom-right corner if saved position is out of bounds
+      position.value.x = maxX;
+      position.value.y = maxY;
+      savePosition();
+    }
+  } else {
+    // Default to bottom-right corner
+    position.value.x = window.innerWidth - buttonSize - boundaryMargin;
+    position.value.y = window.innerHeight - buttonSize - boundaryMargin;
   }
-  // NEW: Add the resize listener
+
   window.addEventListener("resize", handleViewportResize);
 });
 
