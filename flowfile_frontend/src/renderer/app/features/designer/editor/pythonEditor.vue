@@ -20,13 +20,13 @@
 
 <script setup lang="ts">
 import { EditorView, keymap } from "@codemirror/view";
-import { EditorState, Extension } from "@codemirror/state";
+import { EditorState, Extension, Prec } from "@codemirror/state";
 import { ref, shallowRef, defineExpose, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
-import { indentMore } from "@codemirror/commands";
+import { indentMore, indentLess } from "@codemirror/commands";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 
 const props = defineProps({
@@ -63,6 +63,12 @@ const tabKeymap = keymap.of([
       return indentMore(view);
     },
   },
+  {
+    key: "Shift-Tab",
+    run: (view: EditorView): boolean => {
+      return indentLess(view);
+    },
+  },
 ]);
 
 const insertTextAtCursor = (text: string) => {
@@ -88,10 +94,10 @@ const extensions: Extension[] = [
   EditorState.tabSize.of(4),
   autocompletion({
     override: [polarsCompletions],
-    defaultKeymap: false, // Disable default keymap
+    defaultKeymap: true, // Enable default keymap for arrow navigation
     closeOnBlur: false,
   }),
-  tabKeymap,
+  Prec.highest(tabKeymap), // Tab keymap with highest precedence
 ];
 
 // Rest of the component code remains the same...
