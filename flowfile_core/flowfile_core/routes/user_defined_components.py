@@ -406,19 +406,23 @@ async def upload_icon(file: UploadFile = File(...)) -> Dict[str, Any]:
             detail=f"File too large. Maximum size is {MAX_ICON_SIZE // (1024 * 1024)}MB"
         )
 
-    # Sanitize filename
-    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename)
+    # Sanitize filename - preserve hyphens, dots, and underscores
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '_', file.filename)
     if not safe_name:
         raise HTTPException(status_code=400, detail="Invalid file name")
 
     icons_dir = storage.user_defined_nodes_icons
+
+    # Ensure the icons directory exists
+    icons_dir.mkdir(parents=True, exist_ok=True)
+
     file_path = icons_dir / safe_name
 
     # Write the file
     try:
         with open(file_path, 'wb') as f:
             f.write(content)
-        logger.info(f"Uploaded icon: {file_path}")
+        logger.info(f"Uploaded icon: {file_path} (size: {len(content)} bytes)")
     except Exception as e:
         logger.error(f"Failed to save icon: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save icon: {str(e)}")
@@ -426,6 +430,7 @@ async def upload_icon(file: UploadFile = File(...)) -> Dict[str, Any]:
     return {
         "success": True,
         "file_name": safe_name,
+        "path": str(file_path),
         "message": f"Icon '{safe_name}' uploaded successfully"
     }
 
@@ -436,14 +441,21 @@ def get_icon(file_name: str) -> FileResponse:
     Retrieve a custom icon file by name.
     Returns the icon file for display in the UI.
     """
-    # Sanitize file name
-    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', file_name)
+    # Sanitize file name - preserve hyphens, dots, and underscores
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '_', file_name)
 
     icons_dir = storage.user_defined_nodes_icons
     file_path = icons_dir / safe_name
 
+    logger.debug(f"Attempting to serve icon: {file_path}")
+
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"Icon '{safe_name}' not found")
+        logger.warning(f"Icon not found: {file_path} (icons_dir exists: {icons_dir.exists()})")
+        # List available icons for debugging
+        if icons_dir.exists():
+            available = list(icons_dir.iterdir())
+            logger.debug(f"Available icons: {[f.name for f in available]}")
+        raise HTTPException(status_code=404, detail=f"Icon '{safe_name}' not found at {file_path}")
 
     # Validate it's actually an icon file
     if file_path.suffix.lower() not in ALLOWED_ICON_EXTENSIONS:
@@ -472,8 +484,8 @@ def delete_icon(file_name: str) -> Dict[str, Any]:
     """
     Delete a custom icon file from the icons directory.
     """
-    # Sanitize file name
-    safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', file_name)
+    # Sanitize file name - preserve hyphens, dots, and underscores
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '_', file_name)
 
     icons_dir = storage.user_defined_nodes_icons
     file_path = icons_dir / safe_name
