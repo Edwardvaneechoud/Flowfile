@@ -20,7 +20,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, defineExpose, defineProps, onMounted } from "vue";
+import { ref, onMounted } from "vue";
 import axios from "axios";
 import { InstantFuncResult } from "./types";
 import { useNodeStore } from "../../../stores/column-store";

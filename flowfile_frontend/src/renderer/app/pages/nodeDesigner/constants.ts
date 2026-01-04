@@ -36,6 +36,7 @@ export const defaultNodeMetadata = {
   intro: '',
   number_of_inputs: 1,
   number_of_outputs: 1,
+  node_icon: 'user-defined-icon.png',
 };
 
 /** Get component icon by type */

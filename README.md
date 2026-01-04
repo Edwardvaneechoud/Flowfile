@@ -56,6 +56,12 @@ For a deeper dive into the technical architecture, check out [this article](http
   <img src=".github/images/generated_code.png" alt="Automatically generate polars code" width="800"/>
 </div>
 
+### **YAML/JSON Export**
+  - Save flows as human-readable YAML or JSON files
+  - Version control your pipelines with Git
+  - Share and collaborate on flow definitions
+  - Portable format for backup and migration
+
 ---
 
 - **Performance**
@@ -213,7 +219,7 @@ For more details on using the FlowFrame API, see the [flowfile_frame documentati
 - [x] Create detailed node documentation
 - [x] Add architectural documentation
 - [ ] Improve inline code comments
-- [ ] Create user guides and tutorials
+- [x] Create user guides and tutorials
 
 ### Infrastructure
 - [ ] Implement proper testing

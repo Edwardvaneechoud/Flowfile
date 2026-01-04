@@ -10,6 +10,7 @@ export type {
   CustomNodeInfo,
   NodeMetadata,
   AvailableComponent,
+  IconInfo,
 } from './types';
 
 // Constants
