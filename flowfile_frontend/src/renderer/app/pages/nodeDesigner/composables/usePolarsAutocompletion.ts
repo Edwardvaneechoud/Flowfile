@@ -147,7 +147,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
     const beforeCursor = context.state.doc.sliceString(0, context.pos);
     const sections = getSections();
 
-    // Check for ".value" completion after a component field
+    // Check for ".value" or ".secret_value" completion after a component field
     for (const section of sections) {
       const sectionName = section.name || toSnakeCase(section.title || 'section');
       for (const comp of section.components) {
@@ -157,6 +157,21 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
         );
         if (valueMatch) {
           const typed = valueMatch[1];
+          // For SecretSelector, show secret_value instead of value
+          if (comp.component_type === 'SecretSelector') {
+            return {
+              from: context.pos - typed.length,
+              options: [
+                {
+                  label: 'secret_value',
+                  type: 'property',
+                  info: 'Get the decrypted secret value (SecretStr)',
+                  detail: 'SecretSelector',
+                },
+              ],
+              validFor: /^\w*$/,
+            };
+          }
           return {
             from: context.pos - typed.length,
             options: [

@@ -70,6 +70,13 @@
               :schema="component"
               :incoming-columns="columnTypes"
             />
+
+            <SecretSelector
+              v-else-if="component.component_type === 'SecretSelector'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+            />
+
             <div v-else class="text-red-500 text-xs">
               Unknown component type: {{ (component as any).component_type }}
             </div>
@@ -96,6 +103,7 @@ import NumericInput from "./components/NumericInput.vue";
 import SliderInput from "./components/SliderInput.vue";
 import SingleSelect from "./components/SingleSelect.vue";
 import ColumnSelector from "./components/ColumnSelector.vue";
+import SecretSelector from "./components/SecretSelector.vue";
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
@@ -122,8 +130,6 @@ const loadNodeData = async (nodeId: number) => {
       return;
     }
     const [schemaData] = await Promise.all([getCustomNodeSchema(nodeStore.flow_id, nodeId)]);
-
-    console.log("schemaData", schemaData);
 
     schema.value = schemaData;
     nodeData.value = inputNodeData;
@@ -160,7 +166,6 @@ const pushNodeData = async () => {
     nodeUserDefined.value.is_user_defined = true;
     nodeUserDefined.value.is_setup = true;
   }
-  console.log(JSON.stringify(formData.value, null, 2));
   nodeStore.updateUserDefinedSettings(nodeUserDefined);
 };
 
