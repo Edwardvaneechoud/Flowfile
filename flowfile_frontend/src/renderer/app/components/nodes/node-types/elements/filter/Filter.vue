@@ -104,26 +104,20 @@ interface EditorChildType {
 }
 const editorChild = ref<EditorChildType | null>(null);
 
-// Get all operator labels for the dropdown
 const operatorLabels = Object.keys(FILTER_OPERATOR_LABELS);
 
-// Get the current operator value
 const currentOperator = computed((): FilterOperator => {
   const op = nodeFilter.value?.filter_input?.basic_filter?.operator;
   if (!op) return "equals";
-  // Handle both enum values and legacy string values
   if (typeof op === "string") {
-    // Check if it's already a valid operator
     if (Object.values(FILTER_OPERATOR_LABELS).includes(op as FilterOperator)) {
       return op as FilterOperator;
     }
-    // Try to convert from legacy symbol
     return convertLegacyOperator(op);
   }
   return op as FilterOperator;
 });
 
-// Convert legacy operator symbols to new format
 function convertLegacyOperator(symbol: string): FilterOperator {
   const legacyMapping: Record<string, FilterOperator> = {
     "=": "equals",
@@ -147,24 +141,20 @@ function convertLegacyOperator(symbol: string): FilterOperator {
   return legacyMapping[symbol] || "equals";
 }
 
-// Get the display label for the current operator
 function getOperatorLabel(operator: FilterOperator | string | undefined): string {
   if (!operator) return "Equals";
   const op = typeof operator === "string" ? convertLegacyOperator(operator) : operator;
   return getFilterOperatorLabel(op);
 }
 
-// Check if the current operator requires a value input
 const showValueInput = computed((): boolean => {
   return !OPERATORS_NO_VALUE.includes(currentOperator.value);
 });
 
-// Check if the current operator requires a second value
 const showValue2Input = computed((): boolean => {
   return OPERATORS_WITH_VALUE2.includes(currentOperator.value);
 });
 
-// Get placeholder text for value input
 const valuePlaceholder = computed((): string => {
   switch (currentOperator.value) {
     case "in":
@@ -177,7 +167,6 @@ const valuePlaceholder = computed((): string => {
   }
 });
 
-// Get help text for special operators
 const operatorHelpText = computed((): string => {
   switch (currentOperator.value) {
     case "in":
@@ -205,11 +194,9 @@ const handleOperatorChange = (newLabel: string) => {
     const operator = FILTER_OPERATOR_LABELS[newLabel];
     if (operator) {
       nodeFilter.value.filter_input.basic_filter.operator = operator;
-      // Clear value2 if operator doesn't need it
       if (!OPERATORS_WITH_VALUE2.includes(operator)) {
         nodeFilter.value.filter_input.basic_filter.value2 = undefined;
       }
-      // Clear value if operator doesn't need it
       if (OPERATORS_NO_VALUE.includes(operator)) {
         nodeFilter.value.filter_input.basic_filter.value = "";
       }
@@ -222,27 +209,22 @@ const loadNodeData = async (nodeId: number) => {
   if (nodeData.value) {
     nodeFilter.value = nodeData.value.setting_input;
 
-    // Handle advanced filter
     if (nodeFilter.value?.filter_input.advanced_filter) {
       editorString.value = nodeFilter.value?.filter_input.advanced_filter;
     }
 
-    // Determine filter mode (support both new 'mode' and legacy 'filter_type')
     const mode = nodeFilter.value?.filter_input.mode || nodeFilter.value?.filter_input.filter_type;
     isAdvancedFilter.value = mode === "advanced";
 
-    // Migrate legacy basic_filter fields if present
+    // Migrate legacy basic_filter fields
     if (nodeFilter.value?.filter_input.basic_filter) {
       const bf = nodeFilter.value.filter_input.basic_filter;
-      // Migrate filter_type -> operator
       if (bf.filter_type && !bf.operator) {
         bf.operator = convertLegacyOperator(bf.filter_type);
       }
-      // Migrate filter_value -> value
       if (bf.filter_value && !bf.value) {
         bf.value = bf.filter_value;
       }
-      // Ensure operator has a default
       if (!bf.operator) {
         bf.operator = "equals";
       }
@@ -262,7 +244,6 @@ const pushNodeData = async () => {
     if (isAdvancedFilter.value) {
       updateAdvancedFilter();
       nodeFilter.value.filter_input.mode = "advanced";
-      // Also set legacy field for compatibility
       nodeFilter.value.filter_input.filter_type = "advanced";
     } else {
       nodeFilter.value.filter_input.mode = "basic";

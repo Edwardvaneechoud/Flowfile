@@ -755,18 +755,14 @@ class FlowGraph:
             value = basic_filter.value
             value2 = basic_filter.value2
 
-            # Determine if value should be quoted (for string comparisons)
             is_numeric_value = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
             should_quote = field_data_type == "str" or not is_numeric_value
 
-            # Get the operator (handle both enum and string)
             try:
                 operator = basic_filter.get_operator()
             except (ValueError, AttributeError):
-                # Fallback for legacy string operators
                 operator = FilterOperator.from_symbol(str(basic_filter.operator))
 
-            # Build expression based on operator using Flowfile expression language
             if operator == FilterOperator.EQUALS:
                 if should_quote:
                     return f'{field}="{value}"'
@@ -798,39 +794,29 @@ class FlowGraph:
                 return f"{field}<={value}"
 
             elif operator == FilterOperator.CONTAINS:
-                # Use Flowfile function: contains([column], "value")
                 return f'contains({field}, "{value}")'
 
             elif operator == FilterOperator.NOT_CONTAINS:
-                # Use Flowfile function with negation: does_not_equal(contains([column], "value"), true)
-                # Or use: contains([column], "value") = false
                 return f'contains({field}, "{value}") = false'
 
             elif operator == FilterOperator.STARTS_WITH:
-                # Use left() function to check prefix: left([column], length) = "value"
                 return f'left({field}, {len(value)}) = "{value}"'
 
             elif operator == FilterOperator.ENDS_WITH:
-                # Use right() function to check suffix: right([column], length) = "value"
                 return f'right({field}, {len(value)}) = "{value}"'
 
             elif operator == FilterOperator.IS_NULL:
-                # Use Flowfile function: is_empty([column])
                 return f"is_empty({field})"
 
             elif operator == FilterOperator.IS_NOT_NULL:
-                # Use Flowfile function: is_not_empty([column])
                 return f"is_not_empty({field})"
 
             elif operator == FilterOperator.IN:
-                # For IN, check if value is in the list using multiple equals with OR
-                # Or use: "value" in [column] syntax if supported
                 values = [v.strip() for v in value.split(",")]
                 if len(values) == 1:
                     if should_quote:
                         return f'{field}="{values[0]}"'
                     return f"{field}={values[0]}"
-                # Build OR expression: ([field]="v1") | ([field]="v2") | ...
                 if should_quote:
                     conditions = [f'({field}="{v}")' for v in values]
                 else:
@@ -838,13 +824,11 @@ class FlowGraph:
                 return " | ".join(conditions)
 
             elif operator == FilterOperator.NOT_IN:
-                # For NOT IN, negate the IN logic using multiple not equals with AND
                 values = [v.strip() for v in value.split(",")]
                 if len(values) == 1:
                     if should_quote:
                         return f'{field}!="{values[0]}"'
                     return f"{field}!={values[0]}"
-                # Build AND expression: ([field]!="v1") & ([field]!="v2") & ...
                 if should_quote:
                     conditions = [f'({field}!="{v}")' for v in values]
                 else:
@@ -865,7 +849,6 @@ class FlowGraph:
                 return f"{field}{operator.to_symbol()}{value}"
 
         def _func(fl: FlowDataEngine):
-            # Check if using advanced mode (supports both new 'mode' and legacy 'filter_type')
             is_advanced = filter_settings.filter_input.is_advanced()
 
             if is_advanced:
@@ -877,15 +860,12 @@ class FlowGraph:
                     logger.warning("Basic filter is None, returning unfiltered data")
                     return fl
 
-                # Get field data type for smart quoting
                 try:
                     field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
                 except Exception:
                     field_data_type = None
 
-                # Build and execute the filter expression
                 expression = _build_basic_filter_expression(basic_filter, field_data_type)
-                # Store the generated expression for debugging/export
                 filter_settings.filter_input.advanced_filter = expression
                 return fl.do_filter(expression)
 
