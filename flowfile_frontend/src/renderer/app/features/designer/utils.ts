@@ -1,5 +1,6 @@
 import axios from "axios";
 import { NodeTemplate } from "./types";
+import { flowfileCorebaseURL } from "../../../config/constants";
 
 // List of built-in icons that are bundled with the app
 const BUILTIN_ICONS = new Set([
@@ -63,8 +64,8 @@ export const getImageUrl = (name: string): string => {
     return new URL(`./assets/icons/${name}`, import.meta.url).href;
   }
 
-  // Otherwise, it's a custom icon served from the backend API
-  return `/user_defined_components/icon/${name}`;
+  // Otherwise, it's a custom icon served from the backend API (use full URL)
+  return `${flowfileCorebaseURL}user_defined_components/icon/${name}`;
 };
 
 /**
@@ -78,7 +79,7 @@ export const getDefaultIconUrl = (): string => {
  * Get the URL for a custom icon from the backend API
  */
 export const getCustomIconUrl = (name: string): string => {
-  return `/user_defined_components/icon/${name}`;
+  return `${flowfileCorebaseURL}user_defined_components/icon/${name}`;
 };
 
 export const fetchNodes = async (): Promise<NodeTemplate[]> => {
