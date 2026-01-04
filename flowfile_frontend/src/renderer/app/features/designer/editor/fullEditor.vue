@@ -26,8 +26,6 @@
 import {
   ref,
   Ref,
-  defineExpose,
-  defineProps,
   watch,
   onMounted,
   nextTick,
