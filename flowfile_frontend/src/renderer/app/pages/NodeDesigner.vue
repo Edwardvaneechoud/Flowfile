@@ -148,7 +148,12 @@
       </div>
 
       <!-- Right Panel: Property Editor -->
-      <PropertyEditor :component="selectedComponent" @update="handlePropertyUpdate" />
+      <PropertyEditor
+        :component="selectedComponent"
+        :section-name="selectedSectionName"
+        @update="handlePropertyUpdate"
+        @insert-variable="handleInsertVariable"
+      />
     </div>
 
     <!-- Modals -->
@@ -183,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted } from "vue";
+import { watch, onMounted, computed } from "vue";
 import axios from "axios";
 
 // Child components
@@ -313,6 +318,40 @@ function handlePropertyUpdate(field: string, value: any) {
   if (selectedComponent.value) {
     (selectedComponent.value as any)[field] = value;
   }
+}
+
+// Computed property for selected section name
+const selectedSectionName = computed(() => {
+  if (selectedSectionIndex.value === null) return "";
+  const section = sections.value[selectedSectionIndex.value];
+  return section?.name || section?.title || "";
+});
+
+// Insert variable into process code
+function handleInsertVariable(code: string) {
+  // Find the position after "def process..." line to insert the variable
+  const lines = processCode.value.split("\n");
+  let insertIndex = 1; // Default to after first line
+
+  // Find the first non-empty, non-comment line after the def statement
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith("def process")) {
+      insertIndex = i + 1;
+      // Skip any immediate comments after def
+      while (
+        insertIndex < lines.length &&
+        (lines[insertIndex].trim().startsWith("#") || lines[insertIndex].trim() === "")
+      ) {
+        insertIndex++;
+      }
+      break;
+    }
+  }
+
+  // Insert the variable assignment
+  lines.splice(insertIndex, 0, code);
+  processCode.value = lines.join("\n");
 }
 </script>
 

@@ -256,6 +256,15 @@
             <span class="field-hint">Only show secrets starting with this prefix</span>
           </div>
         </template>
+
+        <!-- Insert Variable Button -->
+        <div class="insert-variable-section">
+          <button class="insert-variable-btn" @click="insertVariable">
+            <i class="fa-solid fa-code"></i>
+            Insert Variable
+          </button>
+          <span class="field-hint">Add typed variable to process method</span>
+        </div>
       </div>
 
       <div v-else class="no-selection">
@@ -268,17 +277,59 @@
 
 <script setup lang="ts">
 import type { DesignerComponent } from "./types";
+import { toSnakeCase } from "./composables/useCodeGeneration";
 
 const props = defineProps<{
   component: DesignerComponent | null;
+  sectionName: string;
 }>();
 
 const emit = defineEmits<{
   (e: "update", field: string, value: any): void;
+  (e: "insert-variable", code: string): void;
 }>();
 
 function updateField(field: string, value: any) {
   emit("update", field, value);
+}
+
+function getTypeForComponent(componentType: string, multiple?: boolean): string {
+  switch (componentType) {
+    case "TextInput":
+      return "str";
+    case "NumericInput":
+    case "SliderInput":
+      return "float";
+    case "ToggleSwitch":
+      return "bool";
+    case "SingleSelect":
+      return "str";
+    case "MultiSelect":
+      return "list[str]";
+    case "ColumnSelector":
+      return multiple ? "list[str]" : "str";
+    case "SecretSelector":
+      return "SecretStr";
+    default:
+      return "Any";
+  }
+}
+
+function insertVariable() {
+  if (!props.component || !props.sectionName) return;
+
+  const fieldName = toSnakeCase(props.component.field_name);
+  const sectionName = toSnakeCase(props.sectionName);
+  const pyType = getTypeForComponent(props.component.component_type, props.component.multiple);
+
+  let code: string;
+  if (props.component.component_type === "SecretSelector") {
+    code = `    ${fieldName}: ${pyType} = self.settings_schema.${sectionName}.${fieldName}.secret_value`;
+  } else {
+    code = `    ${fieldName}: ${pyType} = self.settings_schema.${sectionName}.${fieldName}.value`;
+  }
+
+  emit("insert-variable", code);
 }
 </script>
 
@@ -343,5 +394,38 @@ function updateField(field: string, value: any) {
   font-size: 0.7rem;
   color: var(--text-secondary);
   margin-top: 0.25rem;
+}
+
+.insert-variable-section {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.insert-variable-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1rem;
+  background: #4a6cf7;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.insert-variable-btn:hover {
+  background: #3d5bd9;
+}
+
+.insert-variable-btn i {
+  font-size: 0.875rem;
 }
 </style>
