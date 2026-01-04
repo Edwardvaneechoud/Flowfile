@@ -132,7 +132,7 @@ defineExpose({ getInstantFuncResults });
 
 .result-content.error .content {
   background-color: var(--color-background-primary);
-  color: #000000;
+  color: var(--color-text-error);
 }
 
 .result-content.loading .label {

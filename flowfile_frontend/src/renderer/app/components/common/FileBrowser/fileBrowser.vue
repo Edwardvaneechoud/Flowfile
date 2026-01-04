@@ -180,8 +180,7 @@
           <div v-if="newFileName.trim()" class="form-hint">
             <span class="preview-label">Will be saved as:</span>
             <code>{{ previewFileName }}</code>
-            <span v-if="!hasValidExtension" class="auto-extension-hint">
-            </span>
+            <span v-if="!hasValidExtension" class="auto-extension-hint"> </span>
           </div>
         </el-form-item>
       </el-form>

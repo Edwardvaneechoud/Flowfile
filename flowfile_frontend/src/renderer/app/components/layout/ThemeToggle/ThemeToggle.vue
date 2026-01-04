@@ -10,9 +10,9 @@
 </template>
 
 <script setup lang="ts">
-import { useTheme } from '../../../composables/useTheme'
+import { useTheme } from "../../../composables/useTheme";
 
-const { isDark, toggleTheme } = useTheme()
+const { isDark, toggleTheme } = useTheme();
 </script>
 
 <style scoped>

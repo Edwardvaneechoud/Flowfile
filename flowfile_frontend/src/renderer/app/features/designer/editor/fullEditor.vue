@@ -23,14 +23,7 @@
 </template>
 
 <script lang="ts" setup>
-import {
-  ref,
-  Ref,
-  watch,
-  onMounted,
-  nextTick,
-  computed,
-} from "vue";
+import { ref, Ref, watch, onMounted, nextTick, computed } from "vue";
 import ColumnSelector from "./ColumnSelector/columnsSelector.vue";
 import Sidebar from "./Sidebar/Sidebar.vue";
 import FunctionEditor from "./FunctionEditor.vue";
