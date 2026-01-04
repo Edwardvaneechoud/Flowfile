@@ -148,6 +148,7 @@ export function useCodeGeneration() {
 class ${nodeName}(CustomNodeBase):
     node_name: str = "${nodeMetadata.node_name}"
     node_category: str = "${nodeMetadata.node_category}"
+    node_icon: str = "${nodeMetadata.node_icon || 'user-defined-icon.png'}"
     title: str = "${nodeMetadata.title || nodeMetadata.node_name}"
     intro: str = "${nodeMetadata.intro || 'A custom node for data processing'}"
     number_of_inputs: int = ${nodeMetadata.number_of_inputs}
