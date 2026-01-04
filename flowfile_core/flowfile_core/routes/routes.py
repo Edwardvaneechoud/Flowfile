@@ -76,10 +76,13 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     Returns:
         A JSON response containing the filename and the path where it was saved.
     """
-    file_location = f"uploads/{file.filename}"
+    safe_name = Path(file.filename).name.replace("..", "")
+    if not safe_name:
+        raise HTTPException(400, 'Invalid filename')
+    file_location = f"uploads/{safe_name}"
     with open(file_location, "wb+") as file_object:
         file_object.write(file.file.read())
-    return JSONResponse(content={"filename": file.filename, "filepath": file_location})
+    return JSONResponse(content={"filename": safe_name, "filepath": file_location})
 
 
 @router.get('/files/files_in_local_directory/', response_model=List[FileInfo], tags=['file manager'])
@@ -94,10 +97,11 @@ async def get_local_files(directory: str) -> List[FileInfo]:
 
     Raises:
         HTTPException: 404 if the directory does not exist.
+        HTTPException: 403 if access is denied (path outside sandbox).
     """
-    files = get_files_from_directory(directory)
+    files = get_files_from_directory(directory, sandbox_root=storage.user_data_directory)
     if files is None:
-        raise HTTPException(404, 'Directory does not exist')
+        raise HTTPException(403, 'Access denied or directory does not exist')
     return files
 
 
@@ -534,7 +538,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
 def get_list_of_saved_flows(path: str):
     """Scans a directory for saved flow files (`.flowfile`)."""
     try:
-        return get_files_from_directory(path, types=['flowfile'])
+        return get_files_from_directory(path, types=['flowfile'], sandbox_root=storage.user_data_directory)
     except:
         return []
 
@@ -599,15 +603,30 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session."""
-    flow_path = Path(flow_path)
-    if not flow_path.exists():
+    explorer = SecureFileExplorer(
+        start_path=storage.user_data_directory,
+        sandbox_root=storage.user_data_directory
+    )
+    validated_path = explorer.get_absolute_path(flow_path)
+    if validated_path is None:
+        raise HTTPException(403, 'Access denied')
+    if not validated_path.exists():
         raise HTTPException(404, 'File not found')
-    return flow_file_handler.import_flow(flow_path)
+    return flow_file_handler.import_flow(validated_path)
 
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
     """Saves the current state of a flow to a `.yaml`."""
+    if flow_path is not None:
+        explorer = SecureFileExplorer(
+            start_path=storage.user_data_directory,
+            sandbox_root=storage.user_data_directory
+        )
+        validated_path = explorer.get_absolute_path(flow_path)
+        if validated_path is None:
+            raise HTTPException(403, 'Access denied')
+        flow_path = str(validated_path)
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -674,7 +693,14 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=List[str])
 async def get_excel_sheet_names(path: str) -> List[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    sheet_names = excel_file_manager.get_sheet_names(path)
+    explorer = SecureFileExplorer(
+        start_path=storage.user_data_directory,
+        sandbox_root=storage.user_data_directory
+    )
+    validated_path = explorer.get_absolute_path(path)
+    if validated_path is None:
+        raise HTTPException(403, 'Access denied')
+    sheet_names = excel_file_manager.get_sheet_names(str(validated_path))
     if sheet_names:
         return sheet_names
     else:
