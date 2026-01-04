@@ -54,6 +54,7 @@ Draw lines between nodes to define data flow. Data moves from top to bottom, lef
 ### More Resources
 - [Building Flows](building-flows.md) - Detailed workflow guide
 - [Node Reference](nodes/index.md) - Complete documentation of all nodes
+- [User-Defined Nodes](user-defined-nodes-ui.md) - Create and manage custom nodes from the UI
 
 ### Tutorials
 - [Connect to Databases](tutorials/database-connectivity.md) - PostgreSQL, MySQL, and more

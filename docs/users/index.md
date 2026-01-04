@@ -74,6 +74,7 @@ ff.open_graph_in_editor(result.flow_graph)  # See it visually!
 - **Coming from Excel/Tableau?** Try the [Visual Editor](visual-editor/index.md)
 - **Know Python/Pandas/Polars?** Jump into the [Python API](python-api/index.md)
 - **Want to see real examples?** Check out our tutorials in either section
+- **Customize your experience?** See [Getting Started](getting-started/index.md) for themes and settings
 
 ---
 

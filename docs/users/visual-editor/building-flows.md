@@ -184,3 +184,4 @@ After mastering basic flows, explore:
   - [Data aggregation techniques](nodes/aggregate.md)
   - [Advanced joining methods](nodes/combine.md)
   - [Output options](nodes/output.md)
+  - [Create custom nodes](user-defined-nodes-ui.md) - Build your own nodes directly in the UI
