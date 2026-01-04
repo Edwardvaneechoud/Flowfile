@@ -762,7 +762,7 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=list[str])
 async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    validated_path = _validate_file_path(path, allowed_base=Path(storage.user_data_directory))
+    validated_path = _validate_file_path(path)
     if validated_path is None:
         raise HTTPException(403, 'Access denied')
     sheet_names = excel_file_manager.get_sheet_names(str(validated_path))
