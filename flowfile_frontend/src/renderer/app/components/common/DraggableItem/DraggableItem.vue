@@ -619,7 +619,7 @@ const applyStickyPosition = () => {
       break;
 
     case "free":
-    default:
+    default: {
       // For free-positioned items, ensure they stay within viewport bounds
       // and maintain relative positioning when window resizes
       if (prevWindowWidth.value > 0 && prevWindowHeight.value > 0) {
@@ -653,6 +653,7 @@ const applyStickyPosition = () => {
         itemState.value.height = newWindowHeight - 70;
       }
       break;
+    }
   }
 
   // Update tracked window dimensions
