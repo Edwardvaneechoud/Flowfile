@@ -3,9 +3,12 @@
   <div v-else-if="error" class="p-4 text-red-600 bg-red-100 rounded-md">
     <strong>Error:</strong> {{ error }}
   </div>
-
   <!-- This wrapper prevents rendering until the schema and formData are ready -->
   <div v-else-if="schema && formData && nodeUserDefined" class="custom-node-wrapper">
+
+    <div v-if="schema.intro" class="listbox-subtitle">
+      {{ schema.intro }}
+    </div>
     <generic-node-settings v-model="nodeUserDefined">
       <!-- Loop through each section in the settings_schema -->
       <div

@@ -4,7 +4,8 @@ import re
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from flowfile_core import flow_file_handler
@@ -35,6 +36,7 @@ class CustomNodeInfo(BaseModel):
     node_category: str = ""
     title: str = ""
     intro: str = ""
+    node_icon: str = "user-defined-icon.png"
 
 
 class SaveCustomNodeRequest(BaseModel):
@@ -155,23 +157,37 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
         # Find class definitions that might be custom nodes
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                # Look for class attributes
+                # Look for class attributes (both annotated and simple assignments)
                 for item in node.body:
-                    if isinstance(item, ast.Assign):
+                    attr_name = None
+                    value = None
+
+                    # Handle annotated assignments: node_name: str = "value"
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        attr_name = item.target.id
+                        if item.value and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
+                            value = item.value.value
+                    # Handle simple assignments: node_name = "value"
+                    elif isinstance(item, ast.Assign):
                         for target in item.targets:
                             if isinstance(target, ast.Name):
                                 attr_name = target.id
-                                # Extract string values
                                 if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
                                     value = item.value.value
-                                    if attr_name == "node_name":
-                                        info.node_name = value
-                                    elif attr_name == "node_category":
-                                        info.node_category = value
-                                    elif attr_name == "title":
-                                        info.title = value
-                                    elif attr_name == "intro":
-                                        info.intro = value
+                                break
+
+                    # Map attribute names to info fields
+                    if attr_name and value:
+                        if attr_name == "node_name":
+                            info.node_name = value
+                        elif attr_name == "node_category":
+                            info.node_category = value
+                        elif attr_name == "title":
+                            info.title = value
+                        elif attr_name == "intro":
+                            info.intro = value
+                        elif attr_name == "node_icon":
+                            info.node_icon = value
 
                 # If we found a node_name, this is likely a custom node class
                 if info.node_name:
@@ -245,27 +261,43 @@ def get_custom_node(file_name: str) -> Dict[str, Any]:
                 # Check if this looks like a custom node class (has node_name attribute)
                 is_custom_node = False
                 for item in node.body:
-                    if isinstance(item, ast.Assign):
+                    # Check annotated assignments: node_name: str = "value"
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        if item.target.id == "node_name":
+                            is_custom_node = True
+                            break
+                    # Check simple assignments: node_name = "value"
+                    elif isinstance(item, ast.Assign):
                         for target in item.targets:
                             if isinstance(target, ast.Name) and target.id == "node_name":
                                 is_custom_node = True
                                 break
 
                 if is_custom_node:
-                    # Extract metadata
+                    # Extract metadata from both annotated and simple assignments
                     for item in node.body:
-                        if isinstance(item, ast.Assign):
+                        attr_name = None
+                        value = None
+
+                        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                            attr_name = item.target.id
+                            if item.value and isinstance(item.value, ast.Constant):
+                                value = item.value.value
+                        elif isinstance(item, ast.Assign):
                             for target in item.targets:
                                 if isinstance(target, ast.Name):
                                     attr_name = target.id
                                     if isinstance(item.value, ast.Constant):
                                         value = item.value.value
-                                        if attr_name in ["node_name", "node_category", "title", "intro"]:
-                                            result["metadata"][attr_name] = value
-                                        elif attr_name == "number_of_inputs":
-                                            result["metadata"]["number_of_inputs"] = value
-                                        elif attr_name == "number_of_outputs":
-                                            result["metadata"]["number_of_outputs"] = value
+                                    break
+
+                        if attr_name and value is not None:
+                            if attr_name in ["node_name", "node_category", "title", "intro", "node_icon"]:
+                                result["metadata"][attr_name] = value
+                            elif attr_name == "number_of_inputs":
+                                result["metadata"]["number_of_inputs"] = value
+                            elif attr_name == "number_of_outputs":
+                                result["metadata"]["number_of_outputs"] = value
 
                     # Extract process method
                     for item in node.body:
@@ -337,4 +369,166 @@ def delete_custom_node(file_name: str) -> Dict[str, Any]:
         "success": True,
         "file_name": safe_name,
         "message": f"Node '{safe_name}' deleted successfully"
+    }
+
+
+# ==================== Custom Icon Endpoints ====================
+
+class IconInfo(BaseModel):
+    """Info about a custom icon file."""
+    file_name: str
+    is_custom: bool = True
+
+
+ALLOWED_ICON_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp'}
+MAX_ICON_SIZE = 5 * 1024 * 1024  # 5MB
+
+
+@router.get("/list-icons", summary="List all available icons", response_model=List[IconInfo])
+def list_icons() -> List[IconInfo]:
+    """
+    List all icon files available for custom nodes.
+    Returns icons from the user_defined_nodes/icons directory.
+    """
+    icons_dir = storage.user_defined_nodes_icons
+    icons: List[IconInfo] = []
+
+    if not icons_dir.exists():
+        return icons
+
+    for file_path in icons_dir.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in ALLOWED_ICON_EXTENSIONS:
+            icons.append(IconInfo(file_name=file_path.name, is_custom=True))
+
+    # Sort by file name
+    icons.sort(key=lambda x: x.file_name.lower())
+    return icons
+
+
+@router.post("/upload-icon", summary="Upload a custom icon")
+async def upload_icon(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """
+    Upload a new icon file to the user_defined_nodes/icons directory.
+
+    Accepts PNG, JPG, JPEG, SVG, GIF, and WebP files up to 5MB.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    # Validate file extension
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ALLOWED_ICON_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed types: {', '.join(ALLOWED_ICON_EXTENSIONS)}"
+        )
+
+    # Read file content
+    content = await file.read()
+
+    # Validate file size
+    if len(content) > MAX_ICON_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Maximum size is {MAX_ICON_SIZE // (1024 * 1024)}MB"
+        )
+
+    # Sanitize filename - preserve hyphens, dots, and underscores
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '_', file.filename)
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
+    icons_dir = storage.user_defined_nodes_icons
+
+    # Ensure the icons directory exists
+    icons_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = icons_dir / safe_name
+
+    # Write the file
+    try:
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        logger.info(f"Uploaded icon: {file_path} (size: {len(content)} bytes)")
+    except Exception as e:
+        logger.error(f"Failed to save icon: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save icon: {str(e)}")
+
+    return {
+        "success": True,
+        "file_name": safe_name,
+        "path": str(file_path),
+        "message": f"Icon '{safe_name}' uploaded successfully"
+    }
+
+
+@router.get("/icon/{file_name}", summary="Get a custom icon file")
+def get_icon(file_name: str) -> FileResponse:
+    """
+    Retrieve a custom icon file by name.
+    Returns the icon file for display in the UI.
+    """
+    # Sanitize file name - preserve hyphens, dots, and underscores
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '_', file_name)
+
+    icons_dir = storage.user_defined_nodes_icons
+    file_path = icons_dir / safe_name
+
+    logger.debug(f"Attempting to serve icon: {file_path}")
+
+    if not file_path.exists():
+        logger.warning(f"Icon not found: {file_path} (icons_dir exists: {icons_dir.exists()})")
+        # List available icons for debugging
+        if icons_dir.exists():
+            available = list(icons_dir.iterdir())
+            logger.debug(f"Available icons: {[f.name for f in available]}")
+        raise HTTPException(status_code=404, detail=f"Icon '{safe_name}' not found at {file_path}")
+
+    # Validate it's actually an icon file
+    if file_path.suffix.lower() not in ALLOWED_ICON_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Invalid file type")
+
+    # Determine content type
+    content_type_map = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.svg': 'image/svg+xml',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+    }
+    content_type = content_type_map.get(file_path.suffix.lower(), 'application/octet-stream')
+
+    return FileResponse(
+        path=file_path,
+        media_type=content_type,
+        filename=safe_name
+    )
+
+
+@router.delete("/delete-icon/{file_name}", summary="Delete a custom icon")
+def delete_icon(file_name: str) -> Dict[str, Any]:
+    """
+    Delete a custom icon file from the icons directory.
+    """
+    # Sanitize file name - preserve hyphens, dots, and underscores
+    safe_name = re.sub(r'[^a-zA-Z0-9_.\-]', '_', file_name)
+
+    icons_dir = storage.user_defined_nodes_icons
+    file_path = icons_dir / safe_name
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Icon '{safe_name}' not found")
+
+    try:
+        file_path.unlink()
+        logger.info(f"Deleted icon: {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to delete icon: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete icon: {str(e)}")
+
+    return {
+        "success": True,
+        "file_name": safe_name,
+        "message": f"Icon '{safe_name}' deleted successfully"
     }
