@@ -57,6 +57,54 @@ file_explorer = SecureFileExplorer(
 )
 
 
+def _is_sensitive_system_path(path: Path) -> bool:
+    """Check if a path is a sensitive system path that should be blocked."""
+    try:
+        resolved = path.resolve()
+        path_str = str(resolved).lower()
+
+        # Block sensitive Unix paths
+        sensitive_unix = ['/etc/', '/etc', '/var/', '/root/', '/boot/', '/sys/', '/proc/', '/dev/']
+        for sensitive in sensitive_unix:
+            if path_str == sensitive.rstrip('/') or path_str.startswith(sensitive):
+                return True
+
+        # Block sensitive Windows paths
+        sensitive_windows = ['\\windows\\', '\\system32\\', '\\syswow64\\', '\\programdata\\']
+        for sensitive in sensitive_windows:
+            if sensitive in path_str:
+                return True
+
+        return False
+    except (ValueError, RuntimeError, OSError):
+        return True  # Block on error
+
+
+def _validate_file_path(user_path: str) -> Optional[Path]:
+    """Validate a file path, blocking path traversal and sensitive directories.
+
+    This is less restrictive than sandbox mode - it allows project directories
+    but blocks sensitive system paths and path traversal patterns.
+
+    Returns:
+        Validated Path or None if the path is unsafe.
+    """
+    try:
+        # Block path traversal patterns
+        if '..' in user_path:
+            return None
+
+        path = Path(user_path).expanduser().resolve()
+
+        # Block sensitive system directories
+        if _is_sensitive_system_path(path):
+            return None
+
+        return path
+    except (ValueError, RuntimeError, OSError):
+        return None
+
+
 def get_node_model(setting_name_ref: str):
     """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
     logger.info("Getting node model for: " + setting_name_ref)
@@ -603,11 +651,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session."""
-    explorer = SecureFileExplorer(
-        start_path=storage.user_data_directory,
-        sandbox_root=storage.user_data_directory
-    )
-    validated_path = explorer.get_absolute_path(flow_path)
+    validated_path = _validate_file_path(flow_path)
     if validated_path is None:
         raise HTTPException(403, 'Access denied')
     if not validated_path.exists():
@@ -619,11 +663,7 @@ def import_saved_flow(flow_path: str) -> int:
 def save_flow(flow_id: int, flow_path: str = None):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
-        explorer = SecureFileExplorer(
-            start_path=storage.user_data_directory,
-            sandbox_root=storage.user_data_directory
-        )
-        validated_path = explorer.get_absolute_path(flow_path)
+        validated_path = _validate_file_path(flow_path)
         if validated_path is None:
             raise HTTPException(403, 'Access denied')
         flow_path = str(validated_path)
@@ -693,11 +733,7 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=List[str])
 async def get_excel_sheet_names(path: str) -> List[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    explorer = SecureFileExplorer(
-        start_path=storage.user_data_directory,
-        sandbox_root=storage.user_data_directory
-    )
-    validated_path = explorer.get_absolute_path(path)
+    validated_path = _validate_file_path(path)
     if validated_path is None:
         raise HTTPException(403, 'Access denied')
     sheet_names = excel_file_manager.get_sheet_names(str(validated_path))
