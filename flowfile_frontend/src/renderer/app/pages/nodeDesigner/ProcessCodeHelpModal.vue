@@ -102,24 +102,6 @@ return lf.select(pl.col(column_name))
 selected_columns = self.settings_schema.columns.selected.value
 return lf.select(selected_columns)</code></pre>
         </div>
-
-        <div class="help-section">
-          <h4>Keyboard Shortcuts</h4>
-          <div class="shortcuts-grid">
-            <div class="shortcut">
-              <kbd>Tab</kbd>
-              <span>Accept autocomplete suggestion</span>
-            </div>
-            <div class="shortcut">
-              <kbd>Arrow Up/Down</kbd>
-              <span>Navigate suggestions</span>
-            </div>
-            <div class="shortcut">
-              <kbd>Escape</kbd>
-              <span>Close autocomplete menu</span>
-            </div>
-          </div>
-        </div>
       </div>
       <div class="modal-actions">
         <button class="btn btn-primary" @click="emit('close')">Close</button>
