@@ -1,0 +1,134 @@
+name: Docker Authentication E2E Tests
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'flowfile_core/flowfile_core/routes/auth.py'
+      - 'flowfile_core/flowfile_core/auth/**'
+      - 'flowfile_core/flowfile_core/database/init_db.py'
+      - 'flowfile_core/tests/test_auth*.py'
+      - 'flowfile_core/Dockerfile'
+      - '.github/workflows/test-docker-auth.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'flowfile_core/flowfile_core/routes/auth.py'
+      - 'flowfile_core/flowfile_core/auth/**'
+      - 'flowfile_core/flowfile_core/database/init_db.py'
+      - 'flowfile_core/tests/test_auth*.py'
+      - 'flowfile_core/Dockerfile'
+      - '.github/workflows/test-docker-auth.yml'
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    name: Unit Tests - Authentication
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        working-directory: flowfile_core
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      - name: Run authentication unit tests
+        working-directory: flowfile_core
+        run: |
+          poetry run pytest tests/test_auth.py -v --tb=short
+
+  docker-e2e-tests:
+    name: E2E Tests - Docker Authentication
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        working-directory: flowfile_core
+        run: |
+          poetry install --no-interaction --no-ansi
+
+      - name: Create master key for testing
+        run: |
+          echo "github-actions-test-master-key-$(date +%s)" > master_key.txt
+
+      - name: Run Docker E2E authentication tests
+        working-directory: flowfile_core
+        run: |
+          poetry run pytest tests/test_auth_e2e.py -v -s --tb=short
+        timeout-minutes: 15
+
+      - name: Clean up Docker resources
+        if: always()
+        run: |
+          # Remove any test containers
+          docker ps -a --filter "name=flowfile-e2e" -q | xargs -r docker rm -f
+          # Remove test images
+          docker images --filter "reference=flowfile-core:e2e-test" -q | xargs -r docker rmi -f
+          # Prune dangling images
+          docker image prune -f
+
+      - name: Show Docker logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker containers ==="
+          docker ps -a
+          echo ""
+          echo "=== Docker images ==="
+          docker images
+          echo ""
+          echo "=== Container logs (if any) ==="
+          docker ps -a --filter "name=flowfile-e2e" --format "{{.Names}}" | while read name; do
+            echo "--- Logs for $name ---"
+            docker logs "$name" 2>&1 || true
+          done
+
+  integration-test-summary:
+    name: Authentication Tests Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, docker-e2e-tests]
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Docker E2E Tests: ${{ needs.docker-e2e-tests.result }}"
+
+          if [ "${{ needs.unit-tests.result }}" != "success" ] || [ "${{ needs.docker-e2e-tests.result }}" != "success" ]; then
+            echo "❌ Some authentication tests failed"
+            exit 1
+          else
+            echo "✅ All authentication tests passed"
+          fi
