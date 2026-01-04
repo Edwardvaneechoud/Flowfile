@@ -1,10 +1,12 @@
-from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
-from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
 from sqlalchemy.orm import Session
-from flowfile_core.database.models import (DatabaseConnection as DBConnectionModel, Secret,
-                                           CloudStorageConnection as DBCloudStorageConnection)
-from flowfile_core.secret_manager.secret_manager import store_secret, SecretInput, decrypt_secret
+
 from flowfile_core.database.connection import get_db_context
+from flowfile_core.database.models import CloudStorageConnection as DBCloudStorageConnection
+from flowfile_core.database.models import DatabaseConnection as DBConnectionModel
+from flowfile_core.database.models import Secret
+from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection, FullCloudStorageConnectionInterface
+from flowfile_core.schemas.input_schema import FullDatabaseConnection, FullDatabaseConnectionInterface
+from flowfile_core.secret_manager.secret_manager import SecretInput, decrypt_secret, store_secret
 
 
 def store_database_connection(db: Session, connection: FullDatabaseConnection, user_id: int) -> DBConnectionModel:
@@ -32,7 +34,7 @@ def store_database_connection(db: Session, connection: FullDatabaseConnection, u
         username=connection.username,
         password_id=password_id,
         ssl_enabled=connection.ssl_enabled,
-        user_id=user_id
+        user_id=user_id,
     )
 
     # Add and commit the new connection to the database
@@ -47,10 +49,11 @@ def get_database_connection(db: Session, connection_name: str, user_id: int) -> 
     """
     Get a database connection by its name and user ID.
     """
-    db_connection = db.query(DBConnectionModel).filter(
-        DBConnectionModel.connection_name == connection_name,
-        DBConnectionModel.user_id == user_id
-    ).first()
+    db_connection = (
+        db.query(DBConnectionModel)
+        .filter(DBConnectionModel.connection_name == connection_name, DBConnectionModel.user_id == user_id)
+        .first()
+    )
 
     return db_connection
 
@@ -59,10 +62,13 @@ def get_cloud_connection(db: Session, connection_name: str, user_id: int) -> DBC
     """
     Get a cloud storage connection by its name and user ID.
     """
-    db_connection = db.query(DBCloudStorageConnection).filter(
-        DBCloudStorageConnection.connection_name == connection_name,
-        DBCloudStorageConnection.user_id == user_id
-    ).first()
+    db_connection = (
+        db.query(DBCloudStorageConnection)
+        .filter(
+            DBCloudStorageConnection.connection_name == connection_name, DBCloudStorageConnection.user_id == user_id
+        )
+        .first()
+    )
 
     return db_connection
 
@@ -87,7 +93,7 @@ def get_database_connection_schema(db: Session, connection_name: str, user_id: i
             database_type=db_connection.database_type,
             username=db_connection.username,
             password=password_secret.encrypted_value,
-            ssl_enabled=db_connection.ssl_enabled
+            ssl_enabled=db_connection.ssl_enabled,
         )
 
     return None
@@ -116,10 +122,11 @@ def delete_database_connection(db: Session, connection_name: str, user_id: int) 
     """
     Delete a database connection by its name and user ID.
     """
-    db_connection = db.query(DBConnectionModel).filter(
-        DBConnectionModel.connection_name == connection_name,
-        DBConnectionModel.user_id == user_id
-    ).first()
+    db_connection = (
+        db.query(DBConnectionModel)
+        .filter(DBConnectionModel.connection_name == connection_name, DBConnectionModel.user_id == user_id)
+        .first()
+    )
 
     if db_connection:
         db.delete(db_connection)
@@ -131,7 +138,8 @@ def delete_database_connection(db: Session, connection_name: str, user_id: int) 
 
 
 def database_connection_interface_from_db_connection(
-        db_connection: DBConnectionModel) -> FullDatabaseConnectionInterface:
+    db_connection: DBConnectionModel,
+) -> FullDatabaseConnectionInterface:
     """
     Convert a database connection from the database model to the interface model.
     """
@@ -142,7 +150,7 @@ def database_connection_interface_from_db_connection(
         host=db_connection.host,
         port=db_connection.port,
         database=db_connection.database,
-        ssl_enabled=db_connection.ssl_enabled
+        ssl_enabled=db_connection.ssl_enabled,
     )
 
 
@@ -151,9 +159,7 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
     Get all database connections for a user.
     """
     # Get the raw query results
-    query_results = db.query(DBConnectionModel).filter(
-        DBConnectionModel.user_id == user_id
-    ).all()
+    query_results = db.query(DBConnectionModel).filter(DBConnectionModel.user_id == user_id).all()
 
     # Convert with explicit type assertion
     result = []
@@ -168,7 +174,9 @@ def get_all_database_connections_interface(db: Session, user_id: int) -> list[Fu
     return result
 
 
-def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, user_id: int) -> DBCloudStorageConnection:
+def store_cloud_connection(
+    db: Session, connection: FullCloudStorageConnection, user_id: int
+) -> DBCloudStorageConnection:
     """
     Placeholder function to store a cloud database connection.
     This function should be implemented based on specific cloud provider requirements.
@@ -180,20 +188,29 @@ def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, 
             f" Please use a unique connection name or delete the existing connection first."
         )
     if connection.aws_secret_access_key is not None:
-        aws_secret_access_key_ref_id = store_secret(db,
-                                                    SecretInput(name=connection.connection_name + "_aws_secret_access_key",
-                                                                value=connection.aws_secret_access_key), user_id).id
+        aws_secret_access_key_ref_id = store_secret(
+            db,
+            SecretInput(
+                name=connection.connection_name + "_aws_secret_access_key", value=connection.aws_secret_access_key
+            ),
+            user_id,
+        ).id
     else:
         aws_secret_access_key_ref_id = None
     if connection.azure_client_secret is not None:
-        azure_client_secret_ref_id = store_secret(db,
-                                                  SecretInput(name=connection.connection_name + "azure_client_secret",
-                                                              value=connection.azure_client_secret), user_id).id
+        azure_client_secret_ref_id = store_secret(
+            db,
+            SecretInput(name=connection.connection_name + "azure_client_secret", value=connection.azure_client_secret),
+            user_id,
+        ).id
     else:
         azure_client_secret_ref_id = None
     if connection.azure_account_key is not None:
-        azure_account_key_ref_id = store_secret(db, SecretInput(name=connection.connection_name + "azure_account_key",
-                                                                value=connection.azure_account_key), user_id).id
+        azure_account_key_ref_id = store_secret(
+            db,
+            SecretInput(name=connection.connection_name + "azure_account_key", value=connection.azure_account_key),
+            user_id,
+        ).id
     else:
         azure_account_key_ref_id = None
 
@@ -202,24 +219,21 @@ def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, 
         storage_type=connection.storage_type,
         auth_method=connection.auth_method,
         user_id=user_id,
-
-            # AWS S3 fields
+        # AWS S3 fields
         aws_region=connection.aws_region,
         aws_access_key_id=connection.aws_access_key_id,
         aws_role_arn=connection.aws_role_arn,
         aws_secret_access_key_id=aws_secret_access_key_ref_id,
         aws_allow_unsafe_html=connection.aws_allow_unsafe_html,
-
         # Azure ADLS fields
         azure_account_name=connection.azure_account_name,
         azure_tenant_id=connection.azure_tenant_id,
         azure_client_id=connection.azure_client_id,
         azure_account_key_id=azure_account_key_ref_id,
         azure_client_secret_id=azure_client_secret_ref_id,
-
         # Common fields
         endpoint_url=connection.endpoint_url,
-        verify_ssl=connection.verify_ssl
+        verify_ssl=connection.verify_ssl,
     )
     db.add(db_cloud_connection)
     db.commit()
@@ -228,7 +242,8 @@ def store_cloud_connection(db: Session, connection: FullCloudStorageConnection, 
 
 
 def get_full_cloud_storage_interface_from_db(
-        db_cloud_connection: DBCloudStorageConnection) -> FullCloudStorageConnectionInterface:
+    db_cloud_connection: DBCloudStorageConnection,
+) -> FullCloudStorageConnectionInterface:
     """
     Convert a cloud storage connection from the database model to the interface model.
     """
@@ -244,7 +259,7 @@ def get_full_cloud_storage_interface_from_db(
         azure_tenant_id=db_cloud_connection.azure_tenant_id,
         azure_client_id=db_cloud_connection.azure_client_id,
         endpoint_url=db_cloud_connection.endpoint_url,
-        verify_ssl=db_cloud_connection.verify_ssl
+        verify_ssl=db_cloud_connection.verify_ssl,
     )
 
 
@@ -291,12 +306,13 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         azure_client_id=db_connection.azure_client_id,
         azure_client_secret=azure_client_secret,
         endpoint_url=db_connection.endpoint_url,
-        verify_ssl=db_connection.verify_ssl
+        verify_ssl=db_connection.verify_ssl,
     )
 
 
 def cloud_connection_interface_from_db_connection(
-        db_connection: DBCloudStorageConnection) -> FullCloudStorageConnectionInterface:
+    db_connection: DBCloudStorageConnection,
+) -> FullCloudStorageConnectionInterface:
     """
     Converts a DBCloudStorageConnection model to a FullCloudStorageConnectionInterface model,
     which safely exposes non-sensitive data.
@@ -313,7 +329,7 @@ def cloud_connection_interface_from_db_connection(
         azure_tenant_id=db_connection.azure_tenant_id,
         azure_client_id=db_connection.azure_client_id,
         endpoint_url=db_connection.endpoint_url,
-        verify_ssl=db_connection.verify_ssl
+        verify_ssl=db_connection.verify_ssl,
     )
 
 
@@ -339,7 +355,7 @@ def delete_cloud_connection(db: Session, connection_name: str, user_id: int) -> 
             db_connection.aws_session_token_id,
             db_connection.azure_account_key_id,
             db_connection.azure_client_secret_id,
-            db_connection.azure_sas_token_id
+            db_connection.azure_sas_token_id,
         ]
         # Filter out None values
         secret_ids_to_delete = [id for id in secret_ids_to_delete if id is not None]

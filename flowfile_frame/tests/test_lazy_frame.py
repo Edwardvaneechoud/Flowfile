@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import sys
-
+from collections.abc import Callable
 from datetime import date, datetime
 from functools import reduce
 from operator import add
 from string import ascii_letters
-from typing import TYPE_CHECKING, Any, Callable, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
+
 import numpy as np
 import polars as pl
 import pytest
-from polars import NUMERIC_DTYPES, FLOAT_DTYPES
+from polars import FLOAT_DTYPES, NUMERIC_DTYPES
 from polars.exceptions import (
     InvalidOperationError,
     PolarsInefficientMapWarning,
@@ -59,7 +60,6 @@ def df() -> FlowFrame:
 
 if TYPE_CHECKING:
     from _pytest.capture import CaptureFixture
-
     from polars._typing import PolarsDataType
 
 

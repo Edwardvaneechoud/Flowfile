@@ -1,14 +1,14 @@
 # flowfile_core/tests/utils.py
 
-import subprocess
 import platform
-from flowfile_core.secret_manager.secret_manager import store_secret, get_encrypted_secret
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.auth.models import SecretInput
-from flowfile_core.schemas import input_schema
-
-
+import subprocess
 from contextlib import contextmanager
+
+from flowfile_core.auth.models import SecretInput
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.schemas import input_schema
+from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, store_secret
+
 
 def is_docker_available():
     """Check if Docker is running."""
@@ -29,8 +29,10 @@ def ensure_password_is_available():
 
 
 def ensure_db_connection_is_available():
-    from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
-                                                                                   get_database_connection)
+    from flowfile_core.flowfile.database_connection_manager.db_connections import (
+        get_database_connection,
+        store_database_connection,
+    )
 
     connection = input_schema.FullDatabaseConnection(username='testuser', password='testpass',
                                                      connection_name='test_connection_endpoint', host='localhost',

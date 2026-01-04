@@ -1,22 +1,26 @@
 
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.flow_graph import (FlowGraph, add_connection, RunInformation)
-from flowfile_core.schemas import input_schema, transform_schema, schemas, cloud_storage_schemas as cloud_ss
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
-from flowfile_core.configs.flow_logger import FlowLogger
-from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               store_database_connection)
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
-from flowfile_core.types import DataType
+from copy import deepcopy
+from pathlib import Path
+from time import sleep
+from typing import Literal
 
 import pytest
-from pathlib import Path
-from typing import List, Dict, Literal
-from copy import deepcopy
-from time import sleep
+
+from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    get_local_database_connection,
+    store_database_connection,
+)
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_graph import FlowGraph, RunInformation, add_connection
+from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.flowfile.schema_callbacks import pre_calculate_pivot_schema
+from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
+from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.types import DataType
 
 
 def find_parent_directory(target_dir_name,):
@@ -33,7 +37,7 @@ def find_parent_directory(target_dir_name,):
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
 
 try:
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 except ModuleNotFoundError:
     import os
@@ -41,7 +45,8 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import ensure_password_is_available, is_docker_available
+
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection
 
 
@@ -51,7 +56,7 @@ def flow_logger() -> FlowLogger:
 
 
 @pytest.fixture
-def raw_data() -> List[Dict]:
+def raw_data() -> list[dict]:
     return [{'name': 'John', 'city': 'New York'},
             {'name': 'Jane', 'city': 'Los Angeles'},
             {'name': 'Edward', 'city': 'Chicago'},
@@ -605,7 +610,7 @@ def test_add_and_run_group_by():
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
     assert set(predicted_df.columns) == {'groups',
                                          'sales_data_output'}, 'Columns should be groups, Country, sales_data_sum'
-    assert {'numeric', 'numeric'} == set(
+    assert {'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -646,7 +651,7 @@ def test_add_pivot():
     graph.add_pivot(pivot_settings)
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
     assert set(predicted_df.columns) == {'Country', '0', '3', '2', '1'}, 'Columns should be Country, 0, 3, 2, 1'
-    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
+    assert {'str', 'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -705,7 +710,7 @@ def test_add_pivot_string_count():
     predicted_df = graph.get_node(2).get_predicted_resulting_data()
     assert set(predicted_df.columns) == {'Country', '0', '3', '2',
                                          '1'}, 'Columns should be Country, 0, 3, 2, 1'
-    assert {'str', 'numeric', 'numeric', 'numeric', 'numeric'} == set(
+    assert {'str', 'numeric'} == set(
         p.generic_datatype() for p in predicted_df.schema), 'Data types should be the same'
     run_info = graph.run_graph()
     handle_run_info(run_info)
@@ -752,7 +757,7 @@ def test_try_add_to_big_pivot():
     run_info = graph.run_graph()
     handle_run_info(run_info)
     error_line = None
-    with open(graph.flow_logger.log_file_path, 'r') as file:
+    with open(graph.flow_logger.log_file_path) as file:
         for line in file:
             if "WARNING" in line and "Pivot column has too many unique values" in line and 'Node ID: 2' in line:
                 error_line = line

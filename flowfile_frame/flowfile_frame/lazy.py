@@ -1,12 +1,14 @@
 import inspect
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from collections.abc import Callable
+from functools import wraps
+from typing import Any, Literal, Optional, cast
+
 import polars as pl
-from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
+
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_frame.expr import Expr
+from flowfile_frame.flow_frame import FlowFrame, can_be_expr, generate_node_id
 from flowfile_frame.utils import _get_function_source
-from typing import cast
-from functools import wraps
 
 
 def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFrame", "Expr"]:
@@ -32,16 +34,18 @@ def _determine_return_type(func_signature: inspect.Signature) -> Literal["FlowFr
         # Allow for type aliases or Union types that might include DataFrame/LazyFrame/Expr
         if "DataFrame" in return_annotation or "LazyFrame" in return_annotation:
             return "FlowFrame"
-        if "Expr" in return_annotation and "DataFrame" not in return_annotation and "LazyFrame" not in return_annotation:
+        if (
+            "Expr" in return_annotation
+            and "DataFrame" not in return_annotation
+            and "LazyFrame" not in return_annotation
+        ):
             return "Expr"
-        raise ValueError(
-            f"Function does not return a Frame or Expr. "
-            f"Got return annotation: {return_annotation}"
-        )
+        raise ValueError(f"Function does not return a Frame or Expr. " f"Got return annotation: {return_annotation}")
 
 
-def _analyze_parameters(func_signature: inspect.Signature) -> Tuple[
-    Dict[str, bool], List[Tuple[str, inspect.Parameter]]]:
+def _analyze_parameters(
+    func_signature: inspect.Signature,
+) -> tuple[dict[str, bool], list[tuple[str, inspect.Parameter]]]:
     """
     Analyze function parameters to determine which can accept Expr types.
 
@@ -99,6 +103,7 @@ def _deep_get_repr(obj: Any, can_be_expr: bool = False) -> str:
         String representation suitable for code generation
     """
     from flowfile_frame.expr import _get_expr_and_repr
+
     if isinstance(obj, Expr):
         # FlowFile Expr - get its representation
         _, repr_str = _get_expr_and_repr(obj)
@@ -131,7 +136,7 @@ def _deep_get_repr(obj: Any, can_be_expr: bool = False) -> str:
         return repr(obj)
 
 
-def _process_callable_arg(arg: Any) -> Tuple[str, Any, bool, Optional[str]]:
+def _process_callable_arg(arg: Any) -> tuple[str, Any, bool, str | None]:
     """
     Process a callable argument for representation and conversion.
 
@@ -154,7 +159,7 @@ def _process_callable_arg(arg: Any) -> Tuple[str, Any, bool, Optional[str]]:
         return repr(arg), arg, False, None
 
 
-def _process_argument(arg: Any, can_be_expr: bool) -> Tuple[str, Any, bool, Optional[str]]:
+def _process_argument(arg: Any, can_be_expr: bool) -> tuple[str, Any, bool, str | None]:
     """
     Process a single argument, handling all types including nested structures.
 
@@ -166,7 +171,7 @@ def _process_argument(arg: Any, can_be_expr: bool) -> Tuple[str, Any, bool, Opti
         Tuple of (repr_string, processed_arg_for_polars, convertible_to_code, function_source)
     """
     # Special handling for callables (but not Expr objects which might be callable)
-    if callable(arg) and not isinstance(arg, (Expr, pl.Expr)) and not hasattr(arg, 'expr'):
+    if callable(arg) and not isinstance(arg, (Expr, pl.Expr)) and not hasattr(arg, "expr"):
         return _process_callable_arg(arg)
     repr_str = _deep_get_repr(arg, can_be_expr)
 
@@ -177,8 +182,9 @@ def _process_argument(arg: Any, can_be_expr: bool) -> Tuple[str, Any, bool, Opti
     return repr_str, processed_arg, convertible, None
 
 
-def _process_arguments(args: Tuple[Any, ...], param_can_be_expr: Dict[str, bool],
-                       param_list: List[Tuple[str, inspect.Parameter]]) -> Tuple[List[str], List[Any], bool, List[str]]:
+def _process_arguments(
+    args: tuple[Any, ...], param_can_be_expr: dict[str, bool], param_list: list[tuple[str, inspect.Parameter]]
+) -> tuple[list[str], list[Any], bool, list[str]]:
     """
     Process positional arguments for the wrapper function.
 
@@ -213,8 +219,9 @@ def _process_arguments(args: Tuple[Any, ...], param_can_be_expr: Dict[str, bool]
     return args_repr, pl_args, convertible_to_code, function_sources
 
 
-def _process_keyword_arguments(kwargs: Dict[str, Any],
-                               param_can_be_expr: Dict[str, bool]) -> Tuple[List[str], Dict[str, Any], bool, List[str]]:
+def _process_keyword_arguments(
+    kwargs: dict[str, Any], param_can_be_expr: dict[str, bool]
+) -> tuple[list[str], dict[str, Any], bool, list[str]]:
     """
     Process keyword arguments for the wrapper function.
 
@@ -244,8 +251,9 @@ def _process_keyword_arguments(kwargs: Dict[str, Any],
     return kwargs_repr, pl_kwargs, convertible_to_code, function_sources
 
 
-def _build_repr_string(polars_func_name: str, args_repr: List[str], kwargs_repr: List[str],
-                       function_sources: List[str] = None) -> str:
+def _build_repr_string(
+    polars_func_name: str, args_repr: list[str], kwargs_repr: list[str], function_sources: list[str] = None
+) -> str:
     """
     Build the string representation of the function call.
 
@@ -290,7 +298,7 @@ def _build_repr_string(polars_func_name: str, args_repr: List[str], kwargs_repr:
         return call_repr
 
 
-def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: Optional[Any]) -> "FlowFrame":
+def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: Any | None) -> "FlowFrame":
     """
     Create a FlowFrame result for functions that return DataFrames/LazyFrames.
 
@@ -320,11 +328,12 @@ def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: 
         node_id=node_id,
         depending_on_ids=[],
         description=f"Execute: {polars_func_name}",
-        polars_code_input=transform_schema.PolarsCodeInput(polars_code)
+        polars_code_input=transform_schema.PolarsCodeInput(polars_code),
     )
     flow_graph.add_polars_code(node_polars_code)
 
     try:
+
         class MockNode:
             def get_resulting_data(self):
                 class MockData:
@@ -332,7 +341,7 @@ def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: 
 
                 return MockData()
 
-        if not hasattr(flow_graph, 'get_node'):
+        if not hasattr(flow_graph, "get_node"):
             flow_graph.get_node = lambda nid: MockNode()
 
         actual_data = flow_graph.get_node(node_id).get_resulting_data().data_frame
@@ -348,7 +357,7 @@ def _create_flowframe_result(polars_func_name: str, full_repr: str, flow_graph: 
     )
 
 
-def _check_for_non_serializable_functions(args: List[Any], kwargs: Dict[str, Any]) -> List[str]:
+def _check_for_non_serializable_functions(args: list[Any], kwargs: dict[str, Any]) -> list[str]:
     """
     Check for non-serializable functions in arguments and return warnings.
 
@@ -365,16 +374,16 @@ def _check_for_non_serializable_functions(args: List[Any], kwargs: Dict[str, Any
         """Recursively check for non-serializable functions."""
         if callable(value) and not isinstance(value, (type, pl.Expr)):
             # Check if it's a lambda or local function
-            if hasattr(value, '__name__'):
-                if value.__name__ == '<lambda>':
+            if hasattr(value, "__name__"):
+                if value.__name__ == "<lambda>":
                     warnings.append(
                         f"Lambda function found at {path}. "
                         "This will cause 'serialization not supported for this opaque function' error. "
                         "Consider using a named function at module level instead."
                     )
-                elif hasattr(value, '__code__') and value.__code__.co_flags & 0x10:  # CO_NESTED flag
+                elif hasattr(value, "__code__") and value.__code__.co_flags & 0x10:  # CO_NESTED flag
                     # Check if it's a local/nested function (excluding top-level module functions)
-                    if value.__code__.co_name != '<module>':  # Ensure it's not a module itself
+                    if value.__code__.co_name != "<module>":  # Ensure it's not a module itself
                         warnings.append(
                             f"Local function '{value.__name__}' found at {path}. "
                             "This may cause serialization issues. "
@@ -401,9 +410,16 @@ def _check_for_non_serializable_functions(args: List[Any], kwargs: Dict[str, Any
     return warnings
 
 
-def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Dict[str, Any],
-                        polars_func_name: str, full_repr: str, is_agg: bool,
-                        convertible_to_code: bool, function_sources: List[str] = None) -> "Expr":
+def _create_expr_result(
+    polars_func: Callable,
+    pl_args: list[Any],
+    pl_kwargs: dict[str, Any],
+    polars_func_name: str,
+    full_repr: str,
+    is_agg: bool,
+    convertible_to_code: bool,
+    function_sources: list[str] = None,
+) -> "Expr":
     """
     Create an Expr result for functions that return expressions.
 
@@ -422,8 +438,9 @@ def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Di
     Returns:
         Expr instance wrapping the polars expression
     """
-    from flowfile_frame.expr import Expr
     import warnings
+
+    from flowfile_frame.expr import Expr
 
     # Check for non-serializable functions
     serialization_warnings = _check_for_non_serializable_functions(pl_args, pl_kwargs)
@@ -440,28 +457,30 @@ def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Di
             try:
                 # Test serialization
                 import io
+
                 buffer = io.BytesIO()
-                pl_expr.serialize(file=buffer, format='json')
+                pl_expr.serialize(file=buffer, format="json")
             except Exception as e:
                 serialization_error = str(e)
 
     except Exception as e:
         print(
-            f"Warning: Polars function '{polars_func_name}' failed to create an expression with provided arguments. Error: {e}")
+            f"Warning: Polars function '{polars_func_name}' failed to create an expression with provided arguments. Error: {e}"
+        )
         if "serialization not supported" in str(e).lower():
             serialization_error = str(e)
 
     # Issue warnings if we found non-serializable functions
     if serialization_warnings:
         warnings.warn(
-            f"\n⚠️  SERIALIZATION WARNING for {polars_func_name}:\n" +
-            "\n".join(f"  • {w}" for w in serialization_warnings) +
-            "\n\nThis expression cannot be saved to a FlowFile format and will need to be " +
-            "recreated from scratch when loading the flow. The expression will work in the " +
-            "current session but won't persist.\n" +
-            (f"\nActual error from Polars: {serialization_error}" if serialization_error else ""),
+            f"\n⚠️  SERIALIZATION WARNING for {polars_func_name}:\n"
+            + "\n".join(f"  • {w}" for w in serialization_warnings)
+            + "\n\nThis expression cannot be saved to a FlowFile format and will need to be "
+            + "recreated from scratch when loading the flow. The expression will work in the "
+            + "current session but won't persist.\n"
+            + (f"\nActual error from Polars: {serialization_error}" if serialization_error else ""),
             category=UserWarning,
-            stacklevel=3
+            stacklevel=3,
         )
 
     # Extract just the expression part without function definitions for repr_str
@@ -469,7 +488,7 @@ def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Di
         # Get the part after the split
         repr_str = full_repr.split("─────SPLIT─────")[-1].strip()
         if repr_str.startswith("output_df = "):
-            repr_str = repr_str[len("output_df = "):]
+            repr_str = repr_str[len("output_df = ") :]
     else:
         repr_str = full_repr
 
@@ -479,11 +498,11 @@ def _create_expr_result(polars_func: Callable, pl_args: List[Any], pl_kwargs: Di
         agg_func=polars_func_name if is_agg else None,
         is_complex=True,
         convertable_to_code=convertible_to_code and (pl_expr is not None),
-        _function_sources=function_sources  # Pass function sources to Expr
+        _function_sources=function_sources,  # Pass function sources to Expr
     )
 
 
-def _copy_function_metadata(original_func: Callable, polars_func_name: str) -> Tuple[str, str]:
+def _copy_function_metadata(original_func: Callable, polars_func_name: str) -> tuple[str, str]:
     """
     Copy metadata from the original polars function.
 
@@ -494,7 +513,7 @@ def _copy_function_metadata(original_func: Callable, polars_func_name: str) -> T
     Returns:
         Tuple of (function_name, docstring)
     """
-    original_doc = getattr(original_func, '__doc__', None) or ""
+    original_doc = getattr(original_func, "__doc__", None) or ""
     enhanced_doc = f"""FlowFile wrapper for pl.{polars_func_name}.
 
 Original Polars documentation:
@@ -509,9 +528,9 @@ Wrapped functions returning Exprs will produce FlowFile Expr objects.
 
 
 def polars_function_wrapper(
-        polars_func_name_or_callable: Union[str, Callable],
-        is_agg: bool = False,
-        return_type: Optional[Literal["FlowFrame", "Expr"]] = None
+    polars_func_name_or_callable: str | Callable,
+    is_agg: bool = False,
+    return_type: Literal["FlowFrame", "Expr"] | None = None,
 ):
     """
     Create a wrapper for a polars function that returns either a FlowFrame or Expr.
@@ -547,31 +566,35 @@ def polars_function_wrapper(
             wrapper_return_annotation_str: str
 
             if determined_rt == "FlowFrame":
-                wrapper_return_annotation_str = 'FlowFrame'
-                if not any(p.name == 'flow_graph' for p in final_params_for_sig):
+                wrapper_return_annotation_str = "FlowFrame"
+                if not any(p.name == "flow_graph" for p in final_params_for_sig):
                     fg_param = inspect.Parameter(
-                        name='flow_graph', kind=inspect.Parameter.KEYWORD_ONLY,
-                        default=None, annotation=Optional[FlowGraph]  # Corrected annotation
+                        name="flow_graph",
+                        kind=inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[FlowGraph],  # Corrected annotation
                     )
                     var_kw_idx = next(
-                        (i for i, p in enumerate(final_params_for_sig) if p.kind == inspect.Parameter.VAR_KEYWORD), -1)
+                        (i for i, p in enumerate(final_params_for_sig) if p.kind == inspect.Parameter.VAR_KEYWORD), -1
+                    )
                     if var_kw_idx != -1:
                         final_params_for_sig.insert(var_kw_idx, fg_param)
                     else:
                         final_params_for_sig.append(fg_param)
             elif determined_rt == "Expr":
-                wrapper_return_annotation_str = 'Expr'
+                wrapper_return_annotation_str = "Expr"
             else:
                 wrapper_return_annotation_str = str(original_polars_sig.return_annotation)
 
-            wrapper_sig = inspect.Signature(parameters=final_params_for_sig,
-                                            return_annotation=wrapper_return_annotation_str)
+            wrapper_sig = inspect.Signature(
+                parameters=final_params_for_sig, return_annotation=wrapper_return_annotation_str
+            )
 
             @wraps(polars_f)
             def wrapper(*args, **kwargs):
                 flow_graph_val = None
                 if determined_rt == "FlowFrame":
-                    flow_graph_val = kwargs.pop('flow_graph', None)
+                    flow_graph_val = kwargs.pop("flow_graph", None)
 
                 args_repr_val, pl_args_val, args_conv, args_func_sources = _process_arguments(
                     args, param_can_be_expr_map, param_list_for_processing
@@ -586,12 +609,18 @@ def polars_function_wrapper(
                     actual_polars_func_name, args_repr_val, kwargs_repr_val, all_func_sources
                 )
 
-                if determined_rt == 'FlowFrame':
+                if determined_rt == "FlowFrame":
                     return _create_flowframe_result(actual_polars_func_name, full_repr_val, flow_graph_val)
                 else:  # Expr
                     return _create_expr_result(
-                        polars_f, pl_args_val, pl_kwargs_val, actual_polars_func_name,
-                        full_repr_val, is_agg, conv_to_code, all_func_sources  # Pass function sources
+                        polars_f,
+                        pl_args_val,
+                        pl_kwargs_val,
+                        actual_polars_func_name,
+                        full_repr_val,
+                        is_agg,
+                        conv_to_code,
+                        all_func_sources,  # Pass function sources
                     )
 
             wrapper.__name__ = wrapper_name
@@ -604,7 +633,7 @@ def polars_function_wrapper(
     else:  # Used as @polars_function_wrapper("name", ...) or assigned
         actual_polars_func_name = cast(str, polars_func_name_or_callable)
 
-        def decorator(func: Optional[Callable] = None):  # func is the decorated placeholder
+        def decorator(func: Callable | None = None):  # func is the decorated placeholder
             polars_f = getattr(pl, actual_polars_func_name, None)
             if polars_f is None:
                 raise ValueError(f"Polars function '{actual_polars_func_name}' not found.")
@@ -620,56 +649,68 @@ def polars_function_wrapper(
             wrapper_return_annotation_str: str
 
             if determined_rt == "FlowFrame":
-                wrapper_return_annotation_str = 'FlowFrame'
-                if not any(p.name == 'flow_graph' for p in final_params_for_sig):
+                wrapper_return_annotation_str = "FlowFrame"
+                if not any(p.name == "flow_graph" for p in final_params_for_sig):
                     flow_graph_param = inspect.Parameter(
-                        name='flow_graph',
+                        name="flow_graph",
                         kind=inspect.Parameter.KEYWORD_ONLY,
                         default=None,
-                        annotation=Optional[FlowGraph]  # Corrected annotation
+                        annotation=Optional[FlowGraph],  # Corrected annotation
                     )
                     var_kw_idx = next(
-                        (i for i, p in enumerate(final_params_for_sig) if p.kind == inspect.Parameter.VAR_KEYWORD), -1)
+                        (i for i, p in enumerate(final_params_for_sig) if p.kind == inspect.Parameter.VAR_KEYWORD), -1
+                    )
                     if var_kw_idx != -1:
                         final_params_for_sig.insert(var_kw_idx, flow_graph_param)
                     else:
                         final_params_for_sig.append(flow_graph_param)
             elif determined_rt == "Expr":
-                wrapper_return_annotation_str = 'Expr'
+                wrapper_return_annotation_str = "Expr"
             else:
                 wrapper_return_annotation_str = str(original_polars_sig.return_annotation)
 
             wrapper_signature = inspect.Signature(
-                parameters=final_params_for_sig,
-                return_annotation=wrapper_return_annotation_str
+                parameters=final_params_for_sig, return_annotation=wrapper_return_annotation_str
             )
 
             @wraps(polars_f)
             def wrapper(*args, **kwargs):
                 flow_graph_val = None
                 if determined_rt == "FlowFrame":
-                    flow_graph_val = kwargs.pop('flow_graph', None)
+                    flow_graph_val = kwargs.pop("flow_graph", None)
 
                 args_repr_val, pl_args_val, args_convertible_val, args_func_sources = _process_arguments(
                     args, param_can_be_expr_map, param_list_for_processing
                 )
-                kwargs_repr_val, pl_kwargs_val, kwargs_convertible_val, kwargs_func_sources = _process_keyword_arguments(
-                    kwargs, param_can_be_expr_map
+                kwargs_repr_val, pl_kwargs_val, kwargs_convertible_val, kwargs_func_sources = (
+                    _process_keyword_arguments(kwargs, param_can_be_expr_map)
                 )
 
-                convertible_to_code_val = args_convertible_val and kwargs_convertible_val  # Correct variable for this scope
+                convertible_to_code_val = (
+                    args_convertible_val and kwargs_convertible_val
+                )  # Correct variable for this scope
                 all_func_sources = args_func_sources + kwargs_func_sources
 
                 full_repr_val = _build_repr_string(
-                    actual_polars_func_name, args_repr_val, kwargs_repr_val, all_func_sources  # Corrected variable
+                    actual_polars_func_name,
+                    args_repr_val,
+                    kwargs_repr_val,
+                    all_func_sources,  # Corrected variable
                 )
 
-                if determined_rt == 'FlowFrame':
+                if determined_rt == "FlowFrame":
                     return _create_flowframe_result(actual_polars_func_name, full_repr_val, flow_graph_val)
                 else:  # Expr
-                    return _create_expr_result(polars_f, pl_args_val, pl_kwargs_val, actual_polars_func_name,
-                                               full_repr_val, is_agg, convertible_to_code_val,
-                                               all_func_sources)  # Pass function sources
+                    return _create_expr_result(
+                        polars_f,
+                        pl_args_val,
+                        pl_kwargs_val,
+                        actual_polars_func_name,
+                        full_repr_val,
+                        is_agg,
+                        convertible_to_code_val,
+                        all_func_sources,
+                    )  # Pass function sources
 
             wrapper.__name__ = wrapper_name
             wrapper.__doc__ = wrapper_doc
@@ -683,22 +724,23 @@ def polars_function_wrapper(
 
 # Example usage with the new decorator (from original snippet):
 
+
 # For functions that return FlowFrames
-@polars_function_wrapper('read_json', return_type="FlowFrame")
-def read_json(*args, flow_graph: Optional[FlowGraph] = None, **kwargs) -> FlowFrame:
+@polars_function_wrapper("read_json", return_type="FlowFrame")
+def read_json(*args, flow_graph: FlowGraph | None = None, **kwargs) -> FlowFrame:
     pass
 
 
-@polars_function_wrapper('read_avro', return_type="FlowFrame")
-def read_avro(*args, flow_graph: Optional[FlowGraph] = None, **kwargs) -> FlowFrame:
+@polars_function_wrapper("read_avro", return_type="FlowFrame")
+def read_avro(*args, flow_graph: FlowGraph | None = None, **kwargs) -> FlowFrame:
     pass
 
 
-@polars_function_wrapper('read_ndjson', return_type="FlowFrame")
-def read_ndjson(*args, flow_graph: Optional[FlowGraph] = None, **kwargs) -> FlowFrame:
+@polars_function_wrapper("read_ndjson", return_type="FlowFrame")
+def read_ndjson(*args, flow_graph: FlowGraph | None = None, **kwargs) -> FlowFrame:
     pass
 
 
-@polars_function_wrapper('fold', return_type="Expr")
-def fold(*args, **kwargs) -> 'Expr':  # Type hint 'Expr' refers to flowfile_frame.expr.Expr
+@polars_function_wrapper("fold", return_type="Expr")
+def fold(*args, **kwargs) -> "Expr":  # Type hint 'Expr' refers to flowfile_frame.expr.Expr
     pass

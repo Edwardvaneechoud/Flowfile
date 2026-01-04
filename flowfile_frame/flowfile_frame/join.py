@@ -1,6 +1,6 @@
 # Assume these imports are correct from your original context
-from flowfile_frame.expr import Column
 from flowfile_core.schemas import transform_schema
+from flowfile_frame.expr import Column
 
 
 def _normalize_columns_to_list(columns):
@@ -61,7 +61,7 @@ def _create_join_mappings(left_columns, right_columns):
     join_mappings = []
     needs_polars_code = False
 
-    for left_col, right_col in zip(left_columns, right_columns):
+    for left_col, right_col in zip(left_columns, right_columns, strict=False):
         left_name, left_needs_code = _extract_column_name(left_col)
         right_name, right_needs_code = _extract_column_name(right_col)
 

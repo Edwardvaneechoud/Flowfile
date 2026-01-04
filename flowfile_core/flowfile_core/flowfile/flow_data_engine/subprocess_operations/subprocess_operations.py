@@ -1,14 +1,13 @@
 # Standard library imports
-from base64 import decodebytes, encodebytes
 import io
 import threading
+from base64 import decodebytes, encodebytes
 from time import sleep
-from typing import Any, List, Literal, Optional
+from typing import Any, Literal
 from uuid import uuid4
 
 import polars as pl
 import requests
-
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
@@ -17,104 +16,131 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations.models import
     FuzzyJoinInput,
     OperationType,
     PolarsOperation,
-    Status
+    Status,
 )
-from flowfile_core.flowfile.sources.external_sources.sql_source.models import (DatabaseExternalReadSettings,
-                                                                               DatabaseExternalWriteSettings)
+from flowfile_core.flowfile.sources.external_sources.sql_source.models import (
+    DatabaseExternalReadSettings,
+    DatabaseExternalWriteSettings,
+)
 from flowfile_core.schemas.cloud_storage_schemas import CloudStorageWriteSettingsWorkerInterface
-from flowfile_core.schemas.input_schema import (
-    ReceivedTable
-)
+from flowfile_core.schemas.input_schema import ReceivedTable
 from flowfile_core.utils.arrow_reader import read
 
 
-def trigger_df_operation(flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = 'store') -> Status:
+def trigger_df_operation(
+    flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = "store"
+) -> Status:
     encoded_operation = encodebytes(lf.serialize()).decode()
-    _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': operation_type,
-             'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id}
-    v = requests.post(url=f'{WORKER_URL}/submit_query/', json=_json)
+    _json = {
+        "task_id": file_ref,
+        "operation": encoded_operation,
+        "operation_type": operation_type,
+        "flowfile_flow_id": flow_id,
+        "flowfile_node_id": node_id,
+    }
+    v = requests.post(url=f"{WORKER_URL}/submit_query/", json=_json)
     if not v.ok:
-        raise Exception(f'trigger_df_operation: Could not cache the data, {v.text}')
+        raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
-def trigger_sample_operation(lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100) -> Status:
+def trigger_sample_operation(
+    lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100
+) -> Status:
     encoded_operation = encodebytes(lf.serialize()).decode()
-    _json = {'task_id': file_ref, 'operation': encoded_operation, 'operation_type': 'store_sample',
-             'sample_size': sample_size, 'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id}
-    v = requests.post(url=f'{WORKER_URL}/store_sample/', json=_json)
+    _json = {
+        "task_id": file_ref,
+        "operation": encoded_operation,
+        "operation_type": "store_sample",
+        "sample_size": sample_size,
+        "flowfile_flow_id": flow_id,
+        "flowfile_node_id": node_id,
+    }
+    v = requests.post(url=f"{WORKER_URL}/store_sample/", json=_json)
     if not v.ok:
-        raise Exception(f'trigger_sample_operation: Could not cache the data, {v.text}')
+        raise Exception(f"trigger_sample_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
-def trigger_fuzzy_match_operation(left_df: pl.LazyFrame, right_df: pl.LazyFrame,
-                                  fuzzy_maps: List[FuzzyMapping],
-                                  file_ref: str,
-                                  flow_id: int,
-                                  node_id: int | str) -> Status:
+def trigger_fuzzy_match_operation(
+    left_df: pl.LazyFrame,
+    right_df: pl.LazyFrame,
+    fuzzy_maps: list[FuzzyMapping],
+    file_ref: str,
+    flow_id: int,
+    node_id: int | str,
+) -> Status:
     left_serializable_object = PolarsOperation(operation=encodebytes(left_df.serialize()))
     right_serializable_object = PolarsOperation(operation=encodebytes(right_df.serialize()))
-    fuzzy_join_input = FuzzyJoinInput(left_df_operation=left_serializable_object,
-                                      right_df_operation=right_serializable_object,
-                                      fuzzy_maps=fuzzy_maps,
-                                      task_id=file_ref,
-                                      flowfile_flow_id=flow_id,
-                                      flowfile_node_id=node_id
-                                      )
+    fuzzy_join_input = FuzzyJoinInput(
+        left_df_operation=left_serializable_object,
+        right_df_operation=right_serializable_object,
+        fuzzy_maps=fuzzy_maps,
+        task_id=file_ref,
+        flowfile_flow_id=flow_id,
+        flowfile_node_id=node_id,
+    )
     print("fuzzy join input", fuzzy_join_input)
-    v = requests.post(f'{WORKER_URL}/add_fuzzy_join', data=fuzzy_join_input.model_dump_json())
+    v = requests.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
     if not v.ok:
-        raise Exception(f'trigger_fuzzy_match_operation: Could not cache the data, {v.text}')
+        raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
 
 
-def trigger_create_operation(flow_id: int, node_id: int | str, received_table: ReceivedTable,
-                             file_type: str = Literal['csv', 'parquet', 'json', 'excel']):
-    f = requests.post(url=f'{WORKER_URL}/create_table/{file_type}', data=received_table.model_dump_json(),
-                      params={'flowfile_flow_id': flow_id, 'flowfile_node_id': node_id})
+def trigger_create_operation(
+    flow_id: int,
+    node_id: int | str,
+    received_table: ReceivedTable,
+    file_type: str = Literal["csv", "parquet", "json", "excel"],
+):
+    f = requests.post(
+        url=f"{WORKER_URL}/create_table/{file_type}",
+        data=received_table.model_dump_json(),
+        params={"flowfile_flow_id": flow_id, "flowfile_node_id": node_id},
+    )
     if not f.ok:
-        raise Exception(f'trigger_create_operation: Could not cache the data, {f.text}')
+        raise Exception(f"trigger_create_operation: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
 def trigger_database_read_collector(database_external_read_settings: DatabaseExternalReadSettings):
-    f = requests.post(url=f'{WORKER_URL}/store_database_read_result',
-                      data=database_external_read_settings.model_dump_json())
+    f = requests.post(
+        url=f"{WORKER_URL}/store_database_read_result", data=database_external_read_settings.model_dump_json()
+    )
     if not f.ok:
-        raise Exception(f'trigger_database_read_collector: Could not cache the data, {f.text}')
+        raise Exception(f"trigger_database_read_collector: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
 def trigger_database_write(database_external_write_settings: DatabaseExternalWriteSettings):
-    f = requests.post(url=f'{WORKER_URL}/store_database_write_result',
-                      data=database_external_write_settings.model_dump_json())
+    f = requests.post(
+        url=f"{WORKER_URL}/store_database_write_result", data=database_external_write_settings.model_dump_json()
+    )
     if not f.ok:
-        raise Exception(f'trigger_database_write: Could not cache the data, {f.text}')
+        raise Exception(f"trigger_database_write: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
 def trigger_cloud_storage_write(database_external_write_settings: CloudStorageWriteSettingsWorkerInterface):
-    f = requests.post(url=f'{WORKER_URL}/write_data_to_cloud',
-                      data=database_external_write_settings.model_dump_json())
+    f = requests.post(url=f"{WORKER_URL}/write_data_to_cloud", data=database_external_write_settings.model_dump_json())
     if not f.ok:
-        raise Exception(f'trigger_cloud_storage_write: Could not cache the data, {f.text}')
+        raise Exception(f"trigger_cloud_storage_write: Could not cache the data, {f.text}")
     return Status(**f.json())
 
 
 def get_results(file_ref: str) -> Status | None:
-    f = requests.get(f'{WORKER_URL}/status/{file_ref}')
+    f = requests.get(f"{WORKER_URL}/status/{file_ref}")
     if f.status_code == 200:
         return Status(**f.json())
     else:
-        raise Exception(f'get_results: Could not fetch the data, {f.text}')
+        raise Exception(f"get_results: Could not fetch the data, {f.text}")
 
 
 def results_exists(file_ref: str):
     try:
-        f = requests.get(f'{WORKER_URL}/status/{file_ref}')
+        f = requests.get(f"{WORKER_URL}/status/{file_ref}")
         if f.status_code == 200:
-            if f.json()['status'] == 'Completed':
+            if f.json()["status"] == "Completed":
                 return True
         return False
     except requests.RequestException as e:
@@ -134,7 +160,7 @@ def clear_task_from_worker(file_ref: str) -> bool:
         bool: True if the task was successfully cleared, False otherwise.
     """
     try:
-        f = requests.delete(f'{WORKER_URL}/clear_task/{file_ref}')
+        f = requests.delete(f"{WORKER_URL}/clear_task/{file_ref}")
         if f.status_code == 200:
             return True
         return False
@@ -150,16 +176,16 @@ def get_df_result(encoded_df: str) -> pl.LazyFrame:
 
 def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
     status = get_results(file_ref)
-    if status.status != 'Completed':
+    if status.status != "Completed":
         raise Exception(f"Status is not completed, {status.status}")
-    if status.result_type == 'polars':
+    if status.result_type == "polars":
         return get_df_result(status.results)
     else:
         raise Exception(f"Result type is not polars, {status.result_type}")
 
 
 def get_status(file_ref: str) -> Status:
-    status_response = requests.get(f'{WORKER_URL}/status/{file_ref}')
+    status_response = requests.get(f"{WORKER_URL}/status/{file_ref}")
     if status_response.status_code == 200:
         return Status(**status_response.json())
     else:
@@ -180,12 +206,12 @@ def cancel_task(file_ref: str) -> bool:
         Exception: If there's an error communicating with the worker service
     """
     try:
-        response = requests.post(f'{WORKER_URL}/cancel_task/{file_ref}')
+        response = requests.post(f"{WORKER_URL}/cancel_task/{file_ref}")
         if response.ok:
             return True
         return False
     except requests.RequestException as e:
-        raise Exception(f'Failed to cancel task: {str(e)}')
+        raise Exception(f"Failed to cancel task: {str(e)}")
 
 
 class BaseFetcher:
@@ -203,15 +229,15 @@ class BaseFetcher:
         self._thread = None
 
         # State variables - use properties for thread-safe access
-        self._result: Optional[Any] = None
+        self._result: Any | None = None
         self._started: bool = False
         self._running: bool = False
         self._error_code: int = 0
-        self._error_description: Optional[str] = None
+        self._error_description: str | None = None
 
     # Public properties for compatibility with subclasses
     @property
-    def result(self) -> Optional[Any]:
+    def result(self) -> Any | None:
         with self._lock:
             return self._result
 
@@ -240,7 +266,7 @@ class BaseFetcher:
             return self._error_code
 
     @property
-    def error_description(self) -> Optional[str]:
+    def error_description(self) -> str | None:
         with self._lock:
             return self._error_description
 
@@ -259,22 +285,22 @@ class BaseFetcher:
         try:
             while not self._stop_event.is_set():
                 try:
-                    r = requests.get(f'{WORKER_URL}/status/{self.file_ref}', timeout=10)
+                    r = requests.get(f"{WORKER_URL}/status/{self.file_ref}", timeout=10)
 
                     if r.status_code == 200:
                         status = Status(**r.json())
 
-                        if status.status == 'Completed':
+                        if status.status == "Completed":
                             self._handle_completion(status)
                             return
-                        elif status.status == 'Error':
+                        elif status.status == "Error":
                             self._handle_error(1, status.error_message)
                             return
-                        elif status.status == 'Unknown Error':
+                        elif status.status == "Unknown Error":
                             self._handle_error(
                                 -1,
-                                'There was an unknown error with the process, '
-                                'and the process got killed by the server'
+                                "There was an unknown error with the process, "
+                                "and the process got killed by the server",
                             )
                             return
                     else:
@@ -303,7 +329,7 @@ class BaseFetcher:
         """Handle successful completion. Must be called from fetch thread."""
         with self._condition:
             try:
-                if status.result_type == 'polars':
+                if status.result_type == "polars":
                     self._result = get_df_result(status.results)
                 else:
                     self._result = status.results
@@ -336,10 +362,10 @@ class BaseFetcher:
         """Start the background fetch thread."""
         with self._lock:
             if self._started:
-                logger.info('Fetcher already started')
+                logger.info("Fetcher already started")
                 return
             if self._running:
-                logger.info('Already running the fetching')
+                logger.info("Already running the fetching")
                 return
 
             self._running = True
@@ -350,13 +376,13 @@ class BaseFetcher:
         Cancels the current task both locally and on the worker service.
         Also cleans up any resources being used.
         """
-        logger.warning('Cancelling the operation')
+        logger.warning("Cancelling the operation")
 
         # Cancel on the worker side
         try:
             cancel_task(self.file_ref)
         except Exception as e:
-            logger.error(f'Failed to cancel task on worker: {str(e)}')
+            logger.error(f"Failed to cancel task on worker: {str(e)}")
 
         # Signal the thread to stop
         self._stop_event.set()
@@ -367,7 +393,7 @@ class BaseFetcher:
             if self._thread.is_alive():
                 logger.warning("Fetch thread did not stop within timeout")
 
-    def get_result(self) -> Optional[Any]:
+    def get_result(self) -> Any | None:
         """
         Get the result, blocking until it's available.
 
@@ -408,105 +434,141 @@ class BaseFetcher:
             return self._error_description is not None
 
     @property
-    def error_info(self) -> tuple[int, Optional[str]]:
+    def error_info(self) -> tuple[int, str | None]:
         """Get error code and description."""
         with self._lock:
             return self._error_code, self._error_description
 
 
 class ExternalDfFetcher(BaseFetcher):
-    status: Optional[Status] = None
+    status: Status | None = None
 
-    def __init__(self, flow_id: int, node_id: int | str, lf: pl.LazyFrame | pl.DataFrame, file_ref: str = None,
-                 wait_on_completion: bool = True,
-                 operation_type: OperationType = 'store', offload_to_worker: bool = True):
+    def __init__(
+        self,
+        flow_id: int,
+        node_id: int | str,
+        lf: pl.LazyFrame | pl.DataFrame,
+        file_ref: str = None,
+        wait_on_completion: bool = True,
+        operation_type: OperationType = "store",
+        offload_to_worker: bool = True,
+    ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
-        r = trigger_df_operation(lf=lf, file_ref=self.file_ref, operation_type=operation_type,
-                                 node_id=node_id, flow_id=flow_id)
-        self.running = r.status == 'Processing'
+        r = trigger_df_operation(
+            lf=lf, file_ref=self.file_ref, operation_type=operation_type, node_id=node_id, flow_id=flow_id
+        )
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
         self.status = get_status(self.file_ref)
 
 
 class ExternalSampler(BaseFetcher):
-    status: Optional[Status] = None
+    status: Status | None = None
 
-    def __init__(self, lf: pl.LazyFrame | pl.DataFrame, node_id: str | int, flow_id: int, file_ref: str = None, wait_on_completion: bool = True,
-                 sample_size: int = 100):
+    def __init__(
+        self,
+        lf: pl.LazyFrame | pl.DataFrame,
+        node_id: str | int,
+        flow_id: int,
+        file_ref: str = None,
+        wait_on_completion: bool = True,
+        sample_size: int = 100,
+    ):
         super().__init__(file_ref=file_ref)
         lf = lf.lazy() if isinstance(lf, pl.DataFrame) else lf
-        r = trigger_sample_operation(lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id)
-        self.running = r.status == 'Processing'
+        r = trigger_sample_operation(
+            lf=lf, file_ref=file_ref, sample_size=sample_size, node_id=node_id, flow_id=flow_id
+        )
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
         self.status = get_status(self.file_ref)
 
 
 class ExternalFuzzyMatchFetcher(BaseFetcher):
-    def __init__(self, left_df: pl.LazyFrame, right_df: pl.LazyFrame, fuzzy_maps: List[Any], flow_id: int,
-                 node_id: int | str,
-                 file_ref: str = None,
-                 wait_on_completion: bool = True):
+    def __init__(
+        self,
+        left_df: pl.LazyFrame,
+        right_df: pl.LazyFrame,
+        fuzzy_maps: list[Any],
+        flow_id: int,
+        node_id: int | str,
+        file_ref: str = None,
+        wait_on_completion: bool = True,
+    ):
         super().__init__(file_ref=file_ref)
 
-        r = trigger_fuzzy_match_operation(left_df=left_df, right_df=right_df, fuzzy_maps=fuzzy_maps,
-                                          file_ref=file_ref, flow_id=flow_id, node_id=node_id)
+        r = trigger_fuzzy_match_operation(
+            left_df=left_df,
+            right_df=right_df,
+            fuzzy_maps=fuzzy_maps,
+            file_ref=file_ref,
+            flow_id=flow_id,
+            node_id=node_id,
+        )
         self.file_ref = r.background_task_id
-        self.running = r.status == 'Processing'
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalCreateFetcher(BaseFetcher):
-    def __init__(self, received_table: ReceivedTable, node_id: int, flow_id: int,
-                 file_type: str = 'csv', wait_on_completion: bool = True):
-        r = trigger_create_operation(received_table=received_table, file_type=file_type,
-                                     node_id=node_id, flow_id=flow_id)
+    def __init__(
+        self,
+        received_table: ReceivedTable,
+        node_id: int,
+        flow_id: int,
+        file_type: str = "csv",
+        wait_on_completion: bool = True,
+    ):
+        r = trigger_create_operation(
+            received_table=received_table, file_type=file_type, node_id=node_id, flow_id=flow_id
+        )
         super().__init__(file_ref=r.background_task_id)
-        self.running = r.status == 'Processing'
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalDatabaseFetcher(BaseFetcher):
-    def __init__(self, database_external_read_settings: DatabaseExternalReadSettings,
-                 wait_on_completion: bool = True):
+    def __init__(self, database_external_read_settings: DatabaseExternalReadSettings, wait_on_completion: bool = True):
         r = trigger_database_read_collector(database_external_read_settings=database_external_read_settings)
         super().__init__(file_ref=r.background_task_id)
-        self.running = r.status == 'Processing'
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalDatabaseWriter(BaseFetcher):
-    def __init__(self, database_external_write_settings: DatabaseExternalWriteSettings,
-                 wait_on_completion: bool = True):
+    def __init__(
+        self, database_external_write_settings: DatabaseExternalWriteSettings, wait_on_completion: bool = True
+    ):
         r = trigger_database_write(database_external_write_settings=database_external_write_settings)
         super().__init__(file_ref=r.background_task_id)
-        self.running = r.status == 'Processing'
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalCloudWriter(BaseFetcher):
-
-    def __init__(self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface,
-                 wait_on_completion: bool = True):
+    def __init__(
+        self, cloud_storage_write_settings: CloudStorageWriteSettingsWorkerInterface, wait_on_completion: bool = True
+    ):
         r = trigger_cloud_storage_write(database_external_write_settings=cloud_storage_write_settings)
         super().__init__(file_ref=r.background_task_id)
-        self.running = r.status == 'Processing'
+        self.running = r.status == "Processing"
         if wait_on_completion:
             _ = self.get_result()
 
 
 class ExternalExecutorTracker:
-    result: Optional[pl.LazyFrame]
+    result: pl.LazyFrame | None
     started: bool = False
     running: bool = False
     error_code: int = 0
-    error_description: Optional[str] = None
+    error_description: str | None = None
     file_ref: str = None
 
     def __init__(self, initial_response: Status, wait_on_completion: bool = True):
@@ -515,7 +577,7 @@ class ExternalExecutorTracker:
         self.thread = threading.Thread(target=self._fetch_cached_df)
         self.result = None
         self.error_description = None
-        self.running = initial_response.status == 'Processing'
+        self.running = initial_response.status == "Processing"
         self.condition = threading.Condition()
         if wait_on_completion:
             _ = self.get_result()
@@ -523,30 +585,32 @@ class ExternalExecutorTracker:
     def _fetch_cached_df(self):
         with self.condition:
             if self.running:
-                logger.info('Already running the fetching')
+                logger.info("Already running the fetching")
                 return
             sleep_time = 1
             self.running = True
             while not self.stop_event.is_set():
                 try:
-                    r = requests.get(f'{WORKER_URL}/status/{self.file_ref}')
+                    r = requests.get(f"{WORKER_URL}/status/{self.file_ref}")
                     if r.status_code == 200:
                         status = Status(**r.json())
-                        if status.status == 'Completed':
+                        if status.status == "Completed":
                             self.running = False
                             self.condition.notify_all()  # Notify all waiting threads
-                            if status.result_type == 'polars':
+                            if status.result_type == "polars":
                                 self.result = get_df_result(status.results)
                             else:
                                 self.result = status.results
                             return
-                        elif status.status == 'Error':
+                        elif status.status == "Error":
                             self.error_code = 1
                             self.error_description = status.error_message
                             break
-                        elif status.status == 'Unknown Error':
+                        elif status.status == "Unknown Error":
                             self.error_code = -1
-                            self.error_description = 'There was an unknown error with the process, and the process got killed by the server'
+                            self.error_description = (
+                                "There was an unknown error with the process, and the process got killed by the server"
+                            )
                             break
                     else:
                         self.error_description = r.text
@@ -570,12 +634,12 @@ class ExternalExecutorTracker:
     def start(self):
         self.started = True
         if self.running:
-            logger.info('Already running the fetching')
+            logger.info("Already running the fetching")
             return
         self.thread.start()
 
     def cancel(self):
-        logger.warning('Cancelling the operation')
+        logger.warning("Cancelling the operation")
         self.thread.join()
 
         self.running = False
@@ -591,7 +655,7 @@ class ExternalExecutorTracker:
         return self.result
 
 
-def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
+def fetch_unique_values(lf: pl.LazyFrame) -> list[str]:
     """
     Fetches unique values from a specified column in a LazyFrame, attempting first via an external fetcher
     and falling back to direct LazyFrame computation if that fails.
@@ -616,8 +680,7 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
         # Try external source first if lf is provided
         try:
             external_df_fetcher = ExternalDfFetcher(lf=lf, flow_id=1, node_id=-1)
-            if external_df_fetcher.status.status == 'Completed':
-
+            if external_df_fetcher.status.status == "Completed":
                 unique_values = read(external_df_fetcher.status.file_ref).column(0).to_pylist()
                 if logger:
                     logger.info(f"Got {len(unique_values)} unique values from external source")
@@ -626,10 +689,10 @@ def fetch_unique_values(lf: pl.LazyFrame) -> List[str]:
             if logger:
                 logger.debug(f"Failed reading external file: {str(e)}")
 
-        unique_values = (lf.unique().collect(engine="streaming")[:, 0].to_list())
+        unique_values = lf.unique().collect(engine="streaming")[:, 0].to_list()
 
         if not unique_values:
-            raise ValueError(f"No unique values found in lazyframe")
+            raise ValueError("No unique values found in lazyframe")
 
         return unique_values
 

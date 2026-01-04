@@ -1,6 +1,7 @@
+from dataclasses import dataclass
+
 import polars as pl
 from polars.exceptions import PanicException
-from dataclasses import dataclass
 
 
 def collect_lazy_frame(lf: pl.LazyFrame) -> pl.DataFrame:
@@ -12,7 +13,7 @@ def collect_lazy_frame(lf: pl.LazyFrame) -> pl.DataFrame:
 
 @dataclass
 class CollectStreamingInfo:
-    __slots__ = 'df', 'streaming_collect_available'
+    __slots__ = "df", "streaming_collect_available"
     df: pl.DataFrame
     streaming_collect_available: bool
 

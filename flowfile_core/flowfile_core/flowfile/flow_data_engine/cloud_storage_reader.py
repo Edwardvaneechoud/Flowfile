@@ -1,12 +1,15 @@
+from collections.abc import Callable
+from typing import Any, Literal
+
 import boto3
 from botocore.exceptions import ClientError
-from typing import Optional, Dict, Any, Callable, Literal
 
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
 
 
-def create_storage_options_from_boto_credentials(profile_name: Optional[str],
-                                                 region_name: Optional[str] = None) -> Dict[str, Any]:
+def create_storage_options_from_boto_credentials(
+    profile_name: str | None, region_name: str | None = None
+) -> dict[str, Any]:
     """
     Create a storage options dictionary from AWS credentials using a boto3 profile.
     This is the most robust way to handle profile-based authentication as it
@@ -45,7 +48,7 @@ class CloudStorageReader:
     """Helper class to handle different cloud storage authentication methods and read operations."""
 
     @staticmethod
-    def get_storage_options(connection: FullCloudStorageConnection) -> Dict[str, Any]:
+    def get_storage_options(connection: FullCloudStorageConnection) -> dict[str, Any]:
         """
         Build storage options dict based on the connection type and auth method.
 
@@ -65,13 +68,12 @@ class CloudStorageReader:
             raise ValueError(f"Unsupported storage type: {connection.storage_type}")
 
     @staticmethod
-    def _get_s3_storage_options(connection: 'FullCloudStorageConnection') -> Dict[str, Any]:
+    def _get_s3_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
         """Build S3-specific storage options."""
         auth_method = connection.auth_method
         if auth_method == "aws-cli":
             return create_storage_options_from_boto_credentials(
-                profile_name=connection.connection_name,
-                region_name=connection.aws_region
+                profile_name=connection.connection_name, region_name=connection.aws_region
             )
 
         storage_options = {}
@@ -81,7 +83,7 @@ class CloudStorageReader:
             storage_options["endpoint_url"] = connection.endpoint_url
         if not connection.verify_ssl:
             storage_options["verify"] = "False"
-        if connection.aws_allow_unsafe_html: # Note: Polars uses aws_allow_http
+        if connection.aws_allow_unsafe_html:  # Note: Polars uses aws_allow_http
             storage_options["aws_allow_http"] = "true"
 
         if auth_method == "access_key":
@@ -92,20 +94,20 @@ class CloudStorageReader:
 
         elif auth_method == "iam_role":
             # Correctly implement IAM role assumption using boto3 STS client.
-            sts_client = boto3.client('sts', region_name=connection.aws_region)
+            sts_client = boto3.client("sts", region_name=connection.aws_region)
             assumed_role_object = sts_client.assume_role(
                 RoleArn=connection.aws_role_arn,
-                RoleSessionName="PolarsCloudStorageReaderSession" # A descriptive session name
+                RoleSessionName="PolarsCloudStorageReaderSession",  # A descriptive session name
             )
-            credentials = assumed_role_object['Credentials']
-            storage_options["aws_access_key_id"] = credentials['AccessKeyId']
-            storage_options["aws_secret_access_key"] = credentials['SecretAccessKey']
-            storage_options["aws_session_token"] = credentials['SessionToken']
+            credentials = assumed_role_object["Credentials"]
+            storage_options["aws_access_key_id"] = credentials["AccessKeyId"]
+            storage_options["aws_secret_access_key"] = credentials["SecretAccessKey"]
+            storage_options["aws_session_token"] = credentials["SessionToken"]
 
         return storage_options
 
     @staticmethod
-    def _get_adls_storage_options(connection: 'FullCloudStorageConnection') -> Dict[str, Any]:
+    def _get_adls_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
         """Build Azure ADLS-specific storage options."""
         storage_options = {}
 
@@ -133,14 +135,14 @@ class CloudStorageReader:
         return storage_options
 
     @staticmethod
-    def _get_gcs_storage_options(connection: 'FullCloudStorageConnection') -> Dict[str, Any]:
+    def _get_gcs_storage_options(connection: "FullCloudStorageConnection") -> dict[str, Any]:
         """Build GCS-specific storage options."""
         # GCS typically uses service account authentication
         # Implementation would depend on how credentials are stored
         return {}
 
     @staticmethod
-    def get_credential_provider(connection: 'FullCloudStorageConnection') -> Optional[Callable]:
+    def get_credential_provider(connection: "FullCloudStorageConnection") -> Callable | None:
         """
         Get a credential provider function if needed for the authentication method.
 
@@ -165,7 +167,7 @@ class CloudStorageReader:
         return None
 
 
-def get_first_file_from_s3_dir(source: str, storage_options: Dict[str, Any] = None) -> str:
+def get_first_file_from_s3_dir(source: str, storage_options: dict[str, Any] = None) -> str:
     """
     Get the first parquet file from an S3 directory path.
 
@@ -188,7 +190,7 @@ def get_first_file_from_s3_dir(source: str, storage_options: Dict[str, Any] = No
     ClientError
         If S3 access fails
     """
-    if not source.startswith('s3://'):
+    if not source.startswith("s3://"):
         raise ValueError("Source must be a valid S3 URI starting with 's3://'")
     bucket_name, prefix = _parse_s3_path(source)
     file_extension = _get_file_extension(source)
@@ -211,39 +213,39 @@ def _get_file_extension(source: str) -> str:
 
 def _parse_s3_path(source: str) -> tuple[str, str]:
     """Parse S3 URI into bucket name and prefix."""
-    path_parts = source[5:].split('/', 1)  # Remove 's3://'
+    path_parts = source[5:].split("/", 1)  # Remove 's3://'
     bucket_name = path_parts[0]
-    prefix = path_parts[1] if len(path_parts) > 1 else ''
+    prefix = path_parts[1] if len(path_parts) > 1 else ""
     return bucket_name, prefix
 
 
 def _remove_wildcards_from_prefix(prefix: str) -> str:
     """Remove wildcard patterns from S3 prefix."""
-    return prefix.split('*')[0]
+    return prefix.split("*")[0]
 
 
-def _create_s3_client(storage_options: Optional[Dict[str, Any]]):
+def _create_s3_client(storage_options: dict[str, Any] | None):
     """Create boto3 S3 client with optional credentials."""
     if storage_options is None:
-        return boto3.client('s3')
+        return boto3.client("s3")
 
     # Handle both 'aws_region' and 'region_name' keys
     client_options = storage_options.copy()
-    if 'aws_region' in client_options:
-        client_options['region_name'] = client_options.pop('aws_region')
+    if "aws_region" in client_options:
+        client_options["region_name"] = client_options.pop("aws_region")
 
-    return boto3.client('s3', **{k: v for k, v in client_options.items() if k != "aws_allow_http"})
+    return boto3.client("s3", **{k: v for k, v in client_options.items() if k != "aws_allow_http"})
 
 
-def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extension: str) -> Dict[Any, Any]:
+def _get_first_file(s3_client, bucket_name: str, base_prefix: str, file_extension: str) -> dict[Any, Any]:
     """List all parquet files in S3 bucket with given prefix."""
     try:
-        paginator = s3_client.get_paginator('list_objects_v2')
+        paginator = s3_client.get_paginator("list_objects_v2")
         pages = paginator.paginate(Bucket=bucket_name, Prefix=base_prefix)
         for page in pages:
-            if 'Contents' in page:
-                for obj in page['Contents']:
-                    if obj['Key'].endswith(f".{file_extension}"):
+            if "Contents" in page:
+                for obj in page["Contents"]:
+                    if obj["Key"].endswith(f".{file_extension}"):
                         return obj
             else:
                 raise ValueError(f"No objects found in s3://{bucket_name}/{base_prefix}")

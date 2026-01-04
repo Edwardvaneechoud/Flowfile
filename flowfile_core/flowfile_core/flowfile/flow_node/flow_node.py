@@ -1,22 +1,34 @@
-from typing import List, Union, Callable, Any, Optional, Generator, Literal
-from flowfile_core.configs import logger
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.utils.arrow_reader import get_read_top_n
-from flowfile_core.schemas import input_schema, schemas
-from flowfile_core.configs.flow_logger import NodeLogger
-
-from flowfile_core.schemas.output_model import TableExample, FileColumn, NodeData
-from flowfile_core.flowfile.utils import get_hash
-from flowfile_core.configs import node_store
-from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
+from collections.abc import Callable, Generator
 from time import sleep
+from typing import Any, Literal, Optional
+
+from flowfile_core.configs import logger, node_store
+from flowfile_core.configs.flow_logger import NodeLogger
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    ExternalDfFetcher, ExternalSampler, clear_task_from_worker, results_exists, get_external_df_result,
-    ExternalDatabaseFetcher, ExternalDatabaseWriter, ExternalCloudWriter)
-from flowfile_core.flowfile.flow_node.models import (NodeStepSettings, NodeStepInputs, NodeSchemaInformation,
-                                                     NodeStepStats, NodeResults)
+    ExternalCloudWriter,
+    ExternalDatabaseFetcher,
+    ExternalDatabaseWriter,
+    ExternalDfFetcher,
+    ExternalSampler,
+    clear_task_from_worker,
+    get_external_df_result,
+    results_exists,
+)
+from flowfile_core.flowfile.flow_node.models import (
+    NodeResults,
+    NodeSchemaInformation,
+    NodeStepInputs,
+    NodeStepSettings,
+    NodeStepStats,
+)
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
+from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
+from flowfile_core.flowfile.utils import get_hash
+from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas.output_model import FileColumn, NodeData, TableExample
+from flowfile_core.utils.arrow_reader import get_read_top_n
 
 
 class FlowNode:
@@ -25,6 +37,7 @@ class FlowNode:
     This class manages the node's state, its data processing function,
     and its connections to other nodes within the graph.
     """
+
     parent_uuid: str
     node_type: str
     node_template: node_store.NodeTemplate
@@ -34,31 +47,38 @@ class FlowNode:
     node_stats: NodeStepStats
     node_settings: NodeStepSettings
     results: NodeResults
-    node_information: Optional[schemas.NodeInformation] = None
-    leads_to_nodes: List["FlowNode"] = []  # list with target flows, after execution the step will trigger those step(s)
-    user_provided_schema_callback: Optional[Callable] = None  # user provided callback function for schema calculation
+    node_information: schemas.NodeInformation | None = None
+    leads_to_nodes: list["FlowNode"] = []  # list with target flows, after execution the step will trigger those step(s)
+    user_provided_schema_callback: Callable | None = None  # user provided callback function for schema calculation
     _setting_input: Any = None
-    _hash: Optional[str] = None  # host this for caching results
+    _hash: str | None = None  # host this for caching results
     _function: Callable = None  # the function that needs to be executed when triggered
     _name: str = None  # name of the node, used for display
-    _schema_callback: Optional[SingleExecutionFuture] = None  # Function that calculates the schema without executing
+    _schema_callback: SingleExecutionFuture | None = None  # Function that calculates the schema without executing
     _state_needs_reset: bool = False
-    _fetch_cached_df: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter] = None
-    _cache_progress: Optional[ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter] = None
+    _fetch_cached_df: (
+        ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | None
+    ) = None
+    _cache_progress: (
+        ExternalDfFetcher | ExternalDatabaseFetcher | ExternalDatabaseWriter | ExternalCloudWriter | None
+    ) = None
 
-    def __init__(self, node_id: Union[str, int], function: Callable,
-                 parent_uuid: str,
-                 setting_input: Any,
-                 name: str,
-                 node_type: str,
-                 input_columns: List[str] = None,
-                 output_schema: List[FlowfileColumn] = None,
-                 drop_columns: List[str] = None,
-                 renew_schema: bool = True,
-                 pos_x: float = 0,
-                 pos_y: float = 0,
-                 schema_callback: Callable = None,
-                 ):
+    def __init__(
+        self,
+        node_id: str | int,
+        function: Callable,
+        parent_uuid: str,
+        setting_input: Any,
+        name: str,
+        node_type: str,
+        input_columns: list[str] = None,
+        output_schema: list[FlowfileColumn] = None,
+        drop_columns: list[str] = None,
+        renew_schema: bool = True,
+        pos_x: float = 0,
+        pos_y: float = 0,
+        schema_callback: Callable = None,
+    ):
         """Initializes a FlowNode instance.
 
         Args:
@@ -83,16 +103,17 @@ class FlowNode:
         self.node_information.id = node_id
         self.node_type = node_type
         self.node_settings.renew_schema = renew_schema
-        self.update_node(function=function,
-                         input_columns=input_columns,
-                         output_schema=output_schema,
-                         drop_columns=drop_columns,
-                         setting_input=setting_input,
-                         name=name,
-                         pos_x=pos_x,
-                         pos_y=pos_y,
-                         schema_callback=schema_callback,
-                         )
+        self.update_node(
+            function=function,
+            input_columns=input_columns,
+            output_schema=output_schema,
+            drop_columns=drop_columns,
+            setting_input=setting_input,
+            name=name,
+            pos_x=pos_x,
+            pos_y=pos_y,
+            schema_callback=schema_callback,
+        )
 
     def post_init(self):
         """Initializes or resets the node's attributes to their default states."""
@@ -127,7 +148,7 @@ class FlowNode:
         self._state_needs_reset = v
 
     @staticmethod
-    def create_schema_callback_from_function(f: Callable) -> Callable[[], List[FlowfileColumn]]:
+    def create_schema_callback_from_function(f: Callable) -> Callable[[], list[FlowfileColumn]]:
         """Wraps a node's function to create a schema callback that extracts the schema.
 
         Args:
@@ -136,13 +157,15 @@ class FlowNode:
         Returns:
             A callable that, when executed, returns the output schema.
         """
-        def schema_callback() -> List[FlowfileColumn]:
+
+        def schema_callback() -> list[FlowfileColumn]:
             try:
-                logger.info('Executing the schema callback function based on the node function')
+                logger.info("Executing the schema callback function based on the node function")
                 return f().schema
             except Exception as e:
-                logger.warning(f'Error with the schema callback: {e}')
+                logger.warning(f"Error with the schema callback: {e}")
                 return []
+
         return schema_callback
 
     @property
@@ -171,7 +194,7 @@ class FlowNode:
         if f is None:
             return
 
-        def error_callback(e: Exception) -> List:
+        def error_callback(e: Exception) -> list:
             logger.warning(e)
 
             self.node_settings.setup_errors = True
@@ -190,7 +213,7 @@ class FlowNode:
         """
         return not self.has_input and self.node_template.input == 0
 
-    def get_input_type(self, node_id: int) -> List:
+    def get_input_type(self, node_id: int) -> list:
         """Gets the type of connection ('main', 'left', 'right') for a given input node ID.
 
         Args:
@@ -201,24 +224,25 @@ class FlowNode:
         """
         relation_type = []
         if node_id in [n.node_id for n in self.node_inputs.main_inputs]:
-            relation_type.append('main')
+            relation_type.append("main")
         if self.node_inputs.left_input is not None and node_id == self.node_inputs.left_input.node_id:
-            relation_type.append('left')
+            relation_type.append("left")
         if self.node_inputs.right_input is not None and node_id == self.node_inputs.right_input.node_id:
-            relation_type.append('right')
+            relation_type.append("right")
         return list(set(relation_type))
 
-    def update_node(self,
-                    function: Callable,
-                    input_columns: List[str] = None,
-                    output_schema: List[FlowfileColumn] = None,
-                    drop_columns: List[str] = None,
-                    name: str = None,
-                    setting_input: Any = None,
-                    pos_x: float = 0,
-                    pos_y: float = 0,
-                    schema_callback: Callable = None,
-                    ):
+    def update_node(
+        self,
+        function: Callable,
+        input_columns: list[str] = None,
+        output_schema: list[FlowfileColumn] = None,
+        drop_columns: list[str] = None,
+        name: str = None,
+        setting_input: Any = None,
+        pos_x: float = 0,
+        pos_y: float = 0,
+        schema_callback: Callable = None,
+    ):
         """Updates the properties of the node.
 
         This is called during initialization and when settings are changed.
@@ -245,7 +269,7 @@ class FlowNode:
         self.node_schema.output_columns = [] if output_schema is None else output_schema
         self.node_schema.drop_columns = [] if drop_columns is None else drop_columns
         self.node_settings.renew_schema = True
-        if hasattr(setting_input, 'cache_results'):
+        if hasattr(setting_input, "cache_results"):
             self.node_settings.cache_results = setting_input.cache_results
 
         self.results.errors = None
@@ -253,7 +277,7 @@ class FlowNode:
         _ = self.hash
         self.node_template = node_store.node_dict.get(self.node_type)
         if self.node_template is None:
-            raise Exception(f'Node template {self.node_type} not found')
+            raise Exception(f"Node template {self.node_type} not found")
         self.node_default = node_store.node_defaults.get(self.node_type)
         self.setting_input = setting_input  # wait until the end so that the hash is calculated correctly
 
@@ -292,10 +316,11 @@ class FlowNode:
         Args:
             setting_input: The new settings object.
         """
-        is_manual_input = (self.node_type == 'manual_input' and
-                           isinstance(setting_input, input_schema.NodeManualInput) and
-                           isinstance(self._setting_input, input_schema.NodeManualInput)
-                           )
+        is_manual_input = (
+            self.node_type == "manual_input"
+            and isinstance(setting_input, input_schema.NodeManualInput)
+            and isinstance(self._setting_input, input_schema.NodeManualInput)
+        )
         if is_manual_input:
             _ = self.hash
         self._setting_input = setting_input
@@ -309,7 +334,7 @@ class FlowNode:
             self.reset()
 
     @property
-    def node_id(self) -> Union[str, int]:
+    def node_id(self) -> str | int:
         """Gets the unique identifier of the node.
 
         Returns:
@@ -336,7 +361,7 @@ class FlowNode:
         return self.node_inputs.right_input
 
     @property
-    def main_input(self) -> List["FlowNode"]:
+    def main_input(self) -> list["FlowNode"]:
         """Gets the list of nodes connected to the main input port(s).
 
         Returns:
@@ -353,24 +378,29 @@ class FlowNode:
         """
         if isinstance(self.setting_input, input_schema.NodePromise):
             return False
-        return (self.node_template.input == len(self.node_inputs.get_all_inputs()) or
-                (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0) or
-                (self.node_template.multi and self.node_template.can_be_start))
+        return (
+            self.node_template.input == len(self.node_inputs.get_all_inputs())
+            or (self.node_template.multi and len(self.node_inputs.get_all_inputs()) > 0)
+            or (self.node_template.multi and self.node_template.can_be_start)
+        )
 
     def set_node_information(self):
         """Populates the `node_information` attribute with the current state.
 
         This includes the node's connections, settings, and position.
         """
-        logger.info('setting node information')
+        logger.info("setting node information")
         node_information = self.node_information
         node_information.left_input_id = self.node_inputs.left_input.node_id if self.left_input else None
         node_information.right_input_id = self.node_inputs.right_input.node_id if self.right_input else None
-        node_information.input_ids = [mi.node_id for mi in
-                                      self.node_inputs.main_inputs] if self.node_inputs.main_inputs is not None else None
+        node_information.input_ids = (
+            [mi.node_id for mi in self.node_inputs.main_inputs] if self.node_inputs.main_inputs is not None else None
+        )
         node_information.setting_input = self.setting_input
         node_information.outputs = [n.node_id for n in self.leads_to_nodes]
-        node_information.description = self.setting_input.description if hasattr(self.setting_input, 'description') else ''
+        node_information.description = (
+            self.setting_input.description if hasattr(self.setting_input, "description") else ""
+        )
         node_information.is_setup = self.is_setup
         node_information.x_position = self.setting_input.pos_x
         node_information.y_position = self.setting_input.pos_y
@@ -404,7 +434,7 @@ class FlowNode:
         self._function = function
 
     @property
-    def all_inputs(self) -> List["FlowNode"]:
+    def all_inputs(self) -> list["FlowNode"]:
         """Gets a list of all nodes connected to any input port.
 
         Returns:
@@ -436,8 +466,9 @@ class FlowNode:
             self._hash = self.calculate_hash(self.setting_input)
         return self._hash
 
-    def add_node_connection(self, from_node: "FlowNode",
-                            insert_type: Literal['main', 'left', 'right'] = 'main') -> None:
+    def add_node_connection(
+        self, from_node: "FlowNode", insert_type: Literal["main", "left", "right"] = "main"
+    ) -> None:
         """Adds a connection from a source node to this node.
 
         Args:
@@ -448,19 +479,19 @@ class FlowNode:
             Exception: If the insert_type is invalid.
         """
         from_node.leads_to_nodes.append(self)
-        if insert_type == 'main':
+        if insert_type == "main":
             if self.node_template.input <= 2 or self.node_inputs.main_inputs is None:
                 self.node_inputs.main_inputs = [from_node]
             else:
                 self.node_inputs.main_inputs.append(from_node)
-        elif insert_type == 'right':
+        elif insert_type == "right":
             self.node_inputs.right_input = from_node
-        elif insert_type == 'left':
+        elif insert_type == "left":
             self.node_inputs.left_input = from_node
         else:
-            raise Exception('Cannot find the connection')
+            raise Exception("Cannot find the connection")
         if self.setting_input.is_setup:
-            if hasattr(self.setting_input, 'depending_on_id') and insert_type == 'main':
+            if hasattr(self.setting_input, "depending_on_id") and insert_type == "main":
                 self.setting_input.depending_on_id = from_node.node_id
         self.reset()
         from_node.reset()
@@ -472,7 +503,7 @@ class FlowNode:
             deep: If True, the reset propagates recursively through the entire downstream graph.
         """
         for node in self.leads_to_nodes:
-            self.print(f'resetting node: {node.node_id}')
+            self.print(f"resetting node: {node.node_id}")
             node.reset(deep)
 
     def get_flow_file_column_schema(self, col_name: str) -> FlowfileColumn | None:
@@ -488,7 +519,7 @@ class FlowNode:
             if s.column_name == col_name:
                 return s
 
-    def get_predicted_schema(self, force: bool = False) -> List[FlowfileColumn] | None:
+    def get_predicted_schema(self, force: bool = False) -> list[FlowfileColumn] | None:
         """Predicts the output schema of the node without full execution.
 
         It uses the schema_callback or infers from predicted data.
@@ -503,18 +534,18 @@ class FlowNode:
         if self.node_schema.predicted_schema and not force:
             return self.node_schema.predicted_schema
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
-            self.print('Getting the data from a schema callback')
+            self.print("Getting the data from a schema callback")
             if force:
                 # Force the schema callback to reset, so that it will be executed again
                 self.schema_callback.reset()
             schema = self.schema_callback()
             if schema is not None and len(schema) > 0:
-                self.print('Calculating the schema based on the schema callback')
+                self.print("Calculating the schema based on the schema callback")
                 self.node_schema.predicted_schema = schema
                 return self.node_schema.predicted_schema
         predicted_data = self._predicted_data_getter()
         if predicted_data is not None and predicted_data.schema is not None:
-            self.print('Calculating the schema based on the predicted resulting data')
+            self.print("Calculating the schema based on the predicted resulting data")
             self.node_schema.predicted_schema = self._predicted_data_getter().schema
 
         return self.node_schema.predicted_schema
@@ -527,7 +558,7 @@ class FlowNode:
             True if the node is set up, False otherwise.
         """
         if not self.node_information.is_setup:
-            if self.function.__name__ != 'placeholder':
+            if self.function.__name__ != "placeholder":
                 self.node_information.is_setup = True
                 self.setting_input.is_setup = True
         return self.node_information.is_setup
@@ -538,7 +569,7 @@ class FlowNode:
         Args:
             v: The message or value to log.
         """
-        logger.info(f'{self.node_type}, node_id: {self.node_id}: {v}')
+        logger.info(f"{self.node_type}, node_id: {self.node_id}: {v}")
 
     def get_resulting_data(self) -> FlowDataEngine | None:
         """Executes the node's function to produce the actual output data.
@@ -553,11 +584,11 @@ class FlowNode:
         """
         if self.is_setup:
             if self.results.resulting_data is None and self.results.errors is None:
-                self.print('getting resulting data')
+                self.print("getting resulting data")
                 try:
                     if isinstance(self.function, FlowDataEngine):
                         fl: FlowDataEngine = self.function
-                    elif self.node_type == 'external_source':
+                    elif self.node_type == "external_source":
                         fl: FlowDataEngine = self.function()
                         fl.collect_external()
                         self.node_settings.streamable = False
@@ -590,14 +621,14 @@ class FlowNode:
             return fl
         except ValueError as e:
             if str(e) == "generator already executing":
-                logger.info('Generator already executing, waiting for the result')
+                logger.info("Generator already executing, waiting for the result")
                 sleep(1)
                 return self._predicted_data_getter()
             fl = FlowDataEngine()
             return fl
 
         except Exception as e:
-            logger.warning('there was an issue with the function, returning an empty Flowfile')
+            logger.warning("there was an issue with the function, returning an empty Flowfile")
             logger.warning(e)
 
     def get_predicted_resulting_data(self) -> FlowDataEngine:
@@ -609,7 +640,7 @@ class FlowNode:
             A FlowDataEngine instance with a schema but no data.
         """
         if self.needs_run(False) and self.schema_callback is not None or self.node_schema.result_schema is not None:
-            self.print('Getting data based on the schema')
+            self.print("Getting data based on the schema")
 
             _s = self.schema_callback() if self.node_schema.result_schema is None else self.node_schema.result_schema
             return FlowDataEngine.create_from_schema(_s)
@@ -649,7 +680,7 @@ class FlowNode:
                 yield n
 
     @property
-    def schema(self) -> List[FlowfileColumn]:
+    def schema(self) -> list[FlowfileColumn]:
         """Gets the definitive output schema of the node.
 
         If not already run, it falls back to the predicted schema.
@@ -661,7 +692,7 @@ class FlowNode:
             if self.is_setup and self.results.errors is None:
                 if self.node_schema.result_schema is not None and len(self.node_schema.result_schema) > 0:
                     return self.node_schema.result_schema
-                elif self.node_type == 'output':
+                elif self.node_type == "output":
                     if len(self.node_inputs.main_inputs) > 0:
                         self.node_schema.result_schema = self.node_inputs.main_inputs[0].schema
                 else:
@@ -680,11 +711,15 @@ class FlowNode:
         """
 
         if results_exists(self.hash):
-            logger.warning('Not implemented')
+            logger.warning("Not implemented")
             clear_task_from_worker(self.hash)
 
-    def needs_run(self, performance_mode: bool, node_logger: NodeLogger = None,
-                  execution_location: schemas.ExecutionLocationsLiteral = "remote") -> bool:
+    def needs_run(
+        self,
+        performance_mode: bool,
+        node_logger: NodeLogger = None,
+        execution_location: schemas.ExecutionLocationsLiteral = "remote",
+    ) -> bool:
         """Determines if the node needs to be executed.
 
         The decision is based on its run state, caching settings, and execution mode.
@@ -703,7 +738,7 @@ class FlowNode:
         flow_logger = logger if node_logger is None else node_logger
         cache_result_exists = results_exists(self.hash)
         if not self.node_stats.has_run_with_current_setup:
-            flow_logger.info('Node has not run, needs to run')
+            flow_logger.info("Node has not run, needs to run")
             return True
         if self.node_settings.cache_results and cache_result_exists:
             return False
@@ -737,7 +772,9 @@ class FlowNode:
                 if example_data is None:
                     example_data = resulting_data.get_sample(100).to_arrow()
                 return example_data
+
             return get_example_data
+
         resulting_data = self.get_resulting_data()
 
         if not performance_mode:
@@ -759,8 +796,13 @@ class FlowNode:
         try:
             resulting_data = self.get_resulting_data()
             if not performance_mode:
-                external_sampler = ExternalSampler(lf=resulting_data.data_frame, file_ref=self.hash,
-                                                   wait_on_completion=True, node_id=self.node_id, flow_id=flow_id)
+                external_sampler = ExternalSampler(
+                    lf=resulting_data.data_frame,
+                    file_ref=self.hash,
+                    wait_on_completion=True,
+                    node_id=self.node_id,
+                    flow_id=flow_id,
+                )
                 self.store_example_data_generator(external_sampler)
                 if self.results.errors is None and not self.node_stats.is_canceled:
                     self.node_stats.has_run_with_current_setup = True
@@ -790,48 +832,58 @@ class FlowNode:
             Exception: If the node_logger is not provided or if execution fails.
         """
         if node_logger is None:
-            raise Exception('Node logger is not defined')
+            raise Exception("Node logger is not defined")
         if self.node_settings.cache_results and results_exists(self.hash):
             try:
                 self.results.resulting_data = get_external_df_result(self.hash)
                 self._cache_progress = None
                 return
-            except Exception as e:
-                node_logger.warning('Failed to read the cache, rerunning the code')
-        if self.node_type == 'output':
+            except Exception:
+                node_logger.warning("Failed to read the cache, rerunning the code")
+        if self.node_type == "output":
             self.results.resulting_data = self.get_resulting_data()
             self.node_stats.has_run_with_current_setup = True
             return
         try:
             self.get_resulting_data()
         except Exception as e:
-            self.results.errors = 'Error with creating the lazy frame, most likely due to invalid graph'
+            self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
             raise e
         if not performance_mode:
-            external_df_fetcher = ExternalDfFetcher(lf=self.get_resulting_data().data_frame,
-                                                    file_ref=self.hash, wait_on_completion=False,
-                                                    flow_id=node_logger.flow_id,
-                                                    node_id=self.node_id)
+            external_df_fetcher = ExternalDfFetcher(
+                lf=self.get_resulting_data().data_frame,
+                file_ref=self.hash,
+                wait_on_completion=False,
+                flow_id=node_logger.flow_id,
+                node_id=self.node_id,
+            )
             self._fetch_cached_df = external_df_fetcher
             try:
                 lf = external_df_fetcher.get_result()
                 self.results.resulting_data = FlowDataEngine(
-                    lf, number_of_records=ExternalDfFetcher(lf=lf, operation_type='calculate_number_of_records',
-                                                            flow_id=node_logger.flow_id, node_id=self.node_id).result
+                    lf,
+                    number_of_records=ExternalDfFetcher(
+                        lf=lf,
+                        operation_type="calculate_number_of_records",
+                        flow_id=node_logger.flow_id,
+                        node_id=self.node_id,
+                    ).result,
                 )
                 if not performance_mode:
                     self.store_example_data_generator(external_df_fetcher)
                     self.node_stats.has_run_with_current_setup = True
 
             except Exception as e:
-                node_logger.error('Error with external process')
+                node_logger.error("Error with external process")
                 if external_df_fetcher.error_code == -1:
                     try:
                         self.results.resulting_data = self.get_resulting_data()
-                        self.results.warnings = ('Error with external process (unknown error), '
-                                                 'likely the process was killed by the server because of memory constraints, '
-                                                 'continue with the process. '
-                                                 'We cannot display example data...')
+                        self.results.warnings = (
+                            "Error with external process (unknown error), "
+                            "likely the process was killed by the server because of memory constraints, "
+                            "continue with the process. "
+                            "We cannot display example data..."
+                        )
                     except Exception as e:
                         self.results.errors = str(e)
                         raise e
@@ -858,15 +910,18 @@ class FlowNode:
             self._fetch_cached_df.cancel()
             self.node_stats.is_canceled = True
         else:
-            logger.warning('No external process to cancel')
+            logger.warning("No external process to cancel")
         self.node_stats.is_canceled = True
 
-    def execute_node(self, run_location: schemas.ExecutionLocationsLiteral,
-                     reset_cache: bool = False,
-                     performance_mode: bool = False,
-                     retry: bool = True,
-                     node_logger: NodeLogger = None,
-                     optimize_for_downstream: bool = True):
+    def execute_node(
+        self,
+        run_location: schemas.ExecutionLocationsLiteral,
+        reset_cache: bool = False,
+        performance_mode: bool = False,
+        retry: bool = True,
+        node_logger: NodeLogger = None,
+        optimize_for_downstream: bool = True,
+    ):
         """Orchestrates the execution, handling location, caching, and retries.
 
         Args:
@@ -882,7 +937,7 @@ class FlowNode:
             Exception: If the node_logger is not defined.
         """
         if node_logger is None:
-            raise Exception('Flow logger is not defined')
+            raise Exception("Flow logger is not defined")
         #  TODO: Simplify which route is being picked there are many duplicate checks
 
         if reset_cache:
@@ -891,63 +946,78 @@ class FlowNode:
             self.node_stats.has_completed_last_run = False
 
         if self.is_setup:
-            node_logger.info(f'Starting to run {self.__name__}')
-            if (self.needs_run(performance_mode, node_logger, run_location) or self.node_template.node_group == "output"
-                    and not (run_location == 'local')):
+            node_logger.info(f"Starting to run {self.__name__}")
+            if (
+                self.needs_run(performance_mode, node_logger, run_location)
+                or self.node_template.node_group == "output"
+                and not (run_location == "local")
+            ):
                 self.clear_table_example()
                 self.prepare_before_run()
                 self.reset()
                 try:
-                    if (((run_location == 'remote' or
-                         (self.node_default.transform_type == 'wide' and optimize_for_downstream) and
-                         not run_location == 'local'))
-                            or self.node_settings.cache_results):
-                        node_logger.info('Running the node remotely')
+                    if (
+                        run_location == "remote"
+                        or (self.node_default.transform_type == "wide" and optimize_for_downstream)
+                        and not run_location == "local"
+                    ) or self.node_settings.cache_results:
+                        node_logger.info("Running the node remotely")
                         if self.node_settings.cache_results:
                             performance_mode = False
-                        self.execute_remote(performance_mode=(performance_mode if not self.node_settings.cache_results
-                                                              else False),
-                                            node_logger=node_logger
-                                            )
+                        self.execute_remote(
+                            performance_mode=(performance_mode if not self.node_settings.cache_results else False),
+                            node_logger=node_logger,
+                        )
                     else:
-                        node_logger.info('Running the node locally')
+                        node_logger.info("Running the node locally")
                         self.execute_local(performance_mode=performance_mode, flow_id=node_logger.flow_id)
                 except Exception as e:
-                    if 'No such file or directory (os error' in str(e) and retry:
-                        logger.warning('Error with the input node, starting to rerun the input node...')
-                        all_inputs: List[FlowNode] = self.node_inputs.get_all_inputs()
+                    if "No such file or directory (os error" in str(e) and retry:
+                        logger.warning("Error with the input node, starting to rerun the input node...")
+                        all_inputs: list[FlowNode] = self.node_inputs.get_all_inputs()
                         for node_input in all_inputs:
-                            node_input.execute_node(run_location=run_location,
-                                                    performance_mode=performance_mode, retry=True,
-                                                    reset_cache=True,
-                                                    node_logger=node_logger)
-                        self.execute_node(run_location=run_location,
-                                          performance_mode=performance_mode, retry=False,
-                                          node_logger=node_logger)
+                            node_input.execute_node(
+                                run_location=run_location,
+                                performance_mode=performance_mode,
+                                retry=True,
+                                reset_cache=True,
+                                node_logger=node_logger,
+                            )
+                        self.execute_node(
+                            run_location=run_location,
+                            performance_mode=performance_mode,
+                            retry=False,
+                            node_logger=node_logger,
+                        )
                     else:
                         self.results.errors = str(e)
                         if "Connection refused" in str(e) and "/submit_query/" in str(e):
-                            node_logger.warning("There was an issue connecting to the remote worker, "
-                                                "ensure the worker process is running, "
-                                                "or change the settings to, so it executes locally")
-                            node_logger.error("Could not execute in the remote worker. (Re)start the worker service, or change settings to local settings.")
+                            node_logger.warning(
+                                "There was an issue connecting to the remote worker, "
+                                "ensure the worker process is running, "
+                                "or change the settings to, so it executes locally"
+                            )
+                            node_logger.error(
+                                "Could not execute in the remote worker. (Re)start the worker service, or change settings to local settings."
+                            )
                         else:
-                            node_logger.error(f'Error with running the node: {e}')
-            elif ((run_location == 'local') and
-                  (not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output")):
+                            node_logger.error(f"Error with running the node: {e}")
+            elif (run_location == "local") and (
+                not self.node_stats.has_run_with_current_setup or self.node_template.node_group == "output"
+            ):
                 try:
-                    node_logger.info('Executing fully locally')
+                    node_logger.info("Executing fully locally")
                     self.execute_full_local(performance_mode)
                 except Exception as e:
                     self.results.errors = str(e)
-                    node_logger.error(f'Error with running the node: {e}')
+                    node_logger.error(f"Error with running the node: {e}")
                     self.node_stats.error = str(e)
                     self.node_stats.has_completed_last_run = False
 
             else:
-                node_logger.info('Node has already run, not running the node')
+                node_logger.info("Node has already run, not running the node")
         else:
-            node_logger.warning(f'Node {self.__name__} is not setup, cannot run the node')
+            node_logger.warning(f"Node {self.__name__} is not setup, cannot run the node")
 
     def store_example_data_generator(self, external_df_fetcher: ExternalDfFetcher | ExternalSampler):
         """Stores a generator function for fetching a sample of the result data.
@@ -960,7 +1030,7 @@ class FlowNode:
             self.results.example_data_path = file_ref
             self.results.example_data_generator = get_read_top_n(file_path=file_ref, n=100)
         else:
-            logger.error('Could not get the sample data, the external process is not ready')
+            logger.error("Could not get the sample data, the external process is not ready")
 
     def needs_reset(self) -> bool:
         """Checks if the node's hash has changed, indicating an outdated state.
@@ -980,7 +1050,7 @@ class FlowNode:
         """
         needs_reset = self.needs_reset() or deep
         if needs_reset:
-            logger.info(f'{self.node_id}: Node needs reset')
+            logger.info(f"{self.node_id}: Node needs reset")
             self.node_stats.has_run_with_current_setup = False
             self.results.reset()
             self.node_schema.result_schema = None
@@ -991,7 +1061,7 @@ class FlowNode:
             if self.is_correct:
                 self._schema_callback = None  # Ensure the schema callback is reset
                 if self.schema_callback:
-                    logger.info(f'{self.node_id}: Resetting the schema callback')
+                    logger.info(f"{self.node_id}: Resetting the schema callback")
                     self.schema_callback.start()
             self.evaluate_nodes()
             _ = self.hash  # Recalculate the hash after reset
@@ -1005,17 +1075,18 @@ class FlowNode:
         Returns:
             True if the connection was found and removed, False otherwise.
         """
-        logger.info(f'Deleting lead to node: {node_id}')
+        logger.info(f"Deleting lead to node: {node_id}")
         for i, lead_to_node in enumerate(self.leads_to_nodes):
-            logger.info(f'Checking lead to node: {lead_to_node.node_id}')
+            logger.info(f"Checking lead to node: {lead_to_node.node_id}")
             if lead_to_node.node_id == node_id:
-                logger.info(f'Found the node to delete: {node_id}')
+                logger.info(f"Found the node to delete: {node_id}")
                 self.leads_to_nodes.pop(i)
                 return True
         return False
 
-    def delete_input_node(self, node_id: int, connection_type: input_schema.InputConnectionClass = 'input-0',
-                          complete: bool = False) -> bool:
+    def delete_input_node(
+        self, node_id: int, connection_type: input_schema.InputConnectionClass = "input-0", complete: bool = False
+    ) -> bool:
         """Removes a connection from a specific input node.
 
         Args:
@@ -1027,23 +1098,23 @@ class FlowNode:
             True if a connection was found and removed, False otherwise.
         """
         deleted: bool = False
-        if connection_type == 'input-0':
+        if connection_type == "input-0":
             for i, node in enumerate(self.node_inputs.main_inputs):
                 if node.node_id == node_id:
                     self.node_inputs.main_inputs.pop(i)
                     deleted = True
                     if not complete:
                         continue
-        elif connection_type == 'input-1' or complete:
+        elif connection_type == "input-1" or complete:
             if self.node_inputs.right_input is not None and self.node_inputs.right_input.node_id == node_id:
                 self.node_inputs.right_input = None
                 deleted = True
-        elif connection_type == 'input-2' or complete:
+        elif connection_type == "input-2" or complete:
             if self.node_inputs.left_input is not None and self.node_inputs.right_input.node_id == node_id:
                 self.node_inputs.left_input = None
                 deleted = True
         else:
-            logger.warning('Could not find the connection to delete...')
+            logger.warning("Could not find the connection to delete...")
         if deleted:
             self.reset()
         return deleted
@@ -1056,7 +1127,7 @@ class FlowNode:
         """
         return f"Node id: {self.node_id} ({self.node_type})"
 
-    def _get_readable_schema(self) -> List[dict] | None:
+    def _get_readable_schema(self) -> list[dict] | None:
         """Helper to get a simplified, dictionary representation of the output schema.
 
         Returns:
@@ -1074,11 +1145,14 @@ class FlowNode:
         Returns:
             A dictionary containing key information about the node.
         """
-        return dict(FlowNode=
-                    dict(node_id=self.node_id,
-                         step_name=self.__name__,
-                         output_columns=self.node_schema.output_columns,
-                         output_schema=self._get_readable_schema()))
+        return dict(
+            FlowNode=dict(
+                node_id=self.node_id,
+                step_name=self.__name__,
+                output_columns=self.node_schema.output_columns,
+                output_schema=self._get_readable_schema(),
+            )
+        )
 
     @property
     def number_of_leads_to_nodes(self) -> int | None:
@@ -1149,14 +1223,13 @@ class FlowNode:
         Returns:
             A `TableExample` object, or None if the node is not set up.
         """
-        self.print('Getting a table example')
+        self.print("Getting a table example")
         if self.is_setup and include_data and self.node_stats.has_completed_last_run:
-
-            if self.node_template.node_group == 'output':
-                self.print('getting the table example')
+            if self.node_template.node_group == "output":
+                self.print("getting the table example")
                 return self.main_input[0].get_table_example(include_data)
 
-            logger.info('getting the table example since the node has run')
+            logger.info("getting the table example since the node has run")
             example_data_getter = self.results.example_data_generator
             if example_data_getter is not None:
                 data = example_data_getter().to_pylist()
@@ -1168,26 +1241,34 @@ class FlowNode:
             fl = self.get_resulting_data()
             has_example_data = self.results.example_data_generator is not None
 
-            return TableExample(node_id=self.node_id,
-                                name=str(self.node_id), number_of_records=999,
-                                number_of_columns=fl.number_of_fields,
-                                table_schema=schema, columns=fl.columns, data=data,
-                                has_example_data=has_example_data,
-                                has_run_with_current_setup=self.node_stats.has_run_with_current_setup
-                                )
+            return TableExample(
+                node_id=self.node_id,
+                name=str(self.node_id),
+                number_of_records=999,
+                number_of_columns=fl.number_of_fields,
+                table_schema=schema,
+                columns=fl.columns,
+                data=data,
+                has_example_data=has_example_data,
+                has_run_with_current_setup=self.node_stats.has_run_with_current_setup,
+            )
         else:
-            logger.warning('getting the table example but the node has not run')
+            logger.warning("getting the table example but the node has not run")
             try:
                 schema = [FileColumn.model_validate(c.get_column_repr()) for c in self.schema]
             except Exception as e:
                 logger.warning(e)
                 schema = []
             columns = [s.name for s in schema]
-            return TableExample(node_id=self.node_id,
-                                name=str(self.node_id), number_of_records=0,
-                                number_of_columns=len(columns),
-                                table_schema=schema, columns=columns,
-                                data=[])
+            return TableExample(
+                node_id=self.node_id,
+                name=str(self.node_id),
+                number_of_records=0,
+                number_of_columns=len(columns),
+                table_schema=schema,
+                columns=columns,
+                data=[],
+            )
 
     def get_node_data(self, flow_id: int, include_example: bool = False) -> NodeData:
         """Gathers all necessary data for representing the node in the UI.
@@ -1199,11 +1280,13 @@ class FlowNode:
         Returns:
             A `NodeData` object.
         """
-        node = NodeData(flow_id=flow_id,
-                        node_id=self.node_id,
-                        has_run=self.node_stats.has_run_with_current_setup,
-                        setting_input=self.setting_input,
-                        flow_type=self.node_type)
+        node = NodeData(
+            flow_id=flow_id,
+            node_id=self.node_id,
+            has_run=self.node_stats.has_run_with_current_setup,
+            setting_input=self.setting_input,
+            flow_type=self.node_type,
+        )
         if self.main_input:
             node.main_input = self.main_input[0].get_table_example()
         if self.left_input:
@@ -1231,12 +1314,14 @@ class FlowNode:
         Returns:
             A `NodeInput` object.
         """
-        return schemas.NodeInput(pos_y=self.setting_input.pos_y,
-                                 pos_x=self.setting_input.pos_x,
-                                 id=self.node_id,
-                                 **self.node_template.__dict__)
+        return schemas.NodeInput(
+            pos_y=self.setting_input.pos_y,
+            pos_x=self.setting_input.pos_x,
+            id=self.node_id,
+            **self.node_template.__dict__,
+        )
 
-    def get_edge_input(self) -> List[schemas.NodeEdge]:
+    def get_edge_input(self) -> list[schemas.NodeEdge]:
         """Generates `NodeEdge` objects for all input connections to this node.
 
         Returns:
@@ -1245,24 +1330,33 @@ class FlowNode:
         edges = []
         if self.node_inputs.main_inputs is not None:
             for i, main_input in enumerate(self.node_inputs.main_inputs):
-                edges.append(schemas.NodeEdge(id=f'{main_input.node_id}-{self.node_id}-{i}',
-                                              source=main_input.node_id,
-                                              target=self.node_id,
-                                              sourceHandle='output-0',
-                                              targetHandle='input-0',
-                                              ))
+                edges.append(
+                    schemas.NodeEdge(
+                        id=f"{main_input.node_id}-{self.node_id}-{i}",
+                        source=main_input.node_id,
+                        target=self.node_id,
+                        sourceHandle="output-0",
+                        targetHandle="input-0",
+                    )
+                )
         if self.node_inputs.left_input is not None:
-            edges.append(schemas.NodeEdge(id=f'{self.node_inputs.left_input.node_id}-{self.node_id}-right',
-                                          source=self.node_inputs.left_input.node_id,
-                                          target=self.node_id,
-                                          sourceHandle='output-0',
-                                          targetHandle='input-2',
-                                          ))
+            edges.append(
+                schemas.NodeEdge(
+                    id=f"{self.node_inputs.left_input.node_id}-{self.node_id}-right",
+                    source=self.node_inputs.left_input.node_id,
+                    target=self.node_id,
+                    sourceHandle="output-0",
+                    targetHandle="input-2",
+                )
+            )
         if self.node_inputs.right_input is not None:
-            edges.append(schemas.NodeEdge(id=f'{self.node_inputs.right_input.node_id}-{self.node_id}-left',
-                                          source=self.node_inputs.right_input.node_id,
-                                          target=self.node_id,
-                                          sourceHandle='output-0',
-                                          targetHandle='input-1',
-                                          ))
+            edges.append(
+                schemas.NodeEdge(
+                    id=f"{self.node_inputs.right_input.node_id}-{self.node_id}-left",
+                    source=self.node_inputs.right_input.node_id,
+                    target=self.node_id,
+                    sourceHandle="output-0",
+                    targetHandle="input-1",
+                )
+            )
         return edges

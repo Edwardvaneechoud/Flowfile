@@ -1,11 +1,13 @@
 """
 Secure storage module for FlowFile credentials and secrets.
 """
-from cryptography.fernet import Fernet
-import os
-from pathlib import Path
+
 import json
 import logging
+import os
+from pathlib import Path
+
+from cryptography.fernet import Fernet
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,7 @@ class SecureStorage:
 
     def __init__(self):
         env = os.environ.get("FLOWFILE_MODE")
-        logger.debug(f'Using secure storage in {env} mode')
+        logger.debug(f"Using secure storage in {env} mode")
         if os.environ.get("FLOWFILE_MODE") == "electron":
             app_data = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
             self.storage_path = Path(app_data) / "flowfile"
@@ -148,7 +150,7 @@ def get_docker_secret_key():
     secret_path = "/run/secrets/flowfile_master_key"
     if os.path.exists(secret_path):
         try:
-            with open(secret_path, "r") as f:
+            with open(secret_path) as f:
                 return f.read().strip()
         except Exception as e:
             logger.error(f"Failed to read master key from Docker secret: {e}")

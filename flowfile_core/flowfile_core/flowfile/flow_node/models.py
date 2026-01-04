@@ -1,15 +1,15 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
 
 import pyarrow as pa
-from typing import List, Union, Callable, Optional, Literal
-from dataclasses import dataclass
 
 # Forward declaration for type hints to avoid circular imports
 if False:
     from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.schemas import schemas
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 
 
 @dataclass
@@ -27,30 +27,35 @@ class NodeStepPromise:
         right_input: The ID of the node connected to the right input port.
         depends_on: A list of node IDs that this node depends on for main inputs.
     """
-    node_id: Union[str, int]
+
+    node_id: str | int
     name: str
     is_start: bool
-    leads_to_id: Optional[List[Union[str, int]]] = None
-    left_input: Optional[Union[str, int]] = None
-    right_input: Optional[Union[str, int]] = None
-    depends_on: Optional[List[Union[str, int]]] = None
+    leads_to_id: list[str | int] | None = None
+    left_input: str | int | None = None
+    right_input: str | int | None = None
+    depends_on: list[str | int] | None = None
 
 
 class NodeStepStats:
     """
     Tracks the execution status and statistics of a `FlowNode`.
     """
+
     error: str = None
     _has_run_with_current_setup: bool = False
     has_completed_last_run: bool = False
     active: bool = True
     is_canceled: bool = False
 
-    def __init__(self, error: str = None,
-                 has_run_with_current_setup: bool = False,
-                 has_completed_last_run: bool = False,
-                 active: bool = True,
-                 is_canceled: bool = False):
+    def __init__(
+        self,
+        error: str = None,
+        has_run_with_current_setup: bool = False,
+        has_completed_last_run: bool = False,
+        active: bool = True,
+        is_canceled: bool = False,
+    ):
         """
         Initializes the node's statistics.
 
@@ -71,9 +76,11 @@ class NodeStepStats:
         Provides a string representation of the node's stats.
         :return: A string detailing the current stats.
         """
-        return (f"NodeStepStats(error={self.error}, has_run_with_current_setup={self.has_run_with_current_setup}, "
-                f"has_completed_last_run={self.has_completed_last_run}, "
-                f"active={self.active}, is_canceled={self.is_canceled})")
+        return (
+            f"NodeStepStats(error={self.error}, has_run_with_current_setup={self.has_run_with_current_setup}, "
+            f"has_completed_last_run={self.has_completed_last_run}, "
+            f"active={self.active}, is_canceled={self.is_canceled})"
+        )
 
     @property
     def has_run_with_current_setup(self) -> bool:
@@ -109,6 +116,7 @@ class NodeStepSettings:
         setup_errors: If True, indicates a non-blocking error occurred during setup.
         breaking_setup_errors: If True, indicates an error occurred that prevents execution.
     """
+
     cache_results: bool = False
     renew_schema: bool = True
     streamable: bool = True
@@ -125,12 +133,13 @@ class NodeStepInputs:
         right_input: The `FlowNode` connected to the right input port.
         main_inputs: A list of `FlowNode` objects connected to the main input port(s).
     """
+
     left_input: "FlowNode" = None
     right_input: "FlowNode" = None
-    main_inputs: List["FlowNode"] = None
+    main_inputs: list["FlowNode"] = None
 
     @property
-    def input_ids(self) -> List[int]:
+    def input_ids(self) -> list[int]:
         """
         Gets the IDs of all connected input nodes.
         :return: A list of integer node IDs.
@@ -139,7 +148,7 @@ class NodeStepInputs:
             return [node_input.node_information.id for node_input in self.get_all_inputs()]
         return []
 
-    def get_all_inputs(self) -> List["FlowNode"]:
+    def get_all_inputs(self) -> list["FlowNode"]:
         """
         Retrieves a single list containing all input nodes (main, left, and right).
         :return: A list of all connected `FlowNode` objects.
@@ -157,8 +166,9 @@ class NodeStepInputs:
         main_inputs_repr = f"Main Inputs: {self.main_inputs}" if self.main_inputs else "Main Inputs: None"
         return f"{self.__class__.__name__}({left_repr}, {right_repr}, {main_inputs_repr})"
 
-    def validate_if_input_connection_exists(self, node_input_id: int,
-                                            connection_name: Literal['main', 'left', 'right']) -> bool:
+    def validate_if_input_connection_exists(
+        self, node_input_id: int, connection_name: Literal["main", "left", "right"]
+    ) -> bool:
         """
         Checks if a connection from a specific node ID exists on a given port.
 
@@ -166,11 +176,11 @@ class NodeStepInputs:
         :param connection_name: The name of the input port ('main', 'left', 'right').
         :return: True if the connection exists, False otherwise.
         """
-        if connection_name == 'main' and self.main_inputs:
+        if connection_name == "main" and self.main_inputs:
             return any(node_input.node_information.id == node_input_id for node_input in self.main_inputs)
-        if connection_name == 'left' and self.left_input:
+        if connection_name == "left" and self.left_input:
             return self.left_input.node_information.id == node_input_id
-        if connection_name == 'right':
+        if connection_name == "right":
             return self.right_input.node_information.id == node_input_id
 
 
@@ -185,25 +195,27 @@ class NodeSchemaInformation:
         drop_columns: A list of column names that will be dropped by the node.
         output_columns: A list of `FlowfileColumn` objects that will be added by the node.
     """
-    result_schema: Optional[List[FlowfileColumn]] = None
-    predicted_schema: Optional[List[FlowfileColumn]] = None
-    input_columns: List[str] = []
-    drop_columns: List[str] = []
-    output_columns: List[FlowfileColumn] = []
+
+    result_schema: list[FlowfileColumn] | None = None
+    predicted_schema: list[FlowfileColumn] | None = None
+    input_columns: list[str] = []
+    drop_columns: list[str] = []
+    output_columns: list[FlowfileColumn] = []
 
 
 class NodeResults:
     """
     Stores the outputs of a `FlowNode`'s execution, including data, errors, and metadata.
     """
-    _resulting_data: Optional[FlowDataEngine] = None
-    example_data: Optional[FlowDataEngine] = None
-    example_data_path: Optional[str] = None
-    example_data_generator: Optional[Callable[[], pa.Table]] = None
+
+    _resulting_data: FlowDataEngine | None = None
+    example_data: FlowDataEngine | None = None
+    example_data_path: str | None = None
+    example_data_generator: Callable[[], pa.Table] | None = None
     run_time: int = -1
-    errors: Optional[str] = None
-    warnings: Optional[str] = None
-    analysis_data_generator: Optional[Callable[[], pa.Table]] = None
+    errors: str | None = None
+    warnings: str | None = None
+    analysis_data_generator: Callable[[], pa.Table] | None = None
 
     def __init__(self):
         self._resulting_data = None
@@ -214,7 +226,7 @@ class NodeResults:
         self.example_data_generator = None
         self.analysis_data_generator = None
 
-    def get_example_data(self) -> Optional[pa.Table]:
+    def get_example_data(self) -> pa.Table | None:
         """
         Executes the generator to fetch a sample of the resulting data.
         :return: A PyArrow Table containing a sample of the data, or None.
@@ -223,7 +235,7 @@ class NodeResults:
             return self.example_data_generator()
 
     @property
-    def resulting_data(self) -> Optional[FlowDataEngine]:
+    def resulting_data(self) -> FlowDataEngine | None:
         """
         Gets the full resulting data from the node's execution.
         :return: A `FlowDataEngine` instance containing the result, or None.
@@ -231,7 +243,7 @@ class NodeResults:
         return self._resulting_data
 
     @resulting_data.setter
-    def resulting_data(self, d: Optional[FlowDataEngine]):
+    def resulting_data(self, d: FlowDataEngine | None):
         """
         Sets the resulting data.
         :param d: The `FlowDataEngine` instance to store.

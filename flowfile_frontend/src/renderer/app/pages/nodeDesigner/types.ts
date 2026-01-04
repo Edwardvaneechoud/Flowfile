@@ -41,6 +41,13 @@ export interface CustomNodeInfo {
   node_category: string;
   title: string;
   intro: string;
+  node_icon: string;
+}
+
+/** Icon info from the backend */
+export interface IconInfo {
+  file_name: string;
+  is_custom: boolean;
 }
 
 /** Node metadata for the designer */
@@ -51,6 +58,7 @@ export interface NodeMetadata {
   intro: string;
   number_of_inputs: number;
   number_of_outputs: number;
+  node_icon: string;
 }
 
 /** Available component definition for the palette */

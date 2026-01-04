@@ -1,12 +1,11 @@
 import os
-import subprocess
 import platform
 import shutil
+import subprocess
 from pathlib import Path
-from typing import List
 
 
-def merge_directories(directories: List[str], target_dir: str, cleanup_after_merge: bool = True):
+def merge_directories(directories: list[str], target_dir: str, cleanup_after_merge: bool = True):
     """
     Merge all files from two folders into a new target directory.
     After successful merge, removes the original folders.
@@ -16,9 +15,9 @@ def merge_directories(directories: List[str], target_dir: str, cleanup_after_mer
     for directory in directories:
         if os.path.exists(directory):
             shutil.copytree(directory, target_dir, dirs_exist_ok=True)
-    print('Merged directories:', directories, 'into', target_dir)
+    print("Merged directories:", directories, "into", target_dir)
     if cleanup_after_merge:
-        print('Cleaning up directories:', directories)
+        print("Cleaning up directories:", directories)
         for directory in directories:
             if os.path.exists(directory):
                 shutil.rmtree(directory)
@@ -197,25 +196,28 @@ coll = COLLECT(
     name='{output_name}'
 )
 '''
-    spec_path = f'{output_name}.spec'
-    with open(spec_path, 'w') as f:
+    spec_path = f"{output_name}.spec"
+    with open(spec_path, "w") as f:
         f.write(spec_content)
     return spec_path
+
 
 def build_backend(directory, script_name, output_name, hidden_imports=None):
     try:
         spec_path = create_spec_file(directory, script_name, output_name, hidden_imports)
 
         env = os.environ.copy()
-        env['PYTHONOPTIMIZE'] = "1"
+        env["PYTHONOPTIMIZE"] = "1"
 
         command = [
             "pyinstaller",
             "--clean",
             "-y",
-            "--dist", "./services_dist",
-            "--workpath", "/tmp" if platform.system() != "Windows" else os.path.join(os.getenv('TEMP'), 'pyinstaller'),
-            spec_path
+            "--dist",
+            "./services_dist",
+            "--workpath",
+            "/tmp" if platform.system() != "Windows" else os.path.join(os.getenv("TEMP"), "pyinstaller"),
+            spec_path,
         ]
 
         print(f"Building {output_name}...")
@@ -247,7 +249,7 @@ def combine_packages():
             exe_name = project + ".exe" if platform.system() == "Windows" else project
             src_exe = os.path.join(src_dir, exe_name)
             temp_target_exe = os.path.join(dist_dir, "_" + exe_name)
-            target_exe = os.path.join(dist_dir,  exe_name)
+            target_exe = os.path.join(dist_dir, exe_name)
             if os.path.exists(src_exe) and os.path.isfile(src_exe):
                 # Instead of removing, overwrite the target
                 shutil.move(src_exe, temp_target_exe)
@@ -257,9 +259,10 @@ def combine_packages():
             if platform.system() == "Windows" and os.path.exists(os.path.join(dist_dir, project)):
                 shutil.rmtree(os.path.join(dist_dir, project))
 
+
 def main():
     # Clean previous builds
-    for dir_name in ['services_dist']:
+    for dir_name in ["services_dist"]:
         if os.path.exists(dir_name):
             shutil.rmtree(dir_name)
 
@@ -286,20 +289,20 @@ def main():
     # Build flowfile_worker
 
     if not build_backend(
-            directory=os.path.join("flowfile_worker", "flowfile_worker"),
-            script_name="main.py",
-            output_name="flowfile_worker",
-            hidden_imports=common_imports
+        directory=os.path.join("flowfile_worker", "flowfile_worker"),
+        script_name="main.py",
+        output_name="flowfile_worker",
+        hidden_imports=common_imports,
     ):
         builds_successful = False
 
     # Build flowfile_core
 
     if not build_backend(
-            directory=os.path.join("flowfile_core", "flowfile_core"),
-            script_name="main.py",
-            output_name="flowfile_core",
-            hidden_imports=common_imports
+        directory=os.path.join("flowfile_core", "flowfile_core"),
+        script_name="main.py",
+        output_name="flowfile_core",
+        hidden_imports=common_imports,
     ):
         builds_successful = False
 

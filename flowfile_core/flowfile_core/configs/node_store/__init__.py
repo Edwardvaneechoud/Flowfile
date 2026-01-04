@@ -1,16 +1,17 @@
+import logging
+
+from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
 from flowfile_core.configs.node_store.user_defined_node_registry import (
     get_all_nodes_from_standard_location,
     load_single_node_from_file,
     unload_node_by_name,
 )
-from flowfile_core.configs.node_store.nodes import get_all_standard_nodes
-from flowfile_core.schemas.schemas import NodeTemplate
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
-import logging
+from flowfile_core.schemas.schemas import NodeTemplate
 
 logger = logging.getLogger(__name__)
 
-nodes_with_defaults = {'sample', 'sort', 'union', 'select', 'record_count'}
+nodes_with_defaults = {"sample", "sort", "union", "select", "record_count"}
 
 
 def register_custom_node(node: NodeTemplate):
@@ -94,5 +95,4 @@ for custom_node in CUSTOM_NODE_STORE.values():
 
 
 def check_if_has_default_setting(node_item: str):
-
     return node_item in nodes_with_defaults

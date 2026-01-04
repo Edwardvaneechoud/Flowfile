@@ -3,10 +3,9 @@ Migration logic for converting old flowfile pickles to new YAML format.
 """
 
 import pickle
-from dataclasses import fields, is_dataclass, asdict
+from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import sys
+from typing import Any
 
 try:
     import yaml
@@ -27,28 +26,28 @@ class LegacyUnpickler(pickle.Unpickler):
     # ONLY these classes changed from @dataclass to BaseModel
     # These are all from flowfile_core/schemas/transform_schema.py
     DATACLASS_TO_PYDANTIC = {
-        'SelectInput',
-        'FieldInput',
-        'FunctionInput',
-        'BasicFilter',
-        'FilterInput',
-        'SelectInputs',
-        'JoinInputs',
-        'JoinMap',
-        'CrossJoinInput',
-        'JoinInput',
-        'FuzzyMatchInput',
-        'AggColl',
-        'GroupByInput',
-        'PivotInput',
-        'SortByInput',
-        'RecordIdInput',
-        'TextToRowsInput',
-        'UnpivotInput',
-        'UnionInput',
-        'UniqueInput',
-        'GraphSolverInput',
-        'PolarsCodeInput',
+        "SelectInput",
+        "FieldInput",
+        "FunctionInput",
+        "BasicFilter",
+        "FilterInput",
+        "SelectInputs",
+        "JoinInputs",
+        "JoinMap",
+        "CrossJoinInput",
+        "JoinInput",
+        "FuzzyMatchInput",
+        "AggColl",
+        "GroupByInput",
+        "PivotInput",
+        "SortByInput",
+        "RecordIdInput",
+        "TextToRowsInput",
+        "UnpivotInput",
+        "UnionInput",
+        "UniqueInput",
+        "GraphSolverInput",
+        "PolarsCodeInput",
     }
 
     def find_class(self, module: str, name: str):
@@ -71,7 +70,7 @@ def load_legacy_flowfile(path: Path) -> Any:
     Returns:
         The deserialized FlowInformation object (as legacy dataclass)
     """
-    with open(path, 'rb') as f:
+    with open(path, "rb") as f:
         return LegacyUnpickler(f).load()
 
 
@@ -111,7 +110,7 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
 
     try:
         # Handle Pydantic models FIRST (check for model_dump method)
-        if hasattr(obj, 'model_dump') and callable(obj.model_dump):
+        if hasattr(obj, "model_dump") and callable(obj.model_dump):
             try:
                 data = obj.model_dump()
                 # Recursively convert any nested structures
@@ -150,9 +149,8 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
             return str(obj)
 
         # Handle objects with __dict__ (generic fallback)
-        if hasattr(obj, '__dict__'):
-            return {k: convert_to_dict(v, _seen) for k, v in obj.__dict__.items()
-                    if not k.startswith('_')}
+        if hasattr(obj, "__dict__"):
+            return {k: convert_to_dict(v, _seen) for k, v in obj.__dict__.items() if not k.startswith("_")}
 
         # Fallback: try to convert to string
         return str(obj)
@@ -161,7 +159,7 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
         _seen.discard(obj_id)
 
 
-def transform_to_new_schema(data: Dict) -> Dict:
+def transform_to_new_schema(data: dict) -> dict:
     """
     Transform the legacy schema structure to the new FlowfileData format.
 
@@ -176,39 +174,39 @@ def transform_to_new_schema(data: Dict) -> Dict:
     Returns:
         Transformed dict ready for YAML serialization (FlowfileData format)
     """
-    node_starts = set(data.get('node_starts', []))
+    node_starts = set(data.get("node_starts", []))
 
     result = {
-        'flowfile_version': '2.0',
-        'flowfile_id': data.get('flow_id', 1),
-        'flowfile_name': data.get('flow_name', ''),
-        'flowfile_settings': _transform_flow_settings(data.get('flow_settings', {})),
-        'nodes': _transform_nodes(data.get('data', {}), node_starts),
+        "flowfile_version": "2.0",
+        "flowfile_id": data.get("flow_id", 1),
+        "flowfile_name": data.get("flow_name", ""),
+        "flowfile_settings": _transform_flow_settings(data.get("flow_settings", {})),
+        "nodes": _transform_nodes(data.get("data", {}), node_starts),
     }
 
     return result
 
 
-def _transform_flow_settings(settings: Dict) -> Dict:
+def _transform_flow_settings(settings: dict) -> dict:
     """Transform flow settings to FlowfileSettings format."""
     if not settings:
         return {
-            'execution_mode': 'Development',
-            'execution_location': 'local',
-            'auto_save': False,
-            'show_detailed_progress': True,
+            "execution_mode": "Development",
+            "execution_location": "local",
+            "auto_save": False,
+            "show_detailed_progress": True,
         }
 
     return {
-        'description': settings.get('description'),
-        'execution_mode': settings.get('execution_mode', 'Development'),
-        'execution_location': settings.get('execution_location', 'local'),
-        'auto_save': settings.get('auto_save', False),
-        'show_detailed_progress': settings.get('show_detailed_progress', True),
+        "description": settings.get("description"),
+        "execution_mode": settings.get("execution_mode", "Development"),
+        "execution_location": settings.get("execution_location", "local"),
+        "auto_save": settings.get("auto_save", False),
+        "show_detailed_progress": settings.get("show_detailed_progress", True),
     }
 
 
-def _transform_nodes(nodes_data: Dict, node_starts: set) -> List[Dict]:
+def _transform_nodes(nodes_data: dict, node_starts: set) -> list[dict]:
     """Transform nodes dict to FlowfileNode list format."""
     nodes = []
 
@@ -216,34 +214,34 @@ def _transform_nodes(nodes_data: Dict, node_starts: set) -> List[Dict]:
         if not isinstance(node_info, dict):
             node_info = convert_to_dict(node_info)
 
-        actual_node_id = node_info.get('id', node_id)
+        actual_node_id = node_info.get("id", node_id)
 
         node = {
-            'id': actual_node_id,
-            'type': node_info.get('type', ''),
-            'is_start_node': actual_node_id in node_starts,
-            'description': node_info.get('description', ''),
-            'x_position': int(node_info.get('x_position', 0) or 0),
-            'y_position': int(node_info.get('y_position', 0) or 0),
-            'left_input_id': node_info.get('left_input_id'),
-            'right_input_id': node_info.get('right_input_id'),
-            'input_ids': node_info.get('input_ids', []),
-            'outputs': node_info.get('outputs', []),
+            "id": actual_node_id,
+            "type": node_info.get("type", ""),
+            "is_start_node": actual_node_id in node_starts,
+            "description": node_info.get("description", ""),
+            "x_position": int(node_info.get("x_position", 0) or 0),
+            "y_position": int(node_info.get("y_position", 0) or 0),
+            "left_input_id": node_info.get("left_input_id"),
+            "right_input_id": node_info.get("right_input_id"),
+            "input_ids": node_info.get("input_ids", []),
+            "outputs": node_info.get("outputs", []),
         }
 
         # Transform settings based on node type
-        setting_input = node_info.get('setting_input', {})
+        setting_input = node_info.get("setting_input", {})
         if setting_input:
             if not isinstance(setting_input, dict):
                 setting_input = convert_to_dict(setting_input)
-            node['setting_input'] = _transform_node_settings(node['type'], setting_input)
+            node["setting_input"] = _transform_node_settings(node["type"], setting_input)
 
         nodes.append(node)
 
     return nodes
 
 
-def _transform_node_settings(node_type: str, settings: Dict) -> Dict:
+def _transform_node_settings(node_type: str, settings: dict) -> dict:
     """Transform node-specific settings to new format.
 
     Handles structural changes for various node types:
@@ -254,72 +252,85 @@ def _transform_node_settings(node_type: str, settings: Dict) -> Dict:
     - join/fuzzy_match: Handle JoinInput/FuzzyMatchInput changes
     """
     # Remove common fields that are stored elsewhere
-    settings = {k: v for k, v in settings.items()
-                if k not in ('flow_id', 'node_id', 'pos_x', 'pos_y', 'is_setup',
-                            'description', 'cache_results', 'user_id', 'is_flow_output',
-                            'is_user_defined')}
+    settings = {
+        k: v
+        for k, v in settings.items()
+        if k
+        not in (
+            "flow_id",
+            "node_id",
+            "pos_x",
+            "pos_y",
+            "is_setup",
+            "description",
+            "cache_results",
+            "user_id",
+            "is_flow_output",
+            "is_user_defined",
+        )
+    }
 
     # Handle specific node types
-    if node_type == 'read':
+    if node_type == "read":
         return _transform_read_settings(settings)
-    elif node_type == 'output':
+    elif node_type == "output":
         return _transform_output_settings(settings)
-    elif node_type == 'polars_code':
+    elif node_type == "polars_code":
         return _transform_polars_code_settings(settings)
-    elif node_type == 'select':
+    elif node_type == "select":
         return _transform_select_settings(settings)
-    elif node_type in ('join', 'fuzzy_match', 'cross_join'):
+    elif node_type in ("join", "fuzzy_match", "cross_join"):
         return _transform_join_settings(settings)
 
     return settings
 
 
-def _transform_select_settings(settings: Dict) -> Dict:
+def _transform_select_settings(settings: dict) -> dict:
     """Transform NodeSelect settings - ensure all fields exist."""
     # Ensure sorted_by field exists (added in new version)
-    if 'sorted_by' not in settings:
-        settings['sorted_by'] = 'none'
+    if "sorted_by" not in settings:
+        settings["sorted_by"] = "none"
 
     # Ensure select_input items have position field
-    select_input = settings.get('select_input', [])
+    select_input = settings.get("select_input", [])
     if isinstance(select_input, list):
         for i, item in enumerate(select_input):
-            if isinstance(item, dict) and item.get('position') is None:
-                item['position'] = i
+            if isinstance(item, dict) and item.get("position") is None:
+                item["position"] = i
 
     return settings
 
 
-def _transform_join_settings(settings: Dict) -> Dict:
+def _transform_join_settings(settings: dict) -> dict:
     """Transform join-related node settings.
 
     Handles migration of old JoinInput where left_select/right_select could be None.
     New schema requires these to be JoinInputs with renames list.
     """
     # Handle join_input transformation
-    join_input = settings.get('join_input') or settings.get('cross_join_input')
+    join_input = settings.get("join_input") or settings.get("cross_join_input")
     if join_input and isinstance(join_input, dict):
         # ADD DEFAULT EMPTY JoinInputs IF MISSING (required in new schema)
-        for side in ['left_select', 'right_select']:
+        for side in ["left_select", "right_select"]:
             if join_input.get(side) is None:
-                join_input[side] = {'renames': []}
+                join_input[side] = {"renames": []}
 
             select = join_input.get(side)
             if select and isinstance(select, dict):
                 # Ensure renames key exists
-                if 'renames' not in select:
-                    select['renames'] = []
+                if "renames" not in select:
+                    select["renames"] = []
 
-                renames = select.get('renames', [])
+                renames = select.get("renames", [])
                 if isinstance(renames, list):
                     for i, item in enumerate(renames):
-                        if isinstance(item, dict) and item.get('position') is None:
-                            item['position'] = i
+                        if isinstance(item, dict) and item.get("position") is None:
+                            item["position"] = i
 
     return settings
 
 
-def _transform_read_settings(settings: Dict) -> Dict:
+def _transform_read_settings(settings: dict) -> dict:
     """Transform NodeRead settings - extract table_settings from old flat structure.
 
     OLD structure (flat):
@@ -338,85 +349,85 @@ def _transform_read_settings(settings: Dict) -> Dict:
                 delimiter: ","
                 encoding: "utf-8"
     """
-    received_file = settings.get('received_file', {})
+    received_file = settings.get("received_file", {})
     if not received_file:
         return settings
 
     # Check if already transformed (has table_settings)
-    if 'table_settings' in received_file and isinstance(received_file['table_settings'], dict):
+    if "table_settings" in received_file and isinstance(received_file["table_settings"], dict):
         return settings
 
-    file_type = received_file.get('file_type', 'csv')
+    file_type = received_file.get("file_type", "csv")
 
     # Build table_settings based on file_type, extracting from flat structure
-    if file_type == 'csv':
+    if file_type == "csv":
         table_settings = {
-            'file_type': 'csv',
-            'reference': received_file.get('reference', ''),
-            'starting_from_line': received_file.get('starting_from_line', 0),
-            'delimiter': received_file.get('delimiter', ','),
-            'has_headers': received_file.get('has_headers', True),
-            'encoding': received_file.get('encoding', 'utf-8') or 'utf-8',
-            'parquet_ref': received_file.get('parquet_ref'),
-            'row_delimiter': received_file.get('row_delimiter', '\n'),
-            'quote_char': received_file.get('quote_char', '"'),
-            'infer_schema_length': received_file.get('infer_schema_length', 10000),
-            'truncate_ragged_lines': received_file.get('truncate_ragged_lines', False),
-            'ignore_errors': received_file.get('ignore_errors', False),
+            "file_type": "csv",
+            "reference": received_file.get("reference", ""),
+            "starting_from_line": received_file.get("starting_from_line", 0),
+            "delimiter": received_file.get("delimiter", ","),
+            "has_headers": received_file.get("has_headers", True),
+            "encoding": received_file.get("encoding", "utf-8") or "utf-8",
+            "parquet_ref": received_file.get("parquet_ref"),
+            "row_delimiter": received_file.get("row_delimiter", "\n"),
+            "quote_char": received_file.get("quote_char", '"'),
+            "infer_schema_length": received_file.get("infer_schema_length", 10000),
+            "truncate_ragged_lines": received_file.get("truncate_ragged_lines", False),
+            "ignore_errors": received_file.get("ignore_errors", False),
         }
-    elif file_type == 'json':
+    elif file_type == "json":
         table_settings = {
-            'file_type': 'json',
-            'reference': received_file.get('reference', ''),
-            'starting_from_line': received_file.get('starting_from_line', 0),
-            'delimiter': received_file.get('delimiter', ','),
-            'has_headers': received_file.get('has_headers', True),
-            'encoding': received_file.get('encoding', 'utf-8') or 'utf-8',
-            'parquet_ref': received_file.get('parquet_ref'),
-            'row_delimiter': received_file.get('row_delimiter', '\n'),
-            'quote_char': received_file.get('quote_char', '"'),
-            'infer_schema_length': received_file.get('infer_schema_length', 10000),
-            'truncate_ragged_lines': received_file.get('truncate_ragged_lines', False),
-            'ignore_errors': received_file.get('ignore_errors', False),
+            "file_type": "json",
+            "reference": received_file.get("reference", ""),
+            "starting_from_line": received_file.get("starting_from_line", 0),
+            "delimiter": received_file.get("delimiter", ","),
+            "has_headers": received_file.get("has_headers", True),
+            "encoding": received_file.get("encoding", "utf-8") or "utf-8",
+            "parquet_ref": received_file.get("parquet_ref"),
+            "row_delimiter": received_file.get("row_delimiter", "\n"),
+            "quote_char": received_file.get("quote_char", '"'),
+            "infer_schema_length": received_file.get("infer_schema_length", 10000),
+            "truncate_ragged_lines": received_file.get("truncate_ragged_lines", False),
+            "ignore_errors": received_file.get("ignore_errors", False),
         }
-    elif file_type == 'excel':
+    elif file_type == "excel":
         table_settings = {
-            'file_type': 'excel',
-            'sheet_name': received_file.get('sheet_name'),
-            'start_row': received_file.get('start_row', 0),
-            'start_column': received_file.get('start_column', 0),
-            'end_row': received_file.get('end_row', 0),
-            'end_column': received_file.get('end_column', 0),
-            'has_headers': received_file.get('has_headers', True),
-            'type_inference': received_file.get('type_inference', False),
+            "file_type": "excel",
+            "sheet_name": received_file.get("sheet_name"),
+            "start_row": received_file.get("start_row", 0),
+            "start_column": received_file.get("start_column", 0),
+            "end_row": received_file.get("end_row", 0),
+            "end_column": received_file.get("end_column", 0),
+            "has_headers": received_file.get("has_headers", True),
+            "type_inference": received_file.get("type_inference", False),
         }
-    elif file_type == 'parquet':
-        table_settings = {'file_type': 'parquet'}
+    elif file_type == "parquet":
+        table_settings = {"file_type": "parquet"}
     else:
         # Unknown file type - try to preserve what we can
-        table_settings = {'file_type': file_type or 'csv'}
+        table_settings = {"file_type": file_type or "csv"}
 
     # Build new structure with metadata + nested table_settings
     return {
-        'received_file': {
+        "received_file": {
             # Metadata fields (preserved from old structure)
-            'id': received_file.get('id'),
-            'name': received_file.get('name'),
-            'path': received_file.get('path', ''),
-            'directory': received_file.get('directory'),
-            'analysis_file_available': received_file.get('analysis_file_available', False),
-            'status': received_file.get('status'),
-            'fields': received_file.get('fields', []),
-            'abs_file_path': received_file.get('abs_file_path'),
+            "id": received_file.get("id"),
+            "name": received_file.get("name"),
+            "path": received_file.get("path", ""),
+            "directory": received_file.get("directory"),
+            "analysis_file_available": received_file.get("analysis_file_available", False),
+            "status": received_file.get("status"),
+            "fields": received_file.get("fields", []),
+            "abs_file_path": received_file.get("abs_file_path"),
             # New discriminator field
-            'file_type': file_type,
+            "file_type": file_type,
             # Nested table settings
-            'table_settings': table_settings,
+            "table_settings": table_settings,
         }
     }
 
 
-def _transform_output_settings(settings: Dict) -> Dict:
+def _transform_output_settings(settings: dict) -> dict:
     """Transform NodeOutput settings - consolidate separate table settings into single field.
 
     OLD structure:
@@ -434,80 +445,80 @@ def _transform_output_settings(settings: Dict) -> Dict:
                 delimiter: ","
                 encoding: "utf-8"
     """
-    output_settings = settings.get('output_settings', {})
+    output_settings = settings.get("output_settings", {})
     if not output_settings:
         return settings
 
     # Check if already transformed
-    if 'table_settings' in output_settings and isinstance(output_settings['table_settings'], dict):
+    if "table_settings" in output_settings and isinstance(output_settings["table_settings"], dict):
         return settings
 
-    file_type = output_settings.get('file_type', 'csv')
+    file_type = output_settings.get("file_type", "csv")
 
     # Build table_settings from old separate fields
-    if file_type == 'csv':
-        old_csv = output_settings.get('output_csv_table', {}) or {}
+    if file_type == "csv":
+        old_csv = output_settings.get("output_csv_table", {}) or {}
         table_settings = {
-            'file_type': 'csv',
-            'delimiter': old_csv.get('delimiter', ','),
-            'encoding': old_csv.get('encoding', 'utf-8'),
+            "file_type": "csv",
+            "delimiter": old_csv.get("delimiter", ","),
+            "encoding": old_csv.get("encoding", "utf-8"),
         }
-    elif file_type == 'excel':
-        old_excel = output_settings.get('output_excel_table', {}) or {}
+    elif file_type == "excel":
+        old_excel = output_settings.get("output_excel_table", {}) or {}
         table_settings = {
-            'file_type': 'excel',
-            'sheet_name': old_excel.get('sheet_name', 'Sheet1'),
+            "file_type": "excel",
+            "sheet_name": old_excel.get("sheet_name", "Sheet1"),
         }
-    elif file_type == 'parquet':
-        table_settings = {'file_type': 'parquet'}
+    elif file_type == "parquet":
+        table_settings = {"file_type": "parquet"}
     else:
-        table_settings = {'file_type': file_type or 'csv'}
+        table_settings = {"file_type": file_type or "csv"}
 
     return {
-        'output_settings': {
-            'name': output_settings.get('name', ''),
-            'directory': output_settings.get('directory', ''),
-            'file_type': file_type,
-            'fields': output_settings.get('fields', []),
-            'write_mode': output_settings.get('write_mode', 'overwrite'),
-            'abs_file_path': output_settings.get('abs_file_path'),
-            'table_settings': table_settings,
+        "output_settings": {
+            "name": output_settings.get("name", ""),
+            "directory": output_settings.get("directory", ""),
+            "file_type": file_type,
+            "fields": output_settings.get("fields", []),
+            "write_mode": output_settings.get("write_mode", "overwrite"),
+            "abs_file_path": output_settings.get("abs_file_path"),
+            "table_settings": table_settings,
         }
     }
 
 
-def _transform_polars_code_settings(settings: Dict) -> Dict:
+def _transform_polars_code_settings(settings: dict) -> dict:
     """Transform NodePolarsCode settings.
 
     Extracts polars_code from PolarsCodeInput and handles depending_on_id → depending_on_ids.
     """
-    polars_code_input = settings.get('polars_code_input', {})
+    polars_code_input = settings.get("polars_code_input", {})
 
     # Extract the actual code
-    polars_code = ''
+    polars_code = ""
     if isinstance(polars_code_input, dict):
-        polars_code = polars_code_input.get('polars_code', '')
-    elif hasattr(polars_code_input, 'polars_code'):
+        polars_code = polars_code_input.get("polars_code", "")
+    elif hasattr(polars_code_input, "polars_code"):
         polars_code = polars_code_input.polars_code
 
     # Handle depending_on_id → depending_on_ids migration
-    depending_on_ids = settings.get('depending_on_ids', [])
+    depending_on_ids = settings.get("depending_on_ids", [])
     if not depending_on_ids or depending_on_ids == [-1]:
-        old_id = settings.get('depending_on_id')
+        old_id = settings.get("depending_on_id")
         if old_id is not None and old_id != -1:
             depending_on_ids = [old_id]
         else:
             depending_on_ids = []
 
     return {
-        'polars_code_input': {
-            'polars_code': polars_code,
+        "polars_code_input": {
+            "polars_code": polars_code,
         },
-        'depending_on_ids': depending_on_ids,
+        "depending_on_ids": depending_on_ids,
     }
 
 
-def migrate_flowfile(input_path: Path, output_path: Path = None, format: str = 'yaml') -> Path:
+def migrate_flowfile(input_path: Path, output_path: Path = None, format: str = "yaml") -> Path:
     """
     Migrate a single flowfile from pickle to YAML format.
 
@@ -519,12 +530,12 @@ def migrate_flowfile(input_path: Path, output_path: Path = None, format: str = '
     Returns:
         Path to the created output file
     """
-    if format == 'yaml' and yaml is None:
+    if format == "yaml" and yaml is None:
         raise ImportError("PyYAML is required for YAML output. Install with: pip install pyyaml")
 
     # Determine output path
     if output_path is None:
-        suffix = '.yaml' if format == 'yaml' else '.json'
+        suffix = ".yaml" if format == "yaml" else ".json"
         output_path = input_path.with_suffix(suffix)
 
     print(f"Loading: {input_path}")
@@ -541,18 +552,19 @@ def migrate_flowfile(input_path: Path, output_path: Path = None, format: str = '
     # Write output
     print(f"Writing: {output_path}")
 
-    with open(output_path, 'w', encoding='utf-8') as f:
-        if format == 'yaml':
+    with open(output_path, "w", encoding="utf-8") as f:
+        if format == "yaml":
             yaml.dump(transformed, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
         else:
             import json
+
             json.dump(transformed, f, indent=2, ensure_ascii=False)
 
     print(f"✓ Migrated: {input_path.name} → {output_path.name}")
     return output_path
 
 
-def migrate_directory(dir_path: Path, output_dir: Path = None, format: str = 'yaml') -> List[Path]:
+def migrate_directory(dir_path: Path, output_dir: Path = None, format: str = "yaml") -> list[Path]:
     """
     Migrate all flowfiles in a directory.
 
@@ -567,7 +579,7 @@ def migrate_directory(dir_path: Path, output_dir: Path = None, format: str = 'ya
     output_dir = output_dir or dir_path
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    flowfiles = list(dir_path.glob('**/*.flowfile'))
+    flowfiles = list(dir_path.glob("**/*.flowfile"))
 
     if not flowfiles:
         print(f"No .flowfile files found in {dir_path}")
@@ -581,7 +593,7 @@ def migrate_directory(dir_path: Path, output_dir: Path = None, format: str = 'ya
     for flowfile in flowfiles:
         # Preserve directory structure
         relative = flowfile.relative_to(dir_path)
-        suffix = '.yaml' if format == 'yaml' else '.json'
+        suffix = ".yaml" if format == "yaml" else ".json"
         output_path = output_dir / relative.with_suffix(suffix)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

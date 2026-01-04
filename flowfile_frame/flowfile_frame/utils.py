@@ -1,25 +1,23 @@
+import inspect
+import textwrap
 import uuid
-import time
-import os
-import requests
-import subprocess
-from pathlib import Path
+from collections.abc import Iterable
+from typing import Any
+
 import polars as pl
-from typing import Iterable, Any, List, Optional
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.schemas import schemas
-from tempfile import TemporaryDirectory
-import inspect
-import textwrap
+
 
 def _is_iterable(obj: Any) -> bool:
     # Avoid treating strings as iterables in this context
     return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))
 
 
-def _check_if_convertible_to_code(expressions: List[Any]) -> bool:
+def _check_if_convertible_to_code(expressions: list[Any]) -> bool:
     from flowfile_frame.expr import Expr
+
     for expr in expressions:
         if isinstance(expr, Expr):
             if not expr.convertable_to_code:
@@ -27,7 +25,9 @@ def _check_if_convertible_to_code(expressions: List[Any]) -> bool:
     return True
 
 
-def _parse_inputs_as_iterable(inputs: tuple[Any, ...] | tuple[Iterable[Any]],) -> List[Any]:
+def _parse_inputs_as_iterable(
+    inputs: tuple[Any, ...] | tuple[Iterable[Any]],
+) -> list[Any]:
     if not inputs:
         return []
 
@@ -55,7 +55,7 @@ def _get_function_source(func):
         source = inspect.getsource(func)
 
         # Check if it's a lambda
-        if func.__name__ == '<lambda>':
+        if func.__name__ == "<lambda>":
             # Extract just the lambda expression
             # This is tricky as getsource returns the entire line
             return None, False
@@ -72,9 +72,9 @@ def _get_function_source(func):
         return None, False
 
 
-def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> List[Any]:
+def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> list[Any]:
     """Convert inputs to list, treating strings as single items."""
-    if inputs is None or (hasattr(inputs, '__len__') and len(inputs) == 0):
+    if inputs is None or (hasattr(inputs, "__len__") and len(inputs) == 0):
         return []
     # Treat strings/bytes as atomic items, everything else check if iterable
     if isinstance(inputs, (str, bytes)) or not _is_iterable(inputs):
@@ -99,13 +99,11 @@ def create_flow_graph(flow_id: int = None) -> FlowGraph:
     """
     if flow_id is None:
         flow_id = _generate_id()
-    flow_settings = schemas.FlowSettings(
-        flow_id=flow_id,
-        name=f"Flow_{flow_id}",
-        path=f"flow_{flow_id}"
-    )
+    flow_settings = schemas.FlowSettings(flow_id=flow_id, name=f"Flow_{flow_id}", path=f"flow_{flow_id}")
     flow_graph = FlowGraph(flow_settings=flow_settings)
-    flow_graph.flow_settings.execution_location = 'local'  # always create a local frame so that the run time does not attempt to use the flowfile_worker process
+    flow_graph.flow_settings.execution_location = (
+        "local"  # always create a local frame so that the run time does not attempt to use the flowfile_worker process
+    )
     return flow_graph
 
 

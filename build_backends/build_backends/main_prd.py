@@ -1,14 +1,9 @@
-import os
-import subprocess
-import platform
-from concurrent.futures import ProcessPoolExecutor, wait
-
 import subprocess
 import time
-import requests
-from statistics import mean, stdev
-import sys
 from datetime import datetime
+from statistics import mean, stdev
+
+import requests
 
 
 def wait_for_endpoint(url, timeout=60):
@@ -27,11 +22,7 @@ def wait_for_endpoint(url, timeout=60):
 def shutdown_service():
     """Shutdown the service gracefully using the shutdown endpoint."""
     try:
-        response = requests.post(
-            'http://0.0.0.0:63578/shutdown',
-            headers={'accept': 'application/json'},
-            data=''
-        )
+        response = requests.post("http://0.0.0.0:63578/shutdown", headers={"accept": "application/json"}, data="")
         print("Shutdown request sent, waiting for service to stop...")
         time.sleep(1)  # Wait 10 seconds to ensure the service is fully stopped
         return True
@@ -97,14 +88,14 @@ def run_comparison_test(old_exe, new_exe, num_runs=3):
     print("\nResults:")
     print("-" * 50)
     if old_times:
-        print(f"Old executable:")
+        print("Old executable:")
         print(f"  Average: {mean(old_times):.3f} seconds")
         print(f"  Std Dev: {stdev(old_times):.3f} seconds" if len(old_times) > 1 else "  Std Dev: N/A")
         print(f"  Min: {min(old_times):.3f} seconds")
         print(f"  Max: {max(old_times):.3f} seconds")
 
     if new_times:
-        print(f"\nNew executable:")
+        print("\nNew executable:")
         print(f"  Average: {mean(new_times):.3f} seconds")
         print(f"  Std Dev: {stdev(new_times):.3f} seconds" if len(new_times) > 1 else "  Std Dev: N/A")
         print(f"  Min: {min(new_times):.3f} seconds")
@@ -112,13 +103,13 @@ def run_comparison_test(old_exe, new_exe, num_runs=3):
 
     if old_times and new_times:
         improvement = (mean(old_times) - mean(new_times)) / mean(old_times) * 100
-        print(f"\nPerformance difference:")
+        print("\nPerformance difference:")
         print(f"  {improvement:.1f}% {'faster' if improvement > 0 else 'slower'} than old version")
 
 
 if __name__ == "__main__":
-    old_exe = '/Users/edwardvanechoud/personal_dev/Flowfile/dist/flowfile_core/flowfile_core'
-    new_exe = '/Users/edwardvanechoud/personal_dev/Flowfile/dist_flowfile_core/flowfile_core'
+    old_exe = "/Users/edwardvanechoud/personal_dev/Flowfile/dist/flowfile_core/flowfile_core"
+    new_exe = "/Users/edwardvanechoud/personal_dev/Flowfile/dist_flowfile_core/flowfile_core"
 
     run_comparison_test(old_exe, old_exe)
 
