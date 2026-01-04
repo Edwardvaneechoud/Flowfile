@@ -338,9 +338,9 @@ onMounted(async () => {
 /* Tabs Navigation */
 .tabs-navigation {
   display: flex;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--color-border-light);
   margin-bottom: 1.25rem;
-  background-color: #f8fafc;
+  background-color: var(--color-background-secondary);
   border-radius: 8px 8px 0 0;
   overflow: hidden;
 }
@@ -361,14 +361,13 @@ onMounted(async () => {
 }
 
 .tab-button:hover {
-  color: #4a5568;
-  background-color: #edf2f7;
+  color: var(--color-text-primary);
 }
 
 .tab-button.active {
-  border-bottom-color: #3182ce;
-  color: #3182ce;
-  background-color: #ebf8ff;
+  border-bottom-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+  background-color: var(--color-accent-subtle);
 }
 
 .tab-content {
@@ -379,16 +378,16 @@ onMounted(async () => {
 .settings-card {
   background-color: var(--color-background-primary);
   border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(125, 107, 107, 0.05);
   margin-bottom: 1.5rem;
-  border: 1px solid #edf2f7;
+  border: 1px solid var(--color-border-primary);
   overflow: hidden;
 }
 
 .card-header {
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid #edf2f7;
-  background-color: #fafafa;
+  border-bottom: 1px solid var(--color-border-light);
+  background-color: var(--color-background-secondary);
 }
 
 .section-title {
@@ -410,16 +409,17 @@ onMounted(async () => {
 }
 
 .setting-panel {
-  background-color: #f8fafc;
+  background-color: var(--color-background-secondary);
   border-radius: 6px;
   padding: 1rem;
-  border: 1px solid #edf2f7;
+  border: 1px solid var(--color-border-secondary);
   transition: all 0.2s ease;
+  color: var(--color-text-secondary);
 }
 
 .setting-panel:hover {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
-  border-color: #e2e8f0;
+  border-color: var(--color-border-light);
 }
 
 .setting-header {
@@ -432,7 +432,7 @@ onMounted(async () => {
 .setting-title {
   font-size: 0.95rem;
   font-weight: 600;
-  color: #4a5568;
+  color: var(--color-text-primary);
   margin: 0;
   display: flex;
   align-items: center;
@@ -459,7 +459,7 @@ onMounted(async () => {
 .column-field label {
   font-size: 0.875rem;
   font-weight: 500;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 /* Settings Grid */
@@ -480,7 +480,7 @@ onMounted(async () => {
 .select-field label {
   font-size: 0.875rem;
   font-weight: 500;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 /* Range Input */
@@ -492,11 +492,10 @@ onMounted(async () => {
 
 .range-slider {
   flex: 1;
-  -webkit-appearance: none;
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  background: #e2e8f0;
+  background: var(--color-background-secondary);
   outline: none;
 }
 
@@ -506,9 +505,9 @@ onMounted(async () => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #3182ce;
+  background: var(--color-accent);
   cursor: pointer;
-  border: 2px solid white;
+  border: 2px solid var(--color-accent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -516,7 +515,7 @@ onMounted(async () => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #3182ce;
+  background: var(--color-accent);
   cursor: pointer;
   border: 2px solid white;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);

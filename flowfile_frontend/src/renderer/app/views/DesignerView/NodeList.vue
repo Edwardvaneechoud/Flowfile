@@ -124,6 +124,7 @@ defineEmits(["dragstart"]);
 /* Style for search input */
 .search-input {
   padding: var(--spacing-2) var(--spacing-4);
+  color: var(--color-text-primary);
   margin-bottom: var(--spacing-2);
   border: 1px solid var(--color-border-primary);
   border-radius: var(--border-radius-md);
