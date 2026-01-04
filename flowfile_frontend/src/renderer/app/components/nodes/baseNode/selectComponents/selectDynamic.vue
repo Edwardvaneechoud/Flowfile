@@ -1,5 +1,6 @@
 <template>
   <div>
+    {{ props.selectInputs }}
     <div v-if="dataLoaded">
       <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
         <UnavailableField tooltip-text="Field not available click for removing them for memory" />
@@ -105,13 +106,10 @@
 <script lang="ts" setup>
 import {
   ref,
-  defineProps,
   computed,
   onMounted,
   onUnmounted,
   watchEffect,
-  defineEmits,
-  defineExpose,
 } from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";

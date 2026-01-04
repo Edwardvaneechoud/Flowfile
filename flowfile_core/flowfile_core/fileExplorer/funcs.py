@@ -130,10 +130,11 @@ class SecureFileExplorer:
         Returns None if path would escape sandbox.
         """
         try:
-            # Handle relative paths from current directory
+            # Handle relative paths from current directoryb
             if isinstance(path, str):
+
                 # Remove any suspicious patterns
-                if ".." in Path(path).parts or path.startswith("/"):
+                if path.startswith("/"):
                     # For absolute paths or parent references, resolve from sandbox root
                     test_path = Path(path).expanduser()
                 else:

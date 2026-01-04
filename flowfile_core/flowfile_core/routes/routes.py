@@ -135,8 +135,8 @@ async def upload_file(file: UploadFile = File(...)) -> JSONResponse:
     return JSONResponse(content={"filename": safe_name, "filepath": str(file_location)})
 
 
-@router.get('/files/files_in_local_directory/', response_model=List[FileInfo], tags=['file manager'])
-async def get_local_files(directory: str) -> List[FileInfo]:
+@router.get('/files/files_in_local_directory/', response_model=list[FileInfo], tags=['file manager'])
+async def get_local_files(directory: str) -> list[FileInfo]:
     """Retrieves a list of files from a specified local directory.
 
     Args:
