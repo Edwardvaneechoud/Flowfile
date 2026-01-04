@@ -150,7 +150,7 @@ watch(
 }
 
 .csv-table-settings {
-  background: #fff;
+  background: var(--color-background-primary);
   border-radius: 6px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -170,7 +170,7 @@ watch(
 
 label {
   font-weight: 500;
-  color: #333;
+  color: var(--color-text-primary);
   font-size: 14px;
   flex: 1;
   max-width: 100%;

@@ -61,7 +61,7 @@ from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 try:
     __version__ = version("Flowfile")
 except PackageNotFoundError:
-    __version__ = "0.0.0-dev"
+    __version__ = "0.5.0"
 
 
 def represent_list_json(dumper, data):

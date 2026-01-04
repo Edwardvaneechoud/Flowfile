@@ -306,11 +306,300 @@ button {
 }
 
 /* ========== Element Plus Collapse ========== */
+.el-collapse {
+  --el-collapse-border-color: var(--color-border-primary);
+  --el-collapse-header-background-color: var(--color-background-primary);
+  --el-collapse-header-font-color: var(--color-text-primary);
+  --el-collapse-content-background-color: var(--color-background-primary);
+  --el-collapse-content-font-color: var(--color-text-primary);
+  border-color: var(--color-border-primary);
+}
+
 .el-collapse-item__header {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .el-collapse-item__content {
   font-size: var(--font-size-sm);
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
+
+.el-collapse-item__wrap {
+  background-color: var(--color-background-primary);
+}
+
+/* ========== Element Plus Menu Styling ========== */
+.el-menu {
+  background-color: var(--color-background-primary);
+  border-right: none;
+}
+
+.el-menu-item,
+.el-sub-menu__title {
+  color: var(--color-text-secondary);
+}
+
+.el-menu-item:hover,
+.el-sub-menu__title:hover {
+  background-color: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+.el-menu-item.is-active {
+  color: var(--color-accent);
+  background-color: var(--color-background-selected);
+}
+
+.el-menu-item i,
+.el-sub-menu__title i {
+  color: var(--color-text-secondary);
+}
+
+.el-menu-item.is-active i {
+  color: var(--color-accent);
+}
+
+/* ========== Element Plus Tabs Styling ========== */
+.el-tabs__header {
+  background-color: var(--color-background-primary);
+}
+
+.el-tabs__nav-wrap::after {
+  background-color: var(--color-border-primary);
+}
+
+.el-tabs__item {
+  color: var(--color-text-secondary);
+}
+
+.el-tabs__item:hover {
+  color: var(--color-text-primary);
+}
+
+.el-tabs__item.is-active {
+  color: var(--color-accent);
+}
+
+.el-tabs__content {
+  background-color: var(--color-background-primary);
+}
+
+.el-tab-pane {
+  background-color: var(--color-background-primary);
+}
+
+/* ========== Element Plus Drawer Styling ========== */
+.el-drawer {
+  background-color: var(--color-background-primary);
+}
+
+.el-drawer__header {
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.el-drawer__body {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Switch Styling ========== */
+.el-switch__label {
+  color: var(--color-text-secondary);
+}
+
+.el-switch__label.is-active {
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Textarea/Input Styling ========== */
+.el-textarea__inner {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-textarea__inner:focus {
+  border-color: var(--color-accent);
+}
+
+.el-input__inner {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Card Styling ========== */
+.el-card {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-card__header {
+  background-color: var(--color-background-secondary);
+  border-bottom-color: var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+.el-card__body {
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Dropdown Styling ========== */
+.el-dropdown-menu {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-dropdown-menu__item {
+  color: var(--color-text-primary);
+}
+
+.el-dropdown-menu__item:hover {
+  background-color: var(--color-background-hover);
+  color: var(--color-text-primary);
+}
+
+/* ========== Element Plus Popover Styling ========== */
+.el-popover {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.el-popover__title {
+  color: var(--color-text-primary);
+}
+
+/* ========== CodeMirror Dark Mode Styling ========== */
+/* These styles must be global because CodeMirror tooltips are rendered as portals */
+
+/* Editor background and text */
+.cm-editor {
+  background-color: var(--color-background-secondary) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.cm-editor .cm-content {
+  caret-color: var(--color-text-primary) !important;
+}
+
+.cm-editor .cm-cursor,
+.cm-editor .cm-cursor-primary {
+  border-left-color: var(--color-text-primary) !important;
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--color-background-primary) !important;
+  color: var(--color-text-muted) !important;
+  border-right: 1px solid var(--color-border-primary) !important;
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: var(--color-background-hover) !important;
+}
+
+.cm-editor .cm-activeLine {
+  background-color: var(--color-background-hover) !important;
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+  background-color: var(--color-background-selected) !important;
+}
+
+/* Placeholder styling */
+.cm-placeholder {
+  color: var(--color-text-muted) !important;
+}
+
+/* CodeMirror Autocomplete Tooltip - rendered as portal to body */
+.cm-tooltip {
+  background-color: var(--color-background-primary) !important;
+  border: 1px solid var(--color-border-primary) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.cm-tooltip-autocomplete {
+  background-color: var(--color-background-primary) !important;
+}
+
+.cm-tooltip-autocomplete > ul {
+  background-color: var(--color-background-primary) !important;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  color: var(--color-text-primary) !important;
+  background-color: var(--color-background-primary) !important;
+}
+
+.cm-tooltip-autocomplete > ul > li:hover {
+  background-color: var(--color-background-hover) !important;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected],
+.cm-tooltip-autocomplete > ul > li[aria-selected="true"] {
+  background-color: var(--color-accent) !important;
+  color: white !important;
+}
+
+/* Completion label and detail */
+.cm-completionLabel {
+  color: var(--color-text-primary) !important;
+}
+
+.cm-completionDetail {
+  color: var(--color-text-secondary) !important;
+}
+
+/* Completion Info Panel (documentation popup) - critical for dark mode */
+.cm-completionInfo {
+  background-color: var(--color-background-secondary) !important;
+  border: 1px solid var(--color-border-primary) !important;
+  color: var(--color-text-primary) !important;
+  padding: 8px 12px !important;
+  max-width: 400px !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.cm-completionInfo * {
+  color: var(--color-text-primary) !important;
+}
+
+/* Ensure tooltip above other content */
+.cm-tooltip-above,
+.cm-tooltip-below {
+  background-color: var(--color-background-primary) !important;
+}
+
+/* Tooltip arrow styling */
+.cm-tooltip::before,
+.cm-tooltip::after {
+  border-color: var(--color-border-primary) transparent transparent transparent !important;
+}
+
+/* Matching bracket highlight */
+.cm-matchingBracket {
+  background-color: var(--color-background-selected) !important;
+  color: var(--color-accent) !important;
+}
+
+/* Panel styling */
+.cm-panels {
+  background-color: var(--color-background-secondary) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border-primary) !important;
+}
+
+.cm-panels-top {
+  border-bottom-color: var(--color-border-primary) !important;
+}
+
+.cm-panels-bottom {
+  border-top-color: var(--color-border-primary) !important;
+}
+

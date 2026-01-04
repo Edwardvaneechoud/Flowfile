@@ -28,7 +28,7 @@ COPY pyproject.toml poetry.lock* /app/
 RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
 
 # Install additional package that wasn't in requirements.txt
-RUN pip install --no-cache-dir --only-binary=:all: connectorx==0.4.3a1
+#RUN pip install --no-cache-dir --only-binary=:all: connectorx==0.4.3a1
 
 # Copy the shared package
 COPY shared /app/shared

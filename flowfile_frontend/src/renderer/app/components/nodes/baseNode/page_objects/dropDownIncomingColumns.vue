@@ -72,7 +72,7 @@ defineExpose({ selectedValue });
 .label {
   font-weight: bold;
   margin-bottom: 8px;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .select-wrapper {
@@ -111,7 +111,7 @@ defineExpose({ selectedValue });
   list-style: none;
   margin: 0;
   padding: 0;
-  background: #fff;
+  background: var(--color-background-primary);
   z-index: 1050;
 }
 
@@ -119,7 +119,7 @@ defineExpose({ selectedValue });
   padding: 10px 12px;
   cursor: pointer;
   font-size: 14px;
-  color: #333;
+  color: var(--color-text-primary);
   transition: background-color 0.2s;
 }
 

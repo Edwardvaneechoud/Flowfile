@@ -92,7 +92,7 @@ watch(
   display: block;
   margin-bottom: 5px;
   font-weight: bold;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .el-select {

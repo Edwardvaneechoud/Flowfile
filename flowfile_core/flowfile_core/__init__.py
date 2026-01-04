@@ -1,5 +1,4 @@
-from importlib.metadata import version
-
+from importlib.metadata import version, PackageNotFoundError
 
 import os
 from flowfile_core.utils.validate_setup import validate_setup
@@ -15,5 +14,9 @@ class ServerRun:
     exit: bool = False
 
 
-__version__ = version("Flowfile")
+try:
+    __version__ = version("Flowfile")
+except PackageNotFoundError:
+    __version__ = "0.5.0"
+
 flow_file_handler = FlowfileHandler()

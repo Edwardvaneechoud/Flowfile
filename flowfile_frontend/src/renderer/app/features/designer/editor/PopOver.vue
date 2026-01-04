@@ -144,11 +144,12 @@ onMounted(() => {
 .popover {
   position: fixed;
   padding: 10px;
-  background-color: #fff;
-  border: 0.5px solid #ccc;
+  background-color: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-primary);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   min-width: v-bind('props.minWidth + "px"');
+  color: var(--color-text-primary);
 }
 
 .popover--left {

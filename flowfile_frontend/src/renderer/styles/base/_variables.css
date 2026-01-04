@@ -195,9 +195,6 @@
 }
 
 /* ========== Dark Theme ========== */
-/* TODO: Add theme toggle mechanism. To enable dark mode, set data-theme="dark"
-   on the html or body element. Consider using a ThemeProvider component or
-   localStorage-persisted user preference with system preference detection. */
 [data-theme="dark"] {
   --color-background-primary: #1a1a2e;
   --color-background-secondary: #16213e;
@@ -216,6 +213,44 @@
   --color-border-secondary: #475569;
   --color-border-light: #1e293b;
 
+  /* Gray scale adjustments for dark mode */
+  --color-gray-50: #1f2937;
+  --color-gray-100: #374151;
+  --color-gray-200: #4b5563;
+  --color-gray-300: #6b7280;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #d1d5db;
+  --color-gray-600: #e5e7eb;
+  --color-gray-700: #f3f4f6;
+  --color-gray-800: #f9fafb;
+  --color-gray-900: #ffffff;
+
+  /* Shadow adjustments for dark mode */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px -1px rgba(0, 0, 0, 0.3);
+  --shadow-default: 0 2px 4px -1px rgba(0, 0, 0, 0.3), 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+
   --card-bg: var(--color-background-secondary);
   --node-bg: var(--color-background-secondary);
+
+  /* Element Plus dark mode overrides */
+  --el-color-white: var(--color-background-primary);
+  --el-bg-color: var(--color-background-primary);
+  --el-bg-color-page: var(--color-background-secondary);
+  --el-bg-color-overlay: var(--color-background-tertiary);
+  --el-text-color-primary: var(--color-text-primary);
+  --el-text-color-regular: var(--color-text-secondary);
+  --el-text-color-secondary: var(--color-text-tertiary);
+  --el-text-color-placeholder: var(--color-text-muted);
+  --el-border-color: var(--color-border-primary);
+  --el-border-color-light: var(--color-border-light);
+  --el-border-color-lighter: var(--color-border-light);
+  --el-fill-color: var(--color-background-secondary);
+  --el-fill-color-light: var(--color-background-tertiary);
+  --el-fill-color-lighter: var(--color-background-hover);
+  --el-fill-color-blank: var(--color-background-primary);
+  --el-mask-color: rgba(0, 0, 0, 0.7);
 }

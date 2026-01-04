@@ -7,9 +7,12 @@ This package ties together the FlowFile ecosystem components:
 - flowfile_worker: Computation engine
 """
 
-from importlib.metadata import version
+from importlib.metadata import version, PackageNotFoundError
 
-__version__ = version("Flowfile")
+try:
+    __version__ = version("Flowfile")
+except PackageNotFoundError:
+    __version__ = "0.5.0"
 
 import os
 import logging

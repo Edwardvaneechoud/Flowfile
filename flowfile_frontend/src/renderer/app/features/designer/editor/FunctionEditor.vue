@@ -17,7 +17,7 @@
 import { EditorView, Decoration, DecorationSet, ViewPlugin } from "@codemirror/view";
 import { EditorState, Extension } from "@codemirror/state";
 import { RangeSetBuilder } from "@codemirror/state";
-import { ref, shallowRef, defineExpose, watch, onMounted } from "vue";
+import { ref, shallowRef, watch, onMounted } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { autocompletion, CompletionSource, CompletionContext } from "@codemirror/autocomplete";
 import axios from "axios";
@@ -256,6 +256,7 @@ defineExpose({ insertTextAtCursor });
   flex-direction: column;
 }
 
+/* Custom syntax highlighting - these are specific to this editor */
 .cm-function {
   color: #f08d49;
   font-weight: bold;

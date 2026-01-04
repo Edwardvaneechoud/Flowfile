@@ -13,6 +13,7 @@ import "./styles/main.css";
 // Import auth service and configured axios
 import authService from "./app/services/auth.service";
 import "./app/services/axios.config";
+import { useThemeStore } from "./app/stores/theme-store";
 
 const app = createApp(App);
 
@@ -24,6 +25,10 @@ app.use(ElementPlus, {
   size: "large",
   zIndex: 2000,
 });
+
+// Initialize theme before mounting app
+const themeStore = useThemeStore();
+themeStore.initialize();
 
 // Initialize auth before mounting app
 authService

@@ -293,17 +293,15 @@ onBeforeUnmount(() => {
 
 .panel {
   position: absolute;
-  /* REMOVED: right: 60px; */
-  /* REMOVED: bottom: 0; */
   width: 250px;
-  background: white;
+  background: var(--color-background-primary);
   border-radius: 12px;
-  box-shadow: 0 5px 25px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-xl);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   backdrop-filter: blur(10px);
-  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--color-border-primary);
 }
 
 .panel-header {
@@ -311,14 +309,14 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
-  background: linear-gradient(135deg, #667eea10 0%, #764ba210 100%);
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
 }
 
 .panel-title {
   font-weight: 600;
   font-size: 16px;
-  color: #333;
+  color: var(--color-text-primary);
   user-select: none;
 }
 
@@ -326,7 +324,7 @@ onBeforeUnmount(() => {
   background: none;
   border: none;
   font-size: 20px;
-  color: #888;
+  color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
   line-height: 1;
@@ -340,8 +338,8 @@ onBeforeUnmount(() => {
 }
 
 .close-btn:hover {
-  color: #333;
-  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-primary);
+  background: var(--color-background-hover);
 }
 
 .panel-body {
@@ -352,9 +350,9 @@ onBeforeUnmount(() => {
 }
 
 .control-btn {
-  background-color: #f8f9fa;
-  color: #333;
-  border: 1px solid #e0e0e0;
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 8px;
   padding: 10px 16px;
   cursor: pointer;
@@ -385,8 +383,8 @@ onBeforeUnmount(() => {
 }
 
 .control-btn:hover {
-  background-color: #f0f2ff;
-  border-color: #667eea;
+  background-color: var(--color-background-hover);
+  border-color: var(--color-accent);
   transform: translateX(2px);
 }
 

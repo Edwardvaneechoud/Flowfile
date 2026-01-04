@@ -93,7 +93,7 @@ defineExpose({ selectedValue });
   list-style: none;
   margin: 0;
   padding: 0;
-  background: #fff; /* Maintain light background */
+  background: var(--color-background-primary);
   z-index: 10; /* Ensure dropdown is above other content */
 }
 

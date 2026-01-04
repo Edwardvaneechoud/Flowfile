@@ -163,7 +163,7 @@ watch(
 
 label {
   font-weight: 500;
-  color: #333;
+  color: var(--color-text-primary);
   font-size: 14px;
 }
 
