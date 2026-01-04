@@ -1,9 +1,14 @@
-from flowfile_frame.expr import col, Expr, Column, lit
-from flowfile_frame.selectors import Selector
-from flowfile_frame.utils import _parse_inputs_as_iterable
-from flowfile_core.schemas import transform_schema, input_schema
 from typing import TYPE_CHECKING, Any
-from flowfile_frame.utils import _check_if_convertible_to_code, ensure_inputs_as_iterable, get_pl_expr_from_expr
+
+from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_frame.expr import Column, Expr, col, lit
+from flowfile_frame.selectors import Selector
+from flowfile_frame.utils import (
+    _check_if_convertible_to_code,
+    _parse_inputs_as_iterable,
+    ensure_inputs_as_iterable,
+    get_pl_expr_from_expr,
+)
 
 if TYPE_CHECKING:
     from flowfile_frame.flow_frame import FlowFrame
@@ -53,11 +58,11 @@ class GroupByFrame:
                 parts.append(f'''"{str(c)}"''')
         return ", ".join(parts)
 
-    def len(self) -> 'FlowFrame':
+    def len(self) -> "FlowFrame":
         """Count number of rows per group. Output column is named 'len'."""
         return self._generate_direct_polars_code("len")
 
-    def count(self) -> 'FlowFrame':
+    def count(self) -> "FlowFrame":
         """Count number of rows per group. Output column is named 'count'."""
         return self._generate_direct_polars_code("count")
 
@@ -82,8 +87,15 @@ class GroupByFrame:
         if can_be_converted:
             can_be_converted = self._process_named_agg_expressions(agg_cols, named_agg_exprs)
         node_desc = self.description or f"Aggregate after grouping by {self.readable_group()}"
-        return self._create_agg_node(self.node_id, can_be_converted, agg_cols, agg_expressions, named_agg_exprs,
-                                     convertable_to_code=convertable_to_code, description=node_desc)
+        return self._create_agg_node(
+            self.node_id,
+            can_be_converted,
+            agg_cols,
+            agg_expressions,
+            named_agg_exprs,
+            convertable_to_code=convertable_to_code,
+            description=node_desc,
+        )
 
     def _process_group_columns(self, agg_cols: list[transform_schema.AggColl]) -> bool:
         """Process grouping columns for aggregation schema."""
@@ -150,8 +162,16 @@ class GroupByFrame:
                 return False
         return True
 
-    def _create_agg_node(self, node_id_to_use: int, can_be_converted: bool, agg_cols: list, agg_expressions,
-                         named_agg_exprs, convertable_to_code: bool, description: str):
+    def _create_agg_node(
+        self,
+        node_id_to_use: int,
+        can_be_converted: bool,
+        agg_cols: list,
+        agg_expressions,
+        named_agg_exprs,
+        convertable_to_code: bool,
+        description: str,
+    ):
         """Create node for explicit aggregations via self.agg()."""
 
         if can_be_converted:
@@ -159,9 +179,11 @@ class GroupByFrame:
                 flow_id=self.parent.flow_graph.flow_id,
                 node_id=node_id_to_use,
                 groupby_input=transform_schema.GroupByInput(agg_cols=agg_cols),
-                pos_x=200, pos_y=200, is_setup=True,
+                pos_x=200,
+                pos_y=200,
+                is_setup=True,
                 depending_on_id=self.parent.node_id,
-                description=description
+                description=description,
             )
             self.parent.flow_graph.add_group_by(group_by_settings)
         else:
@@ -169,11 +191,17 @@ class GroupByFrame:
             pl_agg_expressions = list(map(get_pl_expr_from_expr, ensure_inputs_as_iterable(agg_expressions)))
             pl_group_expr = list(map(get_pl_expr_from_expr, ensure_inputs_as_iterable(self.expr_by_cols)))
             pl_kwargs_expr = {k: self._create_expr_col(c).expr for k, c in named_agg_exprs.items()}
-            self.parent._add_polars_code(new_node_id=node_id_to_use, code=code, description=description,
-                                         method_name='group_by', convertable_to_code=convertable_to_code,
-                                         polars_expr=pl_agg_expressions, group_expr=pl_group_expr,
-                                         kwargs_expr=pl_kwargs_expr,
-                                         group_kwargs={'maintain_order': self.maintain_order})
+            self.parent._add_polars_code(
+                new_node_id=node_id_to_use,
+                code=code,
+                description=description,
+                method_name="group_by",
+                convertable_to_code=convertable_to_code,
+                polars_expr=pl_agg_expressions,
+                group_expr=pl_group_expr,
+                kwargs_expr=pl_kwargs_expr,
+                group_kwargs={"maintain_order": self.maintain_order},
+            )
         return self.parent._create_child_frame(node_id_to_use)
 
     def _generate_direct_polars_code(self, method_name: str, *args, **kwargs) -> "FlowFrame":
@@ -190,7 +218,9 @@ class GroupByFrame:
         readable_group_str = self.readable_group()
         execution = "(" + ",".join(args) + ",".join([f"{k}={v}" for k, v in kwargs.items()]) + ")"
 
-        code = f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}{execution}"
+        code = (
+            f"input_df.group_by([{readable_group_str}], maintain_order={self.maintain_order}).{method_name}{execution}"
+        )
         node_description = self.description or f"{method_name.capitalize()} after grouping by {readable_group_str}"
         self.parent._add_polars_code(new_node_id=self.node_id, code=code, description=node_description)
         return self.parent._create_child_frame(self.node_id)

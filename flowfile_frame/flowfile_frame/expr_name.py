@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import inspect
-from typing import TYPE_CHECKING, Callable, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from flowfile_frame.expr import Expr
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 class ExprNameNameSpace:
     """Namespace for expression name operations in FlowFrame."""
 
-    def __init__(self, parent_expr: 'Expr', parent_repr_str: str):
+    def __init__(self, parent_expr: Expr, parent_repr_str: str):
         """
         Initialize the namespace with parent expression reference.
 
@@ -25,11 +25,11 @@ class ExprNameNameSpace:
         self.expr = parent_expr.expr.name if parent_expr.expr is not None else None
         self.parent_repr_str = parent_repr_str
 
-    def _create_next_expr(self, method_name: str, *args, result_expr: Optional[any] = None, **kwargs) -> 'Expr':
+    def _create_next_expr(self, method_name: str, *args, result_expr: any | None = None, **kwargs) -> Expr:
         """Create a new expression with name operation applied."""
         from flowfile_frame.expr import Expr
 
-        args_repr = ''
+        args_repr = ""
         # Format positional args for repr
         if args:
             args_strs = []
@@ -44,20 +44,21 @@ class ExprNameNameSpace:
                         if method_name == "map":
                             # For map function specifically, try to extract the function body
                             import inspect
+
                             try:
                                 source = inspect.getsource(arg).strip()
                                 # Handle multiline lambdas and functions
-                                if '\n' in source:
+                                if "\n" in source:
                                     # Try to extract just the lambda expression if possible
-                                    if 'lambda' in source:
-                                        lambda_parts = source.split('lambda')
+                                    if "lambda" in source:
+                                        lambda_parts = source.split("lambda")
                                         if len(lambda_parts) > 1:
                                             lambda_expr = f"lambda{lambda_parts[1].split(':')[0]}:"
-                                            body_parts = source.split(':')
+                                            body_parts = source.split(":")
                                             if len(body_parts) > 1:
                                                 body = body_parts[1].strip()
                                                 # Remove trailing characters like parentheses, commas
-                                                body = body.rstrip(')\n, ')
+                                                body = body.rstrip(")\n, ")
                                                 lambda_expr += f" {body}"
                                                 args_strs.append(lambda_expr)
                                             else:
@@ -69,8 +70,8 @@ class ExprNameNameSpace:
                                         args_strs.append("lambda x: x.upper()")  # Simplified fallback
                                 else:
                                     # Single line function, extract it directly
-                                    if 'lambda' in source:
-                                        lambda_expr = source.split('=')[-1].strip()
+                                    if "lambda" in source:
+                                        lambda_expr = source.split("=")[-1].strip()
                                         args_strs.append(lambda_expr)
                                     else:
                                         args_strs.append("lambda x: x.upper()")  # Fallback
@@ -102,11 +103,11 @@ class ExprNameNameSpace:
             initial_column_name=self.parent._initial_column_name,
             selector=None,
             agg_func=self.parent.agg_func,
-            is_complex=True
+            is_complex=True,
         )
         return new_expr
 
-    def keep(self) -> 'Expr':
+    def keep(self) -> Expr:
         """
         Keep the original root name of the expression.
 
@@ -120,7 +121,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.keep() if self.expr is not None else None
         return self._create_next_expr("keep", result_expr=result_expr)
 
-    def map(self, function: Callable[[str], str]) -> 'Expr':
+    def map(self, function: Callable[[str], str]) -> Expr:
         """
         Rename the output of an expression by mapping a function over the root name.
 
@@ -147,7 +148,7 @@ class ExprNameNameSpace:
         # The representation is handled by _create_next_expr with special lambda handling
         return self._create_next_expr("map", function, result_expr=result_expr)
 
-    def prefix(self, prefix: str) -> 'Expr':
+    def prefix(self, prefix: str) -> Expr:
         """
         Add a prefix to the root column name of the expression.
 
@@ -164,7 +165,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.prefix(prefix) if self.expr is not None else None
         return self._create_next_expr("prefix", prefix, result_expr=result_expr)
 
-    def suffix(self, suffix: str) -> 'Expr':
+    def suffix(self, suffix: str) -> Expr:
         """
         Add a suffix to the root column name of the expression.
 
@@ -181,7 +182,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.suffix(suffix) if self.expr is not None else None
         return self._create_next_expr("suffix", suffix, result_expr=result_expr)
 
-    def to_lowercase(self) -> 'Expr':
+    def to_lowercase(self) -> Expr:
         """
         Make the root column name lowercase.
 
@@ -193,7 +194,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.to_lowercase() if self.expr is not None else None
         return self._create_next_expr("to_lowercase", result_expr=result_expr)
 
-    def to_uppercase(self) -> 'Expr':
+    def to_uppercase(self) -> Expr:
         """
         Make the root column name uppercase.
 
@@ -205,7 +206,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.to_uppercase() if self.expr is not None else None
         return self._create_next_expr("to_uppercase", result_expr=result_expr)
 
-    def map_fields(self, function: Callable[[str], str]) -> 'Expr':
+    def map_fields(self, function: Callable[[str], str]) -> Expr:
         """
         Rename fields of a struct by mapping a function over the field name(s).
 
@@ -222,7 +223,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.map_fields(function) if self.expr is not None else None
         return self._create_next_expr("map_fields", function, result_expr=result_expr)
 
-    def prefix_fields(self, prefix: str) -> 'Expr':
+    def prefix_fields(self, prefix: str) -> Expr:
         """
         Add a prefix to all field names of a struct.
 
@@ -239,7 +240,7 @@ class ExprNameNameSpace:
         result_expr = self.expr.prefix_fields(prefix) if self.expr is not None else None
         return self._create_next_expr("prefix_fields", prefix, result_expr=result_expr)
 
-    def suffix_fields(self, suffix: str) -> 'Expr':
+    def suffix_fields(self, suffix: str) -> Expr:
         """
         Add a suffix to all field names of a struct.
 
@@ -255,4 +256,3 @@ class ExprNameNameSpace:
         """
         result_expr = self.expr.suffix_fields(suffix) if self.expr is not None else None
         return self._create_next_expr("suffix_fields", suffix, result_expr=result_expr)
-

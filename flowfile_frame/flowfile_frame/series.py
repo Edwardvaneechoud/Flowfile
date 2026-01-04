@@ -1,6 +1,8 @@
 from __future__ import annotations
+
+from typing import Any
+
 import polars as pl
-from typing import Any, Optional, Union, List
 
 
 class Series:
@@ -9,11 +11,11 @@ class Series:
     """
 
     def __init__(
-            self,
-            name: str | list | pl.Series | None = None,
-            values: list | None = None,
-            dtype: Any = None,
-            **kwargs  # Ignored parameters
+        self,
+        name: str | list | pl.Series | None = None,
+        values: list | None = None,
+        dtype: Any = None,
+        **kwargs,  # Ignored parameters
     ):
         """
         Initialize a FlowSeries with the same API as pl.Series.

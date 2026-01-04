@@ -1,6 +1,7 @@
-import pytest
+from typing import Any, Literal
+
 import polars as pl
-from typing import List, Any, Union, Literal
+import pytest
 
 # Note: For these imports to work, your project's source directory
 # (e.g., the directory containing `flowfile_core`) should be in your PYTHONPATH.
@@ -73,7 +74,7 @@ def test_column_selector_default_initialization():
     ([pl.Float32, pl.Int16], [DataType.Float32, DataType.Int16]),
 
 ])
-def test_column_selector_data_type_normalization(input_spec: Any, expected_output: Union[Literal["ALL"], List[DataType]]):
+def test_column_selector_data_type_normalization(input_spec: Any, expected_output: Literal["ALL"] | list[DataType]):
     """
     Tests various inputs for the `data_types` field and verifies
     the computed `data_types_filter` is correctly normalized and sorted.

@@ -1,9 +1,11 @@
-from typing import Callable, Any, Optional, Generic, TypeVar
-from concurrent.futures import ThreadPoolExecutor, Future
 import threading
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Generic, TypeVar
+
 from flowfile_core.configs import logger
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class SingleExecutionFuture(Generic[T]):
@@ -14,20 +16,16 @@ class SingleExecutionFuture(Generic[T]):
     """
 
     func: Callable[[], T]
-    on_error: Optional[Callable[[Exception], Any]]
+    on_error: Callable[[Exception], Any] | None
     _lock: threading.RLock
-    _executor: Optional[ThreadPoolExecutor]
-    _future: Optional[Future[T]]
-    _result_value: Optional[T]
-    _exception: Optional[Exception]
+    _executor: ThreadPoolExecutor | None
+    _future: Future[T] | None
+    _result_value: T | None
+    _exception: Exception | None
     _has_completed: bool
     _has_started: bool
 
-    def __init__(
-            self,
-            func: Callable[[], T],
-            on_error: Optional[Callable[[Exception], Any]] = None
-    ) -> None:
+    def __init__(self, func: Callable[[], T], on_error: Callable[[Exception], Any] | None = None) -> None:
         """Initialize with function and optional error handler."""
         self.func = func
         self.on_error = on_error
@@ -81,7 +79,7 @@ class SingleExecutionFuture(Generic[T]):
             if self._executor and not self._executor._shutdown:
                 self._executor.shutdown(wait=False)
 
-    def __call__(self) -> Optional[T]:
+    def __call__(self) -> T | None:
         """Execute function if not running and return its result."""
         with self._lock:
             # If already completed, return cached result or raise cached exception
@@ -137,10 +135,7 @@ class SingleExecutionFuture(Generic[T]):
         """Check if the function is currently executing."""
         with self._lock:
             return bool(
-                self._has_started and
-                not self._has_completed and
-                self._future is not None and
-                not self._future.done()
+                self._has_started and not self._has_completed and self._future is not None and not self._future.done()
             )
 
     def is_completed(self) -> bool:
@@ -148,7 +143,7 @@ class SingleExecutionFuture(Generic[T]):
         with self._lock:
             return self._has_completed
 
-    def get_result(self) -> Optional[T]:
+    def get_result(self) -> T | None:
         """Get the cached result without triggering execution."""
         with self._lock:
             if self._exception:

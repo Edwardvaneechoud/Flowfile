@@ -5,37 +5,67 @@ Run with:
     pytest tools/migrate/tests/test_node_migrations.py -v
 """
 
+import json
 import pickle
 import tempfile
-import json
 from pathlib import Path
+
 import pytest
 
 from tools.migrate.legacy_schemas import (
+    AggColl,
+    BasicFilter,
+    CrossJoinInput,
+    FieldInput,
+    FilterInput,
     # Flow schemas
-    FlowInformation, FlowSettings, NodeInformation,
-
+    FlowInformation,
+    FlowSettings,
+    FunctionInput,
+    FuzzyMapping,
+    FuzzyMatchInput,
+    GraphSolverInput,
+    GroupByInput,
+    JoinInput,
+    JoinInputs,
+    JoinMap,
+    NodeCrossJoin,
+    NodeFilter,
+    NodeFormula,
+    NodeFuzzyMatch,
+    NodeGraphSolver,
+    NodeGroupBy,
+    NodeInformation,
+    NodeJoin,
+    NodeOutput,
+    NodePivot,
+    NodePolarsCode,
     # Node schemas
-    NodeRead, NodeSelect, NodeFilter, NodeFormula, NodeOutput,
-    NodeJoin, NodeCrossJoin, NodeFuzzyMatch, NodePolarsCode,
-    NodeGroupBy, NodeSort, NodeUnion, NodeUnique,
-    NodePivot, NodeUnpivot, NodeRecordId, NodeTextToRows,
-    NodeGraphSolver, NodeSample,
-
+    NodeRead,
+    NodeRecordId,
+    NodeSelect,
+    NodeSort,
+    NodeTextToRows,
+    NodeUnion,
+    NodeUnique,
+    NodeUnpivot,
+    OutputCsvTable,
+    OutputExcelTable,
+    OutputSettings,
+    PivotInput,
+    PolarsCodeInput,
     # Input/Output schemas
-    ReceivedTable, OutputSettings, OutputCsvTable, OutputExcelTable,
-
+    ReceivedTable,
+    RecordIdInput,
     # Transform schemas
-    SelectInput, SelectInputs, JoinInputs, JoinInput, JoinMap,
-    CrossJoinInput, FuzzyMatchInput, FuzzyMapping,
-    FilterInput, BasicFilter, FunctionInput, FieldInput,
-    GroupByInput, AggColl, SortByInput, UnionInput, UniqueInput,
-    PivotInput, UnpivotInput, RecordIdInput, TextToRowsInput,
-    GraphSolverInput, PolarsCodeInput,
+    SelectInput,
+    SortByInput,
+    TextToRowsInput,
+    UnionInput,
+    UniqueInput,
+    UnpivotInput,
 )
-
 from tools.migrate.migrate import migrate_flowfile
-
 
 # =============================================================================
 # FIXTURES

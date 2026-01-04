@@ -13,13 +13,12 @@ from typing import Literal
 import pytest
 import yaml
 
-from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.schemas.output_model import RunInformation
-
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import schemas, input_schema, transform_schema
+from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.manage.io_flowfile import open_flow
+from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.schemas.output_model import RunInformation
 
 
 def find_parent_directory(target_dir_name: str) -> Path:
@@ -268,7 +267,7 @@ class TestYamlSave:
         assert yaml_path.exists(), f"YAML file should exist at {yaml_path}"
 
         # Verify it's valid YAML
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
         assert data is not None, "YAML should parse successfully"
@@ -276,7 +275,7 @@ class TestYamlSave:
         assert 'nodes' in data, "Should have nodes"
         assert len(data['nodes']) == 2, "Should have 2 nodes"
 
-        print(f"\n=== Saved YAML ===")
+        print("\n=== Saved YAML ===")
         print(yaml.dump(data, default_flow_style=False))
 
     def test_save_graph_with_filter(self, graph_with_filter: FlowGraph, temp_dir: Path):
@@ -285,14 +284,14 @@ class TestYamlSave:
 
         graph_with_filter.save_flow(str(yaml_path))
 
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
         # Find filter node
         filter_node = next((n for n in data['nodes'] if n['type'] == 'filter'), None)
         assert filter_node is not None, "Should have filter node"
         assert 'setting_input' in filter_node, "Filter node should have settings"
 
-        print(f"\n=== Filter Node ===")
+        print("\n=== Filter Node ===")
         print(yaml.dump(filter_node, default_flow_style=False))
 
     def test_save_graph_with_group_by(self, graph_with_group_by: FlowGraph, temp_dir: Path):
@@ -301,14 +300,14 @@ class TestYamlSave:
 
         graph_with_group_by.save_flow(str(yaml_path))
 
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
         # Find group_by node
         groupby_node = next((n for n in data['nodes'] if n['type'] == 'group_by'), None)
         assert groupby_node is not None, "Should have group_by node"
 
-        print(f"\n=== Group By Node ===")
+        print("\n=== Group By Node ===")
         print(yaml.dump(groupby_node, default_flow_style=False))
 
     def test_save_graph_with_join(self, graph_with_join: FlowGraph, temp_dir: Path):
@@ -316,7 +315,7 @@ class TestYamlSave:
         yaml_path = temp_dir / "join_flow.yaml"
         graph_with_join.save_flow(str(yaml_path))
 
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
         assert len(data['nodes']) == 3, "Should have 3 nodes (2 inputs + join)"
@@ -326,7 +325,7 @@ class TestYamlSave:
         assert join_node is not None, "Should have join node"
         assert 'setting_input' in join_node, "Join node should have settings"
 
-        print(f"\n=== Join Node ===")
+        print("\n=== Join Node ===")
         print(yaml.dump(join_node, default_flow_style=False))
 
 
@@ -351,7 +350,7 @@ class TestYamlLoad:
         assert 'manual_input' in node_types, "Should have manual_input"
         assert 'select' in node_types, "Should have select"
 
-        print(f"\n=== Loaded Flow ===")
+        print("\n=== Loaded Flow ===")
         print(f"Flow ID: {loaded_flow.flow_id}")
         print(f"Nodes: {[n.node_id for n in loaded_flow.nodes]}")
 
@@ -402,7 +401,7 @@ class TestRoundTrip:
         assert len(original_data) == len(loaded_data), "Should have same number of rows"
         assert original_data == loaded_data, "Data should match"
 
-        print(f"\n=== Round Trip Success ===")
+        print("\n=== Round Trip Success ===")
         print(f"Original rows: {len(original_data)}")
         print(f"Loaded rows: {len(loaded_data)}")
 
@@ -420,7 +419,7 @@ class TestRoundTrip:
 
         assert original_connections == loaded_connections, "Connections should match"
 
-        print(f"\n=== Connections ===")
+        print("\n=== Connections ===")
         print(f"Original: {original_connections}")
         print(f"Loaded: {loaded_connections}")
 
@@ -445,7 +444,7 @@ class TestRoundTrip:
         assert output_data is not None, "Should have output data"
         assert output_data.number_of_records > 0, "Should have records"
 
-        print(f"\n=== Execution Result ===")
+        print("\n=== Execution Result ===")
         print(f"Records: {output_data.number_of_records}")
 
 
@@ -468,7 +467,7 @@ class TestLegacyPickleLoad:
         assert flow is not None, "Should load pickle file"
         assert len(flow.nodes) > 0, "Should have nodes"
 
-        print(f"\n=== Loaded Pickle ===")
+        print("\n=== Loaded Pickle ===")
         print(f"Flow ID: {flow.flow_id}")
         print(f"Nodes: {len(flow.nodes)}")
         for node in flow.nodes:
@@ -494,13 +493,13 @@ class TestLegacyPickleLoad:
         assert yaml_path.exists(), "YAML file should exist"
 
         # Verify YAML is valid
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
         assert data is not None, "Should parse YAML"
         assert 'nodes' in data, "Should have nodes"
 
-        print(f"\n=== Converted YAML ===")
+        print("\n=== Converted YAML ===")
         print(f"Nodes: {len(data['nodes'])}")
         print(yaml.dump(data, default_flow_style=False)[:1000] + "...")
 
@@ -523,7 +522,7 @@ class TestFlowfileDataModel:
         assert restored.flowfile_id == flowfile_data.flowfile_id
         assert len(restored.nodes) == len(flowfile_data.nodes)
 
-        print(f"\n=== FlowfileData ===")
+        print("\n=== FlowfileData ===")
         print(f"Version: {flowfile_data.flowfile_version}")
         print(f"ID: {flowfile_data.flowfile_id}")
         print(f"Nodes: {len(flowfile_data.nodes)}")
@@ -540,7 +539,7 @@ class TestFlowfileDataModel:
         settings = join_node.setting_input
         assert isinstance(settings, input_schema.NodeJoin), f"Expected NodeJoin, got {type(settings)}"
 
-        print(f"\n=== Join Settings ===")
+        print("\n=== Join Settings ===")
         print(f"Type: {type(settings).__name__}")
         print(f"Has join_input: {hasattr(settings, 'join_input')}")
 
@@ -555,7 +554,7 @@ class TestEdgeCases:
 
         graph.save_flow(str(yaml_path))
 
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
         assert data['nodes'] == [], "Empty graph should have no nodes"

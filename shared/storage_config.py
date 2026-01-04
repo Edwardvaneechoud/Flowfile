@@ -3,21 +3,28 @@
 Centralized storage configuration for Flowfile.
 This module can be imported by both core and worker without creating dependencies.
 """
+
 import os
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Literal
 
-DirectoryOptions = Literal["temp_directory", "logs_directory",
-                            "system_logs_directory", "database_directory",
-                            "cache_directory", "flows_directory", "user_defined_nodes_directory"]
+DirectoryOptions = Literal[
+    "temp_directory",
+    "logs_directory",
+    "system_logs_directory",
+    "database_directory",
+    "cache_directory",
+    "flows_directory",
+    "user_defined_nodes_directory",
+]
 
 
 class FlowfileStorage:
     """Centralized storage manager for Flowfile applications."""
 
     def __init__(self):
-        self._base_dir: Optional[Path] = None
-        self._user_data_dir: Optional[Path] = None
+        self._base_dir: Path | None = None
+        self._user_data_dir: Path | None = None
         self._ensure_directories()
 
     @property
@@ -184,8 +191,8 @@ class FlowfileStorage:
 
     def cleanup_directory(self, directory_option: DirectoryOptions, storage_duration_hours: int = 24) -> None:
         """Clean up any directory of the folder"""
-        import time
         import shutil
+        import time
 
         if not hasattr(self, directory_option):
             raise Exception(f"Directory does not exist in {self.base_directory}")

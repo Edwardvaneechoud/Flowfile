@@ -1,17 +1,14 @@
-import logging
 import io
+import logging
 import os
-import tempfile
-import shutil
 import random
+import tempfile
 from datetime import datetime, timedelta
 
 # Third-party libraries
 import boto3
-from botocore.client import Config
 import polars as pl
-import pyarrow as pa
-from pyarrow import parquet as pq
+from botocore.client import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -152,7 +149,7 @@ def create_demo_data(endpoint_url: str, access_key: str, secret_key: str, bucket
     unique_product_ids = sales_df["product_id"].unique().to_list()
     # Create a map of product_id to unit_price from the first occurrence in sales_df
     product_price_map = sales_df.group_by("product_id").agg(pl.first("unit_price")).to_dict(as_series=False)
-    price_dict = dict(zip(product_price_map['product_id'], product_price_map['unit_price']))
+    price_dict = dict(zip(product_price_map['product_id'], product_price_map['unit_price'], strict=False))
 
     products_df = pl.DataFrame({
         "product_id": unique_product_ids,

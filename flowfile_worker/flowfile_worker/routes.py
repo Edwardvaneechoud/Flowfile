@@ -1,18 +1,17 @@
-import polars as pl
-import uuid
 import os
-from fastapi import APIRouter, HTTPException, Response, BackgroundTasks
-from typing import Dict
+import uuid
 from base64 import encodebytes
 
-from flowfile_worker import status_dict, CACHE_DIR, PROCESS_MEMORY_USAGE, status_dict_lock
-from flowfile_worker import models
-from flowfile_worker.spawner import start_process, start_fuzzy_process, start_generic_process, process_manager
-from flowfile_worker.create import table_creator_factory_method, FileType
+import polars as pl
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
+
+from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
-from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
-from flowfile_worker.external_sources.sql_source.main import read_sql_source
+from flowfile_worker.create import FileType, table_creator_factory_method
 from flowfile_worker.create.models import ReceivedTable
+from flowfile_worker.external_sources.sql_source.main import read_sql_source
+from flowfile_worker.external_sources.sql_source.models import DatabaseReadSettings
+from flowfile_worker.spawner import process_manager, start_fuzzy_process, start_generic_process, start_process
 
 router = APIRouter()
 
@@ -35,15 +34,20 @@ def submit_query(polars_script: models.PolarsScript, background_tasks: Backgroun
         polars_serializable_object = polars_script.polars_serializable_object()
         file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
         result_type = "polars" if polars_script.operation_type == "store" else "other"
-        status = models.Status(background_task_id=polars_script.task_id, status="Starting", file_ref=file_path,
-                               result_type=result_type)
+        status = models.Status(
+            background_task_id=polars_script.task_id, status="Starting", file_ref=file_path, result_type=result_type
+        )
         status_dict[polars_script.task_id] = status
-        background_tasks.add_task(start_process, polars_serializable_object=polars_serializable_object,
-                                  task_id=polars_script.task_id, operation=polars_script.operation_type,
-                                  file_ref=file_path, flowfile_flow_id=polars_script.flowfile_flow_id,
-                                  flowfile_node_id=polars_script.flowfile_node_id,
-                                  kwargs={}
-                                  )
+        background_tasks.add_task(
+            start_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=polars_script.task_id,
+            operation=polars_script.operation_type,
+            file_ref=file_path,
+            flowfile_flow_id=polars_script.flowfile_flow_id,
+            flowfile_node_id=polars_script.flowfile_node_id,
+            kwargs={},
+        )
         logger.info(f"Started background task: {polars_script.task_id}")
         return status
 
@@ -52,7 +56,7 @@ def submit_query(polars_script: models.PolarsScript, background_tasks: Backgroun
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/store_sample/')
+@router.post("/store_sample/")
 def store_sample(polars_script: models.PolarsScriptSample, background_tasks: BackgroundTasks) -> models.Status:
     logger.info(f"Processing sample storage with size: {polars_script.sample_size}")
 
@@ -63,15 +67,21 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
         polars_serializable_object = polars_script.polars_serializable_object()
 
         file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
-        status = models.Status(background_task_id=polars_script.task_id, status="Starting", file_ref=file_path,
-                               result_type="other")
+        status = models.Status(
+            background_task_id=polars_script.task_id, status="Starting", file_ref=file_path, result_type="other"
+        )
         status_dict[polars_script.task_id] = status
 
-        background_tasks.add_task(start_process, polars_serializable_object=polars_serializable_object,
-                                  task_id=polars_script.task_id, operation=polars_script.operation_type,
-                                  file_ref=file_path, flowfile_flow_id=polars_script.flowfile_flow_id,
-                                  flowfile_node_id=polars_script.flowfile_node_id,
-                                  kwargs={'sample_size': polars_script.sample_size})
+        background_tasks.add_task(
+            start_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=polars_script.task_id,
+            operation=polars_script.operation_type,
+            file_ref=file_path,
+            flowfile_flow_id=polars_script.flowfile_flow_id,
+            flowfile_node_id=polars_script.flowfile_node_id,
+            kwargs={"sample_size": polars_script.sample_size},
+        )
         logger.info(f"Started sample storage task: {polars_script.task_id}")
 
         return status
@@ -82,8 +92,9 @@ def store_sample(polars_script: models.PolarsScriptSample, background_tasks: Bac
 
 
 @router.post("/write_data_to_cloud/")
-def write_data_to_cloud(cloud_storage_script_write: models.CloudStorageScriptWrite,
-                        background_tasks: BackgroundTasks) -> models.Status:
+def write_data_to_cloud(
+    cloud_storage_script_write: models.CloudStorageScriptWrite, background_tasks: BackgroundTasks
+) -> models.Status:
     """
     Write polars dataframe to a file in cloud storage.
     Args:
@@ -97,30 +108,29 @@ def write_data_to_cloud(cloud_storage_script_write: models.CloudStorageScriptWri
         logger.info("Starting write operation to: cloud storage")
         task_id = str(uuid.uuid4())
         polars_serializable_object = cloud_storage_script_write.polars_serializable_object()
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref='',
-                               result_type="other")
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref="", result_type="other")
         status_dict[task_id] = status
         background_tasks.add_task(
             start_process,
             polars_serializable_object=polars_serializable_object,
             task_id=task_id,
             operation="write_to_cloud_storage",
-            file_ref='',
+            file_ref="",
             flowfile_flow_id=cloud_storage_script_write.flowfile_flow_id,
             flowfile_node_id=cloud_storage_script_write.flowfile_node_id,
             kwargs=dict(cloud_write_settings=cloud_storage_script_write.get_cloud_storage_write_settings()),
         )
-        logger.info(
-            f"Started write task: {task_id} to database"
-        )
+        logger.info(f"Started write task: {task_id} to database")
         return status
     except Exception as e:
         logger.error(f"Error in write operation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/store_database_write_result/')
-def store_in_database(database_script_write: models.DatabaseScriptWrite, background_tasks: BackgroundTasks) -> models.Status:
+@router.post("/store_database_write_result/")
+def store_in_database(
+    database_script_write: models.DatabaseScriptWrite, background_tasks: BackgroundTasks
+) -> models.Status:
     """
     Write polars dataframe to a file in specified format.
 
@@ -135,23 +145,20 @@ def store_in_database(database_script_write: models.DatabaseScriptWrite, backgro
     try:
         task_id = str(uuid.uuid4())
         polars_serializable_object = database_script_write.polars_serializable_object()
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref='',
-                               result_type="other")
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref="", result_type="other")
         status_dict[task_id] = status
         background_tasks.add_task(
             start_process,
             polars_serializable_object=polars_serializable_object,
             task_id=task_id,
             operation="write_to_database",
-            file_ref='',
+            file_ref="",
             flowfile_flow_id=database_script_write.flowfile_flow_id,
             flowfile_node_id=database_script_write.flowfile_node_id,
             kwargs=dict(database_write_settings=database_script_write.get_database_write_settings()),
-            )
-
-        logger.info(
-            f"Started write task: {task_id} to database"
         )
+
+        logger.info(f"Started write task: {task_id} to database")
 
         return status
 
@@ -160,7 +167,7 @@ def store_in_database(database_script_write: models.DatabaseScriptWrite, backgro
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/write_results/')
+@router.post("/write_results/")
 def write_results(polars_script_write: models.PolarsScriptWrite, background_tasks: BackgroundTasks) -> models.Status:
     """
     Write polars dataframe to a file in specified format.
@@ -178,22 +185,26 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         file_path = polars_script_write.path
         polars_serializable_object = polars_script_write.polars_serializable_object()
         result_type = "other"
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
-                               result_type=result_type)
+        status = models.Status(
+            background_task_id=task_id, status="Starting", file_ref=file_path, result_type=result_type
+        )
         status_dict[task_id] = status
-        background_tasks.add_task(start_process,
-                                  polars_serializable_object=polars_serializable_object, task_id=task_id,
-                                  operation="write_output",
-                                  file_ref=file_path,
-                                  flowfile_flow_id=polars_script_write.flowfile_flow_id,
-                                  flowfile_node_id=polars_script_write.flowfile_node_id,
-                                  kwargs=dict(
-                                      data_type=polars_script_write.data_type,
-                                      path=polars_script_write.path,
-                                      write_mode=polars_script_write.write_mode,
-                                      sheet_name=polars_script_write.sheet_name,
-                                      delimiter=polars_script_write.delimiter)
-                                  )
+        background_tasks.add_task(
+            start_process,
+            polars_serializable_object=polars_serializable_object,
+            task_id=task_id,
+            operation="write_output",
+            file_ref=file_path,
+            flowfile_flow_id=polars_script_write.flowfile_flow_id,
+            flowfile_node_id=polars_script_write.flowfile_node_id,
+            kwargs=dict(
+                data_type=polars_script_write.data_type,
+                path=polars_script_write.path,
+                write_mode=polars_script_write.write_mode,
+                sheet_name=polars_script_write.sheet_name,
+                delimiter=polars_script_write.delimiter,
+            ),
+        )
         logger.info(f"Started write task: {task_id} with type: {polars_script_write.data_type}")
 
         return status
@@ -203,8 +214,10 @@ def write_results(polars_script_write: models.PolarsScriptWrite, background_task
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/store_database_read_result')
-def store_sql_db_result(database_read_settings: DatabaseReadSettings, background_tasks: BackgroundTasks) -> models.Status:
+@router.post("/store_database_read_result")
+def store_sql_db_result(
+    database_read_settings: DatabaseReadSettings, background_tasks: BackgroundTasks
+) -> models.Status:
     """
     Store the result of an sql source operation.
 
@@ -219,16 +232,21 @@ def store_sql_db_result(database_read_settings: DatabaseReadSettings, background
 
     try:
         task_id = str(uuid.uuid4())
-        file_path = os.path.join(create_and_get_default_cache_dir(database_read_settings.flowfile_flow_id),
-                                 f"{task_id}.arrow")
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path,
-                               result_type="polars")
+        file_path = os.path.join(
+            create_and_get_default_cache_dir(database_read_settings.flowfile_flow_id), f"{task_id}.arrow"
+        )
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_path, result_type="polars")
         status_dict[task_id] = status
         logger.info(f"Starting reading from database source task: {task_id}")
-        background_tasks.add_task(start_generic_process, func_ref=read_sql_source, file_ref=file_path,
-                                  flowfile_flow_id=database_read_settings.flowfile_flow_id,
-                                  flowfile_node_id=database_read_settings.flowfile_node_id,
-                                  task_id=task_id, kwargs=dict(database_read_settings=database_read_settings))
+        background_tasks.add_task(
+            start_generic_process,
+            func_ref=read_sql_source,
+            file_ref=file_path,
+            flowfile_flow_id=database_read_settings.flowfile_flow_id,
+            flowfile_node_id=database_read_settings.flowfile_node_id,
+            task_id=task_id,
+            kwargs=dict(database_read_settings=database_read_settings),
+        )
         return status
 
     except Exception as e:
@@ -236,9 +254,14 @@ def store_sql_db_result(database_read_settings: DatabaseReadSettings, background
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post('/create_table/{file_type}')
-def create_table(file_type: FileType, received_table: ReceivedTable, background_tasks: BackgroundTasks,
-                 flowfile_flow_id: int = 1, flowfile_node_id: int | str = -1) -> models.Status:
+@router.post("/create_table/{file_type}")
+def create_table(
+    file_type: FileType,
+    received_table: ReceivedTable,
+    background_tasks: BackgroundTasks,
+    flowfile_flow_id: int = 1,
+    flowfile_node_id: int | str = -1,
+) -> models.Status:
     """
     Create a Polars table from received dictionary data based on specified file type.
 
@@ -256,14 +279,18 @@ def create_table(file_type: FileType, received_table: ReceivedTable, background_
     try:
         task_id = str(uuid.uuid4())
         file_ref = os.path.join(create_and_get_default_cache_dir(flowfile_flow_id), f"{task_id}.arrow")
-        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_ref,
-                               result_type="polars")
+        status = models.Status(background_task_id=task_id, status="Starting", file_ref=file_ref, result_type="polars")
         status_dict[task_id] = status
         func_ref = table_creator_factory_method(file_type)
-        background_tasks.add_task(start_generic_process, func_ref=func_ref, file_ref=file_ref,
-                                  task_id=task_id, kwargs={'received_table': received_table},
-                                  flowfile_flow_id=flowfile_flow_id,
-                                  flowfile_node_id=flowfile_node_id)
+        background_tasks.add_task(
+            start_generic_process,
+            func_ref=func_ref,
+            file_ref=file_ref,
+            task_id=task_id,
+            kwargs={"received_table": received_table},
+            flowfile_flow_id=flowfile_flow_id,
+            flowfile_node_id=flowfile_node_id,
+        )
         logger.info(f"Started table creation task: {task_id}")
 
         return status
@@ -285,7 +312,7 @@ def validate_result(task_id: str) -> bool | None:
     """
     logger.debug(f"Validating result for task: {task_id}")
     status = status_dict.get(task_id)
-    if status.status == 'Completed' and status.result_type == 'polars':
+    if status.status == "Completed" and status.result_type == "polars":
         try:
             pl.scan_ipc(status.file_ref)
             logger.debug(f"Validation successful for task: {task_id}")
@@ -296,7 +323,7 @@ def validate_result(task_id: str) -> bool | None:
     return True
 
 
-@router.get('/status/{task_id}', response_model=models.Status)
+@router.get("/status/{task_id}", response_model=models.Status)
 def get_status(task_id: str) -> models.Status:
     """Get status of a task by ID and validate its result if completed.
 
@@ -396,16 +423,20 @@ async def add_fuzzy_join(polars_script: models.FuzzyJoinInput, background_tasks:
         right_serializable_object = polars_script.right_df_operation.polars_serializable_object()
 
         file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
-        status = models.Status(background_task_id=polars_script.task_id, status="Starting", file_ref=file_path,
-                               result_type="polars")
+        status = models.Status(
+            background_task_id=polars_script.task_id, status="Starting", file_ref=file_path, result_type="polars"
+        )
         status_dict[polars_script.task_id] = status
-        background_tasks.add_task(start_fuzzy_process, left_serializable_object=left_serializable_object,
-                                  right_serializable_object=right_serializable_object,
-                                  file_ref=file_path,
-                                  fuzzy_maps=polars_script.fuzzy_maps,
-                                  task_id=polars_script.task_id,
-                                  flowfile_flow_id=polars_script.flowfile_flow_id,
-                                  flowfile_node_id=polars_script.flowfile_node_id)
+        background_tasks.add_task(
+            start_fuzzy_process,
+            left_serializable_object=left_serializable_object,
+            right_serializable_object=right_serializable_object,
+            file_ref=file_path,
+            fuzzy_maps=polars_script.fuzzy_maps,
+            task_id=polars_script.task_id,
+            flowfile_flow_id=polars_script.flowfile_flow_id,
+            flowfile_node_id=polars_script.flowfile_node_id,
+        )
         logger.info(f"Started fuzzy join task: {polars_script.task_id}")
         return status
     except Exception as e:
@@ -468,7 +499,7 @@ def cancel_task(task_id: str):
     return {"message": f"Task {task_id} has been cancelled."}
 
 
-@router.get('/ids')
+@router.get("/ids")
 async def get_all_ids():
     """Get list of all task IDs in the system.
 

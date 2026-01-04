@@ -2,30 +2,29 @@
 End-to-end tests for custom nodes in flow graphs.
 Tests the full lifecycle: definition, registration, graph integration, and execution.
 """
-import pytest
-import polars as pl
-from typing import List, Dict
 
-from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, nodes_list, add_to_custom_node_store
+import polars as pl
+import pytest
+
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE, add_to_custom_node_store, nodes_list
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.node_designer import (
-    CustomNodeBase,
-    NodeSettings,
-    Section,
-    TextInput,
-    NumericInput,
-    ToggleSwitch,
-    SingleSelect,
-    MultiSelect,
     ColumnSelector,
-    Types,
+    CustomNodeBase,
     IncomingColumns,
+    MultiSelect,
+    NodeSettings,
+    NumericInput,
+    Section,
+    SingleSelect,
+    TextInput,
+    ToggleSwitch,
+    Types,
 )
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.types import DataType
-
 
 # =============================================================================
 # Test Utilities
@@ -48,7 +47,7 @@ def create_graph(flow_id: int = 1, execution_mode: str = 'Development') -> FlowG
     return handler.get_flow(flow_id)
 
 
-def add_manual_input(graph: FlowGraph, data: List[Dict], node_id: int = 1) -> FlowGraph:
+def add_manual_input(graph: FlowGraph, data: list[dict], node_id: int = 1) -> FlowGraph:
     node_promise = input_schema.NodePromise(
         flow_id=graph.flow_id,
         node_id=node_id,
@@ -68,7 +67,7 @@ def add_custom_node_to_graph(
         graph: FlowGraph,
         custom_node_class: type,
         node_id: int,
-        settings: Dict
+        settings: dict
 ) -> FlowGraph:
     """Helper to add a custom node to a graph with settings."""
     node_promise = input_schema.NodePromise(

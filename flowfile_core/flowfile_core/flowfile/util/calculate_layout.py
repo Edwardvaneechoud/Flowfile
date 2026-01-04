@@ -1,18 +1,14 @@
 import logging
-import math
 from collections import defaultdict, deque
-from typing import List, Dict, Set, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from flowfile_core.flowfile.flow_graph import FlowGraph
 
 
 def calculate_layered_layout(
-    graph: 'FlowGraph',
-    x_spacing: int = 250,
-    y_spacing: int = 100,
-    initial_y: int = 50
-) -> Dict[int, Tuple[int, int]]:
+    graph: "FlowGraph", x_spacing: int = 250, y_spacing: int = 100, initial_y: int = 50
+) -> dict[int, tuple[int, int]]:
     """
     Calculates node positions using a simplified layered approach for a
     LEFT-TO-RIGHT flow. Stages determine horizontal position (X), and
@@ -32,9 +28,9 @@ def calculate_layered_layout(
 
     nodes = graph.nodes
     node_ids = {node.node_id for node in nodes}
-    adj: Dict[int, List[int]] = defaultdict(list)
-    rev_adj: Dict[int, List[int]] = defaultdict(list)
-    in_degree: Dict[int, int] = defaultdict(int)
+    adj: dict[int, list[int]] = defaultdict(list)
+    rev_adj: dict[int, list[int]] = defaultdict(list)
+    in_degree: dict[int, int] = defaultdict(int)
 
     # --- Graph Building Stage ---
     try:
@@ -65,8 +61,8 @@ def calculate_layered_layout(
                         adj[node.node_id].append(child_node.node_id)
                     in_degree[child_node.node_id] += 1
 
-    stages: Dict[int, List[int]] = defaultdict(list)
-    node_stage: Dict[int, int] = {}
+    stages: dict[int, list[int]] = defaultdict(list)
+    node_stage: dict[int, int] = {}
     initial_sources = sorted([node_id for node_id in node_ids if in_degree.get(node_id, 0) == 0])
     queue = deque(initial_sources)
     current_stage = 0
@@ -105,7 +101,7 @@ def calculate_layered_layout(
             current_stage += 1
 
     # --- Coordinate Assignment Stage ---
-    positions: Dict[int, Tuple[int, int]] = {}
+    positions: dict[int, tuple[int, int]] = {}
     max_stage_height = 0
 
     for stage_index, node_ids_in_stage in stages.items():

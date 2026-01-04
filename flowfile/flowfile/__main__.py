@@ -1,16 +1,19 @@
 #  flowfile/__main__.py
 
+
 def main():
     """
     Display information about FlowFile when run directly as a module.
     """
-    import flowfile
     import argparse
+
+    import flowfile
 
     parser = argparse.ArgumentParser(description="FlowFile: A visual ETL tool with a Polars-like API")
     parser.add_argument("command", nargs="?", choices=["run"], help="Command to execute")
-    parser.add_argument("component", nargs="?", choices=["ui", "core", "worker"],
-                        help="Component to run (ui, core, or worker)")
+    parser.add_argument(
+        "component", nargs="?", choices=["ui", "core", "worker"], help="Component to run (ui, core, or worker)"
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=63578, help="Port to bind the server to")
     parser.add_argument("--no-browser", action="store_true", help="Don't open a browser window")
@@ -21,18 +24,18 @@ def main():
     if args.command == "run" and args.component:
         if args.component == "ui":
             try:
-                flowfile.start_web_ui(
-                    open_browser=not args.no_browser
-                )
+                flowfile.start_web_ui(open_browser=not args.no_browser)
             except KeyboardInterrupt:
                 print("\nFlowFile service stopped.")
         elif args.component == "core":
             # Only for direct core service usage
             from flowfile_core.main import run as run_core
+
             run_core(host=args.host, port=args.port)
         elif args.component == "worker":
             # Only for direct worker service usage
             from flowfile_worker.main import run as run_worker
+
             run_worker(host=args.host, port=args.port)
     else:
         # Default action - show info
