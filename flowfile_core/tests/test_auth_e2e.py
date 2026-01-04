@@ -138,6 +138,7 @@ def running_container(docker_client, docker_image, project_root):
     # Environment variables for Docker mode with admin user
     environment = {
         'FLOWFILE_MODE': 'docker',
+        'JWT_SECRET_KEY': 'e2e-test-secret-key-do-not-use-in-production',
         'FLOWFILE_ADMIN_USER': TEST_ADMIN_USERNAME,
         'FLOWFILE_ADMIN_PASSWORD': TEST_ADMIN_PASSWORD,
         'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
@@ -351,6 +352,7 @@ class TestDockerE2EWithoutAdminCredentials:
         # Environment without admin credentials
         environment = {
             'FLOWFILE_MODE': 'docker',
+            'JWT_SECRET_KEY': 'e2e-test-secret-key-do-not-use-in-production',
             # Intentionally omitting FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD
             'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
             'FLOWFILE_USER_DATA_DIR': '/app/user_data',

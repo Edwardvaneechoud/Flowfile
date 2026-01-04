@@ -142,6 +142,7 @@ class TestDockerModeAuth:
     def setup_docker_mode(self, monkeypatch):
         """Set up Docker mode for these tests."""
         monkeypatch.setenv("FLOWFILE_MODE", "docker")
+        monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
 
     def test_docker_mode_login_with_valid_credentials(self, create_test_user, test_user_credentials):
         """Test successful login with valid credentials in Docker mode."""
@@ -372,6 +373,7 @@ class TestDockerAdminUserCreation:
         try:
             # Create admin user
             monkeypatch.setenv("FLOWFILE_MODE", "docker")
+            monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-for-unit-tests")
             monkeypatch.setenv("FLOWFILE_ADMIN_USER", admin_username)
             monkeypatch.setenv("FLOWFILE_ADMIN_PASSWORD", admin_password)
 
