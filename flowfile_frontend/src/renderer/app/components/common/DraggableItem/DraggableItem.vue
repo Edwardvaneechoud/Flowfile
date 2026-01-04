@@ -238,6 +238,10 @@ const initialGroupStates = ref<
   Record<string, { top: number; left: number; width: number; height: number }>
 >({});
 
+// Track previous window dimensions for proportional repositioning
+const prevWindowWidth = ref(window.innerWidth);
+const prevWindowHeight = ref(window.innerHeight);
+
 const resizeDelay = ref<ReturnType<typeof setTimeout> | null>(null);
 const resizeOnEnter = (e: MouseEvent, position: "top" | "bottom" | "left" | "right") => {
   if (resizeDelay.value) clearTimeout(resizeDelay.value);
@@ -573,6 +577,9 @@ const applyStickyPosition = () => {
     return;
   }
 
+  const newWindowWidth = window.innerWidth;
+  const newWindowHeight = window.innerHeight;
+
   switch (itemState.value.stickynessPosition) {
     case "top":
       itemState.value.left = parentElement.offsetLeft;
@@ -613,9 +620,44 @@ const applyStickyPosition = () => {
 
     case "free":
     default:
-      // Keep current position
+      // For free-positioned items, ensure they stay within viewport bounds
+      // and maintain relative positioning when window resizes
+      if (prevWindowWidth.value > 0 && prevWindowHeight.value > 0) {
+        // Calculate if item was positioned relative to right edge (more than 50% from left)
+        const wasRightAligned = itemState.value.left > prevWindowWidth.value / 2;
+        const wasBottomAligned = itemState.value.top > prevWindowHeight.value / 2;
+
+        if (wasRightAligned) {
+          // Maintain distance from right edge
+          const distanceFromRight = prevWindowWidth.value - itemState.value.left - itemState.value.width;
+          itemState.value.left = Math.max(0, newWindowWidth - itemState.value.width - distanceFromRight);
+        }
+
+        if (wasBottomAligned) {
+          // Maintain distance from bottom edge
+          const distanceFromBottom = prevWindowHeight.value - itemState.value.top - itemState.value.height;
+          itemState.value.top = Math.max(0, newWindowHeight - itemState.value.height - distanceFromBottom);
+        }
+      }
+
+      // Clamp to ensure item stays visible
+      const minVisible = 100; // Minimum visible pixels
+      itemState.value.left = Math.max(0, Math.min(itemState.value.left, newWindowWidth - minVisible));
+      itemState.value.top = Math.max(0, Math.min(itemState.value.top, newWindowHeight - minVisible));
+
+      // Clamp width/height if they exceed viewport
+      if (itemState.value.width > newWindowWidth) {
+        itemState.value.width = newWindowWidth - 20;
+      }
+      if (itemState.value.height > newWindowHeight - 50) {
+        itemState.value.height = newWindowHeight - 70;
+      }
       break;
   }
+
+  // Update tracked window dimensions
+  prevWindowWidth.value = newWindowWidth;
+  prevWindowHeight.value = newWindowHeight;
 
   // Save the new position
   savePositionAndSize();
@@ -651,6 +693,11 @@ const observeParentResize = () => {
   if (parentElement) {
     parentResizeObserver.observe(parentElement);
   }
+};
+
+// Handle window resize events directly
+const handleWindowResize = () => {
+  handleResize();
 };
 
 const registerClick = () => {
@@ -762,6 +809,7 @@ onMounted(() => {
   };
 
   window.addEventListener("layout-reset", handleLayoutReset);
+  window.addEventListener("resize", handleWindowResize);
   document.addEventListener("mouseup", stopResize);
 
   // Store the event handler for cleanup
@@ -779,6 +827,8 @@ onBeforeUnmount(() => {
     window.removeEventListener("layout-reset", handler);
     delete (window as any)[`resetHandler_${props.id}`];
   }
+  window.removeEventListener("resize", handleWindowResize);
+  parentResizeObserver.disconnect();
   document.removeEventListener("mouseup", stopResize);
   document.removeEventListener("mousemove", onMove);
   document.removeEventListener("mouseup", stopMove);
