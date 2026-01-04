@@ -37,17 +37,6 @@ Convert your visual pipelines into clean, executable Python code for deployment 
 - Understanding generated code
 - Deploying pipelines
 
----
-
-### [Export to YAML](yaml-export.md)
-Save your flows as human-readable YAML files for version control, sharing, and portability.
-
-**You'll learn:**
-- Saving flows to YAML format
-- Understanding the YAML structure
-- Loading and sharing flows
-- Migrating from legacy formats
-
 ## Tutorial Format
 
 Each tutorial includes:
@@ -60,8 +49,7 @@ Each tutorial includes:
 
 1. **Start with Database Connectivity** if you work with databases
 2. **Move to Cloud Storage** for S3 and cloud data
-3. **Learn Export to YAML** for version control and sharing
-4. **Learn Export to Code** when ready to deploy
+3. **Learn Export to Code** when ready to deploy
 
 ## Coming Soon
 

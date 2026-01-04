@@ -25,7 +25,7 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 1. Click the **Create** button in the top toolbar
 2. A new empty canvas will open
 3. Save your flow at any time using the **Save** button
-4. Files are saved with the `.flowfile` extension
+4. Flows are saved as `.yaml` or `.json` files (human-readable formats)
 
 ### Adding Nodes
 
@@ -87,6 +87,48 @@ Choose your execution mode from the settings panel:
 2. Review the results in the preview panel
 3. Check for any errors or warnings
 4. Export results using output nodes
+
+## Saving and Loading Flows
+
+Flowfile saves your pipelines as human-readable YAML or JSON files, making them easy to version control, share, and collaborate on.
+
+### Supported Formats
+
+| Format | Extension | Best For |
+|--------|-----------|----------|
+| YAML | `.yaml`, `.yml` | Human readability, version control |
+| JSON | `.json` | Programmatic access, API integration |
+
+### Saving a Flow
+
+1. Click the **Save** button in the toolbar
+2. Choose a filename with `.yaml` or `.json` extension
+3. Your flow is saved with all nodes, connections, and settings
+
+### What Gets Saved
+
+- **Flow settings**: Name, description, execution mode
+- **All nodes**: Type, position, and configuration
+- **Connections**: How nodes are linked together
+- **Node settings**: All parameters and options
+
+### Loading a Flow
+
+1. Click **Open** in the toolbar
+2. Select a `.yaml`, `.json`, or legacy `.flowfile`
+3. The flow is fully restored and ready to run
+
+### Version Control
+
+YAML files work great with Git:
+
+- Track changes to your pipelines over time
+- Review diffs to see what changed
+- Collaborate with team members
+- Roll back to previous versions
+
+!!! tip "Migrating from Legacy Format"
+    If you have flows saved in the old `.flowfile` format, simply open them and save as `.yaml` to convert.
 
 ## Example Flow
 

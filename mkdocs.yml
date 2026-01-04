@@ -96,7 +96,6 @@ nav:
         - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
         - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
         - Export to Python: users/visual-editor/tutorials/code-generator.md
-        - Export to YAML: users/visual-editor/tutorials/yaml-export.md
 
     - Python API:
       - Overview: users/python-api/index.md
