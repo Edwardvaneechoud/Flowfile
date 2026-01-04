@@ -4,7 +4,8 @@ import os
 import sys
 from pathlib import Path
 
-os.environ["FLOWFILE_MODE"] = "electron"
+if "FLOWFILE_MODE" not in os.environ:
+    os.environ["FLOWFILE_MODE"] = "electron"
 
 # Create and configure the logger
 logger = logging.getLogger("PipelineHandler")

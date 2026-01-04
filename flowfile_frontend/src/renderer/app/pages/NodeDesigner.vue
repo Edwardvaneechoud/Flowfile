@@ -7,6 +7,10 @@
         <p class="page-description">Design custom nodes visually</p>
       </div>
       <div class="header-actions">
+        <button class="btn btn-secondary" @click="showHelpModal = true">
+          <i class="fa-solid fa-circle-question"></i>
+          Help
+        </button>
         <button class="btn btn-secondary" @click="nodeBrowser.openNodeBrowser()">
           <i class="fa-solid fa-folder-open"></i>
           Browse
@@ -187,11 +191,13 @@
       @cancel-delete="nodeBrowser.showDeleteConfirm.value = false"
       @delete="nodeBrowser.deleteNode()"
     />
+
+    <NodeDesignerHelpModal :show="showHelpModal" @close="showHelpModal = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { watch, onMounted, computed } from "vue";
+import { ref, watch, onMounted, computed } from "vue";
 import axios from "axios";
 
 // Child components
@@ -202,6 +208,7 @@ import ProcessCodeEditor from "./nodeDesigner/ProcessCodeEditor.vue";
 import CodePreviewModal from "./nodeDesigner/CodePreviewModal.vue";
 import ValidationModal from "./nodeDesigner/ValidationModal.vue";
 import NodeBrowserModal from "./nodeDesigner/NodeBrowserModal.vue";
+import NodeDesignerHelpModal from "./nodeDesigner/NodeDesignerHelpModal.vue";
 import IconSelector from "./nodeDesigner/IconSelector.vue";
 
 // Composables
@@ -242,6 +249,9 @@ const nodeBrowser = useNodeBrowser();
 const autocompletion = usePolarsAutocompletion(() => sections.value);
 
 const storage = useSessionStorage(getState, setState, resetState);
+
+// Help modal state
+const showHelpModal = ref(false);
 
 // Setup auto-save and load on mount
 watch([() => ({ ...nodeMetadata }), sections, processCode], () => storage.saveToSessionStorage(), {
