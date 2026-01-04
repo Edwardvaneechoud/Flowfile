@@ -377,6 +377,13 @@ class CrossJoinInput(BaseModel):
             "right_select": self.right_select.to_yaml_dict(),
         }
 
+    def add_new_select_column(self, select_input: SelectInput, side: str) -> None:
+        """Adds a new column to the selection for either the left or right side."""
+        target_input = self.right_select if side == "right" else self.left_select
+        if select_input.new_name is None:
+            select_input.new_name = select_input.old_name
+        target_input.renames.append(select_input)
+
 
 class JoinInput(BaseModel):
     """Data model for standard SQL-style join operations."""
@@ -492,6 +499,13 @@ class JoinInput(BaseModel):
             "how": self.how,
         }
 
+    def add_new_select_column(self, select_input: SelectInput, side: str) -> None:
+        """Adds a new column to the selection for either the left or right side."""
+        target_input = self.right_select if side == "right" else self.left_select
+        if select_input.new_name is None:
+            select_input.new_name = select_input.old_name
+        target_input.renames.append(select_input)
+
 
 class FuzzyMatchInput(BaseModel):
     """Data model for fuzzy matching join operations."""
@@ -525,6 +539,13 @@ class FuzzyMatchInput(BaseModel):
             "how": self.how,
             "aggregate_output": self.aggregate_output,
         }
+
+    def add_new_select_column(self, select_input: SelectInput, side: str) -> None:
+        """Adds a new column to the selection for either the left or right side."""
+        target_input = self.right_select if side == "right" else self.left_select
+        if select_input.new_name is None:
+            select_input.new_name = select_input.old_name
+        target_input.renames.append(select_input)
 
     @staticmethod
     def _parse_select(select: Any) -> JoinInputs:
