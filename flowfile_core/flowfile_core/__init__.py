@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import os
 from importlib.metadata import PackageNotFoundError, version
 
@@ -7,9 +9,10 @@ validate_setup()
 from flowfile_core.database.init_db import init_db
 from flowfile_core.flowfile.handler import FlowfileHandler
 
-os.environ["FLOWFILE_MODE"] = "electron"
-init_db()
+if "FLOWFILE_MODE" not in os.environ:
+    os.environ["FLOWFILE_MODE"] = "electron"
 
+init_db()
 
 class ServerRun:
     exit: bool = False

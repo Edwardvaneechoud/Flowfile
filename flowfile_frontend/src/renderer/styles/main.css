@@ -506,9 +506,12 @@ button {
   background-color: var(--color-background-hover) !important;
 }
 
-.cm-editor .cm-selectionBackground,
+.cm-editor .cm-selectionBackground {
+  background-color: rgba(8, 145, 178, 0.15) !important;
+}
+
 .cm-editor.cm-focused .cm-selectionBackground {
-  background-color: var(--color-background-selected) !important;
+  background-color: rgba(8, 145, 178, 0.25) !important;
 }
 
 /* Placeholder styling */

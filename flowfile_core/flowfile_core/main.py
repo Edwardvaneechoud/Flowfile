@@ -27,7 +27,9 @@ from shared.storage_config import storage
 
 storage.cleanup_directories()
 
-os.environ["FLOWFILE_MODE"] = "electron"
+# Set default mode to electron if not already set (allows Docker mode override)
+if "FLOWFILE_MODE" not in os.environ:
+    os.environ["FLOWFILE_MODE"] = "electron"
 
 should_exit = False
 server_instance = None

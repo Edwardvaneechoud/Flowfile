@@ -135,7 +135,8 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     This function is a wrapper around flowfile_core.main.run().
     """
     # Set electron mode
-    os.environ["FLOWFILE_MODE"] = "electron"
+    if "FLOWFILE_MODE" not in os.environ:
+        os.environ["FLOWFILE_MODE"] = "electron"
 
     # Import core app
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
