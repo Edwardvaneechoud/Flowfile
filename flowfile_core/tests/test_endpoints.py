@@ -1176,9 +1176,8 @@ def test_import_flow_path_traversal_with_dots():
 
 def test_save_flow_path_traversal_blocked():
     """Test that save_flow blocks saving to paths outside sandbox."""
-    flow_id = create_flow_with_manual_input()
 
-    # Attempt to save to /etc directory (should be blocked)
+    flow_id = create_flow_with_manual_input()
     response = client.get("/save_flow", params={'flow_id': flow_id, 'flow_path': '/etc/malicious.yaml'})
     assert response.status_code == 403, 'Path traversal to /etc should be blocked'
     assert 'Access denied' in response.json()['detail'], 'Should return access denied message'

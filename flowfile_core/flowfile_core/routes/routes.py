@@ -81,29 +81,38 @@ def _is_sensitive_system_path(path: Path) -> bool:
 
 
 def _validate_file_path(user_path: str) -> Optional[Path]:
-    """Validate a file path, blocking path traversal and sensitive directories.
+    """Validate a file path is safe and within allowed_base.
 
-    This is less restrictive than sandbox mode - it allows project directories
-    but blocks sensitive system paths and path traversal patterns.
+    Args:
+        user_path: User-provided path string
 
     Returns:
-        Validated Path or None if the path is unsafe.
+        Validated absolute Path, or None if unsafe.
     """
     try:
-        # Block path traversal patterns
+        # Block path traversal patterns early
         if '..' in user_path:
             return None
+        allowed_base = Path(storage.user_data_directory)
+        # Resolve the allowed base directory
+        base_resolved = allowed_base.resolve()
 
-        path = Path(user_path).expanduser().resolve()
+        # Resolve the user's path
+        if os.path.isabs(user_path):
+            target = Path(user_path).resolve()
+        else:
+            # Relative paths are joined with the base
+            target = (allowed_base / user_path).resolve()
+        target.relative_to(base_resolved)
 
-        # Block sensitive system directories
-        if _is_sensitive_system_path(path):
+        if _is_sensitive_system_path(target):
             return None
 
-        return path
-    except (ValueError, RuntimeError, OSError):
-        return None
+        return target
 
+    except (ValueError, RuntimeError, OSError):
+        # ValueError is raised by relative_to() if path is outside base
+        return None
 
 def get_node_model(setting_name_ref: str):
     """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
@@ -750,10 +759,10 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=List[str])
-async def get_excel_sheet_names(path: str) -> List[str] | None:
+@router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=list[str])
+async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    validated_path = _validate_file_path(path)
+    validated_path = _validate_file_path(path, allowed_base=Path(storage.user_data_directory))
     if validated_path is None:
         raise HTTPException(403, 'Access denied')
     sheet_names = excel_file_manager.get_sheet_names(str(validated_path))
