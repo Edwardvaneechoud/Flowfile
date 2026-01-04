@@ -1,7 +1,6 @@
 
 import ast
 import re
-import shutil
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
@@ -158,25 +157,37 @@ def _extract_node_info_from_file(file_path: Path) -> CustomNodeInfo:
         # Find class definitions that might be custom nodes
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                # Look for class attributes
+                # Look for class attributes (both annotated and simple assignments)
                 for item in node.body:
-                    if isinstance(item, ast.Assign):
+                    attr_name = None
+                    value = None
+
+                    # Handle annotated assignments: node_name: str = "value"
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        attr_name = item.target.id
+                        if item.value and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
+                            value = item.value.value
+                    # Handle simple assignments: node_name = "value"
+                    elif isinstance(item, ast.Assign):
                         for target in item.targets:
                             if isinstance(target, ast.Name):
                                 attr_name = target.id
-                                # Extract string values
                                 if isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
                                     value = item.value.value
-                                    if attr_name == "node_name":
-                                        info.node_name = value
-                                    elif attr_name == "node_category":
-                                        info.node_category = value
-                                    elif attr_name == "title":
-                                        info.title = value
-                                    elif attr_name == "intro":
-                                        info.intro = value
-                                    elif attr_name == "node_icon":
-                                        info.node_icon = value
+                                break
+
+                    # Map attribute names to info fields
+                    if attr_name and value:
+                        if attr_name == "node_name":
+                            info.node_name = value
+                        elif attr_name == "node_category":
+                            info.node_category = value
+                        elif attr_name == "title":
+                            info.title = value
+                        elif attr_name == "intro":
+                            info.intro = value
+                        elif attr_name == "node_icon":
+                            info.node_icon = value
 
                 # If we found a node_name, this is likely a custom node class
                 if info.node_name:
@@ -250,27 +261,43 @@ def get_custom_node(file_name: str) -> Dict[str, Any]:
                 # Check if this looks like a custom node class (has node_name attribute)
                 is_custom_node = False
                 for item in node.body:
-                    if isinstance(item, ast.Assign):
+                    # Check annotated assignments: node_name: str = "value"
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        if item.target.id == "node_name":
+                            is_custom_node = True
+                            break
+                    # Check simple assignments: node_name = "value"
+                    elif isinstance(item, ast.Assign):
                         for target in item.targets:
                             if isinstance(target, ast.Name) and target.id == "node_name":
                                 is_custom_node = True
                                 break
 
                 if is_custom_node:
-                    # Extract metadata
+                    # Extract metadata from both annotated and simple assignments
                     for item in node.body:
-                        if isinstance(item, ast.Assign):
+                        attr_name = None
+                        value = None
+
+                        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                            attr_name = item.target.id
+                            if item.value and isinstance(item.value, ast.Constant):
+                                value = item.value.value
+                        elif isinstance(item, ast.Assign):
                             for target in item.targets:
                                 if isinstance(target, ast.Name):
                                     attr_name = target.id
                                     if isinstance(item.value, ast.Constant):
                                         value = item.value.value
-                                        if attr_name in ["node_name", "node_category", "title", "intro", "node_icon"]:
-                                            result["metadata"][attr_name] = value
-                                        elif attr_name == "number_of_inputs":
-                                            result["metadata"]["number_of_inputs"] = value
-                                        elif attr_name == "number_of_outputs":
-                                            result["metadata"]["number_of_outputs"] = value
+                                    break
+
+                        if attr_name and value is not None:
+                            if attr_name in ["node_name", "node_category", "title", "intro", "node_icon"]:
+                                result["metadata"][attr_name] = value
+                            elif attr_name == "number_of_inputs":
+                                result["metadata"]["number_of_inputs"] = value
+                            elif attr_name == "number_of_outputs":
+                                result["metadata"]["number_of_outputs"] = value
 
                     # Extract process method
                     for item in node.body:
