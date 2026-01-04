@@ -1,13 +1,14 @@
 
 import platform
 import subprocess
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 from pydantic import SecretStr
 
-from flowfile_worker.external_sources.s3_source.models import (FullCloudStorageConnection,
-                                                               )
+from flowfile_worker.external_sources.s3_source.models import (
+    FullCloudStorageConnection,
+)
 from flowfile_worker.secrets import encrypt_secret
 
 

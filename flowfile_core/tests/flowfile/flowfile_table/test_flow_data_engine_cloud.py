@@ -1,33 +1,35 @@
-from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine, execute_polars_code
-from flowfile_core.schemas.cloud_storage_schemas import (CloudStorageReadSettings,
-                                                         CloudStorageReadSettingsInternal,
-                                                         FullCloudStorageConnection,
-                                                         CloudStorageWriteSettings,
-                                                         CloudStorageWriteSettingsInternal)
-from flowfile_core.schemas.transform_schema import UniqueInput
-from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_cloud_connection
-import pytest
-from typing import Dict, Any, Optional
-from pydantic import SecretStr
-from logging import getLogger
-from datetime import datetime
 from dataclasses import dataclass
+from datetime import datetime
+from logging import getLogger
+
+import pytest
+from pydantic import SecretStr
+
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.schemas.cloud_storage_schemas import (
+    CloudStorageReadSettings,
+    CloudStorageReadSettingsInternal,
+    CloudStorageWriteSettings,
+    CloudStorageWriteSettingsInternal,
+    FullCloudStorageConnection,
+)
+from flowfile_core.schemas.transform_schema import UniqueInput
 
 logger = getLogger(__name__)
 
 
 try:
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import is_docker_available
 
 
 import os
-import pytest
+
 
 @pytest.fixture
 def s3_env_vars():
@@ -59,9 +61,9 @@ class S3TestReadCase:
     """Test case for S3 reading functionality."""
     id: str
     read_settings: CloudStorageReadSettings
-    expected_columns: Optional[int] = None
+    expected_columns: int | None = None
     expected_lazy_records: int = -1
-    expected_actual_records: Optional[int] = None
+    expected_actual_records: int | None = None
     expected_sample_size: int = 5
     should_fail_on_create: bool = False
     should_fail_on_collect: bool = False
@@ -73,7 +75,7 @@ class S3TestWriteCase:
     """Test case for S3 reading functionality."""
     id: str
     write_settings: CloudStorageWriteSettings
-    expected_columns: Optional[int] = None
+    expected_columns: int | None = None
     expected_lazy_records: int = -1
 
 
@@ -313,7 +315,7 @@ def test_write_to_s3_with_aws_keys(
 def test_write_to_s3_with_aws_env_vars(
         test_case: S3TestWriteCase,
         source_flow_data_engine: FlowDataEngine,
-        s3_env_vars: Dict[str, str],
+        s3_env_vars: dict[str, str],
 ):
     """
     Tests writing data to S3 and verifies the output by reading it back.

@@ -2,10 +2,8 @@
 Pytest configuration and shared fixtures for migration tool tests.
 """
 
-import pytest
 import sys
 from pathlib import Path
-
 
 # Ensure tools package is importable
 REPO_ROOT = Path(__file__).parent.parent.parent.parent

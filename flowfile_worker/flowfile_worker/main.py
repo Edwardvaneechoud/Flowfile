@@ -1,16 +1,14 @@
 import asyncio
-import uvicorn
 import signal
-
 from contextlib import asynccontextmanager
+
+import uvicorn
 from fastapi import FastAPI
 
-from shared.storage_config import storage
-
-from flowfile_worker.routes import router
 from flowfile_worker import mp_context
-from flowfile_worker.configs import logger, FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT
-
+from flowfile_worker.configs import FLOWFILE_CORE_URI, SERVICE_HOST, SERVICE_PORT, logger
+from flowfile_worker.routes import router
+from shared.storage_config import storage
 
 should_exit = False
 server_instance = None
@@ -19,11 +17,11 @@ server_instance = None
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
     """Handle application startup and shutdown"""
-    logger.info('Starting application...')
+    logger.info("Starting application...")
     try:
         yield
     finally:
-        logger.info('Shutting down application...')
+        logger.info("Shutting down application...")
         logger.info("Cleaning up worker resources...")
         for p in mp_context.active_children():
             try:
@@ -84,17 +82,12 @@ def run(host: str = None, port: int = None):
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        loop="asyncio"
-    )
+    config = uvicorn.Config(app, host=host, port=port, loop="asyncio")
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally
 
-    logger.info('Starting server...')
-    logger.info('Server started')
+    logger.info("Starting server...")
+    logger.info("Server started")
 
     try:
         server.run()
@@ -107,5 +100,6 @@ def run(host: str = None, port: int = None):
 
 if __name__ == "__main__":
     import multiprocessing
+
     multiprocessing.freeze_support()
     run()

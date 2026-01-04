@@ -1,18 +1,16 @@
-import sys
 import importlib.util
 import inspect
-from pathlib import Path
-from typing import Dict, Type, List
 import logging
+import sys
+from pathlib import Path
 
-from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase, NodeSettings
+from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from shared import storage
-
 
 logger = logging.getLogger(__name__)
 
 
-def get_all_custom_nodes() -> Dict[str, Type[CustomNodeBase]]:
+def get_all_custom_nodes() -> dict[str, type[CustomNodeBase]]:
     """
     Scan the user-defined nodes directory and import all CustomNodeBase subclasses.
 
@@ -55,12 +53,9 @@ def get_all_custom_nodes() -> Dict[str, Type[CustomNodeBase]]:
                 for name, obj in inspect.getmembers(module):
                     # Check if it's a class and a subclass of CustomNodeBase
                     # but not CustomNodeBase itself
-                    if (inspect.isclass(obj) and
-                            issubclass(obj, CustomNodeBase) and
-                            obj is not CustomNodeBase):
-
+                    if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
                         # Use the node_name attribute if it exists, otherwise use class name
-                        node_name = getattr(obj, 'node_name', name)
+                        node_name = getattr(obj, "node_name", name)
                         custom_nodes[node_name] = obj
                         print(f"Loaded custom node: {node_name} from {file_path.name}")
 
@@ -72,7 +67,7 @@ def get_all_custom_nodes() -> Dict[str, Type[CustomNodeBase]]:
     return custom_nodes
 
 
-def get_all_custom_nodes_with_validation() -> Dict[str, Type[CustomNodeBase]]:
+def get_all_custom_nodes_with_validation() -> dict[str, type[CustomNodeBase]]:
     """
     Enhanced version that validates the nodes before adding them.
     """
@@ -97,22 +92,19 @@ def get_all_custom_nodes_with_validation() -> Dict[str, Type[CustomNodeBase]]:
                 spec.loader.exec_module(module)
 
                 for name, obj in inspect.getmembers(module):
-                    if (inspect.isclass(obj) and
-                            issubclass(obj, CustomNodeBase) and
-                            obj is not CustomNodeBase):
-
+                    if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
                         try:
                             _obj = obj()
                             # Validate that the node has required attributes
-                            if not hasattr(_obj, 'node_name'):
+                            if not hasattr(_obj, "node_name"):
                                 logger.error(f"Warning: {name} missing node_name attribute")
                                 raise ValueError(f"Node {name} must implement a node_name attribute")
 
-                            if not hasattr(_obj, 'settings_schema'):
+                            if not hasattr(_obj, "settings_schema"):
                                 logger.error(f"Warning: {name} missing settings_schema attribute")
                                 raise ValueError(f"Node {name} must implement a settings_schema attribute")
 
-                            if not hasattr(_obj, 'process'):
+                            if not hasattr(_obj, "process"):
                                 logger.error(f"Warning: {name} missing process method")
                                 raise ValueError(f"Node {name} must implement a process method")
                             if not (storage.user_defined_nodes_icons / _obj.node_icon).exists():
@@ -137,7 +129,7 @@ def get_all_custom_nodes_with_validation() -> Dict[str, Type[CustomNodeBase]]:
     return custom_nodes
 
 
-def get_custom_nodes_lazy() -> List[Type[CustomNodeBase]]:
+def get_custom_nodes_lazy() -> list[type[CustomNodeBase]]:
     """
     Returns a list of custom node classes without instantiating them.
     Useful for registration or catalog purposes.
@@ -162,10 +154,12 @@ def get_custom_nodes_lazy() -> List[Type[CustomNodeBase]]:
                 spec.loader.exec_module(module)
 
                 for name, obj in inspect.getmembers(module):
-                    if (inspect.isclass(obj) and
-                            issubclass(obj, CustomNodeBase) and
-                            obj is not CustomNodeBase and
-                            obj.__module__ == module.__name__):  # Only get classes defined in this module
+                    if (
+                        inspect.isclass(obj)
+                        and issubclass(obj, CustomNodeBase)
+                        and obj is not CustomNodeBase
+                        and obj.__module__ == module.__name__
+                    ):  # Only get classes defined in this module
                         nodes.append(obj)
 
         except Exception as e:
@@ -176,15 +170,15 @@ def get_custom_nodes_lazy() -> List[Type[CustomNodeBase]]:
 
 
 # Example usage function that matches your original pattern
-def add_custom_node(node_class: Type[CustomNodeBase], registry: Dict[str, Type[CustomNodeBase]]):
+def add_custom_node(node_class: type[CustomNodeBase], registry: dict[str, type[CustomNodeBase]]):
     """Add a single custom node to the registry."""
-    if hasattr(node_class, 'node_name'):
+    if hasattr(node_class, "node_name"):
         registry[node_class.node_name] = node_class
     else:
         registry[node_class.__name__] = node_class
 
 
-def get_all_nodes_from_standard_location() -> Dict[str, Type[CustomNodeBase]]:
+def get_all_nodes_from_standard_location() -> dict[str, type[CustomNodeBase]]:
     """
     Main function to get all custom nodes from the standard location.
     This matches your original function signature.
@@ -193,7 +187,7 @@ def get_all_nodes_from_standard_location() -> Dict[str, Type[CustomNodeBase]]:
     return get_all_custom_nodes_with_validation()
 
 
-def load_single_node_from_file(file_path: Path) -> Type[CustomNodeBase] | None:
+def load_single_node_from_file(file_path: Path) -> type[CustomNodeBase] | None:
     """
     Load a single custom node from a specific file.
 
@@ -224,18 +218,15 @@ def load_single_node_from_file(file_path: Path) -> Type[CustomNodeBase] | None:
             spec.loader.exec_module(module)
 
             for name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and
-                        issubclass(obj, CustomNodeBase) and
-                        obj is not CustomNodeBase):
-
+                if inspect.isclass(obj) and issubclass(obj, CustomNodeBase) and obj is not CustomNodeBase:
                     try:
                         _obj = obj()
                         # Validate required attributes
-                        if not hasattr(_obj, 'node_name'):
+                        if not hasattr(_obj, "node_name"):
                             raise ValueError(f"Node {name} must have a node_name attribute")
-                        if not hasattr(_obj, 'settings_schema'):
+                        if not hasattr(_obj, "settings_schema"):
                             raise ValueError(f"Node {name} must have a settings_schema attribute")
-                        if not hasattr(_obj, 'process'):
+                        if not hasattr(_obj, "process"):
                             raise ValueError(f"Node {name} must have a process method")
 
                         logger.info(f"✓ Loaded: {_obj.node_name} from {file_path.name}")
@@ -269,12 +260,11 @@ def unload_node_by_name(node_name: str) -> bool:
         True if any modules were removed, False otherwise
     """
     # Convert node name to potential module names
-    module_stem = node_name.lower().replace(' ', '_')
+    module_stem = node_name.lower().replace(" ", "_")
 
     # Find and remove any matching modules from sys.modules
     modules_to_remove = [
-        key for key in sys.modules.keys()
-        if key == module_stem or key.startswith(f"custom_node_{module_stem}")
+        key for key in sys.modules.keys() if key == module_stem or key.startswith(f"custom_node_{module_stem}")
     ]
 
     for mod_name in modules_to_remove:

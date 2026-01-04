@@ -7,26 +7,31 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from flowfile_core import ServerRun
+from flowfile_core.configs.flow_logger import clear_all_flow_logs
+from flowfile_core.configs.settings import (
+    SERVER_HOST,
+    SERVER_PORT,
+    WORKER_HOST,
+    WORKER_PORT,
+    WORKER_URL,
+)
+from flowfile_core.routes.auth import router as auth_router
+from flowfile_core.routes.cloud_connections import router as cloud_connections_router
+from flowfile_core.routes.logs import router as logs_router
+from flowfile_core.routes.public import router as public_router
+from flowfile_core.routes.routes import router
+from flowfile_core.routes.secrets import router as secrets_router
+from flowfile_core.routes.user_defined_components import router as user_defined_components_router
 from shared.storage_config import storage
 
-from flowfile_core import ServerRun
-from flowfile_core.configs.settings import (SERVER_HOST, SERVER_PORT, WORKER_HOST, WORKER_PORT, WORKER_URL,)
-
-from flowfile_core.routes.auth import router as auth_router
-from flowfile_core.routes.secrets import router as secrets_router
-from flowfile_core.routes.routes import router
-from flowfile_core.routes.public import router as public_router
-from flowfile_core.routes.logs import router as logs_router
-from flowfile_core.routes.cloud_connections import router as cloud_connections_router
-from flowfile_core.routes.user_defined_components import router as user_defined_components_router
-
-from flowfile_core.configs.flow_logger import clear_all_flow_logs
 storage.cleanup_directories()
 
 os.environ["FLOWFILE_MODE"] = "electron"
 
 should_exit = False
 server_instance = None
+
 
 @asynccontextmanager
 async def shutdown_handler(app: FastAPI):
@@ -35,11 +40,11 @@ async def shutdown_handler(app: FastAPI):
     This context manager ensures that resources, such as log files, are cleaned
     up properly when the application is terminated.
     """
-    print('Starting core application...')
+    print("Starting core application...")
     try:
         yield
     finally:
-        print('Shutting down core application...')
+        print("Shutting down core application...")
         print("Cleaning up core service resources...")
         clear_all_flow_logs()
         await asyncio.sleep(0.1)  # Give a moment for cleanup
@@ -47,10 +52,10 @@ async def shutdown_handler(app: FastAPI):
 
 # Initialize FastAPI with metadata
 app = FastAPI(
-    title='Flowfile Backend',
-    version='0.1',
-    description='Backend for the Flowfile application',
-    lifespan=shutdown_handler
+    title="Flowfile Backend",
+    version="0.1",
+    description="Backend for the Flowfile application",
+    lifespan=shutdown_handler,
 )
 
 # Configure CORS
@@ -63,7 +68,7 @@ origins = [
     "http://localhost:4173",
     "http://localhost:4174",
     "http://localhost:63578",
-    "http://127.0.0.1:63578"
+    "http://127.0.0.1:63578",
 ]
 
 app.add_middleware(
@@ -148,8 +153,8 @@ def run(host: str = None, port: int = None):
     server = uvicorn.Server(config)
     server_instance = server  # Store server instance globally
 
-    print('Starting core server...')
-    print('Core server started')
+    print("Starting core server...")
+    print("Core server started")
 
     try:
         server.run()

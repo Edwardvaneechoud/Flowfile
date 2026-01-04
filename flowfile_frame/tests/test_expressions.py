@@ -1,10 +1,10 @@
-import pytest
 import polars as pl
-
-from flowfile_frame.expr import col, lit, Column, Expr, cum_count, sum, mean, max, min, count
-from flowfile_frame import selectors as sc, FlowFrame
-
+import pytest
 from polars.testing import assert_frame_equal
+
+from flowfile_frame import FlowFrame
+from flowfile_frame import selectors as sc
+from flowfile_frame.expr import Column, Expr, col, count, cum_count, lit, max, mean, min, sum
 
 
 class TestExpressions:

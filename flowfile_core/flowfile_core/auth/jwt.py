@@ -3,15 +3,14 @@
 import os
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-from flowfile_core.auth.secrets import get_password, set_password
 
-from flowfile_core.auth.models import User, TokenData
+from flowfile_core.auth.models import TokenData, User
+from flowfile_core.auth.secrets import get_password, set_password
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
 
@@ -117,12 +116,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
 
 def get_current_active_user(current_user=Depends(get_current_user)):
-    if hasattr(current_user, 'disabled') and current_user.disabled:
+    if hasattr(current_user, "disabled") and current_user.disabled:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
 
     if expires_delta:
@@ -136,8 +135,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 async def get_current_user_from_query(
-    access_token: str = Query(..., description="JWT access token"),
-    db: Session = Depends(get_db)
+    access_token: str = Query(..., description="JWT access token"), db: Session = Depends(get_db)
 ):
     """
     Authenticate user using only the query parameter token.

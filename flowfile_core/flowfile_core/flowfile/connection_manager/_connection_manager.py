@@ -1,9 +1,10 @@
-from typing import Dict, List, Any
+from typing import Any
+
 from flowfile_core.flowfile.connection_manager.models import Connection
 
 
 class ConnectionManager:
-    connections: Dict[str, Dict[str, Connection]]
+    connections: dict[str, dict[str, Connection]]
 
     def add_connection(self, connection_group: str, connection_name: str, connection: Connection):
         existing_connections_in_group = self.connections.get(connection_group)
@@ -34,11 +35,11 @@ class ConnectionManager:
         self.raise_if_connection_does_not_exist(connection_group, connection_name)
         self.connections[connection_group][connection_name] = connection
 
-    def insert_settings_raw(self, connection_group: str, connection_name: str, settings: Dict[str, Any]):
+    def insert_settings_raw(self, connection_group: str, connection_name: str, settings: dict[str, Any]):
         connection = Connection(group=connection_group, name=connection_name, config_setting=settings)
         self.add_connection(connection_group, connection_name, connection)
 
-    def connection_groups(self) -> List[str]:
+    def connection_groups(self) -> list[str]:
         return list(self.connections.keys())
 
     def get_available_connections_in_group(self, group_name: str):
