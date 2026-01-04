@@ -130,18 +130,18 @@ defineExpose({ insertTextAtCursor });
 .validation-error {
   margin-top: 8px;
   padding: 8px;
-  color: #ff5555;
+  color: var(--color-error, #ff5555);
   background-color: rgba(255, 85, 85, 0.1);
   border-radius: 4px;
 }
 
 /* Polars-specific syntax highlighting */
 .cm-variable.cm-polars {
-  color: #50fa7b; /* Polars namespace */
+  color: #50fa7b;
 }
 
 .cm-property.cm-polars {
-  color: #8be9fd; /* Polars methods */
+  color: #8be9fd;
 }
 
 .cm-keyword {
@@ -162,5 +162,51 @@ defineExpose({ insertTextAtCursor });
 
 .cm-comment {
   color: #6272a4;
+}
+
+/* CodeMirror dark mode styling */
+.cm-editor {
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
+
+.cm-editor .cm-content {
+  caret-color: var(--color-text-primary);
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-muted);
+  border-right: 1px solid var(--color-border-primary);
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: var(--color-background-hover);
+}
+
+.cm-editor .cm-activeLine {
+  background-color: var(--color-background-hover);
+}
+
+/* Autocomplete tooltip styling */
+.cm-tooltip {
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+.cm-tooltip-autocomplete {
+  background-color: var(--color-background-primary);
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background-color: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.cm-completionInfo {
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
 }
 </style>

@@ -268,4 +268,81 @@ defineExpose({ insertTextAtCursor });
 .cm-string {
   color: #b8bb26;
 }
+
+/* CodeMirror dark mode styling */
+.cm-editor {
+  background-color: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
+
+.cm-editor .cm-content {
+  caret-color: var(--color-text-primary);
+}
+
+.cm-editor .cm-cursor {
+  border-left-color: var(--color-text-primary);
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-muted);
+  border-right: 1px solid var(--color-border-primary);
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: var(--color-background-hover);
+}
+
+.cm-editor .cm-activeLine {
+  background-color: var(--color-background-hover);
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+  background-color: var(--color-background-selected);
+}
+
+/* Autocomplete tooltip styling */
+.cm-tooltip {
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+.cm-tooltip-autocomplete {
+  background-color: var(--color-background-primary);
+}
+
+.cm-tooltip-autocomplete > ul {
+  background-color: var(--color-background-primary);
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  color: var(--color-text-primary);
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background-color: var(--color-accent);
+  color: var(--color-text-inverse);
+}
+
+.cm-completionLabel {
+  color: var(--color-text-primary);
+}
+
+.cm-completionDetail {
+  color: var(--color-text-secondary);
+}
+
+.cm-completionInfo {
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
+  padding: 8px;
+}
+
+/* Placeholder styling */
+.cm-placeholder {
+  color: var(--color-text-muted);
+}
 </style>
