@@ -20,12 +20,12 @@
 
 <script setup lang="ts">
 import { EditorView, keymap } from "@codemirror/view";
-import { EditorState, Extension } from "@codemirror/state";
+import { EditorState, Extension, Prec } from "@codemirror/state";
 import { ref, shallowRef, defineExpose, watch } from "vue";
 import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { autocompletion, completionKeymap, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
+import { autocompletion, CompletionSource, acceptCompletion } from "@codemirror/autocomplete";
 import { indentMore } from "@codemirror/commands";
 import { polarsCompletionVals } from "./pythonEditor/polarsCompletions";
 
@@ -88,11 +88,10 @@ const extensions: Extension[] = [
   EditorState.tabSize.of(4),
   autocompletion({
     override: [polarsCompletions],
-    defaultKeymap: false, // Disable default keymap to use custom tabKeymap
+    defaultKeymap: true, // Enable default keymap for arrow navigation
     closeOnBlur: false,
   }),
-  keymap.of(completionKeymap),
-  tabKeymap,
+  Prec.highest(tabKeymap), // Tab keymap with highest precedence
 ];
 
 // Rest of the component code remains the same...

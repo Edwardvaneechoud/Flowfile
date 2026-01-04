@@ -4,6 +4,7 @@
       <h4>Process Method</h4>
       <button class="help-btn" @click="showHelp = true" title="Show help">
         <i class="fa-solid fa-circle-question"></i>
+        <span>Help</span>
       </button>
     </div>
     <p class="code-hint">
@@ -70,24 +71,22 @@ const showHelp = ref(false);
 }
 
 .help-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  background: transparent;
-  border: 1px solid var(--border-color, #e0e0e0);
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  background: var(--color-accent, #0891b2);
+  border: none;
   border-radius: 4px;
-  color: var(--text-secondary, #6c757d);
+  color: white;
+  font-size: 0.8125rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .help-btn:hover {
-  background: var(--color-accent, #0891b2);
-  border-color: var(--color-accent, #0891b2);
-  color: white;
+  background: var(--color-accent-hover, #0e7490);
 }
 
 .help-btn i {

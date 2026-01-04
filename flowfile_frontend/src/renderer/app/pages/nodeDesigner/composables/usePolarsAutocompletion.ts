@@ -2,7 +2,7 @@
  * Composable for Polars autocompletion in CodeMirror
  */
 import { EditorView, keymap } from '@codemirror/view';
-import { EditorState, Extension } from '@codemirror/state';
+import { EditorState, Extension, Prec } from '@codemirror/state';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion, completionKeymap, CompletionContext, CompletionResult, acceptCompletion } from '@codemirror/autocomplete';
@@ -141,11 +141,49 @@ const polarsCompletions = [
   { label: '.over', type: 'method', info: 'Window function over groups', apply: '.over("")' },
 ];
 
+// SecretStr methods for autocompletion
+const secretStrMethods = [
+  {
+    label: 'get_secret_value',
+    type: 'method',
+    info: 'Get the decrypted secret value as a string',
+    apply: 'get_secret_value()',
+    detail: 'SecretStr',
+  },
+];
+
 export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
+  // Helper to find SecretStr typed variables in the code
+  function findSecretStrVariables(doc: string): string[] {
+    const variables: string[] = [];
+    // Match patterns like: var_name: SecretStr = ... or var_name: SecretStr=...
+    const typeAnnotationPattern = /(\w+)\s*:\s*SecretStr\s*=/g;
+    let match;
+    while ((match = typeAnnotationPattern.exec(doc)) !== null) {
+      variables.push(match[1]);
+    }
+    return variables;
+  }
+
   // Dynamic autocompletion based on schema
   function schemaCompletions(context: CompletionContext): CompletionResult | null {
     const beforeCursor = context.state.doc.sliceString(0, context.pos);
+    const fullDoc = context.state.doc.toString();
     const sections = getSections();
+
+    // Check for SecretStr variable method completion (e.g., my_secret.)
+    const secretStrVars = findSecretStrVariables(fullDoc);
+    for (const varName of secretStrVars) {
+      const varMethodMatch = beforeCursor.match(new RegExp(`\\b${varName}\\.(\\w*)$`));
+      if (varMethodMatch) {
+        const typed = varMethodMatch[1];
+        return {
+          from: context.pos - typed.length,
+          options: secretStrMethods,
+          validFor: /^\w*$/,
+        };
+      }
+    }
 
     // Check for SecretStr method completion (after .secret_value.)
     const secretStrMethodMatch = beforeCursor.match(/\.secret_value\.(\w*)$/);
@@ -153,15 +191,7 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
       const typed = secretStrMethodMatch[1];
       return {
         from: context.pos - typed.length,
-        options: [
-          {
-            label: 'get_secret_value',
-            type: 'method',
-            info: 'Get the decrypted secret value as a string',
-            apply: 'get_secret_value()',
-            detail: 'SecretStr',
-          },
-        ],
+        options: secretStrMethods,
         validFor: /^\w*$/,
       };
     }
@@ -296,17 +326,17 @@ export function usePolarsAutocompletion(getSections: () => DesignerSection[]) {
   ]);
 
   // CodeMirror extensions for editing
+  // Note: Prec.highest ensures completion keybindings take priority over other keymaps
   const extensions: Extension[] = [
     python(),
     oneDark,
     EditorState.tabSize.of(4),
     autocompletion({
       override: [schemaCompletions],
-      defaultKeymap: false,
+      defaultKeymap: true, // Enable default keymap for arrow navigation
       closeOnBlur: false,
     }),
-    keymap.of(completionKeymap),
-    tabKeymap,
+    Prec.highest(tabKeymap), // Tab keymap with highest precedence
   ];
 
   // Read-only CodeMirror extensions for code preview
