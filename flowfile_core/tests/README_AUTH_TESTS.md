@@ -126,6 +126,7 @@ docker build -f flowfile_core/Dockerfile -t flowfile-core:test .
 docker run -d \
   -p 63578:63578 \
   -e FLOWFILE_MODE=docker \
+  -e JWT_SECRET_KEY=your-secret-key-here \
   -e FLOWFILE_ADMIN_USER=admin \
   -e FLOWFILE_ADMIN_PASSWORD=testpass123 \
   -v $(pwd)/master_key.txt:/run/secrets/flowfile_master_key:ro \
@@ -182,10 +183,18 @@ On Linux, you may need to:
 - Add user to docker group: `sudo usermod -aG docker $USER`
 - Or run with sudo: `sudo poetry run pytest ...`
 
+### JWT_SECRET_KEY Error
+If you see "JWT_SECRET_KEY environment variable must be set in Docker mode":
+- This is expected when `FLOWFILE_MODE=docker`
+- Set the environment variable: `export JWT_SECRET_KEY=your-secret-key`
+- For production, use a strong random key: `openssl rand -hex 32`
+- Tests automatically set this variable
+
 ## Environment Variables
 
 ### For Docker Mode
 - `FLOWFILE_MODE=docker` - Enable Docker authentication mode
+- `JWT_SECRET_KEY` - Secret key for JWT token signing (required in Docker mode)
 - `FLOWFILE_ADMIN_USER` - Admin username to create on startup
 - `FLOWFILE_ADMIN_PASSWORD` - Admin password to create on startup
 

@@ -138,6 +138,7 @@ def running_container(docker_client, docker_image, project_root):
     # Environment variables for Docker mode with admin user
     environment = {
         'FLOWFILE_MODE': 'docker',
+        'JWT_SECRET_KEY': 'e2e-test-secret-key-do-not-use-in-production',
         'FLOWFILE_ADMIN_USER': TEST_ADMIN_USERNAME,
         'FLOWFILE_ADMIN_PASSWORD': TEST_ADMIN_PASSWORD,
         'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
@@ -351,6 +352,7 @@ class TestDockerE2EWithoutAdminCredentials:
         # Environment without admin credentials
         environment = {
             'FLOWFILE_MODE': 'docker',
+            'JWT_SECRET_KEY': 'e2e-test-secret-key-do-not-use-in-production',
             # Intentionally omitting FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD
             'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
             'FLOWFILE_USER_DATA_DIR': '/app/user_data',
@@ -360,7 +362,7 @@ class TestDockerE2EWithoutAdminCredentials:
         container = docker_client.containers.run(
             image=docker_image.id,
             detach=True,
-            ports={f'{FLOWFILE_CORE_PORT}/tcp': FLOWFILE_CORE_PORT + 1},  # Different port
+            ports={f'{FLOWFILE_CORE_PORT}/tcp': 63590},  # Use unique port to avoid conflicts
             environment=environment,
             volumes=volumes,
             name=f"flowfile-e2e-no-admin-{int(time.time())}",
