@@ -354,6 +354,146 @@ class TestSelectInputsRemoveMethod:
         assert remaining == ['y']
 
 
+class TestSettingUpdatorWithIsAvailableFalse:
+    """Tests for setting updator when existing settings have is_available=False.
+
+    This covers the case where settings are loaded from frontend/storage with
+    is_available=False, which previously caused duplicate columns.
+    """
+
+    def test_cross_join_updator_no_duplicates_when_is_available_false(self):
+        """Test that no duplicates are created when existing columns have is_available=False."""
+        from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
+        from flowfile_core.schemas.output_model import NodeData, InputOverview
+
+        # Create a NodeData with existing settings where is_available=False
+        existing_cross_join = transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='Column 1', new_name='Column 1', is_available=False),
+            ]),
+            right_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='Column 1', new_name='right_Column 1', is_available=False),
+            ]),
+        )
+
+        node_data = NodeData(
+            flow_id=1,
+            node_id=1,
+            node_type='cross_join',
+            setting_input=input_schema.NodeCrossJoin(
+                flow_id=1,
+                node_id=1,
+                cross_join_input=existing_cross_join,
+            ),
+            main_input=InputOverview(columns=['Column 1']),
+            right_input=InputOverview(columns=['Column 1']),
+        )
+
+        # Run the updator
+        cross_join_updator(node_data)
+
+        # Verify no duplicates
+        left_cols = [r.old_name for r in node_data.setting_input.cross_join_input.left_select.renames]
+        right_cols = [r.old_name for r in node_data.setting_input.cross_join_input.right_select.renames]
+
+        assert len(left_cols) == 1, f"Expected 1 left column, got {len(left_cols)}: {left_cols}"
+        assert len(right_cols) == 1, f"Expected 1 right column, got {len(right_cols)}: {right_cols}"
+
+        # Verify is_available is now True
+        assert node_data.setting_input.cross_join_input.left_select.renames[0].is_available is True
+        assert node_data.setting_input.cross_join_input.right_select.renames[0].is_available is True
+
+    def test_join_updator_no_duplicates_when_is_available_false(self):
+        """Test that join updator doesn't create duplicates when is_available=False."""
+        from flowfile_core.flowfile.setting_generator.settings import join as join_updator
+        from flowfile_core.schemas.output_model import NodeData, InputOverview
+
+        existing_join = transform_schema.JoinInput(
+            join_mapping='id',
+            left_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='id', new_name='id', is_available=False),
+                transform_schema.SelectInput(old_name='name', new_name='name', is_available=False),
+            ]),
+            right_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='id', new_name='id', is_available=False),
+                transform_schema.SelectInput(old_name='value', new_name='value', is_available=False),
+            ]),
+        )
+
+        node_data = NodeData(
+            flow_id=1,
+            node_id=1,
+            node_type='join',
+            setting_input=input_schema.NodeJoin(
+                flow_id=1,
+                node_id=1,
+                join_input=existing_join,
+            ),
+            main_input=InputOverview(columns=['id', 'name']),
+            right_input=InputOverview(columns=['id', 'value']),
+        )
+
+        # Run the updator
+        join_updator(node_data)
+
+        # Verify no duplicates
+        left_cols = [r.old_name for r in node_data.setting_input.join_input.left_select.renames]
+        right_cols = [r.old_name for r in node_data.setting_input.join_input.right_select.renames]
+
+        assert len(left_cols) == 2, f"Expected 2 left columns, got {len(left_cols)}: {left_cols}"
+        assert len(right_cols) == 2, f"Expected 2 right columns, got {len(right_cols)}: {right_cols}"
+
+        # All should now be available
+        for r in node_data.setting_input.join_input.left_select.renames:
+            assert r.is_available is True
+        for r in node_data.setting_input.join_input.right_select.renames:
+            assert r.is_available is True
+
+    def test_updator_sets_is_available_correctly(self):
+        """Test that is_available is set based on incoming dataframe columns."""
+        from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
+        from flowfile_core.schemas.output_model import NodeData, InputOverview
+
+        # Settings have columns that may or may not exist in input
+        existing_cross_join = transform_schema.CrossJoinInput(
+            left_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='exists', new_name='exists', is_available=False),
+                transform_schema.SelectInput(old_name='removed', new_name='removed', is_available=True),
+            ]),
+            right_select=transform_schema.JoinInputs(renames=[
+                transform_schema.SelectInput(old_name='right_exists', new_name='right_exists', is_available=False),
+            ]),
+        )
+
+        node_data = NodeData(
+            flow_id=1,
+            node_id=1,
+            node_type='cross_join',
+            setting_input=input_schema.NodeCrossJoin(
+                flow_id=1,
+                node_id=1,
+                cross_join_input=existing_cross_join,
+            ),
+            main_input=InputOverview(columns=['exists', 'new_col']),  # 'removed' is no longer in input
+            right_input=InputOverview(columns=['right_exists']),
+        )
+
+        cross_join_updator(node_data)
+
+        left_cols = {r.old_name: r for r in node_data.setting_input.cross_join_input.left_select.renames}
+
+        # 'exists' should now be available
+        assert 'exists' in left_cols
+        assert left_cols['exists'].is_available is True
+
+        # 'removed' should be removed entirely (not just marked unavailable)
+        assert 'removed' not in left_cols
+
+        # 'new_col' should be added
+        assert 'new_col' in left_cols
+        assert left_cols['new_col'].is_available is True
+
+
 class TestAddNewSelectColumn:
     """Tests for the add_new_select_column method."""
 
