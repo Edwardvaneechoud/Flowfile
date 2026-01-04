@@ -1298,6 +1298,9 @@ class FlowNode:
         node = setting_generator.get_setting_generator(self.node_type)(node)
 
         node = setting_updator.get_setting_updator(self.node_type)(node)
+        # Save the updated settings back to the node so they persist across calls
+        if node.setting_input is not None and not isinstance(node.setting_input, input_schema.NodePromise):
+            self.setting_input = node.setting_input
         return node
 
     def get_output_data(self) -> TableExample:

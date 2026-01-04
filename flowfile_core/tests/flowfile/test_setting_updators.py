@@ -685,10 +685,13 @@ class TestCrossJoinExecution:
             raw_data_format=input_schema.RawData.from_pylist([{'a': 1, 'c': 3}])
         ))
 
+        # Trigger the updator to update settings with new column
+        node.get_node_data(basic_flow.flow_id)
+
         # Node needs to be reset and re-executed
         node.reset()
         basic_flow.run_graph()
         result2 = node.get_resulting_data()
 
-        # New column 'c' should be present
+        # New column 'c' should be present (auto_keep_left=True by default)
         assert 'c' in result2.columns
