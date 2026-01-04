@@ -212,142 +212,122 @@ sqlalchemy_to_polars_str: dict[str, str] = {
 
 # Additional string mappings for common SQL type names
 sql_type_name_to_polars: dict[str, PolarsType] = {
-    # PostgreSQL types
+    # --- Integers ---
+    "int": pl.Int32,
+    "integer": pl.Int64,
+    "int4": pl.Int32,
+    "int8": pl.Int64,
     "bigint": pl.Int64,
-    "smallint": pl.Int64,
+    "short": pl.Int16,
+    "smallint": pl.Int16,
+    "tinyint": pl.Int8,
+    "mediumint": pl.Int32,
+    "serial": pl.Int32,
+    "bigserial": pl.Int64,
+    "smallserial": pl.Int16,
+    # Unsigned (MySQL specific)
+    "int unsigned": pl.UInt64,
+    "bigint unsigned": pl.UInt64,
+    "smallint unsigned": pl.UInt16,
+    "tinyint unsigned": pl.UInt8,
+    "mediumint unsigned": pl.UInt32,
+    "year": pl.Int16,
+
+    # --- Floats & Decimals ---
     "numeric": pl.Decimal,
+    "decimal": pl.Decimal,
+    "number": pl.Decimal,  # Oracle
+    "money": pl.Decimal,
+    "smallmoney": pl.Decimal,
     "real": pl.Float32,
+    "float": pl.Float64,
+    "float4": pl.Float32,
+    "float8": pl.Float64,
+    "double": pl.Float64,
     "double precision": pl.Float64,
+    "binary_float": pl.Float32,  # Oracle
+    "binary_double": pl.Float64,  # Oracle
+
+    # --- Booleans ---
     "boolean": pl.Boolean,
+    "bool": pl.Boolean,
+    "bit": pl.Boolean,  # Note: PostgreSQL 'bit' is varying, but MSSQL/MySQL 'bit' is boolean. Defaulting to Bool.
+
+    # --- Strings / Text ---
     "varchar": pl.Utf8,
-    "character varying": pl.Utf8,
+    "varchar2": pl.Utf8,  # Oracle
+    "nvarchar": pl.Utf8,
+    "nvarchar2": pl.Utf8,  # Oracle
+    "char": pl.Utf8,
+    "nchar": pl.Utf8,
     "character": pl.Utf8,
+    "character varying": pl.Utf8,
     "text": pl.Utf8,
-    "date": pl.Date,
-    "timestamp": pl.Datetime,
-    "timestamp without time zone": pl.Datetime,
-    "timestamp with time zone": pl.Datetime,
-    "time": pl.Time,
-    "time without time zone": pl.Time,
-    "time with time zone": pl.Time,
-    "interval": pl.Duration,
-    "bytea": pl.Binary,
-    "jsonb": pl.Utf8,
+    "tinytext": pl.Utf8,
+    "mediumtext": pl.Utf8,
+    "longtext": pl.Utf8,
+    "ntext": pl.Utf8,
+    "clob": pl.Utf8,
+    "nclob": pl.Utf8,
+    "long": pl.Utf8,  # Oracle
+    "enum": pl.String,
+    "set": pl.List,
+    "rowid": pl.Utf8,  # Oracle
+    "urowid": pl.Utf8,  # Oracle
+    "uniqueidentifier": pl.Utf8,  # MSSQL
+    "xml": pl.Utf8,
+    "xmltype": pl.Utf8,
     "json": pl.Utf8,
+    "jsonb": pl.Utf8,
+
+    # --- Network / Specialized Strings (Postgres) ---
     "uuid": pl.Utf8,
     "cidr": pl.Utf8,
     "inet": pl.Utf8,
     "macaddr": pl.Utf8,
-    "bit": pl.Utf8,
-    "bit varying": pl.Utf8,
-    "money": pl.Decimal,
-    "xml": pl.Utf8,
     "tsquery": pl.Utf8,
     "tsvector": pl.Utf8,
     "hstore": pl.Utf8,
-    # MySQL types
-    "int": pl.Int32,
-    "int unsigned": pl.UInt64,
-    "bigint unsigned": pl.UInt64,
-    "smallint unsigned": pl.UInt16,
-    "tinyint": pl.Int8,
-    "tinyint unsigned": pl.UInt8,
-    "mediumint": pl.Int32,
-    "mediumint unsigned": pl.UInt32,
-    "decimal": pl.Decimal,
-    "float": pl.Float32,
-    "double": pl.Float64,
-    "bit": pl.Boolean,
-    "char": pl.Utf8,
-    "varchar": pl.Utf8,
-    "binary": pl.Binary,
-    "varbinary": pl.Binary,
-    "tinyblob": pl.Binary,
-    "blob": pl.Binary,
-    "mediumblob": pl.Binary,
-    "longblob": pl.Binary,
-    "tinytext": pl.Utf8,
-    "text": pl.Utf8,
-    "mediumtext": pl.Utf8,
-    "longtext": pl.Utf8,
-    "datetime": pl.Datetime,
-    "timestamp": pl.Datetime,
-    "year": pl.Int16,
-    "enum": pl.String,
-    "set": pl.List,
-    "json": pl.Utf8,
-    # SQLite types
-    "integer": pl.Int64,  # SQLite's INTEGER is 64-bit
-    "real": pl.Float64,
-    "text": pl.Utf8,
-    "blob": pl.Binary,
-    "null": None,
-    # Oracle types
-    "number": pl.Decimal,
-    "float": pl.Float64,
-    "binary_float": pl.Float32,
-    "binary_double": pl.Float64,
-    "varchar2": pl.Utf8,
-    "nvarchar2": pl.Utf8,
-    "char": pl.Utf8,
-    "nchar": pl.Utf8,
-    "clob": pl.Utf8,
-    "nclob": pl.Utf8,
-    "long": pl.Utf8,
-    "raw": pl.Binary,
-    "long raw": pl.Binary,
-    "rowid": pl.Utf8,
-    "urowid": pl.Utf8,
-    "date": pl.Datetime,  # Oracle DATE includes time
-    "timestamp": pl.Datetime,
-    "timestamp with time zone": pl.Datetime,
-    "timestamp with local time zone": pl.Datetime,
-    "interval year to month": pl.Duration,
-    "interval day to second": pl.Duration,
-    "bfile": pl.Binary,
-    "xmltype": pl.Utf8,
-    # SQL Server types
-    "bit": pl.Boolean,
-    "tinyint": pl.Int8,
-    "smallint": pl.Int16,
-    "int": pl.Int32,
-    "bigint": pl.Int64,
-    "numeric": pl.Decimal,
-    "decimal": pl.Decimal,
-    "smallmoney": pl.Decimal,
-    "money": pl.Decimal,
-    "float": pl.Float64,
-    "real": pl.Float32,
-    "datetime": pl.Datetime,
-    "datetime2": pl.Datetime,
-    "smalldatetime": pl.Datetime,
-    "date": pl.Date,
-    "time": pl.Time,
-    "datetimeoffset": pl.Datetime,
-    "char": pl.Utf8,
-    "varchar": pl.Utf8,
-    "text": pl.Utf8,
-    "nchar": pl.Utf8,
-    "nvarchar": pl.Utf8,
-    "ntext": pl.Utf8,
-    "binary": pl.Binary,
-    "varbinary": pl.Binary,
-    "image": pl.Binary,
-    "uniqueidentifier": pl.Utf8,
-    "xml": pl.Utf8,
-    "sql_variant": pl.Object,
-    "hierarchyid": pl.Utf8,
     "geometry": pl.Utf8,
     "geography": pl.Utf8,
-    # Common abbreviations and aliases
-    "int4": pl.Int32,
-    "int8": pl.Int64,
-    "float4": pl.Float32,
-    "float8": pl.Float64,
-    "bool": pl.Boolean,
-    "serial": pl.Int32,  # PostgreSQL auto-incrementing integer
-    "bigserial": pl.Int64,  # PostgreSQL auto-incrementing bigint
-    "smallserial": pl.Int16,  # PostgreSQL auto-incrementing smallint
+    "hierarchyid": pl.Utf8,
+    "bit varying": pl.Utf8,
+
+    # --- Dates & Times ---
+    "date": pl.Date,
+    "datetime": pl.Datetime,
+    "datetime2": pl.Datetime,  # MSSQL
+    "smalldatetime": pl.Datetime,  # MSSQL
+    "timestamp": pl.Datetime,
+    "timestamp without time zone": pl.Datetime,
+    "timestamp with time zone": pl.Datetime,
+    "timestamp with local time zone": pl.Datetime,
+    "datetimeoffset": pl.Datetime,  # MSSQL
+    "time": pl.Time,
+    "time without time zone": pl.Time,
+    "time with time zone": pl.Time,
+
+    # --- Durations / Intervals ---
+    "interval": pl.Duration,
+    "interval year to month": pl.Duration,  # Oracle
+    "interval day to second": pl.Duration,  # Oracle
+
+    # --- Binary ---
+    "bytea": pl.Binary,  # Postgres
+    "binary": pl.Binary,
+    "varbinary": pl.Binary,
+    "blob": pl.Binary,
+    "tinyblob": pl.Binary,
+    "mediumblob": pl.Binary,
+    "longblob": pl.Binary,
+    "raw": pl.Binary,  # Oracle
+    "long raw": pl.Binary,  # Oracle
+    "bfile": pl.Binary,  # Oracle
+    "image": pl.Binary,  # MSSQL
+
+    # --- Other ---
+    "null": None,
+    "sql_variant": pl.Object,
 }
 
 # String to string mapping
