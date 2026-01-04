@@ -7,6 +7,7 @@ import type { NodeGraphicWalker } from "./vueGraphicWalker/interfaces";
 import { fetchGraphicWalkerData } from "./vueGraphicWalker/utils";
 import { useNodeStore } from "../../../../../stores/column-store";
 import { useItemStore } from "../../../../common/DraggableItem/stateStore";
+import { useThemeStore } from "../../../../../stores/theme-store";
 
 const isLoading = ref(false);
 const nodeData = ref<NodeGraphicWalker | null>(null);
@@ -17,7 +18,15 @@ const errorMessage = ref<string | null>(null);
 const nodeStore = useNodeStore();
 const globalNodeId = ref(-1);
 const windowStore = useItemStore();
+const themeStore = useThemeStore();
 const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(null);
+
+// Map theme store values to graphic-walker appearance values
+const graphicWalkerAppearance = computed(() => {
+  const theme = themeStore.mode;
+  if (theme === 'system') return 'media';
+  return theme; // 'light' or 'dark'
+});
 
 const canDisplayVisualization = computed(() => !isLoading.value && !errorMessage.value);
 
@@ -154,7 +163,7 @@ defineExpose({
       <VueGraphicWalker
         v-if="data.length > 0 && fields.length > 0"
         ref="vueGraphicWalkerRef"
-        appearance="light"
+        :appearance="graphicWalkerAppearance"
         :data="data"
         :fields="fields"
         :spec-list="chartList"
@@ -173,6 +182,7 @@ defineExpose({
   height: 100%;
   display: flex;
   flex-direction: column;
+  background-color: var(--color-background-primary);
 }
 .graphic-walker-wrapper {
   flex-grow: 1; /* Allow wrapper to fill space */
@@ -185,9 +195,9 @@ defineExpose({
 }
 .error-display {
   padding: 1rem;
-  color: #a94442; /* Dark red */
-  border: 1px solid #ebccd1; /* Light red border */
-  background-color: #f2dede; /* Light red background */
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-light);
+  background-color: var(--color-danger-light);
   margin: 1rem;
   border-radius: 4px;
 }
@@ -195,7 +205,7 @@ defineExpose({
 .fallback-message {
   padding: 1rem;
   text-align: center;
-  color: #777; /* Grey */
+  color: var(--color-text-secondary);
 }
 /* Add styles for the button if needed */
 button {

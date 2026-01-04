@@ -69,18 +69,19 @@ const selectOption = (option: Option) => {
   width: 100%;
   padding: 8px;
   font-size: 16px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-xs);
   cursor: pointer;
-  background-color: white;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
 .caret {
-  border-top: 5px solid #333;
+  border-top: 5px solid var(--color-text-secondary);
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
   height: 0;
@@ -90,27 +91,28 @@ const selectOption = (option: Option) => {
 .options-list {
   position: absolute;
   width: 100%;
-  border: 1px solid #ccc;
-  border-top: none; /* Seamless transition from select box to options */
+  border: 1px solid var(--color-border-primary);
+  border-top: none;
   border-radius: 0 0 4px 4px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-  background: white;
+  box-shadow: var(--shadow-md);
+  background: var(--color-background-primary);
   max-height: 200px;
   overflow-y: auto;
   list-style: none;
   padding: 0;
   margin: 0;
   z-index: 10;
-  display: none; /* Hide by default */
+  display: none;
 }
 
 .options-list li {
   padding: 8px;
   cursor: pointer;
+  color: var(--color-text-primary);
 }
 
 .options-list li:hover {
-  background-color: #f0f0f0;
+  background-color: var(--color-background-hover);
 }
 
 /* When options are visible */

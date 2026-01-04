@@ -345,13 +345,13 @@ watch(
   padding: 8px 30px 8px 12px;
   font-size: 14px;
   line-height: 1.4;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--color-border-primary);
   border-radius: 6px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-xs);
   outline: none;
   transition: all 0.2s ease;
-  background-color: white;
-  color: #333;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .select-box:focus {
@@ -365,7 +365,7 @@ watch(
 }
 
 .select-box:disabled {
-  background-color: #f9f9f9;
+  background-color: var(--color-background-muted);
   cursor: not-allowed;
   opacity: 0.7;
 }
@@ -396,15 +396,15 @@ watch(
 }
 
 .options-list {
-  background: white;
+  background: var(--color-background-primary);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   max-height: 220px;
   overflow-y: auto;
   list-style: none;
   margin: 0;
   padding: 4px 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-primary);
   scrollbar-width: thin;
 }
 
@@ -413,11 +413,11 @@ watch(
 }
 
 .options-list::-webkit-scrollbar-track {
-  background: #f7fafc;
+  background: var(--color-background-secondary);
 }
 
 .options-list::-webkit-scrollbar-thumb {
-  background-color: #cbd5e0;
+  background-color: var(--color-border-secondary);
   border-radius: 3px;
 }
 
@@ -425,7 +425,7 @@ watch(
   padding: 8px 12px;
   cursor: pointer;
   font-size: 14px;
-  color: #4a5568;
+  color: var(--color-text-primary);
   line-height: 1.5;
   transition: all 0.15s ease;
   border-left: 2px solid transparent;
@@ -433,9 +433,9 @@ watch(
 
 .option-item:hover,
 .option-item.is-active {
-  background-color: #ebf8ff;
-  color: #3182ce;
-  border-left-color: #3182ce;
+  background-color: var(--color-background-hover);
+  color: var(--color-accent);
+  border-left-color: var(--color-accent);
 }
 
 .no-options {

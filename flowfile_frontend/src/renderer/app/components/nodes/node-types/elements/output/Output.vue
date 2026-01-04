@@ -293,7 +293,7 @@ defineExpose({
   padding: 20px;
   border: 1px solid #ddd;
   border-radius: 8px;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
   margin-top: 20px;
 }
 

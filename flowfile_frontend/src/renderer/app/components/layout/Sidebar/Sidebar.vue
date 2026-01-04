@@ -6,6 +6,9 @@
     <div class="sidebar-container">
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
+    <div class="sidebar-footer">
+      <ThemeToggle />
+    </div>
   </div>
 </template>
 
@@ -14,6 +17,7 @@ import { ref } from "vue";
 import NavigationRoutes from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
+import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
 
 // Define the isCollapse prop
 defineProps({
@@ -32,6 +36,8 @@ const items = ref(NavigationRoutes.routes);
 <style lang="scss">
 .sidebar {
   height: 100%;
+  display: flex;
+  flex-direction: column;
   background-color: var(--color-background-primary);
 }
 
@@ -39,6 +45,7 @@ const items = ref(NavigationRoutes.routes);
   border-top: 1px solid var(--color-border-primary);
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .center-container {
@@ -46,5 +53,13 @@ const items = ref(NavigationRoutes.routes);
   justify-content: center;
   width: 100%;
   padding: var(--spacing-8) 0;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: var(--spacing-4);
+  border-top: 1px solid var(--color-border-primary);
+  display: flex;
+  justify-content: center;
 }
 </style>

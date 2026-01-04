@@ -306,10 +306,10 @@ defineExpose({ localSelectInputs });
 .context-menu {
   position: fixed;
   z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: white;
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-background-primary);
   padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
   border-radius: 4px;
   user-select: none;
 }
@@ -322,10 +322,11 @@ defineExpose({ localSelectInputs });
   text-align: left;
   width: 100%;
   cursor: pointer;
+  color: var(--color-text-primary);
 }
 
 .context-menu button:hover {
-  background-color: #f0f0f0;
+  background-color: var(--color-background-hover);
 }
 
 /* Table wrapper for scrolling */

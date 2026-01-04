@@ -331,7 +331,7 @@ onMounted(async () => {
 /* Modern styling for an AI app */
 .fuzzy-join-container {
   font-family: var(--font-family-base);
-  color: #1a202c;
+  color: var(--color-text-primary);
   max-width: 100%;
 }
 
@@ -377,7 +377,7 @@ onMounted(async () => {
 
 /* Card styling */
 .settings-card {
-  background-color: #ffffff;
+  background-color: var(--color-background-primary);
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   margin-bottom: 1.5rem;
@@ -395,7 +395,7 @@ onMounted(async () => {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
-  color: #2d3748;
+  color: var(--color-text-primary);
 }
 
 .card-content {
@@ -541,7 +541,7 @@ onMounted(async () => {
   font-size: 0.875rem;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
   color: #4a5568;
   appearance: none;
   outline: none;

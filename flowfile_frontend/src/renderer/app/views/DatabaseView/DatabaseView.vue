@@ -140,10 +140,7 @@ import {
   createDatabaseConnectionApi,
   deleteDatabaseConnectionApi,
 } from "./api";
-import {
-  FullDatabaseConnectionInterface,
-  FullDatabaseConnection,
-} from "./databaseConnectionTypes";
+import { FullDatabaseConnectionInterface, FullDatabaseConnection } from "./databaseConnectionTypes";
 import DatabaseConnectionForm from "./DatabaseConnectionSettings.vue";
 
 // State

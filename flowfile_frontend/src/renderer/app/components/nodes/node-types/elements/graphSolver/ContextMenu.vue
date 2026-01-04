@@ -35,7 +35,7 @@ const selectOption = (action: string) => {
   position: fixed;
   z-index: 1000;
   border: 1px solid #ccc;
-  background-color: white;
+  background-color: var(--color-background-primary);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   border-radius: 4px;
   user-select: none;

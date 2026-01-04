@@ -189,7 +189,7 @@ onMounted(() => {
 
 .connection-content {
   padding: 1rem;
-  background-color: #ffffff;
+  background-color: var(--color-background-primary);
 }
 
 .form-row {

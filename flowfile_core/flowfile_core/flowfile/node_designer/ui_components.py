@@ -1,4 +1,3 @@
-# ui_components.py - Updated ColumnSelector
 
 from typing import List, Optional, Any, Literal, Union, Type, Tuple, Dict
 

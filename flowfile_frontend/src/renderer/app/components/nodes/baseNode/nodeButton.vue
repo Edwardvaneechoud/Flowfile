@@ -209,7 +209,7 @@ onMounted(() => {
 }
 
 .status-indicator.unknown::before {
-  background-color: #ffffff;
+  background-color: var(--color-text-muted);
 }
 
 .status-indicator.running::before {
@@ -239,8 +239,8 @@ onMounted(() => {
 .tooltip-text {
   visibility: hidden;
   width: 120px;
-  background-color: black;
-  color: #fff;
+  background-color: var(--color-gray-800);
+  color: var(--color-text-inverse);
   text-align: center;
   border-radius: 6px;
   padding: 5px 0;
@@ -260,8 +260,8 @@ onMounted(() => {
 
 .description-input:hover,
 .description-input:focus {
-  background-color: #e7e7e7; /* Slightly darker on hover/focus */
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2); /* More pronounced shadow on hover/focus */
+  background-color: var(--color-background-tertiary);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 .component-wrapper {
   position: relative; /* This makes the absolute positioning of the child relative to this container */
@@ -273,9 +273,9 @@ onMounted(() => {
   padding: 8px;
   width: 200px !important;
   max-height: 8px !important;
-  background-color: #ffffff; /* Light grey background */
-  border-radius: 4px; /* Rounded corners for a modern look */
-  cursor: pointer; /* Indicates the text can be clicked */
+  background-color: var(--color-background-primary);
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .overlay {
@@ -290,21 +290,21 @@ onMounted(() => {
 }
 
 .node-button {
-  background-color: #ffffff;
+  background-color: var(--color-background-primary);
   border-radius: 10px;
   border-width: 0px;
 }
 
 .node-button:hover {
-  background-color: #f5f5f5;
+  background-color: var(--color-background-hover);
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .overlay-content {
   padding: 20px;
   border-radius: 10px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -312,20 +312,22 @@ onMounted(() => {
 
 .overlay-prompt {
   margin-bottom: 10px;
-  color: #333;
+  color: var(--color-text-primary);
   font-size: 16px;
 }
 
 .description-input {
   margin-bottom: 10px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   padding: 10px;
   font-size: 14px;
-  height: 100px; /* Adjust based on your needs */
+  height: 100px;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .selected {
-  border: 2px solid #828282;
+  border: 2px solid var(--color-accent);
 }
 </style>

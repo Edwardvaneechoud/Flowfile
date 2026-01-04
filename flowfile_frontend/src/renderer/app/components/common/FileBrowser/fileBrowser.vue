@@ -180,8 +180,7 @@
           <div v-if="newFileName.trim()" class="form-hint">
             <span class="preview-label">Will be saved as:</span>
             <code>{{ previewFileName }}</code>
-            <span v-if="!hasValidExtension" class="auto-extension-hint">
-            </span>
+            <span v-if="!hasValidExtension" class="auto-extension-hint"> </span>
           </div>
         </el-form-item>
       </el-form>
@@ -577,7 +576,7 @@ onMounted(async () => {
   margin-bottom: 16px;
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--color-text-primary);
 }
 
 .mode-selector {
@@ -594,7 +593,7 @@ onMounted(async () => {
 
 .browser-toolbar {
   padding: 16px;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
   border-bottom: 1px solid #e9ecef;
 }
 
@@ -612,7 +611,7 @@ onMounted(async () => {
   padding: 8px 16px;
   border: 1px solid #dee2e6;
   border-radius: 4px;
-  background-color: white;
+  background-color: var(--color-background-primary);
   color: #495057;
   font-size: 14px;
   cursor: pointer;
@@ -696,7 +695,7 @@ onMounted(async () => {
 
 .file-name {
   font-weight: 500;
-  color: #1f2937;
+  color: var(--color-text-primary);
   margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -705,22 +704,22 @@ onMounted(async () => {
 
 .file-info {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
 }
 
 .browser-actions {
   padding: 16px;
-  background-color: #f8f9fa;
-  border-top: 1px solid #e9ecef;
+  background-color: var(--color-background-secondary);
+  border-top: 1px solid var(--color-border-primary);
   display: flex;
   justify-content: flex-end;
   align-items: center;
   height: 72px;
   box-sizing: border-box;
-  gap: 12px; /* Add gap between buttons */
+  gap: 12px;
 }
 .selected-file {
-  color: #6b7280;
+  color: var(--color-text-secondary);
   font-size: 14px;
 }
 
@@ -730,11 +729,11 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   height: 200px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
 }
 
 .error-state {
-  color: #dc2626;
+  color: var(--color-danger);
 }
 
 .hidden-file {
@@ -745,7 +744,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   height: 70vh; /* Set to 70% of viewport height */
-  background-color: white;
+  background-color: var(--color-background-primary);
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
@@ -820,19 +819,19 @@ onMounted(async () => {
 }
 
 .preview-label {
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .form-hint code {
-  background-color: #f3f4f6;
+  background-color: var(--color-background-secondary);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: monospace;
-  color: #1f2937;
+  color: var(--color-text-primary);
 }
 
 .auto-extension-hint {
-  color: #9ca3af;
+  color: var(--color-text-muted);
   font-style: italic;
 }
 </style>

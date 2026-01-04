@@ -187,7 +187,7 @@ defineExpose({
 
 .join-type-label {
   font-size: 12px;
-  color: #333;
+  color: var(--color-text-primary);
   font-weight: 500;
   min-width: 70px;
 }
@@ -254,7 +254,7 @@ defineExpose({
   height: 24px;
   border-radius: 4px;
   border: 1px solid #ddd;
-  background-color: #fff;
+  background-color: var(--color-background-primary);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -263,7 +263,8 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: var(--color-background-primary);
+  opacity: 0.9;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -273,8 +274,8 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 .spinner {
   width: 50px;
   height: 50px;
-  border: 5px solid #f3f3f3;
-  border-top: 5px solid #3498db;
+  border: 5px solid var(--color-border-primary);
+  border-top: 5px solid var(--color-accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -383,7 +384,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .refresh-link-button {
-  background: linear-gradient(135deg, #ffffff 0%, #fef3c7 100%);
+  background: linear-gradient(135deg, var(--color-background-primary) 0%, #fef3c7 100%);
   border: 1px solid #f59e0b;
   color: #92400e;
   border-radius: 6px;
@@ -431,7 +432,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .dismiss-button {
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--color-background-primary);
   border: 1px solid rgba(251, 191, 36, 0.3);
   width: 24px;
   height: 24px;
@@ -451,7 +452,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .dismiss-button:hover {
-  background: white;
+  background: var(--color-background-hover);
   border-color: #f59e0b;
   color: #78350f;
   transform: rotate(90deg) scale(1.1);
@@ -466,14 +467,14 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 .fetch-data-section {
   padding: 20px;
   text-align: center;
-  background-color: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
   border-top: none;
   border-radius: 0 0 8px 8px;
 }
 
 .fetch-data-section p {
-  color: #6b7280;
+  color: var(--color-text-secondary);
   font-size: 14px;
   margin-bottom: 12px;
 }
@@ -510,8 +511,15 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 .ag-theme-balham {
   max-width: 100%;
   position: relative;
-  --ag-odd-row-background-color: rgb(255, 255, 255);
-  --ag-row-background-color: rgb(255, 255, 255);
-  --ag-header-background-color: rgb(246, 247, 251);
+  --ag-background-color: var(--color-background-primary);
+  --ag-odd-row-background-color: var(--color-background-primary);
+  --ag-row-background-color: var(--color-background-primary);
+  --ag-header-background-color: var(--color-background-secondary);
+  --ag-header-foreground-color: var(--color-text-primary);
+  --ag-foreground-color: var(--color-text-primary);
+  --ag-border-color: var(--color-border-primary);
+  --ag-secondary-foreground-color: var(--color-text-secondary);
+  --ag-row-hover-color: var(--color-background-hover);
+  --ag-selected-row-background-color: var(--color-background-selected);
 }
 </style>

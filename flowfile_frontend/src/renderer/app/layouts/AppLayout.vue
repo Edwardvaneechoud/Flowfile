@@ -54,14 +54,14 @@ $tabletBreakPointPX: 1000;
 
       .app-layout__page {
         width: 100%;
-        background-color: #ffffff;
+        background-color: var(--color-background-primary);
       }
     }
   }
 
   &__sidebar-wrapper {
     width: 16rem;
-    background: #ffffff;
+    background: var(--color-background-primary);
     transition: width 0.3s ease-out;
 
     &.minimized {

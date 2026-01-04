@@ -31,7 +31,42 @@ const props = defineProps({
 </script>
 
 <style scoped>
+.listbox-wrapper {
+  color: var(--color-text-primary);
+}
+
+.listbox-title {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.title {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
 .intro-content {
-  white-space: pre-wrap; /* Preserves whitespace and line breaks */
+  white-space: pre-wrap;
+  color: var(--color-text-secondary);
+}
+
+.listbox-expandable {
+  --el-collapse-header-background-color: transparent;
+  --el-collapse-content-background-color: transparent;
+  border: none;
+}
+
+.listbox-expandable :deep(.el-collapse-item__header) {
+  background-color: transparent;
+  border: none;
+}
+
+.listbox-expandable :deep(.el-collapse-item__wrap) {
+  background-color: transparent;
+  border: none;
+}
+
+.listbox-expandable :deep(.el-collapse-item__content) {
+  background-color: transparent;
 }
 </style>

@@ -15,15 +15,13 @@ export const availableComponents: AvailableComponent[] = [
   { type: 'MultiSelect', label: 'Multi Select', icon: 'fa-solid fa-list-check' },
   { type: 'ColumnSelector', label: 'Column Selector', icon: 'fa-solid fa-table-columns' },
   { type: 'SliderInput', label: 'Slider', icon: 'fa-solid fa-sliders' },
+  { type: 'SecretSelector', label: 'Secret Selector', icon: 'fa-solid fa-key' },
 ];
 
 /** Default process code template */
 export const defaultProcessCode = `def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
     # Get the first input LazyFrame
     lf = inputs[0]
-
-    # Access settings values like this:
-    # value = self.settings_schema.section_name.field_name.value
 
     # Your transformation logic here
     # Example: lf = lf.filter(pl.col("column") > 0)

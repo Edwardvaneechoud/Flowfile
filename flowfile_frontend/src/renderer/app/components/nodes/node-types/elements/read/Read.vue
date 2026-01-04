@@ -219,7 +219,7 @@ defineExpose({
   position: fixed;
   z-index: 1000;
   border: 1px solid #ccc;
-  background-color: white;
+  background-color: var(--color-background-primary);
   padding: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
   border-radius: 4px;
@@ -251,7 +251,7 @@ defineExpose({
   border: 1px solid #ddd;
   border-radius: 4px;
   padding: 10px 15px;
-  color: #333;
+  color: var(--color-text-primary);
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
