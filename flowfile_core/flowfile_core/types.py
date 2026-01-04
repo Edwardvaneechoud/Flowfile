@@ -18,22 +18,41 @@ Usage:
 """
 
 from enum import Enum
-from typing import List, Literal, Union
+from typing import Literal, Union
+
 import polars as pl
 
-
 DataTypeStr = Literal[
-    "Int8", "Int16", "Int32", "Int64",
-    "UInt8", "UInt16", "UInt32", "UInt64",
-    "Float32", "Float64", "Decimal",
+    "Int8",
+    "Int16",
+    "Int32",
+    "Int64",
+    "UInt8",
+    "UInt16",
+    "UInt32",
+    "UInt64",
+    "Float32",
+    "Float64",
+    "Decimal",
     "String",
-    "Date", "Datetime", "Time", "Duration",
-    "Boolean", "Binary", "List", "Struct", "Array", "Integer", "Double", "Utf8"
+    "Date",
+    "Datetime",
+    "Time",
+    "Duration",
+    "Boolean",
+    "Binary",
+    "List",
+    "Struct",
+    "Array",
+    "Integer",
+    "Double",
+    "Utf8",
 ]
 
 
 class TypeGroup(str, Enum):
     """High-level type groups for column selection."""
+
     Numeric = "Numeric"
     String = "String"
     Date = "Date"
@@ -51,6 +70,7 @@ class TypeGroup(str, Enum):
 
 class DataType(str, Enum):
     """Specific data types for fine-grained control."""
+
     # Numeric types
     Int8 = "Int8"
     Int16 = "Int16"
@@ -150,7 +170,7 @@ TypeSpec = Union[
     TypeGroup,
     DataType,
     str,
-    List[Union[TypeGroup, DataType, str, type[pl.DataType], pl.DataType]],
+    list[TypeGroup | DataType | str | type[pl.DataType] | pl.DataType],
     type[pl.DataType],
-    pl.DataType
+    pl.DataType,
 ]

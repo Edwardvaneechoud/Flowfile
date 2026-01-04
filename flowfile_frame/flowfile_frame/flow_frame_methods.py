@@ -1,21 +1,21 @@
 import io
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, List, Optional, Union, Dict, Callable, Literal
+from typing import Any, Literal
 
 import polars as pl
-from polars._typing import (SchemaDict, IO, PolarsDataType,
-                            Sequence, CsvEncoding)
+from polars._typing import IO, CsvEncoding, PolarsDataType, SchemaDict, Sequence
 
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.schemas import input_schema, transform_schema, cloud_storage_schemas
+from flowfile_core.schemas import cloud_storage_schemas, input_schema, transform_schema
+from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
 from flowfile_frame.config import logger
 from flowfile_frame.expr import col
 from flowfile_frame.flow_frame import FlowFrame
-from flowfile_frame.utils import create_flow_graph
-from flowfile_frame.cloud_storage.secret_manager import get_current_user_id
-from flowfile_frame.utils import generate_node_id
+from flowfile_frame.utils import create_flow_graph, generate_node_id
+
 
 def sum(expr):
     """Sum aggregation function."""
@@ -53,42 +53,42 @@ def count(expr):
 
 
 def read_csv(
-        source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
-        *,
-        flow_graph: Optional[Any] = None, # Using Any for FlowGraph placeholder
-        separator: str = ',',
-        convert_to_absolute_path: bool = True,
-        description: Optional[str] = None,
-        has_header: bool = True,
-        new_columns: Optional[List[str]] = None,
-        comment_prefix: Optional[str] = None,
-        quote_char: Optional[str] = '"',
-        skip_rows: int = 0,
-        skip_lines: int = 0,
-        schema: Optional[SchemaDict] = None,
-        schema_overrides: Optional[Union[SchemaDict, Sequence[PolarsDataType]]] = None,
-        null_values: Optional[Union[str, List[str], Dict[str, str]]] = None,
-        missing_utf8_is_empty_string: bool = False,
-        ignore_errors: bool = False,
-        try_parse_dates: bool = False,
-        infer_schema: bool = True,
-        infer_schema_length: Optional[int] = 100,
-        n_rows: Optional[int] = None,
-        encoding: CsvEncoding = 'utf8',
-        low_memory: bool = False,
-        rechunk: bool = False,
-        storage_options: Optional[Dict[str, Any]] = None,
-        skip_rows_after_header: int = 0,
-        row_index_name: Optional[str] = None,
-        row_index_offset: int = 0,
-        eol_char: str = '\n',
-        raise_if_empty: bool = True,
-        truncate_ragged_lines: bool = False,
-        decimal_comma: bool = False,
-        glob: bool = True,
-        cache: bool = True,
-        with_column_names: Optional[Callable[[List[str]], List[str]]] = None,
-        **other_options: Any
+    source: str | Path | IO[bytes] | bytes | list[str | Path | IO[bytes] | bytes],
+    *,
+    flow_graph: Any | None = None,  # Using Any for FlowGraph placeholder
+    separator: str = ",",
+    convert_to_absolute_path: bool = True,
+    description: str | None = None,
+    has_header: bool = True,
+    new_columns: list[str] | None = None,
+    comment_prefix: str | None = None,
+    quote_char: str | None = '"',
+    skip_rows: int = 0,
+    skip_lines: int = 0,
+    schema: SchemaDict | None = None,
+    schema_overrides: SchemaDict | Sequence[PolarsDataType] | None = None,
+    null_values: str | list[str] | dict[str, str] | None = None,
+    missing_utf8_is_empty_string: bool = False,
+    ignore_errors: bool = False,
+    try_parse_dates: bool = False,
+    infer_schema: bool = True,
+    infer_schema_length: int | None = 100,
+    n_rows: int | None = None,
+    encoding: CsvEncoding = "utf8",
+    low_memory: bool = False,
+    rechunk: bool = False,
+    storage_options: dict[str, Any] | None = None,
+    skip_rows_after_header: int = 0,
+    row_index_name: str | None = None,
+    row_index_offset: int = 0,
+    eol_char: str = "\n",
+    raise_if_empty: bool = True,
+    truncate_ragged_lines: bool = False,
+    decimal_comma: bool = False,
+    glob: bool = True,
+    cache: bool = True,
+    with_column_names: Callable[[list[str]], list[str]] | None = None,
+    **other_options: Any,
 ) -> FlowFrame:
     """
     Read a CSV file into a FlowFrame.
@@ -146,44 +146,44 @@ def read_csv(
     current_source_path_for_native = None
     if isinstance(source, (str, os.PathLike)):
         current_source_path_for_native = str(source)
-        if '~' in current_source_path_for_native:
+        if "~" in current_source_path_for_native:
             current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
     elif isinstance(source, list) and all(isinstance(s, (str, os.PathLike)) for s in source):
         current_source_path_for_native = str(source[0]) if source else None
-        if current_source_path_for_native and '~' in current_source_path_for_native:
-             current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
+        if current_source_path_for_native and "~" in current_source_path_for_native:
+            current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
     elif isinstance(source, (io.BytesIO, io.StringIO)):
         logger.warning("Read from bytes io from csv not supported, converting data to raw data")
         return from_dict(pl.read_csv(source), flow_graph=flow_graph, description=description)
-    actual_infer_schema_length: Optional[int]
+    actual_infer_schema_length: int | None
     if not infer_schema:
         actual_infer_schema_length = 0
     else:
         actual_infer_schema_length = infer_schema_length
     can_use_native = (
-            current_source_path_for_native is not None and
-            comment_prefix is None and
-            skip_lines == 0 and
-            schema is None and
-            schema_overrides is None and
-            null_values is None and
-            not missing_utf8_is_empty_string and
-            not try_parse_dates and
-            n_rows is None and
-            not low_memory and
-            not rechunk and
-            storage_options is None and
-            skip_rows_after_header == 0 and
-            row_index_name is None and
-            row_index_offset == 0 and
-            eol_char == '\n' and
-            not decimal_comma and
-            new_columns is None and
-            glob is True
+        current_source_path_for_native is not None
+        and comment_prefix is None
+        and skip_lines == 0
+        and schema is None
+        and schema_overrides is None
+        and null_values is None
+        and not missing_utf8_is_empty_string
+        and not try_parse_dates
+        and n_rows is None
+        and not low_memory
+        and not rechunk
+        and storage_options is None
+        and skip_rows_after_header == 0
+        and row_index_name is None
+        and row_index_offset == 0
+        and eol_char == "\n"
+        and not decimal_comma
+        and new_columns is None
+        and glob is True
     )
     if can_use_native and current_source_path_for_native:
         received_table = input_schema.ReceivedTable(
-            file_type='csv',
+            file_type="csv",
             path=current_source_path_for_native,
             name=Path(current_source_path_for_native).name,
             table_settings=input_schema.InputCsvTable(
@@ -195,8 +195,8 @@ def read_csv(
                 infer_schema_length=actual_infer_schema_length if actual_infer_schema_length is not None else 10000,
                 truncate_ragged_lines=truncate_ragged_lines,
                 ignore_errors=ignore_errors,
-                row_delimiter=eol_char
-            )
+                row_delimiter=eol_char,
+            ),
         )
         if convert_to_absolute_path:
             try:
@@ -213,15 +213,13 @@ def read_csv(
             pos_x=100,
             pos_y=100,
             is_setup=True,
-            description=read_node_description
+            description=read_node_description,
         )
         flow_graph.add_read(read_node)
         flow_graph.get_node(1)
 
         result_frame = FlowFrame(
-            data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-            flow_graph=flow_graph,
-            node_id=node_id
+            data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
         )
         flow_graph.get_node(1)
         return result_frame
@@ -258,13 +256,15 @@ def read_csv(
             glob=glob,
             cache=cache,
             with_column_names=with_column_names,
-            **other_options
+            **other_options,
         )
         polars_code_node_description = description or "Read CSV with Polars scan_csv"
         if isinstance(source, (str, os.PathLike)):
             polars_code_node_description = description or f"Read CSV with Polars scan_csv from {Path(source).name}"
         elif isinstance(source, list) and source and isinstance(source[0], (str, os.PathLike)):
-            polars_code_node_description = description or f"Read CSV with Polars scan_csv from {Path(source[0]).name} (and possibly others)"
+            polars_code_node_description = (
+                description or f"Read CSV with Polars scan_csv from {Path(source[0]).name} (and possibly others)"
+            )
 
         # Assuming input_schema.NodePolarsCode, transform_schema.PolarsCodeInput are defined
         polars_code_settings = input_schema.NodePolarsCode(
@@ -272,7 +272,7 @@ def read_csv(
             node_id=node_id,
             polars_code_input=transform_schema.PolarsCodeInput(polars_code=polars_code),
             is_setup=True,
-            description=polars_code_node_description
+            description=polars_code_node_description,
         )
         flow_graph.add_polars_code(polars_code_settings)
         return FlowFrame(
@@ -283,28 +283,28 @@ def read_csv(
 
 
 def _build_polars_code_args(
-    source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
+    source: str | Path | IO[bytes] | bytes | list[str | Path | IO[bytes] | bytes],
     separator: str,
     has_header: bool,
-    new_columns: Optional[List[str]],
-    comment_prefix: Optional[str],
-    quote_char: Optional[str],
+    new_columns: list[str] | None,
+    comment_prefix: str | None,
+    quote_char: str | None,
     skip_rows: int,
     skip_lines: int,
-    schema: Optional[SchemaDict],
-    schema_overrides: Optional[Union[SchemaDict, Sequence[PolarsDataType]]],
-    null_values: Optional[Union[str, List[str], Dict[str, str]]],
+    schema: SchemaDict | None,
+    schema_overrides: SchemaDict | Sequence[PolarsDataType] | None,
+    null_values: str | list[str] | dict[str, str] | None,
     missing_utf8_is_empty_string: bool,
     ignore_errors: bool,
     try_parse_dates: bool,
-    infer_schema_length: Optional[int],
-    n_rows: Optional[int],
+    infer_schema_length: int | None,
+    n_rows: int | None,
     encoding: CsvEncoding,
     low_memory: bool,
     rechunk: bool,
-    storage_options: Optional[Dict[str, Any]],
+    storage_options: dict[str, Any] | None,
     skip_rows_after_header: int,
-    row_index_name: Optional[str],
+    row_index_name: str | None,
     row_index_offset: int,
     eol_char: str,
     raise_if_empty: bool,
@@ -312,8 +312,8 @@ def _build_polars_code_args(
     decimal_comma: bool,
     glob: bool,
     cache: bool,
-    with_column_names: Optional[Callable[[List[str]], List[str]]],
-    **other_options: Any
+    with_column_names: Callable[[list[str]], list[str]] | None,
+    **other_options: Any,
 ) -> str:
     source_repr: str
     if isinstance(source, (str, Path)):
@@ -322,41 +322,41 @@ def _build_polars_code_args(
         source_repr = repr([str(p) for p in source])
     elif isinstance(source, bytes):
         source_repr = "source_bytes_obj"
-    elif hasattr(source, 'read'):
+    elif hasattr(source, "read"):
         source_repr = "source_file_like_obj"
     else:
         source_repr = repr(source)
 
     param_mapping = {
-        'has_header': (True, lambda x: str(x)),
-        'separator': (',', lambda x: repr(str(x))),
-        'comment_prefix': (None, lambda x: repr(str(x)) if x is not None else 'None'),
-        'quote_char': ('"', lambda x: repr(str(x)) if x is not None else 'None'),
-        'skip_rows': (0, str),
-        'skip_lines': (0, str),
-        'schema': (None, lambda x: repr(x) if x is not None else 'None'),
-        'schema_overrides': (None, lambda x: repr(x) if x is not None else 'None'),
-        'null_values': (None, lambda x: repr(x) if x is not None else 'None'),
-        'missing_utf8_is_empty_string': (False, str),
-        'ignore_errors': (False, str),
-        'cache': (True, str),
-        'with_column_names': (None, lambda x: repr(x) if x is not None else 'None'),
-        'infer_schema_length': (100, lambda x: str(x) if x is not None else 'None'),
-        'n_rows': (None, lambda x: str(x) if x is not None else 'None'),
-        'encoding': ('utf8', lambda x: repr(str(x))),
-        'low_memory': (False, str),
-        'rechunk': (False, str),
-        'skip_rows_after_header': (0, str),
-        'row_index_name': (None, lambda x: repr(str(x)) if x is not None else 'None'),
-        'row_index_offset': (0, str),
-        'try_parse_dates': (False, str),
-        'eol_char': ('\n', lambda x: repr(str(x))),
-        'new_columns': (None, lambda x: repr(x) if x is not None else 'None'),
-        'raise_if_empty': (True, str),
-        'truncate_ragged_lines': (False, str),
-        'decimal_comma': (False, str),
-        'glob': (True, str),
-        'storage_options': (None, lambda x: repr(x) if x is not None else 'None'),
+        "has_header": (True, lambda x: str(x)),
+        "separator": (",", lambda x: repr(str(x))),
+        "comment_prefix": (None, lambda x: repr(str(x)) if x is not None else "None"),
+        "quote_char": ('"', lambda x: repr(str(x)) if x is not None else "None"),
+        "skip_rows": (0, str),
+        "skip_lines": (0, str),
+        "schema": (None, lambda x: repr(x) if x is not None else "None"),
+        "schema_overrides": (None, lambda x: repr(x) if x is not None else "None"),
+        "null_values": (None, lambda x: repr(x) if x is not None else "None"),
+        "missing_utf8_is_empty_string": (False, str),
+        "ignore_errors": (False, str),
+        "cache": (True, str),
+        "with_column_names": (None, lambda x: repr(x) if x is not None else "None"),
+        "infer_schema_length": (100, lambda x: str(x) if x is not None else "None"),
+        "n_rows": (None, lambda x: str(x) if x is not None else "None"),
+        "encoding": ("utf8", lambda x: repr(str(x))),
+        "low_memory": (False, str),
+        "rechunk": (False, str),
+        "skip_rows_after_header": (0, str),
+        "row_index_name": (None, lambda x: repr(str(x)) if x is not None else "None"),
+        "row_index_offset": (0, str),
+        "try_parse_dates": (False, str),
+        "eol_char": ("\n", lambda x: repr(str(x))),
+        "new_columns": (None, lambda x: repr(x) if x is not None else "None"),
+        "raise_if_empty": (True, str),
+        "truncate_ragged_lines": (False, str),
+        "decimal_comma": (False, str),
+        "glob": (True, str),
+        "storage_options": (None, lambda x: repr(x) if x is not None else "None"),
     }
 
     all_vars = locals()
@@ -381,8 +381,9 @@ def _build_polars_code_args(
     return polars_code
 
 
-def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = None,
-                 convert_to_absolute_path: bool = True, **options) -> FlowFrame:
+def read_parquet(
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
+) -> FlowFrame:
     """
     Read a Parquet file into a FlowFrame.
 
@@ -396,7 +397,7 @@ def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = Non
     Returns:
         A FlowFrame with the Parquet data
     """
-    if '~' in source:
+    if "~" in source:
         file_path = os.path.expanduser(source)
     node_id = generate_node_id()
 
@@ -406,10 +407,7 @@ def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = Non
     flow_id = flow_graph.flow_id
 
     received_table = input_schema.ReceivedTable(
-        file_type='parquet',
-        path=source,
-        name=Path(source).name,
-        table_settings=input_schema.InputParquetTable()
+        file_type="parquet", path=source, name=Path(source).name, table_settings=input_schema.InputParquetTable()
     )
     if convert_to_absolute_path:
         received_table.path = received_table.abs_file_path
@@ -421,15 +419,13 @@ def read_parquet(source, *, flow_graph: FlowGraph = None, description: str = Non
         pos_x=100,
         pos_y=100,
         is_setup=True,
-        description=description
+        description=description,
     )
 
     flow_graph.add_read(read_node)
 
     return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
     )
 
 
@@ -458,7 +454,7 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
         pos_x=100,
         pos_y=100,
         is_setup=True,
-        description=description
+        description=description,
     )
 
     # Add to graph
@@ -466,17 +462,17 @@ def from_dict(data, *, flow_graph: FlowGraph = None, description: str = None) ->
 
     # Return new frame
     return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
     )
 
 
-def concat(frames: List['FlowFrame'],
-                  how: str = 'vertical',
-                  rechunk: bool = False,
-                  parallel: bool = True,
-                  description: str = None) -> 'FlowFrame':
+def concat(
+    frames: list["FlowFrame"],
+    how: str = "vertical",
+    rechunk: bool = False,
+    parallel: bool = True,
+    description: str = None,
+) -> "FlowFrame":
     """
     Concatenate multiple FlowFrames into one.
 
@@ -506,48 +502,46 @@ def concat(frames: List['FlowFrame'],
     first_frame = frames[0]
     remaining_frames = frames[1:]
 
-    return first_frame.concat(remaining_frames, how=how,
-                              rechunk=rechunk, parallel=parallel,
-                              description=description)
+    return first_frame.concat(remaining_frames, how=how, rechunk=rechunk, parallel=parallel, description=description)
 
 
 def scan_csv(
-        source: Union[str, Path, IO[bytes], bytes, List[Union[str, Path, IO[bytes], bytes]]],
-        *,
-        flow_graph: Optional[Any] = None,  # Using Any for FlowGraph placeholder
-        separator: str = ',',
-        convert_to_absolute_path: bool = True,
-        description: Optional[str] = None,
-        has_header: bool = True,
-        new_columns: Optional[List[str]] = None,
-        comment_prefix: Optional[str] = None,
-        quote_char: Optional[str] = '"',
-        skip_rows: int = 0,
-        skip_lines: int = 0,
-        schema: Optional[SchemaDict] = None,
-        schema_overrides: Optional[Union[SchemaDict, Sequence[PolarsDataType]]] = None,
-        null_values: Optional[Union[str, List[str], Dict[str, str]]] = None,
-        missing_utf8_is_empty_string: bool = False,
-        ignore_errors: bool = False,
-        try_parse_dates: bool = False,
-        infer_schema: bool = True,
-        infer_schema_length: Optional[int] = 100,
-        n_rows: Optional[int] = None,
-        encoding: CsvEncoding = 'utf8',
-        low_memory: bool = False,
-        rechunk: bool = False,
-        storage_options: Optional[Dict[str, Any]] = None,
-        skip_rows_after_header: int = 0,
-        row_index_name: Optional[str] = None,
-        row_index_offset: int = 0,
-        eol_char: str = '\n',
-        raise_if_empty: bool = True,
-        truncate_ragged_lines: bool = False,
-        decimal_comma: bool = False,
-        glob: bool = True,
-        cache: bool = True,
-        with_column_names: Optional[Callable[[List[str]], List[str]]] = None,
-        **other_options: Any
+    source: str | Path | IO[bytes] | bytes | list[str | Path | IO[bytes] | bytes],
+    *,
+    flow_graph: Any | None = None,  # Using Any for FlowGraph placeholder
+    separator: str = ",",
+    convert_to_absolute_path: bool = True,
+    description: str | None = None,
+    has_header: bool = True,
+    new_columns: list[str] | None = None,
+    comment_prefix: str | None = None,
+    quote_char: str | None = '"',
+    skip_rows: int = 0,
+    skip_lines: int = 0,
+    schema: SchemaDict | None = None,
+    schema_overrides: SchemaDict | Sequence[PolarsDataType] | None = None,
+    null_values: str | list[str] | dict[str, str] | None = None,
+    missing_utf8_is_empty_string: bool = False,
+    ignore_errors: bool = False,
+    try_parse_dates: bool = False,
+    infer_schema: bool = True,
+    infer_schema_length: int | None = 100,
+    n_rows: int | None = None,
+    encoding: CsvEncoding = "utf8",
+    low_memory: bool = False,
+    rechunk: bool = False,
+    storage_options: dict[str, Any] | None = None,
+    skip_rows_after_header: int = 0,
+    row_index_name: str | None = None,
+    row_index_offset: int = 0,
+    eol_char: str = "\n",
+    raise_if_empty: bool = True,
+    truncate_ragged_lines: bool = False,
+    decimal_comma: bool = False,
+    glob: bool = True,
+    cache: bool = True,
+    with_column_names: Callable[[list[str]], list[str]] | None = None,
+    **other_options: Any,
 ) -> FlowFrame:
     """
     Scan a CSV file into a FlowFrame. This function is an alias for read_csv.
@@ -592,17 +586,12 @@ def scan_csv(
         glob=glob,
         cache=cache,
         with_column_names=with_column_names,
-        **other_options
+        **other_options,
     )
 
 
 def scan_parquet(
-        source,
-        *,
-        flow_graph: FlowGraph = None,
-        description: str = None,
-        convert_to_absolute_path: bool = True,
-        **options
+    source, *, flow_graph: FlowGraph = None, description: str = None, convert_to_absolute_path: bool = True, **options
 ) -> FlowFrame:
     """
     Scan a Parquet file into a FlowFrame. This function is an alias for read_parquet.
@@ -617,17 +606,17 @@ def scan_parquet(
         flow_graph=flow_graph,
         description=description,
         convert_to_absolute_path=convert_to_absolute_path,
-        **options
+        **options,
     )
 
 
 def scan_parquet_from_cloud_storage(
-        source: str,
-        *,
-        flow_graph: Optional[FlowGraph] = None,
-        connection_name: Optional[str] = None,
-        scan_mode: Literal["single_file", "directory", None] = None,
-        description: Optional[str] = None
+    source: str,
+    *,
+    flow_graph: FlowGraph | None = None,
+    connection_name: str | None = None,
+    scan_mode: Literal["single_file", "directory", None] = None,
+    description: str | None = None,
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -644,91 +633,27 @@ def scan_parquet_from_cloud_storage(
     settings = input_schema.NodeCloudStorageReader(
         flow_id=flow_id,
         node_id=node_id,
-        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
-                                                                              scan_mode=scan_mode,
-                                                                              connection_name=connection_name,
-                                                                              file_format="parquet"),
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(
+            resource_path=source, scan_mode=scan_mode, connection_name=connection_name, file_format="parquet"
+        ),
         user_id=get_current_user_id(),
-        description=description)
+        description=description,
+    )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
     )
 
 
 def scan_csv_from_cloud_storage(
-        source: str,
-        *,
-        flow_graph: Optional[FlowGraph] = None,
-        connection_name: Optional[str] = None,
-        scan_mode: Literal["single_file", "directory", None] = None,
-        delimiter: str = ";",
-        has_header: Optional[bool] = True,
-        encoding: Optional[CsvEncoding] = "utf8") -> FlowFrame:
-    node_id = generate_node_id()
-
-    if scan_mode is None:
-        if source[-1] in ("*", "/"):
-            scan_mode: Literal["single_file", "directory"] = "directory"
-        else:
-            scan_mode: Literal["single_file", "directory"] = "single_file"
-
-    if flow_graph is None:
-        flow_graph = create_flow_graph()
-    flow_id = flow_graph.flow_id
-    settings = input_schema.NodeCloudStorageReader(
-        flow_id=flow_id,
-        node_id=node_id,
-        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
-                                                                              scan_mode=scan_mode,
-                                                                              connection_name=connection_name,
-                                                                              csv_delimiter=delimiter,
-                                                                              csv_encoding=encoding,
-                                                                              csv_has_header=has_header,
-                                                                              file_format="csv"),
-        user_id=get_current_user_id())
-    flow_graph.add_cloud_storage_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
-    )
-
-
-def scan_delta(
-        source: str,
-        *,
-        flow_graph: Optional[FlowGraph] = None,
-        connection_name: Optional[str] = None,
-        version: int = None) -> FlowFrame:
-    node_id = generate_node_id()
-    if flow_graph is None:
-        flow_graph = create_flow_graph()
-    flow_id = flow_graph.flow_id
-    settings = input_schema.NodeCloudStorageReader(
-        flow_id=flow_id,
-        node_id=node_id,
-        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
-                                                                              connection_name=connection_name,
-                                                                              file_format="delta",
-                                                                              delta_version=version),
-        user_id=get_current_user_id())
-    flow_graph.add_cloud_storage_reader(settings)
-    return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
-    )
-
-
-def scan_json_from_cloud_storage(
-        source: str,
-        *,
-        flow_graph: Optional[FlowGraph] = None,
-        connection_name: Optional[str] = None,
-        scan_mode: Literal["single_file", "directory", None] = None,
+    source: str,
+    *,
+    flow_graph: FlowGraph | None = None,
+    connection_name: str | None = None,
+    scan_mode: Literal["single_file", "directory", None] = None,
+    delimiter: str = ";",
+    has_header: bool | None = True,
+    encoding: CsvEncoding | None = "utf8",
 ) -> FlowFrame:
     node_id = generate_node_id()
 
@@ -744,15 +669,71 @@ def scan_json_from_cloud_storage(
     settings = input_schema.NodeCloudStorageReader(
         flow_id=flow_id,
         node_id=node_id,
-        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(resource_path=source,
-                                                                              scan_mode=scan_mode,
-                                                                              connection_name=connection_name,
-                                                                              file_format="json"),
-        user_id=get_current_user_id())
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(
+            resource_path=source,
+            scan_mode=scan_mode,
+            connection_name=connection_name,
+            csv_delimiter=delimiter,
+            csv_encoding=encoding,
+            csv_has_header=has_header,
+            file_format="csv",
+        ),
+        user_id=get_current_user_id(),
+    )
     flow_graph.add_cloud_storage_reader(settings)
     return FlowFrame(
-        data=flow_graph.get_node(node_id).get_resulting_data().data_frame,
-        flow_graph=flow_graph,
-        node_id=node_id
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
     )
 
+
+def scan_delta(
+    source: str, *, flow_graph: FlowGraph | None = None, connection_name: str | None = None, version: int = None
+) -> FlowFrame:
+    node_id = generate_node_id()
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(
+            resource_path=source, connection_name=connection_name, file_format="delta", delta_version=version
+        ),
+        user_id=get_current_user_id(),
+    )
+    flow_graph.add_cloud_storage_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )
+
+
+def scan_json_from_cloud_storage(
+    source: str,
+    *,
+    flow_graph: FlowGraph | None = None,
+    connection_name: str | None = None,
+    scan_mode: Literal["single_file", "directory", None] = None,
+) -> FlowFrame:
+    node_id = generate_node_id()
+
+    if scan_mode is None:
+        if source[-1] in ("*", "/"):
+            scan_mode: Literal["single_file", "directory"] = "directory"
+        else:
+            scan_mode: Literal["single_file", "directory"] = "single_file"
+
+    if flow_graph is None:
+        flow_graph = create_flow_graph()
+    flow_id = flow_graph.flow_id
+    settings = input_schema.NodeCloudStorageReader(
+        flow_id=flow_id,
+        node_id=node_id,
+        cloud_storage_settings=cloud_storage_schemas.CloudStorageReadSettings(
+            resource_path=source, scan_mode=scan_mode, connection_name=connection_name, file_format="json"
+        ),
+        user_id=get_current_user_id(),
+    )
+    flow_graph.add_cloud_storage_reader(settings)
+    return FlowFrame(
+        data=flow_graph.get_node(node_id).get_resulting_data().data_frame, flow_graph=flow_graph, node_id=node_id
+    )

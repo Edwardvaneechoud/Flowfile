@@ -1,13 +1,13 @@
 import os
-import fastexcel
-from typing import List
 from functools import lru_cache
+
+import fastexcel
 
 from flowfile_core.configs import logger
 
 
 @lru_cache(maxsize=32)
-def get_sheet_names(file_path: str) -> List[str] | None:
+def get_sheet_names(file_path: str) -> list[str] | None:
     if not os.path.exists(file_path):
         logger.error(f"File does not exist: {file_path}")
         return

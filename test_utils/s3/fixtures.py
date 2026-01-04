@@ -1,12 +1,14 @@
-import os
-import time
-import subprocess
 import logging
-from contextlib import contextmanager
-from typing import Dict, Generator
+import os
 import shutil
+import subprocess
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
+
 import boto3
 from botocore.client import Config
+
 from test_utils.s3.data_generator import populate_test_data
 from test_utils.s3.demo_data_generator import create_demo_data
 
@@ -191,7 +193,7 @@ def start_minio_container() -> bool:
 
 
 @contextmanager
-def managed_minio() -> Generator[Dict[str, any], None, None]:
+def managed_minio() -> Generator[dict[str, any], None, None]:
     """Context manager for MinIO container with full connection info"""
     if not start_minio_container():
         yield {}

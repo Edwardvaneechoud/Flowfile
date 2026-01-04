@@ -4,23 +4,17 @@ This module provides functionality to write Polars LazyFrames to various cloud s
 services (S3, Azure ADLS, Google Cloud Storage) in different file formats.
 """
 
-import polars as pl
-from typing import Dict, Any
 from logging import Logger
+from typing import Any
 
-from flowfile_worker.external_sources.s3_source.models import (
-    CloudStorageWriteSettings,
-    WriteSettings
-)
+import polars as pl
+
+from flowfile_worker.external_sources.s3_source.models import CloudStorageWriteSettings, WriteSettings
 from flowfile_worker.utils import collect_lazy_frame
 
 
 def _write_parquet_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: Dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to a Parquet file in cloud storage.
 
@@ -49,7 +43,7 @@ def _write_parquet_to_cloud(
             # Fall back to collecting and writing if sink fails
             logger.warning(f"Failed to use sink_parquet, falling back to collect and write: {str(e)}")
             pl_df = collect_lazy_frame(df)
-            sink_kwargs['file'] = sink_kwargs.pop("path")
+            sink_kwargs["file"] = sink_kwargs.pop("path")
             pl_df.write_parquet(**sink_kwargs)
 
     except Exception as e:
@@ -58,11 +52,7 @@ def _write_parquet_to_cloud(
 
 
 def _write_delta_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: Dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to Delta Lake format in cloud storage.
 
@@ -85,11 +75,7 @@ def _write_delta_to_cloud(
 
 
 def _write_csv_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: Dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to a CSV file in cloud storage.
 
@@ -120,11 +106,7 @@ def _write_csv_to_cloud(
 
 
 def _write_json_to_cloud(
-    df: pl.LazyFrame,
-    resource_path: str,
-    storage_options: Dict[str, Any],
-    write_settings: WriteSettings,
-    logger: Logger
+    df: pl.LazyFrame, resource_path: str, storage_options: dict[str, Any], write_settings: WriteSettings, logger: Logger
 ) -> None:
     """Write LazyFrame to a line-delimited JSON (NDJSON) file in cloud storage.
 
@@ -149,13 +131,14 @@ def _write_json_to_cloud(
         except Exception as e:
             # Fall back to collecting and writing if sink fails
             pl_df = collect_lazy_frame(df)
-            sink_kwargs['file'] = sink_kwargs.pop("path")
+            sink_kwargs["file"] = sink_kwargs.pop("path")
             pl_df.write_ndjson(**sink_kwargs)
             logger.error(f"Failed to use sink_ndjson, falling back to collect and write: {str(e)}")
 
     except Exception as e:
         logger.error(f"Failed to write JSON to {resource_path}: {str(e)}")
         raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
+
 
 writers = {
     "parquet": _write_parquet_to_cloud,
@@ -165,11 +148,7 @@ writers = {
 }
 
 
-def write_df_to_cloud(
-    df: pl.LazyFrame,
-    settings: CloudStorageWriteSettings,
-    logger: Logger
-) -> None:
+def write_df_to_cloud(df: pl.LazyFrame, settings: CloudStorageWriteSettings, logger: Logger) -> None:
     """Write a Polars LazyFrame to an object in cloud storage.
 
     Supports writing to S3, Azure ADLS, and Google Cloud Storage. Currently supports
@@ -187,30 +166,18 @@ def write_df_to_cloud(
     """
     connection = settings.connection
     write_settings = settings.write_settings
-    logger.info(
-        f"Writing to {connection.storage_type} storage: {write_settings.resource_path}"
-    )
+    logger.info(f"Writing to {connection.storage_type} storage: {write_settings.resource_path}")
     # Validate write mode
-    if write_settings.write_mode == 'append' and write_settings.file_format != "delta":
-        raise NotImplementedError(
-            "The 'append' write mode is not yet supported for this destination."
-        )
+    if write_settings.write_mode == "append" and write_settings.file_format != "delta":
+        raise NotImplementedError("The 'append' write mode is not yet supported for this destination.")
 
     storage_options = connection.get_storage_options()
 
     # Dispatch to the appropriate writer
     writer_func = writers.get(write_settings.file_format)
     if not writer_func:
-        raise ValueError(
-            f"Unsupported file format for writing: {write_settings.file_format}"
-        )
+        raise ValueError(f"Unsupported file format for writing: {write_settings.file_format}")
 
-    writer_func(
-        df,
-        write_settings.resource_path,
-        storage_options,
-        write_settings,
-        logger
-    )
+    writer_func(df, write_settings.resource_path, storage_options, write_settings, logger)
 
     logger.info(f"Successfully wrote data to {write_settings.resource_path}")

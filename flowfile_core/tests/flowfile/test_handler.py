@@ -1,13 +1,12 @@
-from flowfile_core.flowfile.handler import FlowfileHandler
-from flowfile_core.flowfile.flow_graph import RunInformation
-from flowfile_core.schemas import schemas
-
-from time import sleep
-from flowfile_core.configs.flow_logger import FlowLogger
-import pytest
 from pathlib import Path
-from typing import List, Dict
+from time import sleep
 
+import pytest
+
+from flowfile_core.configs.flow_logger import FlowLogger
+from flowfile_core.flowfile.flow_graph import RunInformation
+from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.schemas import schemas
 from tests.flowfile.test_flowfile import find_parent_directory
 
 
@@ -17,7 +16,7 @@ def flow_logger() -> FlowLogger:
 
 
 @pytest.fixture
-def raw_data() -> List[Dict]:
+def raw_data() -> list[dict]:
     return [{'name': 'John', 'city': 'New York'},
                 {'name': 'Jane', 'city': 'Los Angeles'},
                 {'name': 'Edward', 'city': 'Chicago'},

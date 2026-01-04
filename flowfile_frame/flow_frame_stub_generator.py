@@ -5,22 +5,35 @@ This script generates a complete type stub file (.pyi) for the FlowFrame class
 that includes both native FlowFrame methods and LazyFrame methods that are
 added by the @add_lazyframe_methods decorator, plus module-level functions.
 """
-import os
-import inspect
-import sys
-import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Type, get_type_hints, Union, Collection
 
+import inspect
+import os
+import re
+import sys
+from typing import get_type_hints
 
 PASSTHROUGH_METHODS = {
-    'collect', 'collect_async', 'profile', 'describe', 'explain',
-    'show_graph', 'fetch', 'collect_schema', 'columns', 'dtypes',
-    'schema', 'width', 'estimated_size', 'n_chunks', 'is_empty',
-    'chunk_lengths', 'get_meta'
+    "collect",
+    "collect_async",
+    "profile",
+    "describe",
+    "explain",
+    "show_graph",
+    "fetch",
+    "collect_schema",
+    "columns",
+    "dtypes",
+    "schema",
+    "width",
+    "estimated_size",
+    "n_chunks",
+    "is_empty",
+    "chunk_lengths",
+    "get_meta",
 }
 
 
-def format_default_value(param: inspect.Parameter) -> Optional[str]:
+def format_default_value(param: inspect.Parameter) -> str | None:
     """
     Properly format a parameter's default value for a .pyi stub file.
 
@@ -43,10 +56,11 @@ def format_default_value(param: inspect.Parameter) -> Optional[str]:
         return repr(default)
 
     type_name = type(default).__name__
-    if type_name == 'QueryOptFlags':
+    if type_name == "QueryOptFlags":
         return "DEFAULT_QUERY_OPT_FLAGS"
 
     return "..."
+
 
 def format_type_annotation(annotation_obj) -> str:
     """
@@ -73,11 +87,11 @@ def format_type_annotation(annotation_obj) -> str:
         name = annotation_obj.__name__
 
         # If it's a builtin type, just use the name
-        if module == 'builtins':
+        if module == "builtins":
             return name
 
         # For known types like polars itself, prefix with pl if appropriate
-        if module.startswith("polars.") and name not in ['DataFrame', 'LazyFrame', 'Series', 'Expr']:
+        if module.startswith("polars.") and name not in ["DataFrame", "LazyFrame", "Series", "Expr"]:
             return f"pl.{name}"
         if module.startswith("polars.") and name == "DataType":  # Handle pl.DataType specifically
             return f"pl.{name}"
@@ -91,10 +105,10 @@ def format_type_annotation(annotation_obj) -> str:
             full_path = class_match.group(1)
 
             # Special case for NoneType
-            if full_path == 'NoneType' or full_path.endswith('.NoneType'):
+            if full_path == "NoneType" or full_path.endswith(".NoneType"):
                 return "None"
 
-            class_name = full_path.split('.')[-1]
+            class_name = full_path.split(".")[-1]
             return class_name
 
     # For other cases, convert to string and remove unnecessary details
@@ -103,25 +117,25 @@ def format_type_annotation(annotation_obj) -> str:
     str_rep = str_rep.replace("polars.internals.datatypes.", "pl.")
     str_rep = str_rep.replace("polars.datatypes.", "pl.")
     str_rep = str_rep.replace("polars.type_aliases.", "")
-    str_rep = str_rep.replace("polars.lazyframe.frame.", "") # For LazyFrame, LazyGroupBy if directly referenced
+    str_rep = str_rep.replace("polars.lazyframe.frame.", "")  # For LazyFrame, LazyGroupBy if directly referenced
     str_rep = str_rep.replace("flowfile_frame.group_frame.", "group_frame.")
     if str_rep == "LazyFrame":
         str_rep = "FlowFrame"
 
     # Special case for NoneType
-    if str_rep == 'NoneType' or str_rep.endswith('.NoneType'):
+    if str_rep == "NoneType" or str_rep.endswith(".NoneType"):
         return "None"
 
     return str_rep
 
 
 def generate_improved_type_stub(
-    flowframe_class: Type,
-    output_file: Optional[str] = None,
+    flowframe_class: type,
+    output_file: str | None = None,
     include_constructors: bool = True,
     include_inherited: bool = True,
     include_lazyframe: bool = True,
-    include_module_functions: bool = True
+    include_module_functions: bool = True,
 ) -> str:
     """
     Generate a comprehensive type stub file for FlowFrame.
@@ -153,7 +167,6 @@ def generate_improved_type_stub(
     str
         Path to the generated stub file
     """
-    import polars as pl
     from polars.lazyframe.frame import LazyFrame
 
     lazyframe_returning_methods = set()
@@ -165,22 +178,22 @@ def generate_improved_type_stub(
     for name, member in all_lazyframe_members:
         if not (inspect.ismethod(member) or inspect.isfunction(member)):
             continue
-        if name.startswith('_'):
+        if name.startswith("_"):
             continue
 
         try:
             sig = inspect.signature(member)
             if sig.return_annotation is not inspect.Signature.empty:
                 return_annotation_str = str(sig.return_annotation).lower()
-                if 'lazyframe' in return_annotation_str or 'polars.lazyframe.frame.lazyframe' in return_annotation_str:
+                if "lazyframe" in return_annotation_str or "polars.lazyframe.frame.lazyframe" in return_annotation_str:
                     lazyframe_returning_methods.add(name)
                 else:
                     non_lazyframe_methods.add(name)
             elif member.__doc__ and "Returns" in member.__doc__:
-                doc_lines = member.__doc__.split('\n')
+                doc_lines = member.__doc__.split("\n")
                 for i, line in enumerate(doc_lines):
-                    if "Returns" in line and i+1 < len(doc_lines):
-                        return_line = doc_lines[i+1].lower().strip()
+                    if "Returns" in line and i + 1 < len(doc_lines):
+                        return_line = doc_lines[i + 1].lower().strip()
                         if "lazyframe" in return_line:
                             lazyframe_returning_methods.add(name)
                             break
@@ -191,21 +204,39 @@ def generate_improved_type_stub(
         except (ValueError, TypeError):
             non_lazyframe_methods.add(name)
 
-    if 'group_by' in lazyframe_returning_methods:
-        lazyframe_returning_methods.remove('group_by')
-        non_lazyframe_methods.add('group_by')
+    if "group_by" in lazyframe_returning_methods:
+        lazyframe_returning_methods.remove("group_by")
+        non_lazyframe_methods.add("group_by")
 
     # print(f"LazyFrame-returning methods: {lazyframe_returning_methods}")
     # print(f"Non-LazyFrame-returning methods from LazyFrame: {non_lazyframe_methods}")
-    print(f"Analysis complete: {len(lazyframe_returning_methods)} LazyFrame-returning methods, "
-          f"{len(non_lazyframe_methods)} non-LazyFrame-returning methods from LazyFrame.")
+    print(
+        f"Analysis complete: {len(lazyframe_returning_methods)} LazyFrame-returning methods, "
+        f"{len(non_lazyframe_methods)} non-LazyFrame-returning methods from LazyFrame."
+    )
 
     flowframe_specific_methods = {
-        "cache", "rename", "pivot", "concat", "write_csv", "write_parquet",
-        "sink_csv", "sink_parquet", "_create_child_frame", "text_to_rows",
-        "_with_flowfile_formula", "_add_number_of_records", "clear", "clone",
-        "gather_every", "approx_n_unique", "set_sorted", "write_json_to_cloud_storage",
-        "write_delta", "write_parquet_to_cloud_storage", "write_csv_to_cloud_storage"
+        "cache",
+        "rename",
+        "pivot",
+        "concat",
+        "write_csv",
+        "write_parquet",
+        "sink_csv",
+        "sink_parquet",
+        "_create_child_frame",
+        "text_to_rows",
+        "_with_flowfile_formula",
+        "_add_number_of_records",
+        "clear",
+        "clone",
+        "gather_every",
+        "approx_n_unique",
+        "set_sorted",
+        "write_json_to_cloud_storage",
+        "write_delta",
+        "write_parquet_to_cloud_storage",
+        "write_csv_to_cloud_storage",
     }
 
     if output_file is None:
@@ -260,23 +291,25 @@ def generate_improved_type_stub(
         "P = typing.ParamSpec('P')",
         "LazyFrameT = TypeVar('LazyFrameT', bound='LazyFrame')",
         "FlowFrameT = TypeVar('FlowFrameT', bound='FlowFrame')",
-        "Self = TypeVar('Self', bound='FlowFrame')", # For __new__
+        "Self = TypeVar('Self', bound='FlowFrame')",  # For __new__
         "NoneType = type(None)",
-        ""
+        "",
     ]
 
     if include_module_functions:
-        content.extend([
-            "# Module-level functions (example from your input)",
-            "def can_be_expr(param: inspect.Parameter) -> bool: ...",
-            "def generate_node_id() -> int: ...",
-            "def get_method_name_from_code(code: str) -> str | None: ...",
-            "def _contains_lambda_pattern(text: str) -> bool: ...",
-            "def _to_string_val(v) -> str: ...",
-            "def _extract_expr_parts(expr_obj) -> tuple[str, str]: ...",
-            "def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None, group_expr: pl.Expr | None = None) -> None: ...",
-            ""
-        ])
+        content.extend(
+            [
+                "# Module-level functions (example from your input)",
+                "def can_be_expr(param: inspect.Parameter) -> bool: ...",
+                "def generate_node_id() -> int: ...",
+                "def get_method_name_from_code(code: str) -> str | None: ...",
+                "def _contains_lambda_pattern(text: str) -> bool: ...",
+                "def _to_string_val(v) -> str: ...",
+                "def _extract_expr_parts(expr_obj) -> tuple[str, str]: ...",
+                "def _check_ok_for_serialization(method_name: str = None, polars_expr: pl.Expr | None = None, group_expr: pl.Expr | None = None) -> None: ...",
+                "",
+            ]
+        )
 
     class_name = flowframe_class.__name__
     content.append(f"class {class_name}:")
@@ -285,11 +318,12 @@ def generate_improved_type_stub(
         "data": "LazyFrame",
         "flow_graph": "FlowGraph",
         "node_id": "int",
-        "parent_node_id": "Optional[int]"
+        "parent_node_id": "Optional[int]",
     }
     try:
-
-        class_annotations = get_type_hints(flowframe_class, getattr(flowframe_class, '__globals__', globals()), locals())
+        class_annotations = get_type_hints(
+            flowframe_class, getattr(flowframe_class, "__globals__", globals()), locals()
+        )
         if "data" in class_annotations:
             core_attr_types["data"] = format_type_annotation(class_annotations["data"])
         if "flow_graph" in class_annotations:
@@ -302,16 +336,18 @@ def generate_improved_type_stub(
     content.append("")
 
     # Helper function for handling special methods - DEFINED HERE
-    def handle_special_methods(name: str, sig: inspect.Signature) -> Optional[str]:
+    def handle_special_methods(name: str, sig: inspect.Signature) -> str | None:
         """Handle methods that need special formatting in the stub file."""
         if name == "group_by":
             return "    def group_by(self, *by, description: Optional[str] = None, maintain_order: bool = False, **named_by) -> group_frame.GroupByFrame: ..."
-        if name == "with_columns": # This specific one is from FlowFrame
-            return ("    def with_columns(self, *exprs: Union[Expr, Iterable[Expr], Any], " # Match FlowFrame signature
-                   "flowfile_formulas: Optional[List[str]] = None, "
-                   "output_column_names: Optional[List[str]] = None, "
-                   "description: Optional[str] = None, "
-                   "**named_exprs: Union[Expr, Any]) -> 'FlowFrame': ...")
+        if name == "with_columns":  # This specific one is from FlowFrame
+            return (
+                "    def with_columns(self, *exprs: Union[Expr, Iterable[Expr], Any], "  # Match FlowFrame signature
+                "flowfile_formulas: Optional[List[str]] = None, "
+                "output_column_names: Optional[List[str]] = None, "
+                "description: Optional[str] = None, "
+                "**named_exprs: Union[Expr, Any]) -> 'FlowFrame': ..."
+            )
         return None
 
     def method_returns_flowframe(method_name: str, method_obj, class_obj) -> bool:
@@ -319,38 +355,64 @@ def generate_improved_type_stub(
             return True
 
         try:
-            hints = get_type_hints(method_obj, getattr(class_obj, '__globals__', globals()), locals())
-            if 'return' in hints:
-                return_type = hints['return']
+            hints = get_type_hints(method_obj, getattr(class_obj, "__globals__", globals()), locals())
+            if "return" in hints:
+                return_type = hints["return"]
                 return_type_str = str(return_type)
-                if class_name in return_type_str or f"'{class_name}'" in return_type_str or \
-                   "FlowFrame" in return_type_str or f"'FlowFrame'" in return_type_str:
+                if (
+                    class_name in return_type_str
+                    or f"'{class_name}'" in return_type_str
+                    or "FlowFrame" in return_type_str
+                    or "'FlowFrame'" in return_type_str
+                ):
                     return True
-                if 'GroupByFrame' in return_type_str:
+                if "GroupByFrame" in return_type_str:
                     return False
         except Exception:
             pass
         return False
+
     flowframe_members_to_process = {}
     for name, member in inspect.getmembers(flowframe_class):
         if not (inspect.isfunction(member) or isinstance(member, property)):
             continue
 
-        allowed_special_methods = {'__init__', '__new__', '__repr__', '__bool__', '__contains__', '__eq__', '__ne__', '__gt__', '__lt__', '__ge__', '__le__'}
-        known_internal_methods = {"_add_connection", "_create_child_frame", "_generate_sort_polars_code",
-                                  "_add_polars_code", "_comparison_error", "_detect_cum_count_record_id",
-                                  "_add_number_of_records", "_with_flowfile_formula"}
+        allowed_special_methods = {
+            "__init__",
+            "__new__",
+            "__repr__",
+            "__bool__",
+            "__contains__",
+            "__eq__",
+            "__ne__",
+            "__gt__",
+            "__lt__",
+            "__ge__",
+            "__le__",
+        }
+        known_internal_methods = {
+            "_add_connection",
+            "_create_child_frame",
+            "_generate_sort_polars_code",
+            "_add_polars_code",
+            "_comparison_error",
+            "_detect_cum_count_record_id",
+            "_add_number_of_records",
+            "_with_flowfile_formula",
+        }
 
-        if name == '__init__' or name == '__new__':
+        if name == "__init__" or name == "__new__":
             if not include_constructors:
                 continue
         elif name in allowed_special_methods:
             pass
-        elif name.startswith('_'):
+        elif name.startswith("_"):
             if name not in known_internal_methods and not include_constructors:
-                 continue
-            elif name in known_internal_methods and not include_constructors and name not in flowframe_specific_methods: # if it's internal but not specifically marked as returning FlowFrame
-                 pass
+                continue
+            elif (
+                name in known_internal_methods and not include_constructors and name not in flowframe_specific_methods
+            ):  # if it's internal but not specifically marked as returning FlowFrame
+                pass
 
         if not include_inherited and name not in flowframe_class.__dict__:
             continue
@@ -366,7 +428,7 @@ def generate_improved_type_stub(
                 special_signature_str = handle_special_methods(name, sig)
                 if special_signature_str:
                     if method.__doc__:
-                        doc_lines = method.__doc__.strip().split('\n')
+                        doc_lines = method.__doc__.strip().split("\n")
                         content.append(f"    # {doc_lines[0].strip()}")
                     content.append(special_signature_str)
                     content.append("")
@@ -377,10 +439,10 @@ def generate_improved_type_stub(
                 var_keyword_param = None
                 description_param_str = None
 
-                is_new_method = (name == "__new__")
+                is_new_method = name == "__new__"
 
                 for i, (param_name, param) in enumerate(sig.parameters.items()):
-                    if i == 0 and (param_name == 'self' or (is_new_method and param_name == 'cls')):
+                    if i == 0 and (param_name == "self" or (is_new_method and param_name == "cls")):
                         continue
 
                     param_str = param_name
@@ -405,9 +467,13 @@ def generate_improved_type_stub(
 
                     processed_params.append(param_str)
 
-                if not name.startswith('_') and name not in PASSTHROUGH_METHODS and \
-                   name not in {'__init__', '__new__', 'group_by', 'with_columns'} and \
-                   not any(p.startswith('description:') for p in processed_params) and not description_param_str :
+                if (
+                    not name.startswith("_")
+                    and name not in PASSTHROUGH_METHODS
+                    and name not in {"__init__", "__new__", "group_by", "with_columns"}
+                    and not any(p.startswith("description:") for p in processed_params)
+                    and not description_param_str
+                ):
                     processed_params.append("description: Optional[str] = None")
                 elif description_param_str:
                     processed_params.append(description_param_str)
@@ -419,13 +485,17 @@ def generate_improved_type_stub(
                 if name == "__init__":
                     final_return_type = "None"
                 elif name == "__new__":
-                    final_return_type = "Self" # PEP 673 for Self type
+                    final_return_type = "Self"  # PEP 673 for Self type
                 elif name == "_generate_sort_polars_code":
                     final_return_type = "str"
                 elif sig.return_annotation is not inspect.Signature.empty:
                     annotated_return = format_type_annotation(sig.return_annotation)
                     # If FlowFrame specific methods like _create_child_frame are annotated with FlowFrame, use it
-                    if class_name in annotated_return or f"'{class_name}'" in annotated_return or "FlowFrame" in annotated_return:
+                    if (
+                        class_name in annotated_return
+                        or f"'{class_name}'" in annotated_return
+                        or "FlowFrame" in annotated_return
+                    ):
                         final_return_type = f"'{class_name}'"
                     else:
                         final_return_type = annotated_return
@@ -434,28 +504,32 @@ def generate_improved_type_stub(
                 params_prefix = "cls" if is_new_method else "self"
                 params_str = ", ".join(processed_params)
                 method_sig_str = f"    def {name}({params_prefix}, {params_str}) -> {final_return_type}: ..."
-                if not processed_params and not params_str : # Methods like __repr__ might have no other params
-                     method_sig_str = f"    def {name}({params_prefix}) -> {final_return_type}: ..."
+                if not processed_params and not params_str:  # Methods like __repr__ might have no other params
+                    method_sig_str = f"    def {name}({params_prefix}) -> {final_return_type}: ..."
 
                 if method.__doc__:
-                    doc_lines = method.__doc__.strip().split('\n')
+                    doc_lines = method.__doc__.strip().split("\n")
                     content.append(f"    # {doc_lines[0].strip()}")
                 content.append(method_sig_str)
                 content.append("")
 
             elif isinstance(member, property):
-                doc = inspect.getdoc(member) or (hasattr(member, 'fget') and member.fget and inspect.getdoc(member.fget))
+                doc = inspect.getdoc(member) or (
+                    hasattr(member, "fget") and member.fget and inspect.getdoc(member.fget)
+                )
                 if doc:
-                    doc_lines = doc.strip().split('\n')
+                    doc_lines = doc.strip().split("\n")
                     content.append(f"    # {doc_lines[0].strip()}")
 
-                content.append(f"    @property")
+                content.append("    @property")
                 return_type_str = "Any"
-                if hasattr(member, 'fget') and member.fget is not None:
+                if hasattr(member, "fget") and member.fget is not None:
                     try:
-                        hints = get_type_hints(member.fget, getattr(flowframe_class, '__globals__', globals()), locals())
-                        if 'return' in hints:
-                            return_type_str = format_type_annotation(hints['return'])
+                        hints = get_type_hints(
+                            member.fget, getattr(flowframe_class, "__globals__", globals()), locals()
+                        )
+                        if "return" in hints:
+                            return_type_str = format_type_annotation(hints["return"])
                         else:
                             prop_sig = inspect.signature(member.fget)
                             if prop_sig.return_annotation is not inspect.Signature.empty:
@@ -475,7 +549,7 @@ def generate_improved_type_stub(
             if not (inspect.ismethod(lf_member) or inspect.isfunction(lf_member) or isinstance(lf_member, property)):
                 continue
 
-            if lf_name.startswith('_'):
+            if lf_name.startswith("_"):
                 continue
 
             if lf_name in flowframe_members_to_process:
@@ -492,7 +566,7 @@ def generate_improved_type_stub(
                 special_signature_str = handle_special_methods(name, sig)
                 if special_signature_str:
                     if method.__doc__:
-                        doc_lines = method.__doc__.strip().split('\n')
+                        doc_lines = method.__doc__.strip().split("\n")
                         content.append(f"    # {doc_lines[0].strip()}")
                     content.append(special_signature_str)
                     content.append("")
@@ -528,8 +602,8 @@ def generate_improved_type_stub(
 
                     processed_params.append(param_str)
 
-                if name not in PASSTHROUGH_METHODS and not description_param_added :
-                     processed_params.append("description: Optional[str] = None")
+                if name not in PASSTHROUGH_METHODS and not description_param_added:
+                    processed_params.append("description: Optional[str] = None")
 
                 if var_keyword_param:
                     processed_params.append(var_keyword_param)
@@ -541,35 +615,37 @@ def generate_improved_type_stub(
                         return_type = "Any"
                 elif name not in lazyframe_returning_methods:
                     if sig.return_annotation is not inspect.Signature.empty:
-                         original_return = format_type_annotation(sig.return_annotation)
-                         if "LazyFrame" not in original_return and class_name not in original_return:
-                              return_type = original_return
+                        original_return = format_type_annotation(sig.return_annotation)
+                        if "LazyFrame" not in original_return and class_name not in original_return:
+                            return_type = original_return
                     else:
-                         return_type = "Any"
+                        return_type = "Any"
 
                 params_str = ", ".join(processed_params)
                 method_sig_str = f"    def {name}(self, {params_str}) -> {return_type}: ..."
 
                 if method.__doc__:
-                    doc_lines = method.__doc__.strip().split('\n')
+                    doc_lines = method.__doc__.strip().split("\n")
                     content.append(f"    # {doc_lines[0].strip()}")
                 content.append(method_sig_str)
                 content.append("")
 
             elif isinstance(member, property):
                 if name in PASSTHROUGH_METHODS:
-                    doc = inspect.getdoc(member) or (hasattr(member, 'fget') and member.fget and inspect.getdoc(member.fget))
+                    doc = inspect.getdoc(member) or (
+                        hasattr(member, "fget") and member.fget and inspect.getdoc(member.fget)
+                    )
                     if doc:
-                        doc_lines = doc.strip().split('\n')
+                        doc_lines = doc.strip().split("\n")
                         content.append(f"    # {doc_lines[0].strip()}")
 
-                    content.append(f"    @property")
+                    content.append("    @property")
                     return_type_str = "Any"
-                    if hasattr(member, 'fget') and member.fget is not None:
+                    if hasattr(member, "fget") and member.fget is not None:
                         try:
-                            hints = get_type_hints(member.fget, getattr(LazyFrame, '__globals__', globals()), locals())
-                            if 'return' in hints:
-                                return_type_str = format_type_annotation(hints['return'])
+                            hints = get_type_hints(member.fget, getattr(LazyFrame, "__globals__", globals()), locals())
+                            if "return" in hints:
+                                return_type_str = format_type_annotation(hints["return"])
                             else:
                                 prop_sig = inspect.signature(member.fget)
                                 if prop_sig.return_annotation is not inspect.Signature.empty:
@@ -594,19 +670,23 @@ if __name__ == "__main__":
     import argparse
     from importlib import import_module
 
-    parser = argparse.ArgumentParser(description='Generate comprehensive type stub file for FlowFrame')
-    parser.add_argument('--output', '-o', help='Output file path for the stub file (e.g., flow_frame.pyi)')
-    parser.add_argument('--module', '-m', default='flowfile_frame.flow_frame', help='Module containing FlowFrame class')
-    parser.add_argument('--class-name', '-c', default='FlowFrame', help='Name of the FlowFrame class')
-    parser.add_argument('--no-constructors', action='store_true', help='Skip __init__, __new__ and other special methods')
-    parser.add_argument('--no-inherited', action='store_true', help='Skip inherited methods not overridden in FlowFrame')
-    parser.add_argument('--no-lazyframe', action='store_true', help='Skip methods from LazyFrame')
-    parser.add_argument('--no-module-functions', action='store_true', help='Skip module-level functions')
+    parser = argparse.ArgumentParser(description="Generate comprehensive type stub file for FlowFrame")
+    parser.add_argument("--output", "-o", help="Output file path for the stub file (e.g., flow_frame.pyi)")
+    parser.add_argument("--module", "-m", default="flowfile_frame.flow_frame", help="Module containing FlowFrame class")
+    parser.add_argument("--class-name", "-c", default="FlowFrame", help="Name of the FlowFrame class")
+    parser.add_argument(
+        "--no-constructors", action="store_true", help="Skip __init__, __new__ and other special methods"
+    )
+    parser.add_argument(
+        "--no-inherited", action="store_true", help="Skip inherited methods not overridden in FlowFrame"
+    )
+    parser.add_argument("--no-lazyframe", action="store_true", help="Skip methods from LazyFrame")
+    parser.add_argument("--no-module-functions", action="store_true", help="Skip module-level functions")
 
     args = parser.parse_args()
 
     try:
-        module_obj = import_module(args.module) # Renamed to avoid conflict
+        module_obj = import_module(args.module)  # Renamed to avoid conflict
         flowframe_class_actual = getattr(module_obj, args.class_name)
 
         output_path = args.output
@@ -618,15 +698,15 @@ if __name__ == "__main__":
 
             # Heuristic for output path based on common project structures
             # Assuming flow_frame.py is in a module directory like 'flowfile_frame'
-            module_path_part = args.module.replace('.', os.sep) # e.g., flowfile_frame/flow_frame
+            module_path_part = args.module.replace(".", os.sep)  # e.g., flowfile_frame/flow_frame
 
             # Check if the target class's module path can be determined
-            class_module_file = getattr(module_obj, '__file__', None)
+            class_module_file = getattr(module_obj, "__file__", None)
             if class_module_file:
-                 output_path = os.path.splitext(class_module_file)[0] + ".pyi"
-            else: # Fallback if module path is not available (e.g. some C extensions or built-ins)
+                output_path = os.path.splitext(class_module_file)[0] + ".pyi"
+            else:  # Fallback if module path is not available (e.g. some C extensions or built-ins)
                 # Try to create it in a folder structure mimicking the module path
-                path_parts = args.module.split('.')
+                path_parts = args.module.split(".")
                 class_file_name = path_parts[-1] + ".pyi"
                 if len(path_parts) > 1:
                     dir_path = os.path.join(script_dir, *path_parts[:-1])
@@ -638,8 +718,7 @@ if __name__ == "__main__":
                     dir_path_cwd = os.path.join(os.getcwd(), *path_parts[:-1])
                     output_path = os.path.join(dir_path_cwd, class_file_name)
                 elif not os.path.isdir(os.path.dirname(output_path)):
-                     output_path = os.path.join(os.getcwd(), class_file_name)
-
+                    output_path = os.path.join(os.getcwd(), class_file_name)
 
         print(f"Attempting to generate stub at: {os.path.abspath(output_path)}")
 
@@ -649,12 +728,14 @@ if __name__ == "__main__":
             include_constructors=not args.no_constructors,
             include_inherited=not args.no_inherited,
             include_lazyframe=not args.no_lazyframe,
-            include_module_functions=not args.no_module_functions
+            include_module_functions=not args.no_module_functions,
         )
         print(f"Type stub file generated successfully: {generated_file}")
 
     except ImportError:
-        print(f"Error: Could not import module '{args.module}'. Ensure it's in PYTHONPATH and all dependencies are installed.")
+        print(
+            f"Error: Could not import module '{args.module}'. Ensure it's in PYTHONPATH and all dependencies are installed."
+        )
         sys.exit(1)
     except AttributeError:
         print(f"Error: Class '{args.class_name}' not found in module '{args.module}'.")
@@ -662,5 +743,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

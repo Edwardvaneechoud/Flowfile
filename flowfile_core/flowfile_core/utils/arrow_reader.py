@@ -1,5 +1,7 @@
+from collections.abc import Callable, Iterator
+
 import pyarrow as pa
-from typing import List, Iterator, Tuple, Callable
+
 from flowfile_core.configs import logger
 
 
@@ -36,7 +38,7 @@ def open_validated_file(file_path: str, n: int) -> pa.OSFile:
         logger.error(f"Invalid file_path type: {type(file_path)}")
         raise TypeError("file_path must be a string")
     try:
-        file = pa.OSFile(file_path, 'rb')
+        file = pa.OSFile(file_path, "rb")
         logger.info(f"Successfully opened file: {file_path}")
         return file
     except FileNotFoundError:
@@ -112,7 +114,7 @@ def iter_batches(reader: pa.ipc.RecordBatchFileReader, n: int, rows_collected: i
             break
 
 
-def collect_batches(reader: pa.ipc.RecordBatchFileReader, n: int) -> Tuple[List[pa.RecordBatch], int]:
+def collect_batches(reader: pa.ipc.RecordBatchFileReader, n: int) -> tuple[list[pa.RecordBatch], int]:
     """
     Collect record batches from a reader up to a specified number of rows.
 
@@ -134,11 +136,10 @@ def collect_batches(reader: pa.ipc.RecordBatchFileReader, n: int) -> Tuple[List[
         >>> print(f"Collected {row_count} rows in {len(batches)} batches")
     """
     logger.debug(f"Collecting batches up to {n} rows")
-    batches: List[pa.RecordBatch] = []
+    batches: list[pa.RecordBatch] = []
     rows_collected = 0
 
     for batch in iter_batches(reader, n, rows_collected):
-
         rows_collected += batch.num_rows
         logger.debug(f"Collected batch: total rows now {rows_collected}")
         if rows_collected >= n:
@@ -178,7 +179,7 @@ def read(file_path: str) -> pa.Table:
     logger.info(f"Reading entire file: {file_path}")
     with open_validated_file(file_path, 0) as source:
         reader = create_reader(source)
-        batches, total_rows = collect_batches(reader, float('inf'))
+        batches, total_rows = collect_batches(reader, float("inf"))
         table = pa.Table.from_batches(batches)  # type: ignore
         logger.info(f"Successfully read {total_rows} rows from {file_path}")
         return table

@@ -1,22 +1,24 @@
 # conftest.py
-import subprocess
-import time
-import signal
 import logging
+import os
 import platform
+import signal
+import subprocess
+import sys
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
+
 import pytest
 import requests
-from contextlib import contextmanager
-from typing import Tuple, Generator
-import sys
-import os
 
 os.environ['TESTING'] = 'True'
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
-from tests.flowfile_core_test_utils import is_docker_available
-from test_utils.postgres import fixtures as pg_fixtures
 import socket
+
+from test_utils.postgres import fixtures as pg_fixtures
+from tests.flowfile_core_test_utils import is_docker_available
 
 
 def is_port_in_use(port, host='localhost'):
@@ -51,9 +53,9 @@ SHUTDOWN_TIMEOUT = int(os.environ.get("FLOWFILE_SHUTDOWN_TIMEOUT", 15))  # secon
 def setup_test_db():
     """Setup the test database and clean up after tests"""
     # Just use your existing init_db function to create tables and set up the database
+    from flowfile_core.database.connection import engine, get_database_url
     from flowfile_core.database.init_db import init_db
     from flowfile_core.database.models import Base
-    from flowfile_core.database.connection import get_database_url, engine
 
     init_db()
 
@@ -84,7 +86,7 @@ def is_worker_running() -> bool:
         return False
 
 
-def start_worker() -> Tuple[subprocess.Popen, bool]:
+def start_worker() -> tuple[subprocess.Popen, bool]:
     """
     Start the flowfile worker process.
 

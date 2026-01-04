@@ -1,23 +1,17 @@
+from typing import Any, Literal
 
-from typing import List, Optional, Any, Literal, Union, Type, Tuple, Dict
-
-from pydantic import Field, BaseModel, computed_field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, computed_field
 
 from flowfile_core.flowfile.node_designer._type_registry import normalize_type_spec
+from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
+
 # Public API import
 from flowfile_core.types import DataType, TypeSpec
-
-from flowfile_core.secret_manager.secret_manager import (
-    get_encrypted_secret,
-    decrypt_secret
-)
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
 
 
-def normalize_input_to_data_types(
-    v: Any
-) -> Union[Literal["ALL"], List[DataType]]:
+def normalize_input_to_data_types(v: Any) -> Literal["ALL"] | list[DataType]:
     """
     Normalizes a wide variety of inputs to either 'ALL' or a sorted list of DataType enums.
     This function is used as a Pydantic BeforeValidator.
@@ -50,9 +44,10 @@ class FlowfileInComponent(BaseModel):
     It's not meant to be used directly, but rather to be inherited by specific
     component classes.
     """
+
     component_type: str = Field(..., description="Type of the UI component")
     value: Any = None
-    label: Optional[str] = None
+    label: str | None = None
     input_type: InputType
 
     def set_value(self, value: Any):
@@ -87,6 +82,7 @@ class IncomingColumns:
                 options=IncomingColumns
             )
     """
+
     pass
 
 
@@ -98,25 +94,21 @@ class ColumnSelector(FlowfileInComponent):
     This is particularly useful when a node operation should only be applied
     to columns of a specific type (e.g., numeric, string, date).
     """
+
     component_type: Literal["ColumnSelector"] = "ColumnSelector"
     required: bool = False
     multiple: bool = False
     input_type: InputType = "text"
 
     # Normalized output: either "ALL" or list of DataType enums
-    data_type_filter_input: TypeSpec = Field(
-        default="ALL",
-        alias="data_types",
-        repr=False,
-        exclude=True
-    )
+    data_type_filter_input: TypeSpec = Field(default="ALL", alias="data_types", repr=False, exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
 
     @computed_field
     @property
-    def data_types_filter(self) -> Union[Literal["ALL"], List[DataType]]:
+    def data_types_filter(self) -> Literal["ALL"] | list[DataType]:
         """
         A computed field that normalizes the `data_type_filter_input` into a
         standardized format for the frontend.
@@ -129,16 +121,17 @@ class ColumnSelector(FlowfileInComponent):
         correct format for the frontend.
         """
         data = super().model_dump(**kwargs)
-        if 'data_types_filter' in data and data['data_types_filter'] != "ALL":
-            data['data_types'] = sorted([dt.value for dt in data['data_types_filter']])
+        if "data_types_filter" in data and data["data_types_filter"] != "ALL":
+            data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
         return data
 
 
 class TextInput(FlowfileInComponent):
     """A standard text input field for capturing string values."""
+
     component_type: Literal["TextInput"] = "TextInput"
-    default: Optional[str] = ""
-    placeholder: Optional[str] = ""
+    default: str | None = ""
+    placeholder: str | None = ""
     input_type: InputType = "text"
 
     def __init__(self, **data):
@@ -149,10 +142,11 @@ class TextInput(FlowfileInComponent):
 
 class NumericInput(FlowfileInComponent):
     """A numeric input field with optional minimum and maximum value validation."""
+
     component_type: Literal["NumericInput"] = "NumericInput"
-    default: Optional[float] = None
-    min_value: Optional[float] = None
-    max_value: Optional[float] = None
+    default: float | None = None
+    min_value: float | None = None
+    max_value: float | None = None
     input_type: InputType = "number"
 
     def __init__(self, **data):
@@ -163,8 +157,9 @@ class NumericInput(FlowfileInComponent):
 
 class SliderInput(FlowfileInComponent):
     """A slider input for selecting a numeric value within a range."""
+
     component_type: Literal["SliderInput"] = "SliderInput"
-    default: Optional[float] = None
+    default: float | None = None
     min_value: float = 0
     max_value: float = 100
     step: float = 1
@@ -180,9 +175,10 @@ class SliderInput(FlowfileInComponent):
 
 class ToggleSwitch(FlowfileInComponent):
     """A boolean toggle switch, typically used for enabling or disabling a feature."""
+
     component_type: Literal["ToggleSwitch"] = "ToggleSwitch"
     default: bool = False
-    description: Optional[str] = None
+    description: str | None = None
     input_type: InputType = "boolean"
 
     def __init__(self, **data):
@@ -203,9 +199,10 @@ class SingleSelect(FlowfileInComponent):
     dynamically populated from the input dataframe's columns by using the
     `IncomingColumns` marker.
     """
+
     component_type: Literal["SingleSelect"] = "SingleSelect"
-    options: Union[List[Union[str, Tuple[str, Any]]], Type[IncomingColumns]]
-    default: Optional[Any] = None
+    options: list[str | tuple[str, Any]] | type[IncomingColumns]
+    default: Any | None = None
     input_type: InputType = "text"
 
     def __init__(self, **data):
@@ -221,9 +218,10 @@ class MultiSelect(FlowfileInComponent):
     Like `SingleSelect`, the options can be static or dynamically populated
     from the input columns using the `IncomingColumns` marker.
     """
+
     component_type: Literal["MultiSelect"] = "MultiSelect"
-    options: Union[List[Union[str, Tuple[str, Any]]], Type[IncomingColumns]]
-    default: List[Any] = Field(default_factory=list)
+    options: list[str | tuple[str, Any]] | type[IncomingColumns]
+    default: list[Any] = Field(default_factory=list)
     input_type: InputType = "array"
 
     def __init__(self, **data):
@@ -247,12 +245,13 @@ class Section(BaseModel):
             my_text_input=TextInput(label="Enter a value")
         )
     """
-    title: Optional[str] = None
-    description: Optional[str] = None
+
+    title: str | None = None
+    description: str | None = None
     hidden: bool = False
 
     class Config:
-        extra = 'allow'
+        extra = "allow"
         arbitrary_types_allowed = True
 
     def __init__(self, **data):
@@ -261,7 +260,7 @@ class Section(BaseModel):
         """
         super().__init__(**data)
 
-    def __call__(self, **kwargs) -> 'Section':
+    def __call__(self, **kwargs) -> "Section":
         """
         Allows adding components to the section after initialization.
 
@@ -271,7 +270,7 @@ class Section(BaseModel):
             setattr(self, key, value)
         return self
 
-    def get_components(self) -> Dict[str, FlowfileInComponent]:
+    def get_components(self) -> dict[str, FlowfileInComponent]:
         """
         Get all FlowfileInComponent instances from the section.
 
@@ -284,13 +283,13 @@ class Section(BaseModel):
         components = {}
 
         # Get from extra fields
-        for key, value in getattr(self, '__pydantic_extra__', {}).items():
+        for key, value in getattr(self, "__pydantic_extra__", {}).items():
             if isinstance(value, FlowfileInComponent):
                 components[key] = value
 
         # Get from defined fields (excluding metadata)
         for field_name in self.model_fields:
-            if field_name not in {'title', 'description', 'hidden'}:
+            if field_name not in {"title", "description", "hidden"}:
                 value = getattr(self, field_name, None)
                 if isinstance(value, FlowfileInComponent):
                     components[field_name] = value
@@ -313,20 +312,21 @@ class AvailableSecrets:
                 options=AvailableSecrets
             )
     """
+
     pass
 
 
 class SecretSelector(FlowfileInComponent):
     component_type: Literal["SecretSelector"] = "SecretSelector"
-    options: Type[AvailableSecrets] = AvailableSecrets
+    options: type[AvailableSecrets] = AvailableSecrets
     required: bool = False
-    description: Optional[str] = None
+    description: str | None = None
     input_type: InputType = "secret"
-    name_prefix: Optional[str] = None
+    name_prefix: str | None = None
 
     # Private fields for runtime context
-    _user_id: Optional[int] = None
-    _accessed_secrets: Optional[set] = None  # Reference to node's tracking set
+    _user_id: int | None = None
+    _accessed_secrets: set | None = None  # Reference to node's tracking set
 
     def set_execution_context(self, user_id: int, accessed_secrets: set):
         """Called by framework before process() runs."""
@@ -334,7 +334,7 @@ class SecretSelector(FlowfileInComponent):
         self._accessed_secrets = accessed_secrets
 
     @property
-    def secret_value(self) -> Optional[SecretStr]:
+    def secret_value(self) -> SecretStr | None:
         """
         Get the decrypted secret value.
 
@@ -350,15 +350,11 @@ class SecretSelector(FlowfileInComponent):
                 "Ensure you're calling this from within the process() method."
             )
 
-        encrypted = get_encrypted_secret(
-            current_user_id=self._user_id,
-            secret_name=self.value
-        )
+        encrypted = get_encrypted_secret(current_user_id=self._user_id, secret_name=self.value)
 
         if encrypted is None:
             raise ValueError(
-                f"Secret '{self.value}' not found for user. "
-                f"Please ensure the secret exists in your secrets store."
+                f"Secret '{self.value}' not found for user. " f"Please ensure the secret exists in your secrets store."
             )
 
         decrypted = decrypt_secret(encrypted)
@@ -376,7 +372,7 @@ class SecretSelector(FlowfileInComponent):
         """
         data = super().model_dump(**kwargs)
         # Signal to frontend that options should be fetched from /secrets endpoint
-        data['options'] = {"__type__": "AvailableSecrets"}
+        data["options"] = {"__type__": "AvailableSecrets"}
         if self.name_prefix:
-            data['name_prefix'] = self.name_prefix
+            data["name_prefix"] = self.name_prefix
         return data

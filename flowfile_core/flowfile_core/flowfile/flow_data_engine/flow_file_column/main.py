@@ -1,13 +1,14 @@
-
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Optional, Any, List, Dict, Iterable
+from typing import Any
 
-from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import ReadableDataTypeGroup, DataTypeGroup
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
 import polars as pl
+
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.interface import DataTypeGroup, ReadableDataTypeGroup
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.polars_type import PlType
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.schemas import input_schema
 
 
 @dataclass
@@ -22,12 +23,12 @@ class FlowfileColumn:
     number_of_unique_values: int
     example_values: str
     data_type_group: ReadableDataTypeGroup
-    __sql_type: Optional[Any]
-    __is_unique: Optional[bool]
-    __nullable: Optional[bool]
-    __has_values: Optional[bool]
-    average_value: Optional[str]
-    __perc_unique: Optional[float]
+    __sql_type: Any | None
+    __is_unique: bool | None
+    __nullable: bool | None
+    __has_values: bool | None
+    average_value: str | None
+    __perc_unique: float | None
 
     def __init__(self, polars_type: PlType):
         self.data_type = convert_pl_type_to_string(polars_type.pl_datatype)
@@ -52,10 +53,12 @@ class FlowfileColumn:
         Provides a concise, developer-friendly representation of the object.
         Ideal for debugging and console inspection.
         """
-        return (f"FlowfileColumn(name='{self.column_name}', "
-                f"type={self.data_type}, "
-                f"size={self.size}, "
-                f"nulls={self.number_of_empty_values})")
+        return (
+            f"FlowfileColumn(name='{self.column_name}', "
+            f"type={self.data_type}, "
+            f"size={self.size}, "
+            f"nulls={self.number_of_empty_values})"
+        )
 
     def __str__(self):
         """
@@ -103,7 +106,7 @@ class FlowfileColumn:
             example_str = str(self.example_values)
             # Truncate long example strings for cleaner display
             if len(example_str) > 70:
-                example_str = example_str[:67] + '...'
+                example_str = example_str[:67] + "..."
             lines.append(f"  Examples: {example_str}")
 
         return f"{header}\n" + "\n".join(lines)
@@ -131,8 +134,7 @@ class FlowfileColumn:
 
     @classmethod
     def create_from_minimal_field_info(cls, minimal_field_info: input_schema.MinimalFieldInfo) -> "FlowfileColumn":
-        return cls.from_input(column_name=minimal_field_info.name,
-                              data_type=minimal_field_info.data_type)
+        return cls.from_input(column_name=minimal_field_info.name, data_type=minimal_field_info.data_type)
 
     @property
     def is_unique(self) -> bool:
@@ -170,41 +172,77 @@ class FlowfileColumn:
         return self.column_name
 
     def get_column_repr(self):
-        return dict(name=self.name,
-                    size=self.size,
-                    data_type=str(self.data_type),
-                    has_values=self.has_values,
-                    is_unique=self.is_unique,
-                    max_value=str(self.max_value),
-                    min_value=str(self.min_value),
-                    number_of_unique_values=self.number_of_unique_values,
-                    number_of_filled_values=self.number_of_filled_values,
-                    number_of_empty_values=self.number_of_empty_values,
-                    average_size=self.average_value)
+        return dict(
+            name=self.name,
+            size=self.size,
+            data_type=str(self.data_type),
+            has_values=self.has_values,
+            is_unique=self.is_unique,
+            max_value=str(self.max_value),
+            min_value=str(self.min_value),
+            number_of_unique_values=self.number_of_unique_values,
+            number_of_filled_values=self.number_of_filled_values,
+            number_of_empty_values=self.number_of_empty_values,
+            average_size=self.average_value,
+        )
 
     def generic_datatype(self) -> DataTypeGroup:
-        if self.data_type in ('Utf8', 'VARCHAR', 'CHAR', 'NVARCHAR', 'String'):
-            return 'str'
-        elif self.data_type in ('fixed_decimal', 'decimal', 'float', 'integer', 'boolean', 'double', 'Int16', 'Int32',
-                                'Int64', 'Float32', 'Float64', 'Decimal', 'Binary', 'Boolean', 'Uint8', 'Uint16',
-                                'Uint32', 'Uint64'):
-            return 'numeric'
-        elif self.data_type in ('datetime', 'date', 'Date', 'Datetime', 'Time'):
-            return 'date'
+        if self.data_type in ("Utf8", "VARCHAR", "CHAR", "NVARCHAR", "String"):
+            return "str"
+        elif self.data_type in (
+            "fixed_decimal",
+            "decimal",
+            "float",
+            "integer",
+            "boolean",
+            "double",
+            "Int16",
+            "Int32",
+            "Int64",
+            "Float32",
+            "Float64",
+            "Decimal",
+            "Binary",
+            "Boolean",
+            "Uint8",
+            "Uint16",
+            "Uint32",
+            "Uint64",
+        ):
+            return "numeric"
+        elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):
+            return "date"
         else:
-            return 'str'
+            return "str"
 
     def get_readable_datatype_group(self) -> ReadableDataTypeGroup:
-        if self.data_type in ('Utf8', 'VARCHAR', 'CHAR', 'NVARCHAR', 'String'):
-            return 'String'
-        elif self.data_type in ('fixed_decimal', 'decimal', 'float', 'integer', 'boolean', 'double', 'Int16', 'Int32',
-                                'Int64', 'Float32', 'Float64', 'Decimal', 'Binary', 'Boolean', 'Uint8', 'Uint16',
-                                'Uint32', 'Uint64'):
-            return 'Numeric'
-        elif self.data_type in ('datetime', 'date', 'Date', 'Datetime', 'Time'):
-            return 'Date'
+        if self.data_type in ("Utf8", "VARCHAR", "CHAR", "NVARCHAR", "String"):
+            return "String"
+        elif self.data_type in (
+            "fixed_decimal",
+            "decimal",
+            "float",
+            "integer",
+            "boolean",
+            "double",
+            "Int16",
+            "Int32",
+            "Int64",
+            "Float32",
+            "Float64",
+            "Decimal",
+            "Binary",
+            "Boolean",
+            "Uint8",
+            "Uint16",
+            "Uint32",
+            "Uint64",
+        ):
+            return "Numeric"
+        elif self.data_type in ("datetime", "date", "Date", "Datetime", "Time"):
+            return "Date"
         else:
-            return 'Other'
+            return "Other"
 
     def get_polars_type(self) -> PlType:
         pl_datatype = cast_str_to_polars_type(self.data_type)
@@ -215,13 +253,15 @@ class FlowfileColumn:
         self.data_type = str(pl_type.pl_datatype.base_type())
 
 
-def convert_stats_to_column_info(stats: List[Dict]) -> List[FlowfileColumn]:
+def convert_stats_to_column_info(stats: list[dict]) -> list[FlowfileColumn]:
     return [FlowfileColumn.create_from_polars_type(PlType(**c)) for c in stats]
 
 
-def convert_pl_schema_to_raw_data_format(pl_schema: pl.Schema) -> List[input_schema.MinimalFieldInfo]:
-    return [FlowfileColumn.create_from_polars_type(PlType(column_name=k, pl_datatype=v)).get_minimal_field_info()
-            for k, v in pl_schema.items()]
+def convert_pl_schema_to_raw_data_format(pl_schema: pl.Schema) -> list[input_schema.MinimalFieldInfo]:
+    return [
+        FlowfileColumn.create_from_polars_type(PlType(column_name=k, pl_datatype=v)).get_minimal_field_info()
+        for k, v in pl_schema.items()
+    ]
 
 
 def assert_if_flowfile_schema(obj: Iterable) -> bool:

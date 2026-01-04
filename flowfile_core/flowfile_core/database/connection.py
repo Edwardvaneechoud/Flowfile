@@ -1,9 +1,11 @@
-from sqlalchemy import create_engine
-from contextlib import contextmanager
-from sqlalchemy.orm import sessionmaker
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from flowfile_core.configs import logger
 from shared.storage_config import storage
 
@@ -44,8 +46,7 @@ def get_database_path() -> Path:
 
 # Create database engine
 engine = create_engine(
-    get_database_url(),
-    connect_args={"check_same_thread": False} if "sqlite" in get_database_url() else {}
+    get_database_url(), connect_args={"check_same_thread": False} if "sqlite" in get_database_url() else {}
 )
 
 # Create session factory
@@ -77,5 +78,5 @@ def get_database_info():
         "url": get_database_url(),
         "path": str(get_database_path()) if get_database_path() else None,
         "app_data_dir": str(get_app_data_dir()),
-        "platform": sys.platform
+        "platform": sys.platform,
     }

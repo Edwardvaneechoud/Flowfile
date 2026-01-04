@@ -1,16 +1,14 @@
-
 # flowfile_core/flowfile_core/configs/settings.py
-import platform
-import os
-import tempfile
 import argparse
+import os
+import platform
+import tempfile
 
 from passlib.context import CryptContext
 from starlette.config import Config
-from shared.storage_config import storage
 
 from flowfile_core.configs.utils import MutableBool
-
+from shared.storage_config import storage
 
 # Constants for server and worker configuration
 DEFAULT_SERVER_HOST = "0.0.0.0"
@@ -27,12 +25,8 @@ OFFLOAD_TO_WORKER: MutableBool = MutableBool(os.environ.get("FLOWFILE_OFFLOAD_TO
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Flowfile Backend Server")
-    parser.add_argument(
-        "--host", type=str, default=DEFAULT_SERVER_HOST, help="Host to bind to"
-    )
-    parser.add_argument(
-        "--port", type=int, default=DEFAULT_SERVER_PORT, help="Port to bind to"
-    )
+    parser.add_argument("--host", type=str, default=DEFAULT_SERVER_HOST, help="Host to bind to")
+    parser.add_argument("--port", type=int, default=DEFAULT_SERVER_PORT, help="Port to bind to")
     parser.add_argument(
         "--worker-port",
         type=int,
@@ -84,8 +78,9 @@ args = parse_args()
 
 SERVER_HOST = args.host if args.host is not None else DEFAULT_SERVER_HOST
 SERVER_PORT = args.port if args.port is not None else DEFAULT_SERVER_PORT
-WORKER_PORT = args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT",
-                                                                                  DEFAULT_WORKER_PORT))
+WORKER_PORT = (
+    args.worker_port if args.worker_port is not None else int(os.getenv("FLOWFILE_WORKER_PORT", DEFAULT_WORKER_PORT))
+)
 WORKER_HOST = os.getenv("WORKER_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
 
 config = Config(".env")
@@ -93,7 +88,7 @@ DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
-IS_RUNNING_IN_DOCKER = os.getenv('RUNNING_IN_DOCKER', 'false').lower() == 'true'
+IS_RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
 TEMP_DIR = storage.temp_directory
 
 ALGORITHM = "HS256"

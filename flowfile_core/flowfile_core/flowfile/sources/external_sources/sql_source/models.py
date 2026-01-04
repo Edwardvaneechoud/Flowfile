@@ -1,34 +1,42 @@
-from typing import Literal, Optional, TYPE_CHECKING
-from pydantic import BaseModel, SecretStr
-from flowfile_core.schemas.input_schema import (DatabaseConnection,
-                                                NodeDatabaseReader,
-                                                FullDatabaseConnection,
-                                                NodeDatabaseWriter)
 import base64
+from typing import Literal
+
 import polars as pl
+from pydantic import BaseModel
+
+from flowfile_core.schemas.input_schema import (
+    DatabaseConnection,
+    FullDatabaseConnection,
+    NodeDatabaseReader,
+    NodeDatabaseWriter,
+)
 
 
 class ExtDatabaseConnection(DatabaseConnection):
     """Database connection configuration with password handling."""
+
     password: str = None
 
 
 class DatabaseExternalWriteSettings(BaseModel):
     """Settings for SQL sink."""
+
     connection: ExtDatabaseConnection
     table_name: str
-    if_exists: Optional[Literal['append', 'replace', 'fail']] = 'append'
+    if_exists: Literal["append", "replace", "fail"] | None = "append"
     flowfile_flow_id: int = 1
     flowfile_node_id: int | str = -1
     operation: str
 
     @classmethod
-    def create_from_from_node_database_writer(cls, node_database_writer: NodeDatabaseWriter,
-                                              password: str,
-                                              table_name: str,
-                                              lf: pl.LazyFrame,
-                                              database_reference_settings: FullDatabaseConnection = None,
-                                              ) -> 'DatabaseExternalWriteSettings':
+    def create_from_from_node_database_writer(
+        cls,
+        node_database_writer: NodeDatabaseWriter,
+        password: str,
+        table_name: str,
+        lf: pl.LazyFrame,
+        database_reference_settings: FullDatabaseConnection = None,
+    ) -> "DatabaseExternalWriteSettings":
         """
         Create DatabaseExternalWriteSettings from NodeDatabaseWriter.
         Args:
@@ -45,28 +53,33 @@ class DatabaseExternalWriteSettings(BaseModel):
         else:
             database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
 
-        ext_database_connection = ExtDatabaseConnection(**database_connection,
-                                                        password=password)
-        return cls(connection=ext_database_connection,
-                   table_name=table_name,
-                   if_exists=node_database_writer.database_write_settings.if_exists,
-                   flowfile_flow_id=node_database_writer.flow_id,
-                   flowfile_node_id=node_database_writer.node_id,
-                   operation=base64.b64encode(lf.serialize()).decode())
+        ext_database_connection = ExtDatabaseConnection(**database_connection, password=password)
+        return cls(
+            connection=ext_database_connection,
+            table_name=table_name,
+            if_exists=node_database_writer.database_write_settings.if_exists,
+            flowfile_flow_id=node_database_writer.flow_id,
+            flowfile_node_id=node_database_writer.node_id,
+            operation=base64.b64encode(lf.serialize()).decode(),
+        )
 
 
 class DatabaseExternalReadSettings(BaseModel):
     """Settings for SQL source."""
+
     connection: ExtDatabaseConnection
     query: str
     flowfile_flow_id: int = 1
     flowfile_node_id: int | str = -1
 
     @classmethod
-    def create_from_from_node_database_reader(cls, node_database_reader: NodeDatabaseReader,
-                                              password: str,
-                                              query: str,
-                                              database_reference_settings: FullDatabaseConnection = None) -> 'DatabaseExternalReadSettings':
+    def create_from_from_node_database_reader(
+        cls,
+        node_database_reader: NodeDatabaseReader,
+        password: str,
+        query: str,
+        database_reference_settings: FullDatabaseConnection = None,
+    ) -> "DatabaseExternalReadSettings":
         """
         Create DatabaseExternalReadSettings from NodeDatabaseReader.
         Args:
@@ -82,9 +95,10 @@ class DatabaseExternalReadSettings(BaseModel):
         else:
             database_connection = {k: v for k, v in database_reference_settings.model_dump().items() if k != "password"}
 
-        ext_database_connection = ExtDatabaseConnection(**database_connection,
-                                                        password=password)
-        return cls(connection=ext_database_connection,
-                   query=query,
-                   flowfile_flow_id=node_database_reader.flow_id,
-                   flowfile_node_id=node_database_reader.node_id)
+        ext_database_connection = ExtDatabaseConnection(**database_connection, password=password)
+        return cls(
+            connection=ext_database_connection,
+            query=query,
+            flowfile_flow_id=node_database_reader.flow_id,
+            flowfile_node_id=node_database_reader.node_id,
+        )

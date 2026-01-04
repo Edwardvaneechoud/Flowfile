@@ -1,11 +1,14 @@
-import polars as pl
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable, TypeVar, Type
-from flowfile_frame.utils import _get_function_source
-from flowfile_frame.config import logger
+from typing import TypeVar
 
-T = TypeVar('T')
-ExprT = TypeVar('ExprT', bound='Expr')
+import polars as pl
+
+from flowfile_frame.config import logger
+from flowfile_frame.utils import _get_function_source
+
+T = TypeVar("T")
+ExprT = TypeVar("ExprT", bound="Expr")
 PASSTHROUGH_METHODS = {"map_elements", "map_batches"}
 
 
@@ -29,12 +32,9 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
 
     @wraps(original_method)
     def wrapper(self: Expr, *args, **kwargs):
-        from flowfile_frame.expr import Expr
         # Check if we have a valid underlying expression
         if self.expr is None:
-            raise ValueError(
-                f"Cannot call '{method_name}' on Expr with no underlying polars expression."
-            )
+            raise ValueError(f"Cannot call '{method_name}' on Expr with no underlying polars expression.")
 
         # Collect function sources and build representations
         function_sources = []
@@ -47,7 +47,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
                 # Try to get function source
                 try:
                     source, is_module_level = _get_function_source(arg)
-                    if source and hasattr(arg, '__name__') and arg.__name__ != '<lambda>':
+                    if source and hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
                         function_sources.append(source)
                         # Use the function name in the representation
                         args_representations.append(arg.__name__)
@@ -65,7 +65,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
                 # Try to get function source
                 try:
                     source, is_module_level = _get_function_source(value)
-                    if source and hasattr(value, '__name__') and value.__name__ != '<lambda>':
+                    if source and hasattr(value, "__name__") and value.__name__ != "<lambda>":
                         function_sources.append(source)
                         # Use the function name in the representation
                         kwargs_representations.append(f"{key}={value.__name__}")
@@ -102,16 +102,56 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
 
         # Methods that typically change the aggregation status or complexity
         agg_methods = {
-            "sum", "mean", "min", "max", "median", "first", "last", "std", "var",
-            "count", "n_unique", "quantile", "implode", "explode"
+            "sum",
+            "mean",
+            "min",
+            "max",
+            "median",
+            "first",
+            "last",
+            "std",
+            "var",
+            "count",
+            "n_unique",
+            "quantile",
+            "implode",
+            "explode",
         }
         # Methods that typically make expressions complex
         complex_methods = {
-            "filter", "map", "shift", "fill_null", "fill_nan", "round", "abs", "alias",
-            "cast", "is_between", "over", "sort", "arg_sort", "arg_unique", "arg_min",
-            "arg_max", "rolling", "interpolate", "ewm_mean", "ewm_std", "ewm_var",
-            "backward_fill", "forward_fill", "rank", "diff", "clip", "dot", "mode",
-            "drop_nulls", "drop_nans", "take", "gather", "filter", "shift_and_fill"
+            "filter",
+            "map",
+            "shift",
+            "fill_null",
+            "fill_nan",
+            "round",
+            "abs",
+            "alias",
+            "cast",
+            "is_between",
+            "over",
+            "sort",
+            "arg_sort",
+            "arg_unique",
+            "arg_min",
+            "arg_max",
+            "rolling",
+            "interpolate",
+            "ewm_mean",
+            "ewm_std",
+            "ewm_var",
+            "backward_fill",
+            "forward_fill",
+            "rank",
+            "diff",
+            "clip",
+            "dot",
+            "mode",
+            "drop_nulls",
+            "drop_nans",
+            "take",
+            "gather",
+            "shift_and_fill",
         }
 
         # Determine new agg_func status
@@ -127,7 +167,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
             result_expr=result_expr,
             is_complex=is_complex,
             method_name=method_name,
-            _function_sources=function_sources  # Pass function sources
+            _function_sources=function_sources,  # Pass function sources
         )
 
         # Set the agg_func if needed
@@ -139,7 +179,7 @@ def create_expr_method_wrapper(method_name: str, original_method: Callable) -> C
     return wrapper
 
 
-def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
+def add_expr_methods(cls: type[ExprT]) -> type[ExprT]:
     """
     Class decorator that adds all polars Expr methods to a custom Expr class.
 
@@ -160,8 +200,7 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
     existing_methods = set(dir(cls))
 
     skip_methods = {
-        name for name in dir(pl.Expr)
-        if name.startswith('_') or isinstance(getattr(pl.Expr, name, None), property)
+        name for name in dir(pl.Expr) if name.startswith("_") or isinstance(getattr(pl.Expr, name, None), property)
     }
 
     # Add all public Expr methods that don't already exist
@@ -193,20 +232,21 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                                 # Try to get function source
                                 try:
                                     source, is_module_level = _get_function_source(arg)
-                                    if source and hasattr(arg, '__name__') and arg.__name__ != '<lambda>':
-
+                                    if source and hasattr(arg, "__name__") and arg.__name__ != "<lambda>":
                                         function_sources.append(source)
                                         # Use the function name in the representation
                                         args_representations.append(arg.__name__)
                                         arg.__repr__ = lambda: arg.__name__
 
                                     else:
-
                                         # Lambda or unnamed function - not convertible
                                         logger.warning(
-                                            f"Warning: Using anonymous functions in {method_name} is not convertable to UI code")
-                                        logger.warning(f"Consider using defined functions (def abc(a, b, c): return ...), "
-                                                       f"In a separate script")
+                                            f"Warning: Using anonymous functions in {method_name} is not convertable to UI code"
+                                        )
+                                        logger.warning(
+                                            "Consider using defined functions (def abc(a, b, c): return ...), "
+                                            "In a separate script"
+                                        )
                                         convertable_to_code = False
                                         args_representations.append(repr(arg))
                                 except:
@@ -220,7 +260,7 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                                 # Try to get function source
                                 try:
                                     source, is_module_level = _get_function_source(value)
-                                    if source and hasattr(value, '__name__') and value.__name__ != '<lambda>':
+                                    if source and hasattr(value, "__name__") and value.__name__ != "<lambda>":
                                         function_sources.append(source)
                                         # Use the function name in the representation
                                         kwargs_representations.append(f"{key}={value.__name__}")
@@ -258,7 +298,7 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                             is_complex=True,
                             convertable_to_code=convertable_to_code,
                             _function_sources=function_sources,  # Pass function sources
-                            **kwargs
+                            **kwargs,
                         )
                         return result
 
@@ -271,8 +311,9 @@ def add_expr_methods(cls: Type[ExprT]) -> Type[ExprT]:
                 setattr(cls, name, wrapped_method)
 
     overlap = {
-        name for name in existing_methods
-        if name in dir(pl.Expr) and not name.startswith('_') and callable(getattr(pl.Expr, name))
+        name
+        for name in existing_methods
+        if name in dir(pl.Expr) and not name.startswith("_") and callable(getattr(pl.Expr, name))
     }
     if overlap:
         logger.debug(f"Preserved existing methods in {cls.__name__}: {', '.join(sorted(overlap))}")

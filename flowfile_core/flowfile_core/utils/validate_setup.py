@@ -1,10 +1,11 @@
 """This script runs on run time and checks if all the nodes that are created have a function in the flow_graph as well
 as have a component in flowfile_frontend"""
 
-from flowfile_core.schemas import input_schema
-from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.configs.node_store import nodes_list, NodeTemplate
 import inspect
+
+from flowfile_core.configs.node_store import NodeTemplate, nodes_list
+from flowfile_core.flowfile.flow_graph import FlowGraph
+from flowfile_core.schemas import input_schema
 
 
 def check_if_node_has_add_function_in_flow_graph(node: NodeTemplate):
@@ -17,7 +18,7 @@ def check_if_node_has_add_function_in_flow_graph(node: NodeTemplate):
 
 
 def check_if_node_has_input_schema_definition(node: NodeTemplate):
-    if "node"+node.item.replace("_","") not in {k.lower() for k in inspect.getmodule(input_schema).__dict__.keys()}:
+    if "node" + node.item.replace("_", "") not in {k.lower() for k in inspect.getmodule(input_schema).__dict__.keys()}:
         raise ValueError(
             f"Node {node.name} ({node.item}) does not have a corresponding input schema definition in input_schema.py."
             "Check if the schema is implemented or if the node item is correct."

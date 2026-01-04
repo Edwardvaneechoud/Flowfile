@@ -4,14 +4,16 @@ Web interface for Flowfile.
 Extends the flowfile_core FastAPI app to serve the Vue.js frontend
 and includes worker functionality.
 """
+
+import asyncio
 import os
 import time
-from pathlib import Path
 import webbrowser
-import asyncio
+from pathlib import Path
+
 from fastapi import FastAPI, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 static_dir = Path(__file__).parent / "static"
 
@@ -52,8 +54,8 @@ def extend_app(app: FastAPI):
     @app.get("/single_mode")
     async def in_single_mode() -> bool:
         print("Checking if single file mode is enabled")
-        print(os.environ.get('FLOWFILE_SINGLE_FILE_MODE'))
-        return os.environ.get('FLOWFILE_SINGLE_FILE_MODE', "0") == "1"
+        print(os.environ.get("FLOWFILE_SINGLE_FILE_MODE"))
+        return os.environ.get("FLOWFILE_SINGLE_FILE_MODE", "0") == "1"
 
     @app.get("/ui", include_in_schema=False)
     async def web_ui_root():
@@ -95,8 +97,8 @@ def include_worker_routes(app: FastAPI):
     """
     try:
         # Import worker modules
+        from flowfile_worker import CACHE_DIR, mp_context
         from flowfile_worker.routes import router as worker_router
-        from flowfile_worker import mp_context, CACHE_DIR
 
         # Add lifecycle event handler for worker cleanup
         @app.on_event("shutdown")
@@ -136,9 +138,11 @@ def start_server(host="127.0.0.1", port=63578, open_browser=True):
     os.environ["FLOWFILE_MODE"] = "electron"
 
     # Import core app
-    from flowfile_core.main import run, app as core_app
     from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
-    if host != '127.0.0.1':
+    from flowfile_core.main import app as core_app
+    from flowfile_core.main import run
+
+    if host != "127.0.0.1":
         raise NotImplementedError("Other then local host is not supported")
     if port != 63578:
         raise NotImplementedError("Service must run on port 63578")

@@ -1,9 +1,10 @@
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
-from flowfile_core.schemas import input_schema, transform_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 try:
     import os
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
     from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 except ModuleNotFoundError:
     import os
@@ -11,8 +12,6 @@ except ModuleNotFoundError:
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
-    from tests.utils import ensure_cloud_storage_connection_is_available_and_get_connection, get_cloud_connection
 
 
 def create_flow_settings(flow_id: int = 1) -> schemas.FlowSettings:
@@ -62,7 +61,7 @@ def test_graph_tree(capsys):
     [280, 260, 230]
     ]
 
-    for i, j in zip([manual_input_data_1, manual_input_data_2, manual_input_data_3, manual_input_data_4], range(1, 5)):
+    for i, j in zip([manual_input_data_1, manual_input_data_2, manual_input_data_3, manual_input_data_4], range(1, 5), strict=False):
         data = input_schema.NodeManualInput(
             flow_id=1,
             node_id=j,

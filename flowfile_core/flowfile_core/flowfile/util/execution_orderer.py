@@ -1,19 +1,20 @@
-from typing import List, Dict, Set
-from flowfile_core.flowfile.flow_node.flow_node import FlowNode
+from collections import defaultdict, deque
+
 from flowfile_core.configs import logger
-from collections import deque, defaultdict
+from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.node_skipper import determine_nodes_to_skip
 
-def compute_execution_plan(nodes: List[FlowNode], flow_starts: List[FlowNode] = None):
-    """ Computes the execution order after finding the nodes to skip on the execution step."""
+
+def compute_execution_plan(nodes: list[FlowNode], flow_starts: list[FlowNode] = None):
+    """Computes the execution order after finding the nodes to skip on the execution step."""
     skip_nodes = determine_nodes_to_skip(nodes=nodes)
-    computed_execution_order = determine_execution_order(all_nodes=[node for node in nodes if node not in skip_nodes],
-                                                        flow_starts=flow_starts)
+    computed_execution_order = determine_execution_order(
+        all_nodes=[node for node in nodes if node not in skip_nodes], flow_starts=flow_starts
+    )
     return skip_nodes, computed_execution_order
 
 
-
-def determine_execution_order(all_nodes: List[FlowNode], flow_starts: List[FlowNode] = None) -> List[FlowNode]:
+def determine_execution_order(all_nodes: list[FlowNode], flow_starts: list[FlowNode] = None) -> list[FlowNode]:
     """
     Determines the execution order of nodes using topological sorting based on node dependencies.
 
@@ -41,7 +42,7 @@ def determine_execution_order(all_nodes: List[FlowNode], flow_starts: List[FlowN
     return execution_order
 
 
-def build_node_map(all_nodes: List[FlowNode]) -> Dict[str, FlowNode]:
+def build_node_map(all_nodes: list[FlowNode]) -> dict[str, FlowNode]:
     """
     Creates a mapping from node ID to node object.
 
@@ -54,8 +55,9 @@ def build_node_map(all_nodes: List[FlowNode]) -> Dict[str, FlowNode]:
     return {node.node_id: node for node in all_nodes}
 
 
-def compute_in_degrees_and_adjacency_list(all_nodes: List[FlowNode],
-                                          node_map: Dict[str, FlowNode]) -> (Dict[str, int], Dict[str, List[str]]):
+def compute_in_degrees_and_adjacency_list(
+    all_nodes: list[FlowNode], node_map: dict[str, FlowNode]
+) -> (dict[str, int], dict[str, list[str]]):
     """
     Computes the in-degree and adjacency list for all nodes.
 
@@ -81,8 +83,9 @@ def compute_in_degrees_and_adjacency_list(all_nodes: List[FlowNode],
     return in_degree, adjacency_list
 
 
-def initialize_queue(flow_starts: List[FlowNode], all_nodes: List[FlowNode], in_degree: Dict[str, int]) -> (
-deque, Set[str]):
+def initialize_queue(
+    flow_starts: list[FlowNode], all_nodes: list[FlowNode], in_degree: dict[str, int]
+) -> (deque, set[str]):
     """
     Initializes the queue with nodes that have zero in-degree or based on specified flow start nodes.
 
@@ -115,8 +118,13 @@ deque, Set[str]):
     return queue, visited_nodes
 
 
-def perform_topological_sort(queue: deque, node_map: Dict[str, FlowNode], in_degree: Dict[str, int],
-                             adjacency_list: Dict[str, List[str]], visited_nodes: Set[str]) -> List[FlowNode]:
+def perform_topological_sort(
+    queue: deque,
+    node_map: dict[str, FlowNode],
+    in_degree: dict[str, int],
+    adjacency_list: dict[str, list[str]],
+    visited_nodes: set[str],
+) -> list[FlowNode]:
     """
     Performs topological sorting to determine the execution order of nodes.
 
@@ -131,7 +139,7 @@ def perform_topological_sort(queue: deque, node_map: Dict[str, FlowNode], in_deg
         List[FlowNode]: A list of nodes in the order they should be executed.
     """
     execution_order = []
-    logger.info('Starting topological sort to determine execution order')
+    logger.info("Starting topological sort to determine execution order")
 
     while queue:
         current_node_id = queue.popleft()
