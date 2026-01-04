@@ -1,21 +1,20 @@
 import polars as pl
 
-
 dtype_to_pl = {
-    'int': pl.Int64,
-    'integer': pl.Int64,
-    'char': pl.String,
-    'fixed decimal': pl.Float32,
-    'double': pl.Float64,
-    'float': pl.Float64,
-    'bool': pl.Boolean,
-    'byte': pl.UInt8,
-    'bit': pl.Binary,
-    'date': pl.Date,
-    'datetime': pl.Datetime,
-    'string': pl.String,
-    'str': pl.String,
-    'time': pl.Time,
+    "int": pl.Int64,
+    "integer": pl.Int64,
+    "char": pl.String,
+    "fixed decimal": pl.Float32,
+    "double": pl.Float64,
+    "float": pl.Float64,
+    "bool": pl.Boolean,
+    "byte": pl.UInt8,
+    "bit": pl.Binary,
+    "date": pl.Date,
+    "datetime": pl.Datetime,
+    "string": pl.String,
+    "str": pl.String,
+    "time": pl.Time,
 }
 
 dtype_to_pl_str = {k: v.__name__ for k, v in dtype_to_pl.items()}

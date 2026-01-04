@@ -1,24 +1,24 @@
-import pytest
-from typing import Dict, Any
+from typing import Any
+
 import polars as pl
+import pytest
 from polars.testing import assert_frame_equal
 
-from flowfile_core.flowfile.node_designer.ui_components import (
-    TextInput,
-    NumericInput,
-    SliderInput,
-    ToggleSwitch,
-    SingleSelect,
-    MultiSelect,
-    IncomingColumns
-)
+from flowfile_core.flowfile.node_designer import ColumnSelector, CustomNodeBase, NodeSettings, Section
 from flowfile_core.flowfile.node_designer.custom_node import (
     to_frontend_schema,
 )
-from flowfile_core.flowfile.node_designer import (
-    CustomNodeBase, Section, NodeSettings, ColumnSelector
+from flowfile_core.flowfile.node_designer.ui_components import (
+    IncomingColumns,
+    MultiSelect,
+    NumericInput,
+    SingleSelect,
+    SliderInput,
+    TextInput,
+    ToggleSwitch,
 )
 from flowfile_core.types import DataType, Types
+
 
 @pytest.fixture
 def UserDefinedNode():
@@ -118,7 +118,7 @@ def node_settings_with_multi_column_selector():
 
 # Fixtures for reusable test components and schemas
 @pytest.fixture
-def sample_components() -> Dict[str, Any]:
+def sample_components() -> dict[str, Any]:
     """Provides a dictionary of sample UI components for testing."""
     return {
         "text_input": TextInput(label="Name", default="Default Name", placeholder="Enter name"),
@@ -132,7 +132,7 @@ def sample_components() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_section(sample_components: Dict[str, Any]) -> Section:
+def sample_section(sample_components: dict[str, Any]) -> Section:
     """Provides a sample Section containing various components."""
     return Section(
         title="Main Config",
@@ -220,7 +220,7 @@ def test_multi_select_default_is_empty_list():
 
 # --- Tests for Section and NodeSettings ---
 
-def test_section_get_components(sample_section: Section, sample_components: Dict[str, Any]):
+def test_section_get_components(sample_section: Section, sample_components: dict[str, Any]):
     """Tests that a Section can correctly find all its component children."""
     found_components = sample_section.get_components()
     assert len(found_components) == len(sample_components)
@@ -243,7 +243,7 @@ def test_node_settings_populate_values(sample_node_settings: NodeSettings):
     sample_node_settings.populate_values(new_values)
 
     # Check that the component values have been updated
-    section = getattr(sample_node_settings, 'config')
+    section = sample_node_settings.config
     components = section.get_components()
     assert components["text_input"].value == "Updated Name"
     assert components["num_input"].value == 99
@@ -337,7 +337,7 @@ class TestUserDefinedNode:
     """A dedicated test class for the node defined in the UserDefinedNode fixture."""
 
     @pytest.fixture
-    def settings_dict(self) -> Dict[str, Any]:
+    def settings_dict(self) -> dict[str, Any]:
         """Provides a sample settings dictionary for the FixedColumn node."""
         return {
             "main_section": {
@@ -347,13 +347,13 @@ class TestUserDefinedNode:
         }
 
     @pytest.fixture
-    def configured_node(self, UserDefinedNode, settings_dict: Dict[str, Any]):
+    def configured_node(self, UserDefinedNode, settings_dict: dict[str, Any]):
         """Provides a configured instance of the FixedColumn node."""
         return UserDefinedNode.from_settings(settings_dict)
 
     def test_build_from_settings(self, configured_node):
         """Tests that the node correctly populates its values from a dict."""
-        section = getattr(configured_node.settings_schema, 'main_section')
+        section = configured_node.settings_schema.main_section
         components = section.get_components()
         assert components["standard_input"].value == "hello from test"
         assert components["column_name"].value == "new_col"
@@ -385,9 +385,7 @@ class TestColumnSelectorInNodeSettings:
     @pytest.fixture
     def numeric_column_selector_node(self):
         """Creates a node with a ColumnSelector filtered to numeric types."""
-        from flowfile_core.flowfile.node_designer import (
-            CustomNodeBase, Section, NodeSettings, ColumnSelector, Types
-        )
+        from flowfile_core.flowfile.node_designer import ColumnSelector, CustomNodeBase, NodeSettings, Section, Types
 
         input_section = Section(
             title="input",

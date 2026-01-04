@@ -1,26 +1,35 @@
-from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (SqlSource,
-                                                                                   get_query_columns,
-                                                                                   get_table_column_types,
-                                                                                   get_polars_type,
-                                                                                   create_sql_source_from_db_settings)
-import pytest
 import polars as pl
-from flowfile_core.schemas.input_schema import (MinimalFieldInfo, FullDatabaseConnection, DatabaseSettings,
-                                                DatabaseConnection)
-from flowfile_core.flowfile.database_connection_manager.db_connections import (get_local_database_connection,
-                                                                               store_database_connection)
-from flowfile_core.database.connection import get_db_context
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+import pytest
 from sqlalchemy import create_engine
 
+from flowfile_core.database.connection import get_db_context
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    get_local_database_connection,
+    store_database_connection,
+)
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
+    SqlSource,
+    create_sql_source_from_db_settings,
+    get_polars_type,
+    get_query_columns,
+    get_table_column_types,
+)
+from flowfile_core.schemas.input_schema import (
+    DatabaseConnection,
+    DatabaseSettings,
+    FullDatabaseConnection,
+    MinimalFieldInfo,
+)
+
 try:
-    from tests.flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from tests.flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 except ModuleNotFoundError:
     import os
     import sys
     sys.path.append(os.path.dirname(os.path.abspath("flowfile_core/tests/flowfile_core_test_utils.py")))
     # noinspection PyUnresolvedReferences
-    from flowfile_core_test_utils import (is_docker_available, ensure_password_is_available)
+    from flowfile_core_test_utils import ensure_password_is_available, is_docker_available
 
 
 
@@ -77,8 +86,8 @@ def test_get_query_columns(engine):
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_table_column_types(engine):
-    from sqlalchemy.sql.sqltypes import INTEGER, TEXT, Text
     from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.sql.sqltypes import INTEGER, TEXT, Text
     expected = [
         ('movie_id', INTEGER()),
         ('title', TEXT()),
@@ -244,8 +253,8 @@ def test_parse_schema(sql_source, expected_schema, monkeypatch):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_get_polars_type():
     """Test the get_polars_type function converts SQLAlchemy types to polars types."""
-    from sqlalchemy.sql.sqltypes import INTEGER, FLOAT, VARCHAR, BOOLEAN, DATE, DATETIME
     import polars as pl
+    from sqlalchemy.sql.sqltypes import BOOLEAN, DATE, DATETIME, FLOAT, INTEGER, VARCHAR
 
     # Test INTEGER type
     int_type = get_polars_type(INTEGER())

@@ -5,8 +5,8 @@ This router provides secure endpoints for creating, retrieving, and deleting
 sensitive credentials for the authenticated user. Secrets are encrypted before
 being stored and are associated with the user's ID.
 """
+
 import os
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -15,12 +15,13 @@ from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.auth.models import Secret, SecretInput
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import get_db
-from flowfile_core.secret_manager.secret_manager import store_secret, delete_secret as delete_secret_action
+from flowfile_core.secret_manager.secret_manager import delete_secret as delete_secret_action
+from flowfile_core.secret_manager.secret_manager import store_secret
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
 
-@router.get("/secrets", response_model=List[Secret])
+@router.get("/secrets", response_model=list[Secret])
 async def get_secrets(current_user=Depends(get_current_active_user), db: Session = Depends(get_db)):
     """Retrieves all secret names for the currently authenticated user.
 
@@ -42,18 +43,15 @@ async def get_secrets(current_user=Depends(get_current_active_user), db: Session
     # Prepare response model (without decrypting)
     secrets = []
     for db_secret in db_secrets:
-        secrets.append(Secret(
-            name=db_secret.name,
-            value=db_secret.encrypted_value,
-            user_id=str(db_secret.user_id)
-        ))
+        secrets.append(Secret(name=db_secret.name, value=db_secret.encrypted_value, user_id=str(db_secret.user_id)))
 
     return secrets
 
 
 @router.post("/secrets", response_model=Secret)
-async def create_secret(secret: SecretInput, current_user=Depends(get_current_active_user),
-                        db: Session = Depends(get_db)) -> Secret:
+async def create_secret(
+    secret: SecretInput, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
+) -> Secret:
     """Creates a new secret for the authenticated user.
 
     The secret value is encrypted before being stored in the database. A secret
@@ -73,10 +71,11 @@ async def create_secret(secret: SecretInput, current_user=Depends(get_current_ac
     # Get user ID
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
-    existing_secret = db.query(db_models.Secret).filter(
-        db_models.Secret.user_id == user_id,
-        db_models.Secret.name == secret.name
-    ).first()
+    existing_secret = (
+        db.query(db_models.Secret)
+        .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret.name)
+        .first()
+    )
 
     if existing_secret:
         raise HTTPException(status_code=400, detail="Secret with this name already exists")
@@ -87,8 +86,9 @@ async def create_secret(secret: SecretInput, current_user=Depends(get_current_ac
 
 
 @router.get("/secrets/{secret_name}", response_model=Secret)
-async def get_secret(secret_name: str,
-                     current_user=Depends(get_current_active_user), db: Session = Depends(get_db)) -> Secret:
+async def get_secret(
+    secret_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
+) -> Secret:
     """Retrieves a specific secret by name for the authenticated user.
 
     Note: This endpoint returns the secret name and metadata but does not
@@ -109,24 +109,22 @@ async def get_secret(secret_name: str,
     user_id = 1 if os.environ.get("FLOWFILE_MODE") == "electron" else current_user.id
 
     # Get secret from database
-    db_secret = db.query(db_models.Secret).filter(
-        db_models.Secret.user_id == user_id,
-        db_models.Secret.name == secret_name
-    ).first()
+    db_secret = (
+        db.query(db_models.Secret)
+        .filter(db_models.Secret.user_id == user_id, db_models.Secret.name == secret_name)
+        .first()
+    )
 
     if not db_secret:
         raise HTTPException(status_code=404, detail="Secret not found")
 
-    return Secret(
-        name=db_secret.name,
-        value=db_secret.encrypted_value,
-        user_id=str(db_secret.user_id)
-    )
+    return Secret(name=db_secret.name, value=db_secret.encrypted_value, user_id=str(db_secret.user_id))
 
 
 @router.delete("/secrets/{secret_name}", status_code=204)
-async def delete_secret(secret_name: str, current_user=Depends(get_current_active_user),
-                        db: Session = Depends(get_db)) -> None:
+async def delete_secret(
+    secret_name: str, current_user=Depends(get_current_active_user), db: Session = Depends(get_db)
+) -> None:
     """Deletes a secret by name for the authenticated user.
 
     Args:

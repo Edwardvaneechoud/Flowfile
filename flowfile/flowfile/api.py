@@ -1,23 +1,23 @@
 # flowfile/api.py
 
-import uuid
-import time
-import os
-import requests
-import subprocess
-import sys
 import atexit
 import logging
-import webbrowser
-import shutil
+import os
 import platform
-
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+import webbrowser
 from pathlib import Path
-from typing import Optional, Dict, Any, Union, Tuple, List
 from subprocess import Popen
-from flowfile_core.flowfile.flow_graph import FlowGraph
 from tempfile import TemporaryDirectory
-import flowfile as ff
+from typing import Any
+
+import requests
+
+from flowfile_core.flowfile.flow_graph import FlowGraph
 
 # Configuration
 FLOWFILE_HOST: str = os.environ.get("FLOWFILE_HOST", "127.0.0.1")
@@ -30,7 +30,7 @@ POETRY_PATH: str = os.environ.get("POETRY_PATH", "poetry")
 logger: logging.Logger = logging.getLogger(__name__)
 
 # Global variable to track the managed server process
-_server_process: Optional[Popen] = None
+_server_process: Popen | None = None
 
 
 def is_flowfile_running() -> bool:
@@ -56,9 +56,7 @@ def stop_flowfile_server_process() -> None:
             try:
                 # On Windows, use subprocess to kill the process tree
                 subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(_server_process.pid)],
-                    capture_output=True,
-                    check=False
+                    ["taskkill", "/F", "/T", "/PID", str(_server_process.pid)], capture_output=True, check=False
                 )
                 logger.info("Server process terminated (Windows).")
             except Exception as e:
@@ -116,10 +114,7 @@ def is_poetry_environment() -> bool:
 
     # Check if we're in a poetry virtual environment
     venv_path = os.environ.get("VIRTUAL_ENV", "")
-    if venv_path and (
-            "poetry" in venv_path.lower() or
-            Path(venv_path).joinpath(".poetry-venv").exists()
-    ):
+    if venv_path and ("poetry" in venv_path.lower() or Path(venv_path).joinpath(".poetry-venv").exists()):
         return True
 
     # Look for pyproject.toml with poetry section
@@ -128,7 +123,7 @@ def is_poetry_environment() -> bool:
         pyproject = parent / "pyproject.toml"
         if pyproject.exists():
             try:
-                with open(pyproject, "r") as f:
+                with open(pyproject) as f:
                     content = f.read()
                     if "[tool.poetry]" in content:
                         return True
@@ -143,7 +138,7 @@ def is_command_available(command: str) -> bool:
     return shutil.which(command) is not None
 
 
-def build_server_command(module_name: str) -> List[str]:
+def build_server_command(module_name: str) -> list[str]:
     """
     Build the appropriate command to start the server based on environment detection.
     Tries Poetry first if in a Poetry environment, falls back to direct module execution.
@@ -167,7 +162,7 @@ def build_server_command(module_name: str) -> List[str]:
     # Case 2: Fallback to direct script execution
     logger.info("Falling back to direct script execution.")
     python_parent_dir = Path(sys.executable).parent
-    command: List[str]
+    command: list[str]
     scripts_dir = Path(sys.executable).parent
 
     if platform.system() == "Windows":
@@ -194,7 +189,7 @@ def build_server_command(module_name: str) -> List[str]:
         # On Unix-like systems, the script in 'bin' is directly executable
         script_path = python_parent_dir / "bin" / module_name
         if not script_path.exists():
-            script_path = python_parent_dir / module_name # Fallback for different venv structures
+            script_path = python_parent_dir / module_name  # Fallback for different venv structures
 
         logger.info(f"Using direct script execution path: {script_path}")
         command = [str(script_path), "run", "ui", "--no-browser"]
@@ -213,7 +208,7 @@ def check_if_in_single_mode() -> bool:
     return False
 
 
-def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tuple[bool, bool]:
+def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> tuple[bool, bool]:
     """
     Start the Flowfile server as a background process if it's not already running.
     Automatically detects and uses Poetry if in a Poetry environment.
@@ -241,7 +236,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
                 command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             )
         else:
             _server_process = Popen(
@@ -265,12 +260,14 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
                 print("Waiting for Flowfile UI to start...")
             time.sleep(1)
         else:
-            logger.error("Failed to start server: API did not become responsive within 60 seconds. "
-                         "Try again or start service by running\n"
-                         "flowfile run ui")
+            logger.error(
+                "Failed to start server: API did not become responsive within 60 seconds. "
+                "Try again or start service by running\n"
+                "flowfile run ui"
+            )
             if _server_process and _server_process.stderr:
                 try:
-                    stderr_output: str = _server_process.stderr.read().decode(errors='ignore')
+                    stderr_output: str = _server_process.stderr.read().decode(errors="ignore")
                     logger.error(f"Server process stderr:\n{stderr_output[:1000]}...")
                 except Exception as read_err:
                     logger.error(f"Could not read stderr from server process: {read_err}")
@@ -286,7 +283,7 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
         logger.error(f"An unexpected error occurred while starting the server process: {e}")
         if _server_process and _server_process.stderr:
             try:
-                stderr_output = _server_process.stderr.read().decode(errors='ignore')
+                stderr_output = _server_process.stderr.read().decode(errors="ignore")
                 logger.error(f"Server process stderr:\n{stderr_output[:1000]}...")
             except Exception as read_err:
                 logger.error(f"Could not read stderr from server process: {read_err}")
@@ -295,17 +292,13 @@ def start_flowfile_server_process(module_name: str = DEFAULT_MODULE_NAME) -> Tup
         return False, False
 
 
-def get_auth_token() -> Optional[str]:
+def get_auth_token() -> str | None:
     """Get an authentication token from the Flowfile API."""
     try:
-        response: requests.Response = requests.post(
-            f"{FLOWFILE_BASE_URL}/auth/token",
-            json={},
-            timeout=5
-        )
+        response: requests.Response = requests.post(f"{FLOWFILE_BASE_URL}/auth/token", json={}, timeout=5)
         response.raise_for_status()
-        token_data: Dict[str, Any] = response.json()
-        access_token: Optional[str] = token_data.get("access_token")
+        token_data: dict[str, Any] = response.json()
+        access_token: str | None = token_data.get("access_token")
         if not access_token:
             logger.error("Auth token endpoint succeeded but 'access_token' was missing in response.")
             return None
@@ -319,7 +312,7 @@ def get_auth_token() -> Optional[str]:
         return None
 
 
-def import_flow_to_editor(flow_path: Path, auth_token: str) -> Optional[int]:
+def import_flow_to_editor(flow_path: Path, auth_token: str) -> int | None:
     """Import the flow into the Flowfile editor using the API endpoint."""
     if not flow_path.is_file():
         logger.error(f"Flow file not found: {flow_path}")
@@ -329,18 +322,15 @@ def import_flow_to_editor(flow_path: Path, auth_token: str) -> Optional[int]:
         return None
 
     try:
-        headers: Dict[str, str] = {"Authorization": f"Bearer {auth_token}"}
-        params: Dict[str, str] = {"flow_path": str(flow_path)}
+        headers: dict[str, str] = {"Authorization": f"Bearer {auth_token}"}
+        params: dict[str, str] = {"flow_path": str(flow_path)}
         response: requests.Response = requests.get(
-            f"{FLOWFILE_BASE_URL}/import_flow/",
-            params=params,
-            headers=headers,
-            timeout=10
+            f"{FLOWFILE_BASE_URL}/import_flow/", params=params, headers=headers, timeout=10
         )
         response.raise_for_status()
 
-        flow_id_data: Union[int, Dict[str, Any], Any] = response.json()
-        flow_id: Optional[int] = None
+        flow_id_data: int | dict[str, Any] | Any = response.json()
+        flow_id: int | None = None
 
         if isinstance(flow_id_data, int):
             flow_id = flow_id_data
@@ -355,7 +345,7 @@ def import_flow_to_editor(flow_path: Path, auth_token: str) -> Optional[int]:
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to import flow: {e}")
-        if hasattr(e, 'response') and e.response is not None:
+        if hasattr(e, "response") and e.response is not None:
             logger.error(f"Server response: {e.response.status_code} - {e.response.text[:500]}")
         return None
     except Exception as e:
@@ -364,10 +354,10 @@ def import_flow_to_editor(flow_path: Path, auth_token: str) -> Optional[int]:
 
 
 def _save_flow_to_location(
-        flow_graph: FlowGraph, storage_location: Optional[str]
-) -> Tuple[Optional[Path], Optional[TemporaryDirectory]]:
+    flow_graph: FlowGraph, storage_location: str | None
+) -> tuple[Path | None, TemporaryDirectory | None]:
     """Handles graph saving, path resolution, and temporary directory creation."""
-    temp_dir_obj: Optional[TemporaryDirectory] = None
+    temp_dir_obj: TemporaryDirectory | None = None
     flow_file_path: Path
     try:
         if storage_location:
@@ -409,7 +399,7 @@ def _open_flow_in_browser(flow_id: int) -> None:
         logger.info("Not in unified mode ('electron'), browser will not be opened automatically.")
 
 
-def _cleanup_temporary_storage(temp_dir_obj: Optional[TemporaryDirectory]) -> None:
+def _cleanup_temporary_storage(temp_dir_obj: TemporaryDirectory | None) -> None:
     """Safely cleans up the temporary directory if one was created."""
     if temp_dir_obj:
         try:
@@ -419,8 +409,12 @@ def _cleanup_temporary_storage(temp_dir_obj: Optional[TemporaryDirectory]) -> No
             logger.error(f"Error cleaning up temporary directory {temp_dir_obj.name}: {e}")
 
 
-def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] = None,
-                         module_name: str = DEFAULT_MODULE_NAME, automatically_open_browser: bool = True) -> bool:
+def open_graph_in_editor(
+    flow_graph: FlowGraph,
+    storage_location: str | None = None,
+    module_name: str = DEFAULT_MODULE_NAME,
+    automatically_open_browser: bool = True,
+) -> bool:
     """
     Save the ETL graph, ensure the Flowfile server is running (starting it
     if necessary), import the graph via API, and open it in a new browser
@@ -436,7 +430,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
     Returns:
     True if the graph was successfully imported, False otherwise.
     """
-    temp_dir_obj: Optional[TemporaryDirectory] = None
+    temp_dir_obj: TemporaryDirectory | None = None
     try:
         original_execution_settings = flow_graph.flow_settings.model_copy()
         flow_graph.flow_settings.execution_location = "local"
@@ -457,7 +451,7 @@ def open_graph_in_editor(flow_graph: FlowGraph, storage_location: Optional[str] 
         if flow_id is not None:
             if flow_in_single_mode and automatically_open_browser:
                 _open_flow_in_browser(flow_id)
-            logger.info(f"Ui available at: http://127.0.0.1:63578/ui#/main/designer")
+            logger.info("Ui available at: http://127.0.0.1:63578/ui#/main/designer")
             return True
         else:
             return False

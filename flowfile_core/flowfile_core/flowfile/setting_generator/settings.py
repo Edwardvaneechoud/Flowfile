@@ -1,10 +1,11 @@
-
-from flowfile_core.schemas import input_schema, transform_schema
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 from functools import wraps
-from flowfile_core.schemas.output_model import NodeData
-from flowfile_core.flowfile.setting_generator.setting_generator import SettingGenerator, SettingUpdator
+
 from pl_fuzzy_frame_match.models import FuzzyMapping
+
+from flowfile_core.flowfile.setting_generator.setting_generator import SettingGenerator, SettingUpdator
+from flowfile_core.schemas import input_schema, transform_schema
+from flowfile_core.schemas.output_model import NodeData
 
 setting_generator = SettingGenerator()
 setting_updator = SettingUpdator()
@@ -16,6 +17,7 @@ def setting_generator_method(f: callable) -> Callable:
         if node_data.setting_input is None or isinstance(node_data.setting_input, input_schema.NodePromise):
             f(node_data)
         return node_data
+
     setting_generator.add_setting_generator_func(inner)
     return inner
 
@@ -38,18 +40,19 @@ def join(node_data: "NodeData") -> NodeData:
         if len(overlapping_cols) > 0:
             join_key = overlapping_cols[0]
         else:
-            join_key = ''
+            join_key = ""
         join_input_manager = transform_schema.JoinInputManager(
-            transform_schema.JoinInput(join_mapping=join_key,
-                                       left_select=node_data.main_input.columns,
-                                       right_select=node_data.right_input.columns
-                                       )
+            transform_schema.JoinInput(
+                join_mapping=join_key,
+                left_select=node_data.main_input.columns,
+                right_select=node_data.right_input.columns,
+            )
         )
         join_input_manager.auto_rename()
         ji = join_input_manager.to_join_input()
-        node_data.setting_input = input_schema.NodeJoin(flow_id=node_data.flow_id,
-                                                        node_id=node_data.node_id,
-                                                        join_input=ji)
+        node_data.setting_input = input_schema.NodeJoin(
+            flow_id=node_data.flow_id, node_id=node_data.node_id, join_input=ji
+        )
     return node_data
 
 
@@ -57,24 +60,25 @@ def join(node_data: "NodeData") -> NodeData:
 def cross_join(node_data: "NodeData") -> NodeData:
     if node_data.right_input and node_data.main_input:
         cj_input_manager = transform_schema.CrossJoinInputManager(
-            transform_schema.CrossJoinInput(left_select=node_data.main_input.columns,
-                                            right_select=node_data.right_input.columns)
+            transform_schema.CrossJoinInput(
+                left_select=node_data.main_input.columns, right_select=node_data.right_input.columns
+            )
         )
         cj_input_manager.auto_rename()
         cj = cj_input_manager.to_cross_join_input()
-        node_data.setting_input = input_schema.NodeCrossJoin(flow_id=node_data.flow_id,
-                                                             node_id=node_data.node_id,
-                                                             cross_join_input=cj)
+        node_data.setting_input = input_schema.NodeCrossJoin(
+            flow_id=node_data.flow_id, node_id=node_data.node_id, cross_join_input=cj
+        )
     return node_data
 
 
 @setting_generator_method
 def filter(node_data: "NodeData") -> NodeData:
     if node_data.main_input:
-        fi = transform_schema.FilterInput(basic_filter=transform_schema.BasicFilter(), filter_type='advanced')
-        node_data.setting_input = input_schema.NodeFilter(flow_id=node_data.flow_id,
-                                                          node_id=node_data.node_id,
-                                                          filter_input=fi)
+        fi = transform_schema.FilterInput(basic_filter=transform_schema.BasicFilter(), filter_type="advanced")
+        node_data.setting_input = input_schema.NodeFilter(
+            flow_id=node_data.flow_id, node_id=node_data.node_id, filter_input=fi
+        )
     return node_data
 
 
@@ -96,16 +100,16 @@ def join(node_data: NodeData):
         existing_columns_left = set(r.old_name for r in left_select.renames if r.is_available)
         missing_incoming_left_columns = [ilc for ilc in left_columns if ilc not in existing_columns_left]
         missing_incoming_right_columns = [irc for irc in right_columns if irc not in existing_columns_right]
-        if not hasattr(setting_input, 'auto_keep_left'):
+        if not hasattr(setting_input, "auto_keep_left"):
             setting_input.auto_keep_left = False
-        if not hasattr(setting_input, 'auto_keep_right'):
+        if not hasattr(setting_input, "auto_keep_right"):
             setting_input.auto_keep_right = False
         for milc in missing_incoming_left_columns:
             select_input = transform_schema.SelectInput(old_name=milc, keep=setting_input.auto_keep_left)
-            setting_input.join_input.add_new_select_column(select_input, 'left')
+            setting_input.join_input.add_new_select_column(select_input, "left")
         for mirc in missing_incoming_right_columns:
             select_input = transform_schema.SelectInput(old_name=mirc, keep=setting_input.auto_keep_right)
-            setting_input.join_input.add_new_select_column(select_input, 'right')
+            setting_input.join_input.add_new_select_column(select_input, "right")
     return node_data
 
 
@@ -127,21 +131,22 @@ def cross_join(node_data: NodeData):
         existing_columns_left = set(r.old_name for r in left_select.renames if r.is_available)
         missing_incoming_left_columns = [ilc for ilc in left_columns if ilc not in existing_columns_left]
         missing_incoming_right_columns = [irc for irc in right_columns if irc not in existing_columns_right]
-        if not hasattr(setting_input, 'auto_keep_left'):
+        if not hasattr(setting_input, "auto_keep_left"):
             setting_input.auto_keep_left = False
-        if not hasattr(setting_input, 'auto_keep_right'):
+        if not hasattr(setting_input, "auto_keep_right"):
             setting_input.auto_keep_right = False
         for milc in missing_incoming_left_columns:
             select_input = transform_schema.SelectInput(old_name=milc, keep=setting_input.auto_keep_left)
-            setting_input.cross_join_input.add_new_select_column(select_input, 'left')
+            setting_input.cross_join_input.add_new_select_column(select_input, "left")
         for mirc in missing_incoming_right_columns:
             select_input = transform_schema.SelectInput(old_name=mirc, keep=setting_input.auto_keep_right)
-            setting_input.cross_join_input.add_new_select_column(select_input, 'right')
+            setting_input.cross_join_input.add_new_select_column(select_input, "right")
     return node_data
 
 
-def check_if_fuzzy_match_is_valid(left_columns: Iterable[str], right_columns: Iterable[str],
-                                  fuzzy_map: FuzzyMapping) -> bool:
+def check_if_fuzzy_match_is_valid(
+    left_columns: Iterable[str], right_columns: Iterable[str], fuzzy_map: FuzzyMapping
+) -> bool:
     if fuzzy_map.left_col not in left_columns:
         return False
     if fuzzy_map.right_col not in right_columns:
@@ -169,14 +174,14 @@ def fuzzy_match(node_data: NodeData):
         existing_columns_left = set(r.old_name for r in left_select.renames if r.is_available)
         missing_incoming_left_columns = [ilc for ilc in left_columns if ilc not in existing_columns_left]
         missing_incoming_right_columns = [irc for irc in right_columns if irc not in existing_columns_right]
-        if not hasattr(setting_input, 'auto_keep_left'):
+        if not hasattr(setting_input, "auto_keep_left"):
             setting_input.auto_keep_left = False
-        if not hasattr(setting_input, 'auto_keep_right'):
+        if not hasattr(setting_input, "auto_keep_right"):
             setting_input.auto_keep_right = False
         for milc in missing_incoming_left_columns:
             select_input = transform_schema.SelectInput(old_name=milc, keep=setting_input.auto_keep_left)
-            setting_input.join_input.add_new_select_column(select_input, 'left')
+            setting_input.join_input.add_new_select_column(select_input, "left")
         for mirc in missing_incoming_right_columns:
             select_input = transform_schema.SelectInput(old_name=mirc, keep=setting_input.auto_keep_right)
-            setting_input.join_input.add_new_select_column(select_input, 'right')
+            setting_input.join_input.add_new_select_column(select_input, "right")
     return node_data

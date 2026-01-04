@@ -5,13 +5,13 @@ This module provides utilities to set up, manage, and tear down PostgreSQL
 containers with sample data for testing.
 """
 
-import os
-import time
 import logging
-import subprocess
+import os
 import shutil
+import subprocess
+import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Dict, Generator, Optional, Tuple
 
 # Configure logging
 logging.basicConfig(
@@ -208,7 +208,7 @@ def start_postgres_container(
         container_name: str = POSTGRES_CONTAINER_NAME,
         port: int = POSTGRES_PORT,
         image_tag: str = POSTGRES_IMAGE_TAG
-) -> Tuple[Optional[subprocess.Popen], bool]:
+) -> tuple[subprocess.Popen | None, bool]:
     """
     Start the PostgreSQL container with sample data.
 
@@ -225,7 +225,7 @@ def start_postgres_container(
         logger.warning("Docker not available, skipping PostgreSQL container start")
         return None, False
 
-    logger.info(f"Starting PostgreSQL container with sample data...")
+    logger.info("Starting PostgreSQL container with sample data...")
 
     # Check if container is already running
     if is_container_running(container_name):
@@ -345,12 +345,12 @@ def print_connection_info(
     print(f"Connection string: postgresql://{user}:{password}@{host}:{port}/{db}")
     print("=" * 50)
     print("\nTo stop the container, run:")
-    print(f"poetry run stop_postgres")
+    print("poetry run stop_postgres")
     print("=" * 50 + "\n")
 
 
 @contextmanager
-def managed_postgres() -> Generator[Dict[str, any], None, None]:
+def managed_postgres() -> Generator[dict[str, any], None, None]:
     """
     Context manager for PostgreSQL container management.
     Ensures proper cleanup even when tests fail.

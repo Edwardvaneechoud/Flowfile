@@ -1,14 +1,15 @@
 import logging
-from pathlib import Path
-from datetime import datetime
-import os
 import logging.handlers
+import os
 import queue
 import threading
+from datetime import datetime
+from pathlib import Path
+
 from shared.storage_config import storage
 
 _process_safe_queue = queue.Queue(-1)
-main_logger = logging.getLogger('PipelineHandler')
+main_logger = logging.getLogger("PipelineHandler")
 
 
 class NodeLogger:
@@ -38,6 +39,7 @@ class NodeLogger:
 
 class FlowLogger:
     """Thread-safe logger for flow execution"""
+
     _instances = {}
     _instances_lock = threading.RLock()
     _queue_listener = None
@@ -47,7 +49,7 @@ class FlowLogger:
     def handle_extra_log_info(flow_id: int, extra: dict = None) -> dict:
         if extra is None:
             extra = {}
-        extra['flow_id'] = flow_id
+        extra["flow_id"] = flow_id
         return extra
 
     def __new__(cls, flow_id: int, clear_existing_logs: bool = False):
@@ -75,7 +77,7 @@ class FlowLogger:
 
     def _setup_new_logger(self):
         """Creates a new logger instance with appropriate handlers"""
-        logger_name = f'FlowExecution.{self.flow_id}'
+        logger_name = f"FlowExecution.{self.flow_id}"
         self._logger = logging.getLogger(logger_name)
         self._logger.setLevel(logging.INFO)
         self.setup_logging()
@@ -131,7 +133,7 @@ class FlowLogger:
 
         try:
             # Create an empty file
-            with open(self.log_file_path, 'w') as f:
+            with open(self.log_file_path, "w") as f:
                 pass
 
             # Re-setup the logger
@@ -154,9 +156,7 @@ class FlowLogger:
         """Start the queue listener for asynchronous logging"""
         queue_handler = logging.handlers.QueueHandler(_process_safe_queue)
         cls._queue_listener = logging.handlers.QueueListener(
-            _process_safe_queue,
-            queue_handler,
-            respect_handler_level=True
+            _process_safe_queue, queue_handler, respect_handler_level=True
         )
         cls._queue_listener.start()
 
@@ -193,7 +193,7 @@ class FlowLogger:
 
         # Add file handler
         file_handler = logging.FileHandler(self.log_file_path)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         file_handler.setFormatter(formatter)
         self._logger.addHandler(file_handler)
 
@@ -214,7 +214,8 @@ class FlowLogger:
             else:
                 # If still can't get lock, proceed anyway
                 main_logger.warning(
-                    f"Could not acquire lock for flow {self.flow_id}, proceeding with file clearing anyway")
+                    f"Could not acquire lock for flow {self.flow_id}, proceeding with file clearing anyway"
+                )
                 self._clear_log_impl()
 
     def _clear_log_impl(self):
@@ -223,7 +224,7 @@ class FlowLogger:
             # Ensure parent directory exists
             self.refresh_logger_if_needed()
             # Truncate file
-            with open(self.log_file_path, 'w') as f:
+            with open(self.log_file_path, "w") as f:
                 pass
             main_logger.info(f"Log file cleared for flow {self.flow_id}")
         except Exception as e:
@@ -409,7 +410,7 @@ def read_log_from_line(log_file_path: Path, start_line: int = 0):
     """Read log file content starting from a specific line"""
     lines = []
     try:
-        with open(log_file_path, "r") as file:
+        with open(log_file_path) as file:
             # Skip lines efficiently if needed
             if start_line > 0:
                 for _ in range(start_line):

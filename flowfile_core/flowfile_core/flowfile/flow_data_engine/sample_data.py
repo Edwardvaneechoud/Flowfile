@@ -1,9 +1,11 @@
-from faker import Faker
+from collections.abc import Generator
 from functools import partial
 from math import ceil
 from random import randint
+from typing import Any
+
 import polars as pl
-from typing import List, Dict, Any, Generator
+from faker import Faker
 
 
 def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFrame:
@@ -45,22 +47,25 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
 
     def generate_phone_number():
         return fake.phone_number()
+
     data = []
     for i in range(max_n_records):
         name = generate_name()
-        data.append(dict(
-            ID=randint(1, 1000000),
-            Name=name,
-            Address=generate_address(),
-            City=cities[selector(min_range(7000))-1],
-            Email=generate_email(name),
-            Phone=generate_phone_number(),
-            DOB=dob[selector(min_range(100_000))-1],
-            Work=companies[selector(min_range(100_000))-1],
-            Zipcode=zipcodes[selector(min_range(200_000))-1],
-            Country=countries[selector(min_range(50))-1],
-            sales_data=sales_data[selector(max_n_records)-1]
-        ))
+        data.append(
+            dict(
+                ID=randint(1, 1000000),
+                Name=name,
+                Address=generate_address(),
+                City=cities[selector(min_range(7000)) - 1],
+                Email=generate_email(name),
+                Phone=generate_phone_number(),
+                DOB=dob[selector(min_range(100_000)) - 1],
+                Work=companies[selector(min_range(100_000)) - 1],
+                Zipcode=zipcodes[selector(min_range(200_000)) - 1],
+                Country=countries[selector(min_range(50)) - 1],
+                sales_data=sales_data[selector(max_n_records) - 1],
+            )
+        )
     if max_n_records < n_records:
         n_duplicates: int = ceil(n_records / max_n_records)
         output = []
@@ -71,8 +76,9 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
     return pl.DataFrame(data)
 
 
-
-def create_fake_data_raw(n_records: int = 1000, col_selection: List[str] = None) -> Generator[Dict[str, Any], None, None]:
+def create_fake_data_raw(
+    n_records: int = 1000, col_selection: list[str] = None
+) -> Generator[dict[str, Any], None, None]:
     fake = Faker()
     selector = partial(randint, 0)
 
@@ -112,7 +118,7 @@ def create_fake_data_raw(n_records: int = 1000, col_selection: List[str] = None)
         "Work": companies,
         "Zipcode": zipcodes,
         "Country": countries,
-        "sales_data": sales_data
+        "sales_data": sales_data,
     }
 
     # Filter the available columns based on col_selection
@@ -133,6 +139,6 @@ def create_fake_data_raw(n_records: int = 1000, col_selection: List[str] = None)
 
 def write_fake_data():
     df = create_fake_data()
-    df.write_parquet('backend/tests/data/fake_data.parquet')
-    df.write_csv('backend/tests/data/fake_data.csv')
-    df.write_excel('backend/tests/data/fake_data.xlsx')
+    df.write_parquet("backend/tests/data/fake_data.parquet")
+    df.write_csv("backend/tests/data/fake_data.csv")
+    df.write_excel("backend/tests/data/fake_data.xlsx")

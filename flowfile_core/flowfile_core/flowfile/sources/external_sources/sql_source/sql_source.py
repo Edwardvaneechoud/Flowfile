@@ -1,16 +1,18 @@
-from typing import Any, Dict, Generator, List, Optional, Literal, Tuple
+from collections.abc import Generator
+from typing import Any, Literal
+
 import polars as pl
+from sqlalchemy import Engine, create_engine, inspect, text
+
 from flowfile_core.configs import logger
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
-from flowfile_core.schemas.input_schema import MinimalFieldInfo, DatabaseSettings
-from sqlalchemy import Engine, inspect, create_engine, text
-from flowfile_core.secret_manager.secret_manager import get_encrypted_secret, decrypt_secret
-
-from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
-from flowfile_core.flowfile.sources.external_sources.sql_source.utils import get_polars_type, construct_sql_uri
 from flowfile_core.flowfile.database_connection_manager.db_connections import get_local_database_connection
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.sources.external_sources.base_class import ExternalDataSource
+from flowfile_core.flowfile.sources.external_sources.sql_source.utils import construct_sql_uri, get_polars_type
+from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInfo
+from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 
-QueryMode = Literal['table', 'query']
+QueryMode = Literal["table", "query"]
 
 
 def get_query_columns(engine: Engine, query_text: str):
@@ -36,7 +38,7 @@ def get_query_columns(engine: Engine, query_text: str):
         return list(column_names)
 
 
-def get_table_column_types(engine: Engine, table_name: str, schema: str = None) -> List[Tuple[str, Any]]:
+def get_table_column_types(engine: Engine, table_name: str, schema: str = None) -> list[tuple[str, Any]]:
     """
     Get column types from a database table using a SQLAlchemy engine
 
@@ -51,7 +53,7 @@ def get_table_column_types(engine: Engine, table_name: str, schema: str = None) 
     inspector = inspect(engine)
     columns = inspector.get_columns(table_name, schema=schema)
 
-    return [(column['name'], column['type']) for column in columns]
+    return [(column["name"], column["type"]) for column in columns]
 
 
 class BaseSqlSource:
@@ -59,17 +61,20 @@ class BaseSqlSource:
     A simplified base class for SQL sources that handles query generation
     without requiring database connection details.
     """
-    table_name: Optional[str] = None
-    query: Optional[str] = None
-    schema_name: Optional[str] = None
-    query_mode: QueryMode = 'table'
-    schema: Optional[List[FlowfileColumn]] = None
 
-    def __init__(self,
-                 query: str = None,
-                 table_name: str = None,
-                 schema_name: str = None,
-                 fields: Optional[List[MinimalFieldInfo]] = None):
+    table_name: str | None = None
+    query: str | None = None
+    schema_name: str | None = None
+    query_mode: QueryMode = "table"
+    schema: list[FlowfileColumn] | None = None
+
+    def __init__(
+        self,
+        query: str = None,
+        table_name: str = None,
+        schema_name: str = None,
+        fields: list[MinimalFieldInfo] | None = None,
+    ):
         """
         Initialize a BaseSqlSource object.
 
@@ -79,7 +84,7 @@ class BaseSqlSource:
             schema_name: Optional database schema name
             fields: Optional list of field information
         """
-        if schema_name == '':
+        if schema_name == "":
             schema_name = None
 
         # Validate inputs
@@ -90,15 +95,15 @@ class BaseSqlSource:
 
         # Set query mode and build query if needed
         if query is not None:
-            self.query_mode = 'query'
+            self.query_mode = "query"
             self.query = query
         elif table_name is not None:
-            self.query_mode = 'table'
+            self.query_mode = "table"
             self.table_name = table_name
             self.schema_name = schema_name
 
             # Generate the basic query
-            if schema_name is not None and schema_name != '':
+            if schema_name is not None and schema_name != "":
                 self.query = f"SELECT * FROM {schema_name}.{table_name}"
             else:
                 self.query = f"SELECT * FROM {table_name}"
@@ -111,13 +116,13 @@ class BaseSqlSource:
         """
         Get a sample query that returns a limited number of rows.
         """
-        if self.query_mode == 'query':
+        if self.query_mode == "query":
             return f"select * from ({self.query}) as main_query LIMIT 1"
         else:
             return f"{self.query} LIMIT 1"
 
     @staticmethod
-    def _parse_table_name(table_name: str) -> tuple[Optional[str], str]:
+    def _parse_table_name(table_name: str) -> tuple[str | None, str]:
         """
         Parse a table name that may include a schema.
 
@@ -127,10 +132,10 @@ class BaseSqlSource:
         Returns:
             Tuple of (schema, table_name)
         """
-        table_parts = table_name.split('.')
+        table_parts = table_name.split(".")
         if len(table_parts) > 1:
             # Handle schema.table_name format
-            schema = '.'.join(table_parts[:-1])
+            schema = ".".join(table_parts[:-1])
             table = table_parts[-1]
             return schema, table
         else:
@@ -138,16 +143,17 @@ class BaseSqlSource:
 
 
 class SqlSource(BaseSqlSource, ExternalDataSource):
-    connection_string: Optional[str]
-    read_result: Optional[pl.DataFrame] = None
+    connection_string: str | None
+    read_result: pl.DataFrame | None = None
 
-    def __init__(self,
-                 connection_string: str,
-                 query: str = None,
-                 table_name: str = None,
-                 schema_name: str = None,
-                 fields: Optional[List[MinimalFieldInfo]] = None):
-
+    def __init__(
+        self,
+        connection_string: str,
+        query: str = None,
+        table_name: str = None,
+        schema_name: str = None,
+        fields: list[MinimalFieldInfo] | None = None,
+    ):
         # Initialize the base class first
         BaseSqlSource.__init__(self, query=query, table_name=table_name, schema_name=schema_name, fields=fields)
 
@@ -155,13 +161,13 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         self.connection_string = connection_string
         self.read_result = None
 
-    def get_initial_data(self) -> List[Dict[str, Any]]:
+    def get_initial_data(self) -> list[dict[str, Any]]:
         return []
 
     def validate(self) -> None:
         try:
             engine = create_engine(self.connection_string)
-            if self.query_mode == 'table':
+            if self.query_mode == "table":
                 try:
                     if self.schema_name is not None:
                         self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
@@ -180,8 +186,8 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             logger.error(f"Error validating SQL source: {e}")
             raise e
 
-    def get_iter(self) -> Generator[Dict[str, Any], None, None]:
-        logger.warning('Getting data in iteration, this is suboptimal')
+    def get_iter(self) -> Generator[dict[str, Any], None, None]:
+        logger.warning("Getting data in iteration, this is suboptimal")
         data = self.data_getter()
         for row in data:
             yield row
@@ -190,8 +196,8 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         df = self.get_pl_df()
         return df.to_pandas()
 
-    def get_sample(self, n: int = 10000) -> Generator[Dict[str, Any], None, None]:
-        if self.query_mode == 'table':
+    def get_sample(self, n: int = 10000) -> Generator[dict[str, Any], None, None]:
+        if self.query_mode == "table":
             query = f"{self.query} LIMIT {n}"
             try:
                 df = pl.read_database_uri(query, self.connection_string)
@@ -204,7 +210,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             rows = df.head(n).to_dicts()
             return (r for r in rows)
 
-    def data_getter(self) -> Generator[Dict[str, Any], None, None]:
+    def data_getter(self) -> Generator[dict[str, Any], None, None]:
         df = self.get_pl_df()
         rows = df.to_dicts()
         return (r for r in rows)
@@ -214,7 +220,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             self.read_result = pl.read_database_uri(self.query, self.connection_string)
         return self.read_result
 
-    def get_flow_file_columns(self) -> List[FlowfileColumn]:
+    def get_flow_file_columns(self) -> list[FlowfileColumn]:
         """
         Get column information from the SQL source and convert to FlowfileColumn objects
 
@@ -223,7 +229,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         """
         engine = create_engine(self.connection_string)
 
-        if self.query_mode == 'table':
+        if self.query_mode == "table":
             try:
                 if self.schema_name is not None:
                     return self._get_columns_from_table_and_schema(engine, self.table_name, self.schema_name)
@@ -235,7 +241,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         return self._get_columns_from_query(engine, self.get_sample_query())
 
     @staticmethod
-    def _get_columns_from_table(engine: Engine, table_name: str) -> List[FlowfileColumn]:
+    def _get_columns_from_table(engine: Engine, table_name: str) -> list[FlowfileColumn]:
         """
         Get FlowfileColumn objects from a database table
 
@@ -248,8 +254,10 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         """
         schema_name, table = BaseSqlSource._parse_table_name(table_name)
         column_types = get_table_column_types(engine, table, schema=schema_name)
-        columns = [FlowfileColumn.create_from_polars_dtype(column_name, get_polars_type(column_type))
-                   for column_name, column_type in column_types]
+        columns = [
+            FlowfileColumn.create_from_polars_dtype(column_name, get_polars_type(column_type))
+            for column_name, column_type in column_types
+        ]
 
         return columns
 
@@ -266,12 +274,14 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
             List of FlowfileColumn objects
         """
         column_types = get_table_column_types(engine, table_name, schema=schema_name)
-        columns = [FlowfileColumn.create_from_polars_dtype(column_name, get_polars_type(column_type))
-                   for column_name, column_type in column_types]
+        columns = [
+            FlowfileColumn.create_from_polars_dtype(column_name, get_polars_type(column_type))
+            for column_name, column_type in column_types
+        ]
         return columns
 
     @staticmethod
-    def _get_columns_from_query(engine: Engine, query: str) -> List[FlowfileColumn]:
+    def _get_columns_from_query(engine: Engine, query: str) -> list[FlowfileColumn]:
         """
         Get FlowfileColumn objects from a SQL query
 
@@ -285,17 +295,18 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
         try:
             column_names = get_query_columns(engine, query)
 
-            columns = [FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in
-                       column_names]
+            columns = [
+                FlowfileColumn.create_from_polars_dtype(column_name, pl.String()) for column_name in column_names
+            ]
             return columns
         except Exception as e:
             logger.error(f"Error getting column info for query: {e}")
             raise e
 
-    def parse_schema(self) -> List[FlowfileColumn]:
+    def parse_schema(self) -> list[FlowfileColumn]:
         return self.get_schema()
 
-    def get_schema(self) -> List[FlowfileColumn]:
+    def get_schema(self) -> list[FlowfileColumn]:
         if self.schema is None:
             self.schema = self.get_flow_file_columns()
         return self.schema
@@ -303,26 +314,27 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
 
 def create_sql_source_from_db_settings(database_settings: DatabaseSettings, user_id: int) -> SqlSource:
     database_connection = database_settings.database_connection
-    if database_settings.connection_mode == 'inline':
+    if database_settings.connection_mode == "inline":
         if database_connection is None:
             raise ValueError("Database connection is required in inline mode")
-        encrypted_secret = get_encrypted_secret(current_user_id=user_id,
-                                                secret_name=database_connection.password_ref)
+        encrypted_secret = get_encrypted_secret(current_user_id=user_id, secret_name=database_connection.password_ref)
     else:
         database_connection = get_local_database_connection(database_settings.database_connection_name, user_id)
         encrypted_secret = database_connection.password.get_secret_value()
     if encrypted_secret is None:
         raise ValueError(f"Secret with name {database_connection.password_ref} not found for user {user_id}")
 
-    sql_source = SqlSource(connection_string=
-                           construct_sql_uri(database_type=database_connection.database_type,
-                                             host=database_connection.host,
-                                             port=database_connection.port,
-                                             database=database_connection.database,
-                                             username=database_connection.username,
-                                             password=decrypt_secret(encrypted_secret)),
-                           query=None if database_settings.query_mode == 'table' else database_settings.query,
-                           table_name=database_settings.table_name,
-                           schema_name=database_settings.schema_name,
-                           )
+    sql_source = SqlSource(
+        connection_string=construct_sql_uri(
+            database_type=database_connection.database_type,
+            host=database_connection.host,
+            port=database_connection.port,
+            database=database_connection.database,
+            username=database_connection.username,
+            password=decrypt_secret(encrypted_secret),
+        ),
+        query=None if database_settings.query_mode == "table" else database_settings.query,
+        table_name=database_settings.table_name,
+        schema_name=database_settings.schema_name,
+    )
     return sql_source

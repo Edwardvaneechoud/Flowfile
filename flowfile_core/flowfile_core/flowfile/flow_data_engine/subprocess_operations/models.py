@@ -1,8 +1,9 @@
-from typing import Any, Optional, Literal
-from pydantic import BaseModel
-from pl_fuzzy_frame_match.models import FuzzyMapping
+from typing import Any, Literal
 
-OperationType = Literal['store', 'calculate_schema', 'calculate_number_of_records', 'write_output', 'store_sample']
+from pl_fuzzy_frame_match.models import FuzzyMapping
+from pydantic import BaseModel
+
+OperationType = Literal["store", "calculate_schema", "calculate_number_of_records", "write_output", "store_sample"]
 
 
 class PolarsOperation(BaseModel):
@@ -10,14 +11,14 @@ class PolarsOperation(BaseModel):
 
 
 class PolarsScript(PolarsOperation):
-    task_id: Optional[str] = None
-    cache_dir: Optional[str] = None
+    task_id: str | None = None
+    cache_dir: str | None = None
     operation_type: OperationType
 
 
 class FuzzyJoinInput(BaseModel):
-    task_id: Optional[str] = None
-    cache_dir: Optional[str] = None
+    task_id: str | None = None
+    cache_dir: str | None = None
     left_df_operation: PolarsOperation
     right_df_operation: PolarsOperation
     fuzzy_maps: list[FuzzyMapping]
@@ -27,10 +28,11 @@ class FuzzyJoinInput(BaseModel):
 
 class Status(BaseModel):
     background_task_id: str
-    status: Literal['Processing', 'Completed', 'Error', 'Unknown Error', 'Starting', 'Cancelled']  # Type alias for status
+    status: Literal[
+        "Processing", "Completed", "Error", "Unknown Error", "Starting", "Cancelled"
+    ]  # Type alias for status
     file_ref: str
     progress: int = 0
-    error_message: Optional[str] = None  # Add error_message field
+    error_message: str | None = None  # Add error_message field
     results: Any
-    result_type: Literal['polars', 'other'] = 'polars'
-
+    result_type: Literal["polars", "other"] = "polars"

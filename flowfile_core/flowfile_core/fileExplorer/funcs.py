@@ -1,13 +1,14 @@
-from pathlib import Path
-from typing import List, Optional, Set, Union
-from datetime import datetime
-from pydantic import BaseModel
-from typing_extensions import Literal
 import os
+from datetime import datetime
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel
 
 
 class FileInfo(BaseModel):
     """Comprehensive information about a file or directory."""
+
     name: str
     path: str
     is_directory: bool
@@ -19,8 +20,7 @@ class FileInfo(BaseModel):
     exists: bool = True
 
     @classmethod
-    def from_path(cls, path: Path, sandbox_root: Optional[Path] = None,
-                  use_relative_paths: bool = False) -> 'FileInfo':
+    def from_path(cls, path: Path, sandbox_root: Path | None = None, use_relative_paths: bool = False) -> "FileInfo":
         """Create FileInfo instance from a path.
 
         Args:
@@ -48,10 +48,8 @@ class FileInfo(BaseModel):
                 file_type=path.suffix[1:] if path.suffix else "",
                 last_modified=datetime.fromtimestamp(stats.st_mtime),
                 created_date=datetime.fromtimestamp(stats.st_ctime),
-                is_hidden=path.name.startswith('.') or (
-                        os.name == 'nt' and bool(stats.st_file_attributes & 0x2)
-                ),
-                exists=True
+                is_hidden=path.name.startswith(".") or (os.name == "nt" and bool(stats.st_file_attributes & 0x2)),
+                exists=True,
             )
         except (PermissionError, OSError):
             # Handle error case
@@ -72,16 +70,16 @@ class FileInfo(BaseModel):
                 last_modified=datetime.fromtimestamp(0),
                 created_date=datetime.fromtimestamp(0),
                 is_hidden=False,
-                exists=False
+                exists=False,
             )
 
 
 class SecureFileExplorer:
     """File explorer with sandbox enforcement to prevent directory traversal."""
 
-    def __init__(self, start_path: Union[str, Path],
-                 sandbox_root: Optional[Union[str, Path]] = None,
-                 use_relative_paths: bool = False):
+    def __init__(
+        self, start_path: str | Path, sandbox_root: str | Path | None = None, use_relative_paths: bool = False
+    ):
         """Initialize SecureFileExplorer with sandboxing.
 
         Args:
@@ -126,7 +124,7 @@ class SecureFileExplorer:
         except (ValueError, RuntimeError):
             return False
 
-    def _sanitize_path(self, path: Union[str, Path]) -> Optional[Path]:
+    def _sanitize_path(self, path: str | Path) -> Path | None:
         """Sanitize and validate a path, ensuring it stays within sandbox.
 
         Returns None if path would escape sandbox.
@@ -135,7 +133,7 @@ class SecureFileExplorer:
             # Handle relative paths from current directory
             if isinstance(path, str):
                 # Remove any suspicious patterns
-                if '..' in Path(path).parts or path.startswith('/'):
+                if ".." in Path(path).parts or path.startswith("/"):
                     # For absolute paths or parent references, resolve from sandbox root
                     test_path = Path(path).expanduser()
                 else:
@@ -168,7 +166,7 @@ class SecureFileExplorer:
             return "/"
 
     @property
-    def parent_directory(self) -> Optional[str]:
+    def parent_directory(self) -> str | None:
         """Get the parent directory path if it exists and is within sandbox."""
         parent = self.current_path.parent
         if self._is_path_safe(parent) and parent != self.current_path:
@@ -180,26 +178,26 @@ class SecureFileExplorer:
         return None
 
     def list_contents(
-            self,
-            *,
-            show_hidden: bool = False,
-            file_types: Optional[List[str]] = None,
-            recursive: bool = False,
-            min_size: Optional[int] = None,
-            max_size: Optional[int] = None,
-            sort_by: Literal['name', 'date', 'size', 'type'] = 'name',
-            reverse: bool = False,
-            exclude_patterns: Optional[List[str]] = None,
-            max_depth: int = 5  # Add depth limit for recursive operations
-    ) -> List[FileInfo]:
+        self,
+        *,
+        show_hidden: bool = False,
+        file_types: list[str] | None = None,
+        recursive: bool = False,
+        min_size: int | None = None,
+        max_size: int | None = None,
+        sort_by: Literal["name", "date", "size", "type"] = "name",
+        reverse: bool = False,
+        exclude_patterns: list[str] | None = None,
+        max_depth: int = 5,  # Add depth limit for recursive operations
+    ) -> list[FileInfo]:
         """List contents with security-conscious filtering."""
-        contents: List[FileInfo] = []
-        excluded_paths: Set[str] = set()
+        contents: list[FileInfo] = []
+        excluded_paths: set[str] = set()
 
         if exclude_patterns:
             for pattern in exclude_patterns:
                 # Ensure patterns don't escape sandbox
-                safe_pattern = pattern.replace('../', '').replace('..\\', '')
+                safe_pattern = pattern.replace("../", "").replace("..\\", "")
                 excluded_paths.update(str(p) for p in self.current_path.glob(safe_pattern))
 
         def should_include(info: FileInfo) -> bool:
@@ -239,8 +237,7 @@ class SecureFileExplorer:
                                 continue
 
                             try:
-                                file_info = FileInfo.from_path(item, self.sandbox_root,
-                                                               self.use_relative_paths)
+                                file_info = FileInfo.from_path(item, self.sandbox_root, self.use_relative_paths)
                                 if should_include(file_info):
                                     contents.append(file_info)
 
@@ -258,8 +255,7 @@ class SecureFileExplorer:
                         continue
 
                     try:
-                        file_info = FileInfo.from_path(item, self.sandbox_root,
-                                                       self.use_relative_paths)
+                        file_info = FileInfo.from_path(item, self.sandbox_root, self.use_relative_paths)
                         if should_include(file_info):
                             contents.append(file_info)
                     except (PermissionError, OSError):
@@ -270,10 +266,10 @@ class SecureFileExplorer:
 
         # Sort results
         sort_key = {
-            'name': lambda x: (not x.is_directory, x.name.lower()),
-            'date': lambda x: (not x.is_directory, x.last_modified),
-            'size': lambda x: (not x.is_directory, x.size),
-            'type': lambda x: (not x.is_directory, x.file_type.lower(), x.name.lower())
+            "name": lambda x: (not x.is_directory, x.name.lower()),
+            "date": lambda x: (not x.is_directory, x.last_modified),
+            "size": lambda x: (not x.is_directory, x.size),
+            "type": lambda x: (not x.is_directory, x.file_type.lower(), x.name.lower()),
         }[sort_by]
 
         return sorted(contents, key=sort_key, reverse=reverse)
@@ -316,13 +312,13 @@ class SecureFileExplorer:
     def navigate_into(self, directory_name: str) -> bool:
         """Navigate into a subdirectory, with path sanitization."""
         # Sanitize directory name
-        if '/' in directory_name or '\\' in directory_name or '..' in directory_name:
+        if "/" in directory_name or "\\" in directory_name or ".." in directory_name:
             return False
 
         new_path = self.current_path / directory_name
         return self.navigate_to(str(new_path))
 
-    def get_absolute_path(self, relative_path: str) -> Optional[Path]:
+    def get_absolute_path(self, relative_path: str) -> Path | None:
         """Get absolute path for a file within sandbox.
 
         Returns None if the path would escape sandbox.
@@ -332,13 +328,13 @@ class SecureFileExplorer:
 
 
 def get_files_from_directory(
-        dir_name: Union[str, Path],
-        types: Optional[List[str]] = None,
-        *,
-        include_hidden: bool = False,
-        recursive: bool = False,
-        sandbox_root: Optional[Union[str, Path]] = None
-) -> Optional[List[FileInfo]]:
+    dir_name: str | Path,
+    types: list[str] | None = None,
+    *,
+    include_hidden: bool = False,
+    recursive: bool = False,
+    sandbox_root: str | Path | None = None,
+) -> list[FileInfo] | None:
     """
     Get list of files from a directory with sandbox enforcement.
 
@@ -360,13 +356,9 @@ def get_files_from_directory(
             explorer = SecureFileExplorer(start_path=dir_name)
 
         # Use the explorer's list_contents method
-        return explorer.list_contents(
-            show_hidden=include_hidden,
-            file_types=types,
-            recursive=recursive
-        )
+        return explorer.list_contents(show_hidden=include_hidden, file_types=types, recursive=recursive)
 
-    except (ValueError, PermissionError) as e:
+    except (ValueError, PermissionError):
         # Return None for invalid/inaccessible directories
         return None
     except Exception as e:

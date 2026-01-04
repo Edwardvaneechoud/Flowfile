@@ -1,11 +1,10 @@
-from threading import Lock
 from multiprocessing import Process
-from typing import Dict
+from threading import Lock
 
 
 class ProcessManager:
     def __init__(self):
-        self.process_dict: Dict[str, Process] = {}
+        self.process_dict: dict[str, Process] = {}
         self.lock = Lock()
 
     def add_process(self, task_id: str, process: Process):

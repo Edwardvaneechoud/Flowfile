@@ -1,15 +1,13 @@
-import os
-import json
-import shutil
-
 import datetime
-from typing import List
-from decimal import Decimal
-import time
-import random
-import uuid
-import socket
 import hashlib
+import json
+import os
+import random
+import shutil
+import socket
+import time
+import uuid
+from decimal import Decimal
 
 
 def generate_sha256_hash(data: bytes):
@@ -25,25 +23,25 @@ def create_directory_if_not_exists(directory: str):
 
 def snake_case_to_camel_case(text: str) -> str:
     # Split the text by underscores, capitalize each piece, and join them together
-    transformed_text = ''.join(word.capitalize() for word in text.split('_'))
+    transformed_text = "".join(word.capitalize() for word in text.split("_"))
     return transformed_text
 
 
 def json_default(val):
     if isinstance(val, datetime.datetime):
-        return val.isoformat(timespec='microseconds')
+        return val.isoformat(timespec="microseconds")
     elif isinstance(val, datetime.date):
         return val.isoformat()
     elif isinstance(val, datetime.time):
         return val.isoformat()
-    elif hasattr(val, '__dict__'):
+    elif hasattr(val, "__dict__"):
         return val.__dict__
     elif isinstance(val, Decimal):
         if val.as_integer_ratio()[1] == 1:
             return int(val)
         return float(val)
     else:
-        raise Exception('Value is not serializable')
+        raise Exception("Value is not serializable")
 
 
 def json_dumps(thing) -> str:
@@ -53,22 +51,22 @@ def json_dumps(thing) -> str:
         ensure_ascii=False,
         sort_keys=True,
         indent=None,
-        separators=(',', ':'),
+        separators=(",", ":"),
     )
 
 
 def get_hash(val):
-    if hasattr(val, 'overridden_hash') and val.overridden_hash():
+    if hasattr(val, "overridden_hash") and val.overridden_hash():
         val = hash(val)
-    elif hasattr(val, '__dict__'):
-        val = {k: v for k, v in val.__dict__.items() if k not in {'pos_x', 'pos_y', 'description'}}
-    elif hasattr(val, 'json'):
+    elif hasattr(val, "__dict__"):
+        val = {k: v for k, v in val.__dict__.items() if k not in {"pos_x", "pos_y", "description"}}
+    elif hasattr(val, "json"):
         pass
-    return generate_sha256_hash(json_dumps(val).encode('utf-8'))
+    return generate_sha256_hash(json_dumps(val).encode("utf-8"))
 
 
-def cleanup(start_location: str = 'temp_storage'):
-    def get_all_files_and_folders(_start_location) -> List[str]:
+def cleanup(start_location: str = "temp_storage"):
+    def get_all_files_and_folders(_start_location) -> list[str]:
         inspect_items = [_start_location]
         output = []
         while len(inspect_items) > 0:
@@ -107,7 +105,7 @@ def cleanup(start_location: str = 'temp_storage'):
             shutil.rmtree(_f)
 
 
-def batch_generator(input_list: List, batch_size: int = 10000):
+def batch_generator(input_list: list, batch_size: int = 10000):
     run: bool = True
     while run:
         if len(input_list) > batch_size:
