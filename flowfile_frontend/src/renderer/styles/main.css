@@ -474,3 +474,132 @@ button {
   color: var(--color-text-primary);
 }
 
+/* ========== CodeMirror Dark Mode Styling ========== */
+/* These styles must be global because CodeMirror tooltips are rendered as portals */
+
+/* Editor background and text */
+.cm-editor {
+  background-color: var(--color-background-secondary) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.cm-editor .cm-content {
+  caret-color: var(--color-text-primary) !important;
+}
+
+.cm-editor .cm-cursor,
+.cm-editor .cm-cursor-primary {
+  border-left-color: var(--color-text-primary) !important;
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--color-background-primary) !important;
+  color: var(--color-text-muted) !important;
+  border-right: 1px solid var(--color-border-primary) !important;
+}
+
+.cm-editor .cm-activeLineGutter {
+  background-color: var(--color-background-hover) !important;
+}
+
+.cm-editor .cm-activeLine {
+  background-color: var(--color-background-hover) !important;
+}
+
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused .cm-selectionBackground {
+  background-color: var(--color-background-selected) !important;
+}
+
+/* Placeholder styling */
+.cm-placeholder {
+  color: var(--color-text-muted) !important;
+}
+
+/* CodeMirror Autocomplete Tooltip - rendered as portal to body */
+.cm-tooltip {
+  background-color: var(--color-background-primary) !important;
+  border: 1px solid var(--color-border-primary) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.cm-tooltip-autocomplete {
+  background-color: var(--color-background-primary) !important;
+}
+
+.cm-tooltip-autocomplete > ul {
+  background-color: var(--color-background-primary) !important;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  color: var(--color-text-primary) !important;
+  background-color: var(--color-background-primary) !important;
+}
+
+.cm-tooltip-autocomplete > ul > li:hover {
+  background-color: var(--color-background-hover) !important;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected],
+.cm-tooltip-autocomplete > ul > li[aria-selected="true"] {
+  background-color: var(--color-accent) !important;
+  color: white !important;
+}
+
+/* Completion label and detail */
+.cm-completionLabel {
+  color: var(--color-text-primary) !important;
+}
+
+.cm-completionDetail {
+  color: var(--color-text-secondary) !important;
+}
+
+/* Completion Info Panel (documentation popup) - critical for dark mode */
+.cm-completionInfo {
+  background-color: var(--color-background-secondary) !important;
+  border: 1px solid var(--color-border-primary) !important;
+  color: var(--color-text-primary) !important;
+  padding: 8px 12px !important;
+  max-width: 400px !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.cm-completionInfo * {
+  color: var(--color-text-primary) !important;
+}
+
+/* Ensure tooltip above other content */
+.cm-tooltip-above,
+.cm-tooltip-below {
+  background-color: var(--color-background-primary) !important;
+}
+
+/* Tooltip arrow styling */
+.cm-tooltip::before,
+.cm-tooltip::after {
+  border-color: var(--color-border-primary) transparent transparent transparent !important;
+}
+
+/* Matching bracket highlight */
+.cm-matchingBracket {
+  background-color: var(--color-background-selected) !important;
+  color: var(--color-accent) !important;
+}
+
+/* Panel styling */
+.cm-panels {
+  background-color: var(--color-background-secondary) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border-primary) !important;
+}
+
+.cm-panels-top {
+  border-bottom-color: var(--color-border-primary) !important;
+}
+
+.cm-panels-bottom {
+  border-top-color: var(--color-border-primary) !important;
+}
+
