@@ -103,6 +103,9 @@
                   class="form-input"
                 />
               </div>
+              <div class="form-field icon-field">
+                <IconSelector v-model="nodeMetadata.node_icon" />
+              </div>
             </div>
           </div>
 
@@ -199,6 +202,7 @@ import ProcessCodeEditor from "./nodeDesigner/ProcessCodeEditor.vue";
 import CodePreviewModal from "./nodeDesigner/CodePreviewModal.vue";
 import ValidationModal from "./nodeDesigner/ValidationModal.vue";
 import NodeBrowserModal from "./nodeDesigner/NodeBrowserModal.vue";
+import IconSelector from "./nodeDesigner/IconSelector.vue";
 
 // Composables
 import {
@@ -452,6 +456,10 @@ function handleInsertVariable(code: string) {
 .form-input:focus {
   outline: none;
   border-color: var(--primary-color);
+}
+
+.icon-field {
+  grid-column: span 2;
 }
 
 /* Sections */
