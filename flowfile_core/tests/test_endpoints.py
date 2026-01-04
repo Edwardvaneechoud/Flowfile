@@ -1134,7 +1134,9 @@ def test_upload_file_sanitizes_filename():
     # The filename should be sanitized to just 'evil' (basename without ..)
     assert result['filename'] == 'evil', f"Filename should be sanitized to 'evil', got: {result['filename']}"
     assert '../' not in result['filepath'], 'Filepath should not contain path traversal sequences'
-    assert result['filepath'] == 'uploads/evil', f"Filepath should be 'uploads/evil', got: {result['filepath']}"
+    # Normalize path separators for cross-platform comparison
+    normalized_filepath = result['filepath'].replace('\\', '/')
+    assert normalized_filepath == 'uploads/evil', f"Filepath should be 'uploads/evil', got: {result['filepath']}"
 
     # Clean up uploaded file
     if os.path.exists(result['filepath']):

@@ -61,7 +61,8 @@ def _is_sensitive_system_path(path: Path) -> bool:
     """Check if a path is a sensitive system path that should be blocked."""
     try:
         resolved = path.resolve()
-        path_str = str(resolved).lower()
+        # Normalize to forward slashes and lowercase for consistent comparison
+        path_str = str(resolved).replace('\\', '/').lower()
 
         # Block sensitive Unix paths
         sensitive_unix = ['/etc/', '/etc', '/var/', '/root/', '/boot/', '/sys/', '/proc/', '/dev/']
@@ -69,8 +70,8 @@ def _is_sensitive_system_path(path: Path) -> bool:
             if path_str == sensitive.rstrip('/') or path_str.startswith(sensitive):
                 return True
 
-        # Block sensitive Windows paths
-        sensitive_windows = ['\\windows\\', '\\system32\\', '\\syswow64\\', '\\programdata\\']
+        # Block sensitive Windows paths (normalized to forward slashes)
+        sensitive_windows = ['/windows/', '/system32/', '/syswow64/', '/programdata/']
         for sensitive in sensitive_windows:
             if sensitive in path_str:
                 return True
