@@ -131,8 +131,6 @@ const loadNodeData = async (nodeId: number) => {
     }
     const [schemaData] = await Promise.all([getCustomNodeSchema(nodeStore.flow_id, nodeId)]);
 
-    console.log("schemaData", schemaData);
-
     schema.value = schemaData;
     nodeData.value = inputNodeData;
     nodeUserDefined.value = nodeData.value?.setting_input;
@@ -168,7 +166,6 @@ const pushNodeData = async () => {
     nodeUserDefined.value.is_user_defined = true;
     nodeUserDefined.value.is_setup = true;
   }
-  console.log(JSON.stringify(formData.value, null, 2));
   nodeStore.updateUserDefinedSettings(nodeUserDefined);
 };
 

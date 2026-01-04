@@ -50,8 +50,6 @@ defineEmits(["update:modelValue"]);
 
 const filteredColumns = computed(() => {
   // If data_types is "ALL" or not specified, return all columns
-  console.log("props.schem.data_types", props.schema);
-  console.log("incoming columns", props.incomingColumns);
   if (!props.schema.data_types || props.schema.data_types === "ALL") {
     return props.incomingColumns;
   }
