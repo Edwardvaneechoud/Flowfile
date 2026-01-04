@@ -373,7 +373,7 @@ class TestSettingUpdatorWithIsAvailableFalse:
     def test_cross_join_updator_no_duplicates_when_is_available_false(self):
         """Test that no duplicates are created when existing columns have is_available=False."""
         from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
-        from flowfile_core.schemas.output_model import NodeData, InputOverview
+        from flowfile_core.schemas.output_model import NodeData, TableExample
 
         # Create a NodeData with existing settings where is_available=False
         existing_cross_join = transform_schema.CrossJoinInput(
@@ -388,14 +388,14 @@ class TestSettingUpdatorWithIsAvailableFalse:
         node_data = NodeData(
             flow_id=1,
             node_id=1,
-            node_type='cross_join',
+            flow_type='cross_join',
             setting_input=input_schema.NodeCrossJoin(
                 flow_id=1,
                 node_id=1,
                 cross_join_input=existing_cross_join,
             ),
-            main_input=InputOverview(columns=['Column 1']),
-            right_input=InputOverview(columns=['Column 1']),
+            main_input=TableExample(node_id=1, number_of_records=1, number_of_columns=1, name='left', table_schema=[], columns=['Column 1']),
+            right_input=TableExample(node_id=2, number_of_records=1, number_of_columns=1, name='right', table_schema=[], columns=['Column 1']),
         )
 
         # Run the updator
@@ -415,7 +415,7 @@ class TestSettingUpdatorWithIsAvailableFalse:
     def test_join_updator_no_duplicates_when_is_available_false(self):
         """Test that join updator doesn't create duplicates when is_available=False."""
         from flowfile_core.flowfile.setting_generator.settings import join as join_updator
-        from flowfile_core.schemas.output_model import NodeData, InputOverview
+        from flowfile_core.schemas.output_model import NodeData, TableExample
 
         existing_join = transform_schema.JoinInput(
             join_mapping='id',
@@ -432,14 +432,14 @@ class TestSettingUpdatorWithIsAvailableFalse:
         node_data = NodeData(
             flow_id=1,
             node_id=1,
-            node_type='join',
+            flow_type='join',
             setting_input=input_schema.NodeJoin(
                 flow_id=1,
                 node_id=1,
                 join_input=existing_join,
             ),
-            main_input=InputOverview(columns=['id', 'name']),
-            right_input=InputOverview(columns=['id', 'value']),
+            main_input=TableExample(node_id=1, number_of_records=1, number_of_columns=2, name='left', table_schema=[], columns=['id', 'name']),
+            right_input=TableExample(node_id=2, number_of_records=1, number_of_columns=2, name='right', table_schema=[], columns=['id', 'value']),
         )
 
         # Run the updator
@@ -461,7 +461,7 @@ class TestSettingUpdatorWithIsAvailableFalse:
     def test_updator_sets_is_available_correctly(self):
         """Test that is_available is set based on incoming dataframe columns."""
         from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
-        from flowfile_core.schemas.output_model import NodeData, InputOverview
+        from flowfile_core.schemas.output_model import NodeData, TableExample
 
         # Settings have columns that may or may not exist in input
         existing_cross_join = transform_schema.CrossJoinInput(
@@ -477,14 +477,14 @@ class TestSettingUpdatorWithIsAvailableFalse:
         node_data = NodeData(
             flow_id=1,
             node_id=1,
-            node_type='cross_join',
+            flow_type='cross_join',
             setting_input=input_schema.NodeCrossJoin(
                 flow_id=1,
                 node_id=1,
                 cross_join_input=existing_cross_join,
             ),
-            main_input=InputOverview(columns=['exists', 'new_col']),  # 'removed' is no longer in input
-            right_input=InputOverview(columns=['right_exists']),
+            main_input=TableExample(node_id=1, number_of_records=1, number_of_columns=2, name='left', table_schema=[], columns=['exists', 'new_col']),  # 'removed' is no longer in input
+            right_input=TableExample(node_id=2, number_of_records=1, number_of_columns=1, name='right', table_schema=[], columns=['right_exists']),
         )
 
         cross_join_updator(node_data)
@@ -506,7 +506,7 @@ class TestSettingUpdatorWithIsAvailableFalse:
     def test_column_renamed_in_input_keeps_old_column_unavailable(self):
         """Test that when input column is renamed, the old column stays but is marked unavailable."""
         from flowfile_core.flowfile.setting_generator.settings import cross_join as cross_join_updator
-        from flowfile_core.schemas.output_model import NodeData, InputOverview
+        from flowfile_core.schemas.output_model import NodeData, TableExample
 
         # Initial state: settings have "Column 1" selected
         existing_cross_join = transform_schema.CrossJoinInput(
@@ -522,14 +522,14 @@ class TestSettingUpdatorWithIsAvailableFalse:
         node_data = NodeData(
             flow_id=1,
             node_id=1,
-            node_type='cross_join',
+            flow_type='cross_join',
             setting_input=input_schema.NodeCrossJoin(
                 flow_id=1,
                 node_id=1,
                 cross_join_input=existing_cross_join,
             ),
-            main_input=InputOverview(columns=['Column 2']),  # Column 1 renamed to Column 2
-            right_input=InputOverview(columns=['other']),
+            main_input=TableExample(node_id=1, number_of_records=1, number_of_columns=1, name='left', table_schema=[], columns=['Column 2']),  # Column 1 renamed to Column 2
+            right_input=TableExample(node_id=2, number_of_records=1, number_of_columns=1, name='right', table_schema=[], columns=['other']),
         )
 
         cross_join_updator(node_data)
@@ -685,8 +685,9 @@ class TestCrossJoinExecution:
             raw_data_format=input_schema.RawData.from_pylist([{'a': 1, 'c': 3}])
         ))
 
-        # Node needs to be invalidated and re-executed
-        node.invalidate()
+        # Node needs to be reset and re-executed
+        node.reset()
+        basic_flow.run_graph()
         result2 = node.get_resulting_data()
 
         # New column 'c' should be present
