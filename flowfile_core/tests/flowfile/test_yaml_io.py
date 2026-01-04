@@ -654,7 +654,7 @@ class TestFlowfileRoundTrip:
         loaded_filter = loaded_flow.get_node(2)
         assert loaded_filter is not None
         assert loaded_filter.setting_input.filter_input.advanced_filter == '[status] = "active"'
-        assert loaded_filter.setting_input.filter_input.filter_type == 'advanced'
+        assert loaded_filter.setting_input.filter_input.mode == 'advanced'
 
         # Verify connection preserved
         assert loaded_filter.setting_input.depending_on_id == 1
