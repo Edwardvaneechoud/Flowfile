@@ -44,10 +44,13 @@ defineEmits(["toggle-collapse"]);
 const router = useRouter();
 const authStore = useAuthStore();
 
-// Filter routes based on admin status
+// Filter routes based on admin status and Electron mode
 const items = computed(() => {
   const isAdmin = authStore.isAdmin;
+  const isElectron = authService.isInElectronMode();
   return NavigationRoutes.routes.filter(route => {
+    // Hide routes marked as hideInElectron when in Electron mode
+    if (route.hideInElectron && isElectron) return false;
     // Show route if it doesn't require admin, or if user is admin
     return !route.requiresAdmin || isAdmin;
   });

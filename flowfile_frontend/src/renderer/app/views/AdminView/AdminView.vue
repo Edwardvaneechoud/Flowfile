@@ -1,5 +1,13 @@
 <template>
   <div class="admin-container">
+    <!-- Status Message -->
+    <Transition name="fade">
+      <div v-if="statusMessage" :class="['status-message', `status-${statusMessage.type}`]">
+        <i :class="statusMessage.type === 'success' ? 'fa-solid fa-check-circle' : 'fa-solid fa-exclamation-circle'"></i>
+        <span>{{ statusMessage.text }}</span>
+      </div>
+    </Transition>
+
     <div class="mb-3">
       <h2 class="page-title">User Management</h2>
       <p class="page-description">Manage users and their permissions</p>
@@ -357,10 +365,23 @@ const loadUsers = async () => {
     users.value = await userService.getUsers();
   } catch (error) {
     console.error("Failed to load users:", error);
-    alert("Failed to load users. Please try again.");
+    showStatus('error', "Failed to load users. Please try again.");
   } finally {
     isLoading.value = false;
   }
+};
+
+// Status message state
+const statusMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
+
+const showStatus = (type: 'success' | 'error', text: string) => {
+  statusMessage.value = { type, text };
+  setTimeout(() => { statusMessage.value = null; }, 4000);
+};
+
+const getErrorMessage = (error: unknown): string => {
+  const axiosError = error as { response?: { data?: { detail?: string } } };
+  return axiosError.response?.data?.detail || (error instanceof Error ? error.message : "An error occurred");
 };
 
 // Create user
@@ -373,14 +394,9 @@ const handleAddUser = async () => {
     newUser.value = { username: "", password: "", email: "", full_name: "", is_admin: false };
     showNewPassword.value = false;
     await loadUsers();
-    alert("User created successfully.");
+    showStatus('success', "User created successfully");
   } catch (error: unknown) {
-    const errorMsg = error instanceof Error ? error.message : "Failed to create user";
-    if ((error as { response?: { data?: { detail?: string } } }).response?.data?.detail) {
-      alert((error as { response: { data: { detail: string } } }).response.data.detail);
-    } else {
-      alert(errorMsg);
-    }
+    showStatus('error', getErrorMessage(error));
   } finally {
     isSubmitting.value = false;
   }
@@ -431,13 +447,9 @@ const handleUpdateUser = async () => {
     await userService.updateUser(editUser.value.id, updateData);
     closeEditModal();
     await loadUsers();
-    alert("User updated successfully.");
+    showStatus('success', "User updated successfully");
   } catch (error: unknown) {
-    if ((error as { response?: { data?: { detail?: string } } }).response?.data?.detail) {
-      alert((error as { response: { data: { detail: string } } }).response.data.detail);
-    } else {
-      alert("Failed to update user. Please try again.");
-    }
+    showStatus('error', getErrorMessage(error));
   } finally {
     isUpdating.value = false;
   }
@@ -462,13 +474,9 @@ const handleDeleteUser = async () => {
     await userService.deleteUser(userToDelete.value.id);
     closeDeleteModal();
     await loadUsers();
-    alert("User deleted successfully.");
+    showStatus('success', "User deleted successfully");
   } catch (error: unknown) {
-    if ((error as { response?: { data?: { detail?: string } } }).response?.data?.detail) {
-      alert((error as { response: { data: { detail: string } } }).response.data.detail);
-    } else {
-      alert("Failed to delete user. Please try again.");
-    }
+    showStatus('error', getErrorMessage(error));
   } finally {
     isDeleting.value = false;
   }
@@ -612,5 +620,37 @@ onMounted(() => {
 
 .toggle-visibility:hover {
   color: var(--color-text-primary);
+}
+
+.status-message {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-4);
+  border-radius: var(--border-radius-md);
+  margin-bottom: var(--spacing-4);
+  font-size: var(--font-size-sm);
+}
+
+.status-success {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-error {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

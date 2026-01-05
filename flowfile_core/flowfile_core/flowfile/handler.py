@@ -74,13 +74,13 @@ class FlowfileHandler:
         self._register_user_session(user_id, imported_flow.flow_id)
         return imported_flow.flow_id
 
-    def register_flow(self, flow_settings: FlowSettings, user_id: int | None = None):
+    def register_flow(self, flow_settings: FlowSettings, user_id: int | None = None) -> FlowGraph:
+        """Register a flow with the handler and associate it with a user session."""
         if flow_settings.flow_id in self._flows:
             self.delete_flow(flow_settings.flow_id)
-            raise "flow already registered"
-        else:
-            name = flow_settings.name if flow_settings.name else flow_settings.flow_id
-            self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_settings=flow_settings)
+            raise ValueError("Flow already registered")
+        name = flow_settings.name if flow_settings.name else str(flow_settings.flow_id)
+        self._flows[flow_settings.flow_id] = FlowGraph(name=name, flow_settings=flow_settings)
         self._register_user_session(user_id, flow_settings.flow_id)
         return self.get_flow(flow_settings.flow_id)
 

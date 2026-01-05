@@ -5,6 +5,7 @@ export interface INavigationRoute {
   children?: INavigationRoute[];
   disabled?: boolean;
   requiresAdmin?: boolean;
+  hideInElectron?: boolean;
 }
 
 export default {
@@ -62,6 +63,7 @@ export default {
         icon: "fa-solid fa-users-cog",
       },
       requiresAdmin: true,
+      hideInElectron: true,
     },
   ] as INavigationRoute[],
 };

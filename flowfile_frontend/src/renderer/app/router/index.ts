@@ -64,7 +64,7 @@ const routes: Array<RouteRecordRaw> = [
         name: "admin",
         path: "admin",
         component: () => import("../views/AdminView/AdminView.vue"),
-        meta: { requiresAdmin: true }
+        meta: { requiresAdmin: true, hideInElectron: true }
       },
     ],
   },
@@ -83,10 +83,17 @@ const router = createRouter({
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
+  const hideInElectron = to.matched.some(record => record.meta.hideInElectron);
 
   // Initialize auth store if authenticated but user info not loaded (e.g., page refresh)
   if (authService.isAuthenticated() && !authStore.user) {
     await authStore.initialize();
+  }
+
+  // Block routes that are hidden in Electron mode (e.g., admin/user management)
+  if (hideInElectron && authService.isInElectronMode()) {
+    next({ name: 'designer' });
+    return;
   }
 
   // Check if route requires auth
