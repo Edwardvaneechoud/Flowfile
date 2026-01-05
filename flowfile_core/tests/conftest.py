@@ -9,6 +9,15 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
+# Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
+import bcrypt
+_original_hashpw = bcrypt.hashpw
+def _patched_hashpw(password, salt):
+    if isinstance(password, bytes) and len(password) > 72:
+        password = password[:72]
+    return _original_hashpw(password, salt)
+bcrypt.hashpw = _patched_hashpw
+
 import pytest
 import requests
 
@@ -220,11 +229,16 @@ def managed_worker() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def flowfile_worker():
+def flowfile_worker(request):
     """
     Pytest fixture that ensures flowfile_worker is running for the test session.
     Uses the managed_worker context manager for proper resource management.
+
+    Can be skipped by setting SKIP_WORKER_TESTS=1 environment variable.
     """
+    if os.environ.get("SKIP_WORKER_TESTS") == "1":
+        yield
+        return
     with managed_worker():
         yield
 
