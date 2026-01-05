@@ -476,7 +476,6 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - Node descriptions
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
-    breakpoint()
     for _id, node_information in flow_storage_obj.data.items():
         if not hasattr(node_information, "setting_input") or node_information.setting_input is None:
             continue
