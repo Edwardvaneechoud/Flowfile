@@ -35,9 +35,23 @@ authService
   .initialize()
   .then((authenticated) => {
     console.log("Auth initialized:", authenticated ? "Authenticated" : "Not authenticated");
+    console.log("Electron mode:", authService.isInElectronMode());
+
+    // Mount the app first
     app.mount("#app");
+
+    // If not authenticated and not in Electron mode, redirect to login
+    if (!authenticated && !authService.isInElectronMode()) {
+      console.log("Redirecting to login page");
+      router.push({ name: 'login' });
+    }
   })
   .catch((error) => {
     console.error("Auth initialization failed:", error);
     app.mount("#app");
+
+    // On error, if not in Electron mode, redirect to login
+    if (!authService.isInElectronMode()) {
+      router.push({ name: 'login' });
+    }
   });

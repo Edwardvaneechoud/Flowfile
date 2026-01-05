@@ -1,5 +1,8 @@
 // Re-export all views for convenient imports
 
+// Auth
+export { default as LoginView } from './LoginView/LoginView.vue'
+
 // Designer
 export { default as DesignerView } from './DesignerView/DesignerView.vue'
 export { default as Canvas } from './DesignerView/Canvas.vue'

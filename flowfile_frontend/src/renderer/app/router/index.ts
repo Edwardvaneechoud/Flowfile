@@ -1,6 +1,7 @@
 // src/renderer/app/router/index.ts
 import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
+import authService from "../services/auth.service";
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -8,8 +9,15 @@ const routes: Array<RouteRecordRaw> = [
     redirect: "/main"
   },
   {
+    path: "/login",
+    name: "login",
+    component: () => import("../views/LoginView/LoginView.vue"),
+    meta: { requiresAuth: false }
+  },
+  {
     path: "/main",
     component: AppLayout,
+    meta: { requiresAuth: true },
     children: [
       {
         path: "",
@@ -62,6 +70,35 @@ const routes: Array<RouteRecordRaw> = [
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL as string),
   routes,
+});
+
+// Navigation guard for authentication
+router.beforeEach((to, _from, next) => {
+  const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
+
+  // Check if route requires auth
+  if (requiresAuth) {
+    // In Electron mode, always allow (auto-auth)
+    if (authService.isInElectronMode()) {
+      next();
+      return;
+    }
+
+    // In Docker/web mode, check for valid token
+    if (authService.isAuthenticated()) {
+      next();
+    } else {
+      next({ name: 'login' });
+    }
+  } else {
+    // Route doesn't require auth (like login page)
+    // If already authenticated and going to login, redirect to main
+    if (to.name === 'login' && authService.isAuthenticated()) {
+      next({ name: 'designer' });
+    } else {
+      next();
+    }
+  }
 });
 
 export default router;

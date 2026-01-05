@@ -13,30 +13,39 @@ interface AuthResponse {
   };
 }
 
+interface UserInfo {
+  username: string;
+  email?: string;
+  full_name?: string;
+}
+
 class AuthService {
   private token = ref<string | null>(null);
   private tokenExpiration = ref<number | null>(null);
   private isElectronMode = ref(false);
   private refreshPromise: Promise<string | null> | null = null;
-  
+  private currentUsername = ref<string | null>(null);
+
   constructor() {
-    // Simplified detection that works in both Docker and Electron
-    this.isElectronMode.value = true; // Always treat as Electron for now
-    
+    // Detect environment - check for Electron or Docker mode
+    this.isElectronMode.value = this.detectElectronMode();
+
     // Clear any potentially invalid tokens on startup
     this.clearStoredTokens();
-    
+
     // Then try to load a valid token if one exists
     const savedToken = localStorage.getItem('auth_token');
     const savedExpiration = localStorage.getItem('auth_token_expiration');
-    
+    const savedUsername = localStorage.getItem('auth_username');
+
     if (savedToken && savedExpiration) {
       const expirationTime = parseInt(savedExpiration, 10);
-      
+
       // Only set the token if it's not expired
       if (expirationTime > Date.now()) {
         this.token.value = savedToken;
         this.tokenExpiration.value = expirationTime;
+        this.currentUsername.value = savedUsername;
         console.log(`Constructor: Loaded valid token from storage, expires at ${new Date(expirationTime)}`);
       } else {
         console.log(`Constructor: Found expired token in storage, clearing it`);
@@ -44,35 +53,119 @@ class AuthService {
       }
     }
   }
+
+  private detectElectronMode(): boolean {
+    // Check if running in Electron by looking for the electron API
+    // In Docker/web mode, this won't be available
+    return !!(window as unknown as { electron?: unknown }).electron;
+  }
+
+  isInElectronMode(): boolean {
+    return this.isElectronMode.value;
+  }
   
   /**
    * Checks local storage for invalid tokens and clears them
    */
   private clearStoredTokens(): void {
     const savedExpiration = localStorage.getItem('auth_token_expiration');
-    
+
     // Clear token if it's expired or if expiration is missing
     if (!savedExpiration || parseInt(savedExpiration, 10) <= Date.now()) {
       console.log('Clearing invalid or expired tokens from storage');
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_token_expiration');
+      localStorage.removeItem('auth_username');
     }
   }
 
   async initialize(): Promise<boolean> {
     // First, clear any invalid tokens
     this.clearStoredTokens();
-    
-    console.log(`Initializing auth service, has valid token: ${this.hasValidToken()}`);
-    
+
+    console.log(`Initializing auth service, has valid token: ${this.hasValidToken()}, electron mode: ${this.isElectronMode.value}`);
+
     if (this.hasValidToken()) {
       console.log('Using existing valid token');
       return true;
     }
-    
-    console.log('No valid token found, requesting new token');
-    // Always try to get a token regardless of environment
-    return await this.getElectronToken();
+
+    // In Electron mode, auto-authenticate without credentials
+    if (this.isElectronMode.value) {
+      console.log('Electron mode: auto-authenticating');
+      return await this.getElectronToken();
+    }
+
+    // In Docker/web mode, require manual login
+    console.log('Docker mode: manual login required');
+    return false;
+  }
+
+  /**
+   * Login with username and password (for Docker/web mode)
+   */
+  async login(username: string, password: string): Promise<boolean> {
+    try {
+      console.log('Attempting login with credentials');
+
+      const formData = new FormData();
+      formData.append('username', username);
+      formData.append('password', password);
+
+      const response = await axios.post<AuthResponse>('/auth/token', formData, {
+        headers: {
+          'X-Skip-Auth-Header': 'true',
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      if (response.data && response.data.access_token) {
+        const expirationTime = response.data.expires_at || this.calculateExpiration();
+        this.setToken(response.data.access_token, expirationTime, username);
+        console.log(`Login successful for user: ${username}`);
+        return true;
+      }
+
+      console.error('No access token in login response');
+      return false;
+    } catch (error) {
+      console.error('Login failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get current user information from the backend
+   */
+  async getCurrentUser(): Promise<UserInfo | null> {
+    if (!this.hasValidToken()) {
+      return null;
+    }
+
+    // If we have a stored username, return it
+    if (this.currentUsername.value) {
+      return { username: this.currentUsername.value };
+    }
+
+    try {
+      const response = await axios.get<UserInfo>('/auth/users/me');
+      if (response.data) {
+        this.currentUsername.value = response.data.username;
+        localStorage.setItem('auth_username', response.data.username);
+        return response.data;
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to get current user:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if login is required (Docker/web mode without valid token)
+   */
+  requiresLogin(): boolean {
+    return !this.isElectronMode.value && !this.hasValidToken();
   }
   
   private async getElectronToken(): Promise<boolean> {
@@ -128,13 +221,18 @@ class AuthService {
     return success ? this.token.value : null;
   }
   
-  private setToken(token: string, expiration: number): void {
+  private setToken(token: string, expiration: number, username?: string): void {
     this.token.value = token;
     this.tokenExpiration.value = expiration;
-    
+
     localStorage.setItem('auth_token', token);
     localStorage.setItem('auth_token_expiration', expiration.toString());
-    
+
+    if (username) {
+      this.currentUsername.value = username;
+      localStorage.setItem('auth_username', username);
+    }
+
     console.log(`Token set, expires at ${new Date(expiration)}`);
   }
   
@@ -160,15 +258,14 @@ class AuthService {
   logout(): void {
     this.token.value = null;
     this.tokenExpiration.value = null;
-    
+    this.currentUsername.value = null;
+
     // Ensure tokens are removed from localStorage
     localStorage.removeItem('auth_token');
     localStorage.removeItem('auth_token_expiration');
-    
+    localStorage.removeItem('auth_username');
+
     console.log('User logged out, token cleared from memory and storage');
-    
-    // Force a check for any other potential tokens
-    this.clearStoredTokens();
   }
 }
 
