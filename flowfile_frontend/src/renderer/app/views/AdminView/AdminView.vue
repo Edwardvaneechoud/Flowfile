@@ -139,6 +139,7 @@
                 <th>Full Name</th>
                 <th>Admin</th>
                 <th>Status</th>
+                <th>Password</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -163,6 +164,14 @@
                   </span>
                 </td>
                 <td>
+                  <span v-if="user.must_change_password" class="badge badge-warning">
+                    <i class="fa-solid fa-exclamation-triangle"></i> Must Change
+                  </span>
+                  <span v-else class="badge badge-ok">
+                    <i class="fa-solid fa-check"></i> OK
+                  </span>
+                </td>
+                <td>
                   <div class="action-buttons">
                     <button
                       type="button"
@@ -171,6 +180,15 @@
                       @click="openEditModal(user)"
                     >
                       <i class="fa-solid fa-edit"></i>
+                    </button>
+                    <button
+                      v-if="!user.must_change_password"
+                      type="button"
+                      class="btn btn-sm btn-warning"
+                      title="Force password change"
+                      @click="handleForcePasswordChange(user)"
+                    >
+                      <i class="fa-solid fa-key"></i>
                     </button>
                     <button
                       v-if="user.id !== currentUserId"
@@ -482,6 +500,17 @@ const handleDeleteUser = async () => {
   }
 };
 
+// Force password change
+const handleForcePasswordChange = async (user: User) => {
+  try {
+    await userService.updateUser(user.id, { must_change_password: true });
+    await loadUsers();
+    showStatus('success', `${user.username} will be required to change password on next login`);
+  } catch (error: unknown) {
+    showStatus('error', getErrorMessage(error));
+  }
+};
+
 // Load users on mount
 onMounted(() => {
   loadUsers();
@@ -586,6 +615,32 @@ onMounted(() => {
 .badge-disabled {
   background-color: #ef4444;
   color: white;
+}
+
+.badge-warning {
+  background-color: #f59e0b;
+  color: white;
+}
+
+.badge-warning i {
+  margin-right: 4px;
+}
+
+.badge-ok {
+  background-color: var(--color-background-muted);
+  color: var(--color-text-tertiary);
+}
+
+.badge-ok i {
+  margin-right: 4px;
+}
+
+.btn-warning {
+  color: #f59e0b;
+}
+
+.btn-warning:hover {
+  background-color: rgba(245, 158, 11, 0.1);
 }
 
 .action-buttons {
