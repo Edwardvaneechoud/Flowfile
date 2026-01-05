@@ -18,14 +18,6 @@ The theme toggle is located in the top navigation bar. Click the theme icon to c
 
 Your theme preference is saved locally and persists across sessions. When you reopen Flowfile, it remembers your last selected theme.
 
-### System Mode Behavior
-
-When set to System mode:
-
-- Flowfile checks your OS theme setting on startup
-- The interface switches automatically if your OS theme changes
-- Works with scheduled dark mode (e.g., sunset/sunrise schedules)
-
 ## Changing the Theme
 
 1. Locate the theme toggle icon in the top navigation bar

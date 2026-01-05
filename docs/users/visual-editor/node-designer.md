@@ -128,13 +128,6 @@ def process(self, *dfs):
     ])
 ```
 
-## Tips
-
-- Use descriptive names for components to make code more readable
-- Group related settings into sections
-- Test your node with sample data before using in production flows
-- Use the Validate action to catch errors early
-
 ## Programmatic Alternative
 
 For more control or to create nodes without the visual interface, see [Creating Custom Nodes](../../for-developers/creating-custom-nodes.md) for the Python-based approach.
