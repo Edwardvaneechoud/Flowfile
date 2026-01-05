@@ -9,8 +9,7 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
-# Patch bcrypt to handle passlib compatibility issue with bcrypt 5.0.0+
-# This must be done before any passlib imports
+# Patch bcrypt for passlib 1.7.4 / bcrypt 5.0.0+ compatibility
 import bcrypt
 _original_hashpw = bcrypt.hashpw
 def _patched_hashpw(password, salt):

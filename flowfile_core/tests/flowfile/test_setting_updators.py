@@ -491,15 +491,12 @@ class TestSettingUpdatorWithIsAvailableFalse:
 
         left_cols = {r.old_name: r for r in node_data.setting_input.cross_join_input.left_select.renames}
 
-        # 'exists' should now be available
         assert 'exists' in left_cols
         assert left_cols['exists'].is_available is True
 
-        # 'removed' should still be in select but marked as unavailable
         assert 'removed' in left_cols
         assert left_cols['removed'].is_available is False
 
-        # 'new_col' should be added
         assert 'new_col' in left_cols
         assert left_cols['new_col'].is_available is True
 
@@ -536,11 +533,9 @@ class TestSettingUpdatorWithIsAvailableFalse:
 
         left_cols = {r.old_name: r for r in node_data.setting_input.cross_join_input.left_select.renames}
 
-        # 'Column 1' should still be in select but marked as unavailable
         assert 'Column 1' in left_cols
         assert left_cols['Column 1'].is_available is False
 
-        # 'Column 2' should be added as new column
         assert 'Column 2' in left_cols
         assert left_cols['Column 2'].is_available is True
 
@@ -685,13 +680,11 @@ class TestCrossJoinExecution:
             raw_data_format=input_schema.RawData.from_pylist([{'a': 1, 'c': 3}])
         ))
 
-        # Trigger the updator to update settings with new column
+        # Trigger updator to add new column to settings
         node.get_node_data(basic_flow.flow_id)
 
-        # Node needs to be reset and re-executed
         node.reset()
         basic_flow.run_graph()
         result2 = node.get_resulting_data()
 
-        # New column 'c' should be present (auto_keep_left=True by default)
         assert 'c' in result2.columns

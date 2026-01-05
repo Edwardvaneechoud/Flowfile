@@ -20,8 +20,7 @@ def create_default_local_user(db: Session):
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
         random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
-        # Truncate to 72 bytes to comply with bcrypt's limit
-        hashed_password = pwd_context.hash(random_password[:72])
+        hashed_password = pwd_context.hash(random_password)
 
         local_user = db_models.User(
             username="local_user",
