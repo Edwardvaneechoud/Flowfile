@@ -55,9 +55,9 @@ class AuthService {
   }
 
   private detectElectronMode(): boolean {
-    // Check if running in Electron by looking for the electron API
+    // Check if running in Electron by looking for the electronAPI exposed by preload
     // In Docker/web mode, this won't be available
-    return !!(window as unknown as { electron?: unknown }).electron;
+    return !!(window as unknown as { electronAPI?: unknown }).electronAPI;
   }
 
   isInElectronMode(): boolean {
