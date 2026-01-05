@@ -3,7 +3,7 @@
     <div class="login-card">
       <div class="login-header">
         <div class="logo-container">
-          <img src="/flowfile_logo.png" alt="Flowfile" class="logo" />
+          <img src="/images/flowfile.svg" alt="Flowfile" class="logo" />
         </div>
         <h1 class="login-title">Welcome to Flowfile</h1>
         <p class="login-subtitle">Sign in to continue</p>
