@@ -111,7 +111,7 @@ const handleLogout = () => {
   transform: translateY(-50%);
   padding: 6px 10px;
   background-color: var(--color-gray-900);
-  color: white;
+  color: var(--color-text-inverse);
   font-size: var(--font-size-xs);
   border-radius: var(--border-radius-sm);
   white-space: nowrap;

@@ -599,7 +599,7 @@ onMounted(() => {
 
 .badge-admin {
   background-color: var(--color-accent);
-  color: white;
+  color: var(--color-text-inverse);
 }
 
 .badge-user {
@@ -608,18 +608,18 @@ onMounted(() => {
 }
 
 .badge-active {
-  background-color: #10b981;
-  color: white;
+  background-color: var(--color-success);
+  color: var(--color-text-inverse);
 }
 
 .badge-disabled {
-  background-color: #ef4444;
-  color: white;
+  background-color: var(--color-danger);
+  color: var(--color-text-inverse);
 }
 
 .badge-warning {
-  background-color: #f59e0b;
-  color: white;
+  background-color: var(--color-warning);
+  color: var(--color-text-inverse);
 }
 
 .badge-warning i {
@@ -636,11 +636,11 @@ onMounted(() => {
 }
 
 .btn-warning {
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .btn-warning:hover {
-  background-color: rgba(245, 158, 11, 0.1);
+  background-color: var(--color-warning-light);
 }
 
 .action-buttons {
@@ -688,15 +688,15 @@ onMounted(() => {
 }
 
 .status-success {
-  background-color: rgba(16, 185, 129, 0.1);
-  color: #10b981;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  background-color: var(--color-success-light);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
 }
 
 .status-error {
-  background-color: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
 }
 
 .fade-enter-active,
