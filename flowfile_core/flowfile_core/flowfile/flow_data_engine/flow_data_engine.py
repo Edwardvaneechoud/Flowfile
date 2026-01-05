@@ -1772,7 +1772,7 @@ class FlowDataEngine:
 
         cols_to_delete_after = [
             col.new_name
-            for col in cross_join_input_manager.left_select.renames + cross_join_input_manager.left_select.renames
+            for col in cross_join_input_manager.left_select.renames + cross_join_input_manager.right_select.renames
             if col.join_key and not col.keep and col.is_available
         ]
 

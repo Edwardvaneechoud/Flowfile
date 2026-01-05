@@ -2,6 +2,9 @@
 
 Build your own data transformation nodes with custom UI components and processing logic.
 
+!!! tip "Visual Alternative"
+    You can also create custom nodes visually using the [Node Designer](../users/visual-editor/node-designer.md) without writing Python files directly.
+
 !!! warning "Beta Feature"
     Custom nodes are currently in beta. Some features like changing the icon are still in development.
 
@@ -280,6 +283,22 @@ text_columns = ColumnSelector(
     multiple=True
 )
 ```
+
+### Secret Selector
+Access stored secrets (API keys, credentials, tokens) securely:
+
+```python
+from flowfile_core.flowfile.node_designer import SecretSelector
+
+class MyNode(CustomNodeBase):
+    settings_schema = NodeSettings(
+        components=[
+            SecretSelector(name="api_key", label="API Key"),
+        ]
+    )
+```
+
+The SecretSelector displays a dropdown of available secrets configured by the user. Secrets are stored securely and retrieved at runtime. This is useful for nodes that connect to external APIs or services.
 
 ### Dynamic Column Options
 Use `IncomingColumns` for dropdowns that populate with input columns:

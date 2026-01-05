@@ -735,32 +735,139 @@ class FlowGraph:
         Args:
             filter_settings: The settings for the filter operation.
         """
+        from flowfile_core.schemas.transform_schema import FilterOperator
 
-        is_advanced = filter_settings.filter_input.filter_type == "advanced"
-        if is_advanced:
-            predicate = filter_settings.filter_input.advanced_filter
-        else:
-            _basic_filter = filter_settings.filter_input.basic_filter
-            filter_settings.filter_input.advanced_filter = (
-                f'[{_basic_filter.field}]{_basic_filter.filter_type}"' f'{_basic_filter.filter_value}"'
-            )
+        def _build_basic_filter_expression(
+            basic_filter: transform_schema.BasicFilter, field_data_type: str | None = None
+        ) -> str:
+            """Build a filter expression string from a BasicFilter object.
+
+            Uses the Flowfile expression language that is compatible with polars_expr_transformer.
+
+            Args:
+                basic_filter: The basic filter configuration.
+                field_data_type: The data type of the field (optional, for smart quoting).
+
+            Returns:
+                A filter expression string compatible with polars_expr_transformer.
+            """
+            field = f"[{basic_filter.field}]"
+            value = basic_filter.value
+            value2 = basic_filter.value2
+
+            is_numeric_value = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
+            should_quote = field_data_type == "str" or not is_numeric_value
+
+            try:
+                operator = basic_filter.get_operator()
+            except (ValueError, AttributeError):
+                operator = FilterOperator.from_symbol(str(basic_filter.operator))
+
+            if operator == FilterOperator.EQUALS:
+                if should_quote:
+                    return f'{field}="{value}"'
+                return f"{field}={value}"
+
+            elif operator == FilterOperator.NOT_EQUALS:
+                if should_quote:
+                    return f'{field}!="{value}"'
+                return f"{field}!={value}"
+
+            elif operator == FilterOperator.GREATER_THAN:
+                if should_quote:
+                    return f'{field}>"{value}"'
+                return f"{field}>{value}"
+
+            elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
+                if should_quote:
+                    return f'{field}>="{value}"'
+                return f"{field}>={value}"
+
+            elif operator == FilterOperator.LESS_THAN:
+                if should_quote:
+                    return f'{field}<"{value}"'
+                return f"{field}<{value}"
+
+            elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
+                if should_quote:
+                    return f'{field}<="{value}"'
+                return f"{field}<={value}"
+
+            elif operator == FilterOperator.CONTAINS:
+                return f'contains({field}, "{value}")'
+
+            elif operator == FilterOperator.NOT_CONTAINS:
+                return f'contains({field}, "{value}") = false'
+
+            elif operator == FilterOperator.STARTS_WITH:
+                return f'left({field}, {len(value)}) = "{value}"'
+
+            elif operator == FilterOperator.ENDS_WITH:
+                return f'right({field}, {len(value)}) = "{value}"'
+
+            elif operator == FilterOperator.IS_NULL:
+                return f"is_empty({field})"
+
+            elif operator == FilterOperator.IS_NOT_NULL:
+                return f"is_not_empty({field})"
+
+            elif operator == FilterOperator.IN:
+                values = [v.strip() for v in value.split(",")]
+                if len(values) == 1:
+                    if should_quote:
+                        return f'{field}="{values[0]}"'
+                    return f"{field}={values[0]}"
+                if should_quote:
+                    conditions = [f'({field}="{v}")' for v in values]
+                else:
+                    conditions = [f"({field}={v})" for v in values]
+                return " | ".join(conditions)
+
+            elif operator == FilterOperator.NOT_IN:
+                values = [v.strip() for v in value.split(",")]
+                if len(values) == 1:
+                    if should_quote:
+                        return f'{field}!="{values[0]}"'
+                    return f"{field}!={values[0]}"
+                if should_quote:
+                    conditions = [f'({field}!="{v}")' for v in values]
+                else:
+                    conditions = [f"({field}!={v})" for v in values]
+                return " & ".join(conditions)
+
+            elif operator == FilterOperator.BETWEEN:
+                if value2 is None:
+                    raise ValueError("BETWEEN operator requires value2")
+                if should_quote:
+                    return f'({field}>="{value}") & ({field}<="{value2}")'
+                return f"({field}>={value}) & ({field}<={value2})"
+
+            else:
+                # Fallback for unknown operators - use legacy format
+                if should_quote:
+                    return f'{field}{operator.to_symbol()}"{value}"'
+                return f"{field}{operator.to_symbol()}{value}"
 
         def _func(fl: FlowDataEngine):
-            is_advanced = filter_settings.filter_input.filter_type == "advanced"
+            is_advanced = filter_settings.filter_input.is_advanced()
+
             if is_advanced:
+                predicate = filter_settings.filter_input.advanced_filter
                 return fl.do_filter(predicate)
             else:
                 basic_filter = filter_settings.filter_input.basic_filter
-                if basic_filter.filter_value.isnumeric():
+                if basic_filter is None:
+                    logger.warning("Basic filter is None, returning unfiltered data")
+                    return fl
+
+                try:
                     field_data_type = fl.get_schema_column(basic_filter.field).generic_datatype()
-                    if field_data_type == "str":
-                        _f = f'[{basic_filter.field}]{basic_filter.filter_type}"{basic_filter.filter_value}"'
-                    else:
-                        _f = f"[{basic_filter.field}]{basic_filter.filter_type}{basic_filter.filter_value}"
-                else:
-                    _f = f'[{basic_filter.field}]{basic_filter.filter_type}"{basic_filter.filter_value}"'
-                filter_settings.filter_input.advanced_filter = _f
-                return fl.do_filter(_f)
+                except Exception:
+                    field_data_type = None
+
+                expression = _build_basic_filter_expression(basic_filter, field_data_type)
+                filter_settings.filter_input.advanced_filter = expression
+                return fl.do_filter(expression)
 
         self.add_node_step(
             filter_settings.node_id,
@@ -910,7 +1017,6 @@ class FlowGraph:
             setting_input=function_settings,
             input_node_ids=[function_settings.depending_on_id],
         )
-        # TODO: Add validation here
         if error != "":
             node = self.get_node(function_settings.node_id)
             node.results.errors = error

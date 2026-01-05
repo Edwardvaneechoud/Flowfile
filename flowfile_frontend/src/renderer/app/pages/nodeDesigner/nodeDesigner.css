@@ -104,9 +104,7 @@
   color: var(--color-text-secondary);
 }
 
-/* Property editor styles
-   TODO: These classes are prepared for a future property editor panel.
-   Remove if not used by the time this feature is implemented. */
+/* Property editor styles */
 .property-group {
   margin-bottom: var(--spacing-4);
 }
@@ -151,9 +149,7 @@
   border-color: var(--input-border-focus);
 }
 
-/* Validation message styles
-   TODO: These classes are prepared for future form validation UI.
-   Remove if not used by the time this feature is implemented. */
+/* Validation message styles */
 .validation-message {
   display: flex;
   align-items: flex-start;
