@@ -170,7 +170,7 @@ def get_master_key():
     Returns:
         str: The master encryption key
     """
-    if os.environ.get("RUNNING_IN_DOCKER") == "true":
+    if os.environ.get("FLOWFILE_MODE") == "docker":
         return get_docker_secret_key()
 
     key = get_password("flowfile", "master_key")

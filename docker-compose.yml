@@ -24,6 +24,7 @@ services:
     ports:
       - "63578:63578"
     environment:
+      # FLOWFILE_MODE: "electron" (desktop), "package" (Python package), "docker" (container)
       - FLOWFILE_MODE=docker
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
@@ -32,7 +33,6 @@ services:
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       # User data directory for file explorer and user files
       - FLOWFILE_USER_DATA_DIR=/app/user_data
-      - RUNNING_IN_DOCKER=true
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
@@ -51,12 +51,12 @@ services:
     ports:
       - "63579:63579"
     environment:
+      - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
       # Same internal storage as core for communication
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       # Access to user data for processing
       - FLOWFILE_USER_DATA_DIR=/app/user_data
-      - RUNNING_IN_DOCKER=true
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
