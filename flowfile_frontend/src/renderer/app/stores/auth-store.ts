@@ -5,6 +5,8 @@ export interface User {
   username: string
   email?: string
   full_name?: string
+  is_admin?: boolean
+  id?: number
 }
 
 interface AuthState {
@@ -26,6 +28,7 @@ export const useAuthStore = defineStore('auth', {
     currentUser: (state): User | null => state.user,
     isLoggedIn: (state): boolean => state.isAuthenticated,
     authError: (state): string | null => state.error,
+    isAdmin: (state): boolean => state.user?.is_admin ?? false,
   },
 
   actions: {

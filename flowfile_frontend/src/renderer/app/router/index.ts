@@ -59,6 +59,12 @@ const routes: Array<RouteRecordRaw> = [
         path: "nodeDesigner",
         component: () => import("../pages/NodeDesigner.vue"),
       },
+      {
+        name: "admin",
+        path: "admin",
+        component: () => import("../views/AdminView/AdminView.vue"),
+        meta: { requiresAdmin: true }
+      },
     ],
   },
   {

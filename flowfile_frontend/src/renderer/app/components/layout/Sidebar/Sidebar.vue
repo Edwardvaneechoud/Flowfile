@@ -21,13 +21,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { computed } from "vue";
 import { useRouter } from "vue-router";
 import NavigationRoutes from "./NavigationRoutes";
 import MenuAccordion from "./menu/MenuAccordion.vue";
 import Logo from "../Logo/Logo.vue";
 import ThemeToggle from "../ThemeToggle/ThemeToggle.vue";
 import authService from "../../../services/auth.service";
+import { useAuthStore } from "../../../stores/auth-store";
 
 // Define the isCollapse prop
 defineProps({
@@ -41,7 +42,16 @@ defineProps({
 defineEmits(["toggle-collapse"]);
 
 const router = useRouter();
-const items = ref(NavigationRoutes.routes);
+const authStore = useAuthStore();
+
+// Filter routes based on admin status
+const items = computed(() => {
+  const isAdmin = authStore.isAdmin;
+  return NavigationRoutes.routes.filter(route => {
+    // Show route if it doesn't require admin, or if user is admin
+    return !route.requiresAdmin || isAdmin;
+  });
+});
 
 // Only show logout button in Docker/web mode
 const showLogout = computed(() => !authService.isInElectronMode());

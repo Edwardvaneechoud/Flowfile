@@ -4,6 +4,7 @@ export interface INavigationRoute {
   meta: { icon: string };
   children?: INavigationRoute[];
   disabled?: boolean;
+  requiresAdmin?: boolean;
 }
 
 export default {
@@ -53,6 +54,14 @@ export default {
       meta: {
         icon: "fa-solid fa-puzzle-piece",
       },
+    },
+    {
+      name: "admin",
+      displayName: "menu.admin",
+      meta: {
+        icon: "fa-solid fa-users-cog",
+      },
+      requiresAdmin: true,
     },
   ] as INavigationRoute[],
 };
