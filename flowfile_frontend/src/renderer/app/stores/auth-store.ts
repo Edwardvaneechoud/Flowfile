@@ -7,6 +7,7 @@ export interface User {
   full_name?: string
   is_admin?: boolean
   id?: number
+  must_change_password?: boolean
 }
 
 interface AuthState {
@@ -29,6 +30,7 @@ export const useAuthStore = defineStore('auth', {
     isLoggedIn: (state): boolean => state.isAuthenticated,
     authError: (state): string | null => state.error,
     isAdmin: (state): boolean => state.user?.is_admin ?? false,
+    mustChangePassword: (state): boolean => state.user?.must_change_password ?? false,
   },
 
   actions: {
@@ -95,6 +97,19 @@ export const useAuthStore = defineStore('auth', {
 
     clearError() {
       this.error = null
+    },
+
+    async refreshUserInfo() {
+      const userInfo = await authService.getCurrentUser()
+      if (userInfo) {
+        this.user = userInfo
+      }
+    },
+
+    clearMustChangePassword() {
+      if (this.user) {
+        this.user.must_change_password = false
+      }
     },
   },
 })

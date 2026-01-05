@@ -17,6 +17,7 @@ class User(BaseModel):
     full_name: str | None = None
     disabled: bool | None = False
     is_admin: bool | None = False
+    must_change_password: bool | None = False
 
 
 class UserInDB(User):
@@ -39,6 +40,13 @@ class UserUpdate(BaseModel):
     disabled: bool | None = None
     is_admin: bool | None = None
     password: str | None = None  # Optional password change
+    must_change_password: bool | None = None
+
+
+class ChangePassword(BaseModel):
+    """Model for user changing their own password"""
+    current_password: str
+    new_password: str
 
 
 class SecretInput(BaseModel):

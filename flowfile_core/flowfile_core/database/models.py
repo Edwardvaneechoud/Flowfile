@@ -15,6 +15,7 @@ class User(Base):
     hashed_password = Column(String)
     disabled = Column(Boolean, default=False)
     is_admin = Column(Boolean, default=False)
+    must_change_password = Column(Boolean, default=True)
 
 
 class Secret(Base):

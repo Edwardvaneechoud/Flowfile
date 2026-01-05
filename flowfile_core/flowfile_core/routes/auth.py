@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
 from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user, create_access_token
-from flowfile_core.auth.models import Token, User, UserCreate, UserUpdate
+from flowfile_core.auth.models import Token, User, UserCreate, UserUpdate, ChangePassword
 from flowfile_core.auth.password import verify_password, get_password_hash
 from flowfile_core.database.connection import get_db
 from flowfile_core.database import models as db_models
@@ -72,7 +72,8 @@ async def list_users(
             email=u.email,
             full_name=u.full_name,
             disabled=u.disabled,
-            is_admin=u.is_admin
+            is_admin=u.is_admin,
+            must_change_password=u.must_change_password
         )
         for u in users
     ]
@@ -106,14 +107,15 @@ async def create_user(
                 detail="Email already exists"
             )
 
-    # Create new user
+    # Create new user with must_change_password=True
     hashed_password = get_password_hash(user_data.password)
     new_user = db_models.User(
         username=user_data.username,
         email=user_data.email or f"{user_data.username}@flowfile.app",
         full_name=user_data.full_name,
         hashed_password=hashed_password,
-        is_admin=user_data.is_admin
+        is_admin=user_data.is_admin,
+        must_change_password=True
     )
     db.add(new_user)
     db.commit()
@@ -125,7 +127,8 @@ async def create_user(
         email=new_user.email,
         full_name=new_user.full_name,
         disabled=new_user.disabled,
-        is_admin=new_user.is_admin
+        is_admin=new_user.is_admin,
+        must_change_password=new_user.must_change_password
     )
 
 
@@ -183,6 +186,11 @@ async def update_user(
 
     if user_data.password is not None:
         user.hashed_password = get_password_hash(user_data.password)
+        # Reset must_change_password when admin sets a new password
+        user.must_change_password = True
+
+    if user_data.must_change_password is not None:
+        user.must_change_password = user_data.must_change_password
 
     db.commit()
     db.refresh(user)
@@ -193,7 +201,8 @@ async def update_user(
         email=user.email,
         full_name=user.full_name,
         disabled=user.disabled,
-        is_admin=user.is_admin
+        is_admin=user.is_admin,
+        must_change_password=user.must_change_password
     )
 
 
@@ -227,3 +236,50 @@ async def delete_user(
     db.commit()
 
     return {"message": f"User '{user.username}' deleted successfully"}
+
+
+# ============= User Self-Service Endpoints =============
+
+@router.post("/users/me/change-password", response_model=User)
+async def change_own_password(
+    password_data: ChangePassword,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Change the current user's password"""
+    user = db.query(db_models.User).filter(db_models.User.id == current_user.id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Verify current password
+    if not verify_password(password_data.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    # Validate new password
+    if len(password_data.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 6 characters"
+        )
+
+    # Update password and clear must_change_password flag
+    user.hashed_password = get_password_hash(password_data.new_password)
+    user.must_change_password = False
+    db.commit()
+    db.refresh(user)
+
+    return User(
+        username=user.username,
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        disabled=user.disabled,
+        is_admin=user.is_admin,
+        must_change_password=user.must_change_password
+    )

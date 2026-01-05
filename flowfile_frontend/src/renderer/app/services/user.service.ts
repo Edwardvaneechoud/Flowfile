@@ -8,6 +8,7 @@ export interface User {
   full_name?: string;
   disabled: boolean;
   is_admin: boolean;
+  must_change_password: boolean;
 }
 
 export interface UserCreate {
@@ -24,6 +25,7 @@ export interface UserUpdate {
   disabled?: boolean;
   is_admin?: boolean;
   password?: string;
+  must_change_password?: boolean;
 }
 
 class UserService {

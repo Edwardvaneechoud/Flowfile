@@ -23,19 +23,26 @@ def run_migrations():
             "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
         ))
         if not result.fetchone():
-            # Table doesn't exist yet, create_all will handle it with the new schema
             logger.info("Users table does not exist, will be created with new schema")
             return
 
-        # Check if is_admin column exists in users table
+        # Check existing columns
         result = conn.execute(text("PRAGMA table_info(users)"))
         columns = [row[1] for row in result.fetchall()]
 
+        # Add is_admin column if missing
         if 'is_admin' not in columns:
             logger.info("Adding is_admin column to users table")
             conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
             conn.commit()
             logger.info("Migration complete: is_admin column added")
+
+        # Add must_change_password column if missing
+        if 'must_change_password' not in columns:
+            logger.info("Adding must_change_password column to users table")
+            conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
+            conn.commit()
+            logger.info("Migration complete: must_change_password column added")
 
 
 # Run migrations BEFORE create_all to update existing tables
@@ -54,13 +61,13 @@ def create_default_local_user(db: Session):
             username="local_user",
             email="local@flowfile.app",
             full_name="Local User",
-            hashed_password=hashed_password
+            hashed_password=hashed_password,
+            must_change_password=False  # Local user doesn't need to change password
         )
         db.add(local_user)
         db.commit()
         return True
-    else:
-        return False
+    return False
 
 
 def create_docker_admin_user(db: Session):
@@ -107,7 +114,8 @@ def create_docker_admin_user(db: Session):
         email=f"{admin_username}@flowfile.app",
         full_name="Admin User",
         hashed_password=hashed_password,
-        is_admin=True
+        is_admin=True,
+        must_change_password=True  # Force password change on first login
     )
     db.add(admin_user)
     db.commit()
