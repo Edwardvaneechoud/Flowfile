@@ -7,15 +7,17 @@
       <menu-accordion :items="items" :is-collapse="true" />
     </div>
     <div class="sidebar-footer">
-      <ThemeToggle />
-      <button
-        v-if="showLogout"
-        class="logout-button"
-        title="Sign Out"
-        @click="handleLogout"
-      >
-        <i class="fa-solid fa-right-from-bracket"></i>
-      </button>
+      <div class="footer-btn-wrapper" data-tooltip="Toggle theme">
+        <ThemeToggle />
+      </div>
+      <div v-if="showLogout" class="footer-btn-wrapper" data-tooltip="Sign out">
+        <button
+          class="logout-button"
+          @click="handleLogout"
+        >
+          <i class="fa-solid fa-right-from-bracket"></i>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -97,26 +99,78 @@ const handleLogout = () => {
   align-items: center;
 }
 
+.footer-btn-wrapper {
+  position: relative;
+}
+
+.footer-btn-wrapper::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  padding: 6px 10px;
+  background-color: var(--color-gray-900);
+  color: white;
+  font-size: var(--font-size-xs);
+  border-radius: var(--border-radius-sm);
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.footer-btn-wrapper::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 2px);
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--color-gray-900);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.footer-btn-wrapper:hover::after,
+.footer-btn-wrapper:hover::before {
+  opacity: 1;
+  visibility: visible;
+}
+
 .logout-button {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 36px;
   height: 36px;
-  border: none;
+  padding: 0;
+  border: 1px solid var(--color-border-primary);
   border-radius: var(--border-radius-md);
-  background-color: transparent;
+  background-color: var(--color-background-primary);
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all var(--transition-base) var(--transition-timing);
 }
 
 .logout-button:hover {
   background-color: var(--color-danger-light);
   color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.logout-button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+  border-color: var(--color-danger);
 }
 
 .logout-button i {
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-lg);
 }
 </style>
