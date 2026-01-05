@@ -263,6 +263,7 @@ def _load_flow_storage(flow_path: Path) -> schemas.FlowInformation:
     if suffix == ".flowfile":
         try:
             flow_storage_obj = load_flowfile_pickle(str(flow_path))
+            breakpoint()
             ensure_compatibility(flow_storage_obj, str(flow_path))
             return flow_storage_obj
         except Exception as e:
@@ -305,7 +306,6 @@ def open_flow(flow_path: Path) -> FlowGraph:
     ingestion_order = determine_insertion_order(flow_storage_obj)
 
     # Create new FlowGraph
-    new_flow = FlowGraph(name=flow_storage_obj.flow_name, flow_settings=flow_storage_obj.flow_settings)
 
     # First pass: add node promises
     for node_id in ingestion_order:
