@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../../tools/yaml_schema/flowfile.schema.json
 flowfile_version: 0.5.0
 flowfile_id: 1
 flowfile_name: complex_elaborate_flow

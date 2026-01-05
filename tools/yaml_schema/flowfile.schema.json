@@ -1,0 +1,3690 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flowfile.dev/schemas/flowfile.schema.json",
+  "title": "Flowfile YAML Schema",
+  "description": "Schema for Flowfile data flow definition files (.yaml, .yml)",
+  "type": "object",
+  "required": [
+    "flowfile_version",
+    "flowfile_id",
+    "flowfile_name",
+    "flowfile_settings",
+    "nodes"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "MinimalFieldInfo": {
+      "description": "Represents the most basic information about a data field (column).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "data_type": {
+          "default": "String",
+          "title": "Data Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "MinimalFieldInfo",
+      "type": "object"
+    },
+    "RawData": {
+      "description": "Represents data in a raw, columnar format for manual input.",
+      "properties": {
+        "columns": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/MinimalFieldInfo"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "data": {
+          "items": {
+            "items": {},
+            "type": "array"
+          },
+          "title": "Data",
+          "type": "array"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "RawData",
+      "type": "object"
+    },
+    "BasicFilter": {
+      "description": "Defines a simple, single-condition filter (e.g., 'column' 'equals' 'value').\n\nAttributes:\n    field: The column name to filter on.\n    operator: The comparison operator (FilterOperator enum value or symbol).\n    value: The value to compare against.\n    value2: Second value for BETWEEN operator (optional).",
+      "properties": {
+        "field": {
+          "default": "",
+          "title": "Field",
+          "type": "string"
+        },
+        "operator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FilterOperator"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "default": "equals",
+          "title": "Operator"
+        },
+        "value": {
+          "default": "",
+          "title": "Value",
+          "type": "string"
+        },
+        "value2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value2"
+        },
+        "filter_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filter Type"
+        },
+        "filter_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filter Value"
+        }
+      },
+      "title": "BasicFilter",
+      "type": "object"
+    },
+    "FilterInput": {
+      "description": "Defines the settings for a filter operation, supporting basic or advanced (expression-based) modes.\n\nAttributes:\n    mode: The filter mode - \"basic\" or \"advanced\".\n    basic_filter: The basic filter configuration (used when mode=\"basic\").\n    advanced_filter: The advanced filter expression string (used when mode=\"advanced\").",
+      "properties": {
+        "mode": {
+          "default": "basic",
+          "enum": [
+            "basic",
+            "advanced"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "basic_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BasicFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "advanced_filter": {
+          "default": "",
+          "title": "Advanced Filter",
+          "type": "string"
+        },
+        "filter_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filter Type"
+        }
+      },
+      "title": "FilterInput",
+      "type": "object"
+    },
+    "FilterOperator": {
+      "description": "Supported filter comparison operators.",
+      "enum": [
+        "equals",
+        "not_equals",
+        "greater_than",
+        "greater_than_or_equals",
+        "less_than",
+        "less_than_or_equals",
+        "contains",
+        "not_contains",
+        "starts_with",
+        "ends_with",
+        "is_null",
+        "is_not_null",
+        "in",
+        "not_in",
+        "between"
+      ],
+      "title": "FilterOperator",
+      "type": "string"
+    },
+    "DataType": {
+      "description": "Specific data types for fine-grained control.",
+      "enum": [
+        "Int8",
+        "Int16",
+        "Int32",
+        "Int64",
+        "UInt8",
+        "UInt16",
+        "UInt32",
+        "UInt64",
+        "Float32",
+        "Float64",
+        "Decimal",
+        "String",
+        "Categorical",
+        "Date",
+        "Datetime",
+        "Time",
+        "Duration",
+        "Boolean",
+        "Binary",
+        "List",
+        "Struct",
+        "Array"
+      ],
+      "title": "DataType",
+      "type": "string"
+    },
+    "FieldInput": {
+      "description": "Represents a single field with its name and data type, typically for defining an output column.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "data_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DataType"
+            },
+            {
+              "const": "Auto",
+              "enum": [
+                "Auto"
+              ],
+              "type": "string"
+            },
+            {
+              "enum": [
+                "Int8",
+                "Int16",
+                "Int32",
+                "Int64",
+                "UInt8",
+                "UInt16",
+                "UInt32",
+                "UInt64",
+                "Float32",
+                "Float64",
+                "Decimal",
+                "String",
+                "Date",
+                "Datetime",
+                "Time",
+                "Duration",
+                "Boolean",
+                "Binary",
+                "List",
+                "Struct",
+                "Array",
+                "Integer",
+                "Double",
+                "Utf8"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "Auto",
+          "title": "Data Type"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "FieldInput",
+      "type": "object"
+    },
+    "FunctionInput": {
+      "description": "Defines a formula to be applied, including the output field information.",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/FieldInput"
+        },
+        "function": {
+          "title": "Function",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "function"
+      ],
+      "title": "FunctionInput",
+      "type": "object"
+    },
+    "SelectInput": {
+      "description": "Defines how a single column should be selected, renamed, or type-cast.\n\nThis is a core building block for any operation that involves column manipulation.\nIt holds all the configuration for a single field in a selection operation.",
+      "properties": {
+        "old_name": {
+          "title": "Old Name",
+          "type": "string"
+        },
+        "original_position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Original Position"
+        },
+        "new_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "New Name"
+        },
+        "data_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Type"
+        },
+        "data_type_change": {
+          "default": false,
+          "title": "Data Type Change",
+          "type": "boolean"
+        },
+        "join_key": {
+          "default": false,
+          "title": "Join Key",
+          "type": "boolean"
+        },
+        "is_altered": {
+          "default": false,
+          "title": "Is Altered",
+          "type": "boolean"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        },
+        "is_available": {
+          "default": true,
+          "title": "Is Available",
+          "type": "boolean"
+        },
+        "keep": {
+          "default": true,
+          "title": "Keep",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "old_name"
+      ],
+      "title": "SelectInput",
+      "type": "object"
+    },
+    "SortByInput": {
+      "description": "Defines a single sort condition on a column, including the direction.",
+      "properties": {
+        "column": {
+          "title": "Column",
+          "type": "string"
+        },
+        "how": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "asc",
+          "title": "How"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "SortByInput",
+      "type": "object"
+    },
+    "RecordIdInput": {
+      "description": "Defines settings for adding a record ID (row number) column to the data.",
+      "properties": {
+        "output_column_name": {
+          "default": "record_id",
+          "title": "Output Column Name",
+          "type": "string"
+        },
+        "offset": {
+          "default": 1,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "group_by": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Group By"
+        },
+        "group_by_columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Group By Columns"
+        }
+      },
+      "title": "RecordIdInput",
+      "type": "object"
+    },
+    "UniqueInput": {
+      "description": "Defines settings for a uniqueness operation, specifying columns and which row to keep.",
+      "properties": {
+        "columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Columns"
+        },
+        "strategy": {
+          "default": "any",
+          "enum": [
+            "first",
+            "last",
+            "any",
+            "none"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        }
+      },
+      "title": "UniqueInput",
+      "type": "object"
+    },
+    "AggColl": {
+      "description": "A data class that represents a single aggregation operation for a group by operation.\n\nAttributes\n----------\nold_name : str\n    The name of the column in the original DataFrame to be aggregated.\n\nagg : str\n    The aggregation function to use. This can be a string representing a built-in function or a custom function.\n\nnew_name : Optional[str]\n    The name of the resulting aggregated column in the output DataFrame. If not provided, it will default to the\n    old_name appended with the aggregation function.\n\noutput_type : Optional[str]\n    The type of the output values of the aggregation. If not provided, it is inferred from the aggregation function\n    using the `get_func_type_mapping` function.\n\nExample\n--------\nagg_col = AggColl(\n    old_name='col1',\n    agg='sum',\n    new_name='sum_col1',\n    output_type='float'\n)",
+      "properties": {
+        "old_name": {
+          "title": "Old Name",
+          "type": "string"
+        },
+        "agg": {
+          "title": "Agg",
+          "type": "string"
+        },
+        "new_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "New Name"
+        },
+        "output_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Type"
+        }
+      },
+      "required": [
+        "old_name",
+        "agg"
+      ],
+      "title": "AggColl",
+      "type": "object"
+    },
+    "GroupByInput": {
+      "description": "A data class that represents the input for a group by operation.\n\nAttributes\n----------\nagg_cols : List[AggColl]\n    A list of `AggColl` objects that specify the aggregation operations to perform on the DataFrame columns\n    after grouping. Each `AggColl` object should specify the column to be aggregated and the aggregation\n    function to use.\n\nExample\n--------\ngroup_by_input = GroupByInput(\n    agg_cols=[AggColl(old_name='ix', agg='groupby'), AggColl(old_name='groups', agg='groupby'),\n              AggColl(old_name='col1', agg='sum'), AggColl(old_name='col2', agg='mean')]\n)",
+      "properties": {
+        "agg_cols": {
+          "items": {
+            "$ref": "#/$defs/AggColl"
+          },
+          "title": "Agg Cols",
+          "type": "array"
+        }
+      },
+      "required": [
+        "agg_cols"
+      ],
+      "title": "GroupByInput",
+      "type": "object"
+    },
+    "PivotInput": {
+      "description": "Defines the settings for a pivot (long-to-wide) operation.",
+      "properties": {
+        "index_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Index Columns",
+          "type": "array"
+        },
+        "pivot_column": {
+          "title": "Pivot Column",
+          "type": "string"
+        },
+        "value_col": {
+          "title": "Value Col",
+          "type": "string"
+        },
+        "aggregations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aggregations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "index_columns",
+        "pivot_column",
+        "value_col",
+        "aggregations"
+      ],
+      "title": "PivotInput",
+      "type": "object"
+    },
+    "UnpivotInput": {
+      "description": "Defines settings for an unpivot (wide-to-long) operation.",
+      "properties": {
+        "index_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Index Columns",
+          "type": "array"
+        },
+        "value_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Value Columns",
+          "type": "array"
+        },
+        "data_type_selector": {
+          "anyOf": [
+            {
+              "enum": [
+                "float",
+                "all",
+                "date",
+                "numeric",
+                "string"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Type Selector"
+        },
+        "data_type_selector_mode": {
+          "default": "column",
+          "enum": [
+            "data_type",
+            "column"
+          ],
+          "title": "Data Type Selector Mode",
+          "type": "string"
+        }
+      },
+      "title": "UnpivotInput",
+      "type": "object"
+    },
+    "TextToRowsInput": {
+      "description": "Defines settings for splitting a text column into multiple rows based on a delimiter.",
+      "properties": {
+        "column_to_split": {
+          "title": "Column To Split",
+          "type": "string"
+        },
+        "output_column_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Column Name"
+        },
+        "split_by_fixed_value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true,
+          "title": "Split By Fixed Value"
+        },
+        "split_fixed_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ",",
+          "title": "Split Fixed Value"
+        },
+        "split_by_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Split By Column"
+        }
+      },
+      "required": [
+        "column_to_split"
+      ],
+      "title": "TextToRowsInput",
+      "type": "object"
+    },
+    "GraphSolverInput": {
+      "description": "Defines settings for a graph-solving operation (e.g., finding connected components).",
+      "properties": {
+        "col_from": {
+          "title": "Col From",
+          "type": "string"
+        },
+        "col_to": {
+          "title": "Col To",
+          "type": "string"
+        },
+        "output_column_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "graph_group",
+          "title": "Output Column Name"
+        }
+      },
+      "required": [
+        "col_from",
+        "col_to"
+      ],
+      "title": "GraphSolverInput",
+      "type": "object"
+    },
+    "PolarsCodeInput": {
+      "description": "A simple container for a string of user-provided Polars code to be executed.",
+      "properties": {
+        "polars_code": {
+          "title": "Polars Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "polars_code"
+      ],
+      "title": "PolarsCodeInput",
+      "type": "object"
+    },
+    "JoinInput": {
+      "description": "Data model for standard SQL-style join operations.",
+      "properties": {
+        "join_mapping": {
+          "items": {
+            "$ref": "#/$defs/JoinMap"
+          },
+          "title": "Join Mapping",
+          "type": "array"
+        },
+        "left_select": {
+          "$ref": "#/$defs/JoinInputs"
+        },
+        "right_select": {
+          "$ref": "#/$defs/JoinInputs"
+        },
+        "how": {
+          "default": "inner",
+          "enum": [
+            "inner",
+            "left",
+            "right",
+            "full",
+            "semi",
+            "anti",
+            "cross",
+            "outer"
+          ],
+          "title": "How",
+          "type": "string"
+        }
+      },
+      "required": [
+        "join_mapping",
+        "left_select",
+        "right_select"
+      ],
+      "title": "JoinInput",
+      "type": "object"
+    },
+    "JoinInputs": {
+      "description": "Data model for join-specific select inputs (extends SelectInputs).",
+      "properties": {
+        "renames": {
+          "items": {
+            "$ref": "#/$defs/SelectInput"
+          },
+          "title": "Renames",
+          "type": "array"
+        }
+      },
+      "title": "JoinInputs",
+      "type": "object"
+    },
+    "JoinMap": {
+      "description": "Defines a single mapping between a left and right column for a join key.",
+      "properties": {
+        "left_col": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Left Col"
+        },
+        "right_col": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Right Col"
+        }
+      },
+      "title": "JoinMap",
+      "type": "object"
+    },
+    "CrossJoinInput": {
+      "description": "Data model for cross join operations.",
+      "properties": {
+        "left_select": {
+          "$ref": "#/$defs/JoinInputs"
+        },
+        "right_select": {
+          "$ref": "#/$defs/JoinInputs"
+        }
+      },
+      "required": [
+        "left_select",
+        "right_select"
+      ],
+      "title": "CrossJoinInput",
+      "type": "object"
+    },
+    "FuzzyMapping": {
+      "properties": {
+        "left_col": {
+          "title": "Left Col",
+          "type": "string"
+        },
+        "right_col": {
+          "title": "Right Col",
+          "type": "string"
+        },
+        "threshold_score": {
+          "default": 80.0,
+          "title": "Threshold Score",
+          "type": "number"
+        },
+        "fuzzy_type": {
+          "default": "levenshtein",
+          "enum": [
+            "levenshtein",
+            "jaro",
+            "jaro_winkler",
+            "hamming",
+            "damerau_levenshtein",
+            "indel"
+          ],
+          "title": "Fuzzy Type",
+          "type": "string"
+        },
+        "perc_unique": {
+          "default": 0.0,
+          "title": "Perc Unique",
+          "type": "number"
+        },
+        "output_column_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Column Name"
+        },
+        "valid": {
+          "default": true,
+          "title": "Valid",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "left_col",
+        "right_col"
+      ],
+      "title": "FuzzyMapping",
+      "type": "object"
+    },
+    "FuzzyMatchInput": {
+      "description": "Data model for fuzzy matching join operations.",
+      "properties": {
+        "join_mapping": {
+          "items": {
+            "$ref": "#/$defs/FuzzyMapping"
+          },
+          "title": "Join Mapping",
+          "type": "array"
+        },
+        "left_select": {
+          "$ref": "#/$defs/JoinInputs"
+        },
+        "right_select": {
+          "$ref": "#/$defs/JoinInputs"
+        },
+        "how": {
+          "default": "inner",
+          "enum": [
+            "inner",
+            "left",
+            "right",
+            "full",
+            "semi",
+            "anti",
+            "cross",
+            "outer"
+          ],
+          "title": "How",
+          "type": "string"
+        },
+        "aggregate_output": {
+          "default": false,
+          "title": "Aggregate Output",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "join_mapping",
+        "left_select",
+        "right_select"
+      ],
+      "title": "FuzzyMatchInput",
+      "type": "object"
+    },
+    "DataModel": {
+      "properties": {
+        "data": {
+          "items": {
+            "type": "object"
+          },
+          "title": "Data",
+          "type": "array"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/MutField"
+          },
+          "title": "Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "DataModel",
+      "type": "object"
+    },
+    "GraphicWalkerInput": {
+      "properties": {
+        "dataModel": {
+          "$ref": "#/$defs/DataModel"
+        },
+        "is_initial": {
+          "default": true,
+          "title": "Is Initial",
+          "type": "boolean"
+        },
+        "specList": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speclist"
+        }
+      },
+      "title": "GraphicWalkerInput",
+      "type": "object"
+    },
+    "MutField": {
+      "properties": {
+        "fid": {
+          "title": "Fid",
+          "type": "string"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "basename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Basename"
+        },
+        "disable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Disable"
+        },
+        "semanticType": {
+          "title": "Semantictype",
+          "type": "string"
+        },
+        "analyticType": {
+          "enum": [
+            "measure",
+            "dimension"
+          ],
+          "title": "Analytictype",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Offset"
+        }
+      },
+      "required": [
+        "fid",
+        "semanticType",
+        "analyticType"
+      ],
+      "title": "MutField",
+      "type": "object"
+    },
+    "UnionInput": {
+      "description": "Defines settings for a union (concatenation) operation.",
+      "properties": {
+        "mode": {
+          "default": "relaxed",
+          "enum": [
+            "selective",
+            "relaxed"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "UnionInput",
+      "type": "object"
+    },
+    "OutputCsvTable": {
+      "description": "Defines settings for writing a CSV file.",
+      "properties": {
+        "file_type": {
+          "const": "csv",
+          "default": "csv",
+          "enum": [
+            "csv"
+          ],
+          "title": "File Type",
+          "type": "string"
+        },
+        "delimiter": {
+          "default": ",",
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "title": "Encoding",
+          "type": "string"
+        }
+      },
+      "title": "OutputCsvTable",
+      "type": "object"
+    },
+    "OutputExcelTable": {
+      "description": "Defines settings for writing an Excel file.",
+      "properties": {
+        "file_type": {
+          "const": "excel",
+          "default": "excel",
+          "enum": [
+            "excel"
+          ],
+          "title": "File Type",
+          "type": "string"
+        },
+        "sheet_name": {
+          "default": "Sheet1",
+          "title": "Sheet Name",
+          "type": "string"
+        }
+      },
+      "title": "OutputExcelTable",
+      "type": "object"
+    },
+    "OutputParquetTable": {
+      "description": "Defines settings for writing a Parquet file.",
+      "properties": {
+        "file_type": {
+          "const": "parquet",
+          "default": "parquet",
+          "enum": [
+            "parquet"
+          ],
+          "title": "File Type",
+          "type": "string"
+        }
+      },
+      "title": "OutputParquetTable",
+      "type": "object"
+    },
+    "OutputSettings": {
+      "description": "Defines the complete settings for an output node.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "directory": {
+          "title": "Directory",
+          "type": "string"
+        },
+        "file_type": {
+          "title": "File Type",
+          "type": "string"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fields"
+        },
+        "write_mode": {
+          "default": "overwrite",
+          "title": "Write Mode",
+          "type": "string"
+        },
+        "table_settings": {
+          "title": "Table Settings",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputCsvTable"
+            },
+            {
+              "$ref": "#/$defs/OutputParquetTable"
+            },
+            {
+              "$ref": "#/$defs/OutputExcelTable"
+            }
+          ]
+        },
+        "abs_file_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abs File Path"
+        }
+      },
+      "required": [
+        "name",
+        "directory",
+        "file_type"
+      ],
+      "title": "OutputSettings",
+      "type": "object"
+    },
+    "InputCsvTable": {
+      "description": "Defines settings for reading a CSV file.",
+      "properties": {
+        "file_type": {
+          "const": "csv",
+          "default": "csv",
+          "enum": [
+            "csv"
+          ],
+          "title": "File Type",
+          "type": "string"
+        },
+        "reference": {
+          "default": "",
+          "title": "Reference",
+          "type": "string"
+        },
+        "starting_from_line": {
+          "default": 0,
+          "title": "Starting From Line",
+          "type": "integer"
+        },
+        "delimiter": {
+          "default": ",",
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "has_headers": {
+          "default": true,
+          "title": "Has Headers",
+          "type": "boolean"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "title": "Encoding",
+          "type": "string"
+        },
+        "parquet_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parquet Ref"
+        },
+        "row_delimiter": {
+          "default": "\n",
+          "title": "Row Delimiter",
+          "type": "string"
+        },
+        "quote_char": {
+          "default": "\"",
+          "title": "Quote Char",
+          "type": "string"
+        },
+        "infer_schema_length": {
+          "default": 10000,
+          "title": "Infer Schema Length",
+          "type": "integer"
+        },
+        "truncate_ragged_lines": {
+          "default": false,
+          "title": "Truncate Ragged Lines",
+          "type": "boolean"
+        },
+        "ignore_errors": {
+          "default": false,
+          "title": "Ignore Errors",
+          "type": "boolean"
+        }
+      },
+      "title": "InputCsvTable",
+      "type": "object"
+    },
+    "InputExcelTable": {
+      "description": "Defines settings for reading an Excel file.",
+      "properties": {
+        "file_type": {
+          "const": "excel",
+          "default": "excel",
+          "enum": [
+            "excel"
+          ],
+          "title": "File Type",
+          "type": "string"
+        },
+        "sheet_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sheet Name"
+        },
+        "start_row": {
+          "default": 0,
+          "title": "Start Row",
+          "type": "integer"
+        },
+        "start_column": {
+          "default": 0,
+          "title": "Start Column",
+          "type": "integer"
+        },
+        "end_row": {
+          "default": 0,
+          "title": "End Row",
+          "type": "integer"
+        },
+        "end_column": {
+          "default": 0,
+          "title": "End Column",
+          "type": "integer"
+        },
+        "has_headers": {
+          "default": true,
+          "title": "Has Headers",
+          "type": "boolean"
+        },
+        "type_inference": {
+          "default": false,
+          "title": "Type Inference",
+          "type": "boolean"
+        }
+      },
+      "title": "InputExcelTable",
+      "type": "object"
+    },
+    "InputJsonTable": {
+      "description": "Defines settings for reading a JSON file.",
+      "properties": {
+        "file_type": {
+          "const": "json",
+          "default": "json",
+          "enum": [
+            "json"
+          ],
+          "title": "File Type",
+          "type": "string"
+        },
+        "reference": {
+          "default": "",
+          "title": "Reference",
+          "type": "string"
+        },
+        "starting_from_line": {
+          "default": 0,
+          "title": "Starting From Line",
+          "type": "integer"
+        },
+        "delimiter": {
+          "default": ",",
+          "title": "Delimiter",
+          "type": "string"
+        },
+        "has_headers": {
+          "default": true,
+          "title": "Has Headers",
+          "type": "boolean"
+        },
+        "encoding": {
+          "default": "utf-8",
+          "title": "Encoding",
+          "type": "string"
+        },
+        "parquet_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parquet Ref"
+        },
+        "row_delimiter": {
+          "default": "\n",
+          "title": "Row Delimiter",
+          "type": "string"
+        },
+        "quote_char": {
+          "default": "\"",
+          "title": "Quote Char",
+          "type": "string"
+        },
+        "infer_schema_length": {
+          "default": 10000,
+          "title": "Infer Schema Length",
+          "type": "integer"
+        },
+        "truncate_ragged_lines": {
+          "default": false,
+          "title": "Truncate Ragged Lines",
+          "type": "boolean"
+        },
+        "ignore_errors": {
+          "default": false,
+          "title": "Ignore Errors",
+          "type": "boolean"
+        }
+      },
+      "title": "InputJsonTable",
+      "type": "object"
+    },
+    "InputParquetTable": {
+      "description": "Defines settings for reading a Parquet file.",
+      "properties": {
+        "file_type": {
+          "const": "parquet",
+          "default": "parquet",
+          "enum": [
+            "parquet"
+          ],
+          "title": "File Type",
+          "type": "string"
+        }
+      },
+      "title": "InputParquetTable",
+      "type": "object"
+    },
+    "ReceivedTable": {
+      "description": "Model for defining a table received from an external source.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "directory": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Directory"
+        },
+        "analysis_file_available": {
+          "default": false,
+          "title": "Analysis File Available",
+          "type": "boolean"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/MinimalFieldInfo"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "abs_file_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Abs File Path"
+        },
+        "file_type": {
+          "enum": [
+            "csv",
+            "json",
+            "parquet",
+            "excel"
+          ],
+          "title": "File Type",
+          "type": "string"
+        },
+        "table_settings": {
+          "title": "Table Settings",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InputCsvTable"
+            },
+            {
+              "$ref": "#/$defs/InputJsonTable"
+            },
+            {
+              "$ref": "#/$defs/InputParquetTable"
+            },
+            {
+              "$ref": "#/$defs/InputExcelTable"
+            }
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "file_type"
+      ],
+      "title": "ReceivedTable",
+      "type": "object"
+    },
+    "DatabaseConnection": {
+      "description": "Defines the connection parameters for a database.",
+      "properties": {
+        "database_type": {
+          "default": "postgresql",
+          "title": "Database Type",
+          "type": "string"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        },
+        "password_ref": {
+          "anyOf": [
+            {
+              "description": "An ID referencing an encrypted secret.",
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Password Ref"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "database": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Database"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "title": "DatabaseConnection",
+      "type": "object"
+    },
+    "DatabaseSettings": {
+      "description": "Defines settings for reading from a database, either via table or query.",
+      "properties": {
+        "connection_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "inline",
+                "reference"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "inline",
+          "title": "Connection Mode"
+        },
+        "database_connection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DatabaseConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "database_connection_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Database Connection Name"
+        },
+        "schema_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Name"
+        },
+        "table_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Name"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "query_mode": {
+          "default": "table",
+          "enum": [
+            "query",
+            "table",
+            "reference"
+          ],
+          "title": "Query Mode",
+          "type": "string"
+        }
+      },
+      "title": "DatabaseSettings",
+      "type": "object"
+    },
+    "DatabaseWriteSettings": {
+      "description": "Defines settings for writing data to a database table.",
+      "properties": {
+        "connection_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "inline",
+                "reference"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "inline",
+          "title": "Connection Mode"
+        },
+        "database_connection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DatabaseConnection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "database_connection_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Database Connection Name"
+        },
+        "table_name": {
+          "title": "Table Name",
+          "type": "string"
+        },
+        "schema_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Name"
+        },
+        "if_exists": {
+          "anyOf": [
+            {
+              "enum": [
+                "append",
+                "replace",
+                "fail"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "append",
+          "title": "If Exists"
+        }
+      },
+      "required": [
+        "table_name"
+      ],
+      "title": "DatabaseWriteSettings",
+      "type": "object"
+    },
+    "CloudStorageReadSettings": {
+      "description": "Settings for reading from cloud storage",
+      "properties": {
+        "auth_mode": {
+          "default": "auto",
+          "enum": [
+            "access_key",
+            "iam_role",
+            "service_principal",
+            "managed_identity",
+            "sas_token",
+            "aws-cli",
+            "env_vars"
+          ],
+          "title": "Auth Mode",
+          "type": "string"
+        },
+        "connection_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connection Name"
+        },
+        "resource_path": {
+          "title": "Resource Path",
+          "type": "string"
+        },
+        "scan_mode": {
+          "default": "single_file",
+          "enum": [
+            "single_file",
+            "directory"
+          ],
+          "title": "Scan Mode",
+          "type": "string"
+        },
+        "file_format": {
+          "default": "parquet",
+          "enum": [
+            "csv",
+            "parquet",
+            "json",
+            "delta",
+            "iceberg"
+          ],
+          "title": "File Format",
+          "type": "string"
+        },
+        "csv_has_header": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true,
+          "title": "Csv Has Header"
+        },
+        "csv_delimiter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ",",
+          "title": "Csv Delimiter"
+        },
+        "csv_encoding": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "utf8",
+          "title": "Csv Encoding"
+        },
+        "delta_version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Delta Version"
+        }
+      },
+      "required": [
+        "resource_path"
+      ],
+      "title": "CloudStorageReadSettings",
+      "type": "object"
+    },
+    "CloudStorageWriteSettings": {
+      "description": "Settings for writing to cloud storage",
+      "properties": {
+        "resource_path": {
+          "title": "Resource Path",
+          "type": "string"
+        },
+        "write_mode": {
+          "default": "overwrite",
+          "enum": [
+            "overwrite",
+            "append"
+          ],
+          "title": "Write Mode",
+          "type": "string"
+        },
+        "file_format": {
+          "default": "parquet",
+          "enum": [
+            "csv",
+            "parquet",
+            "json",
+            "delta"
+          ],
+          "title": "File Format",
+          "type": "string"
+        },
+        "parquet_compression": {
+          "default": "snappy",
+          "enum": [
+            "snappy",
+            "gzip",
+            "brotli",
+            "lz4",
+            "zstd"
+          ],
+          "title": "Parquet Compression",
+          "type": "string"
+        },
+        "csv_delimiter": {
+          "default": ",",
+          "title": "Csv Delimiter",
+          "type": "string"
+        },
+        "csv_encoding": {
+          "default": "utf8",
+          "title": "Csv Encoding",
+          "type": "string"
+        },
+        "auth_mode": {
+          "default": "auto",
+          "enum": [
+            "access_key",
+            "iam_role",
+            "service_principal",
+            "managed_identity",
+            "sas_token",
+            "aws-cli",
+            "env_vars"
+          ],
+          "title": "Auth Mode",
+          "type": "string"
+        },
+        "connection_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Connection Name"
+        }
+      },
+      "required": [
+        "resource_path"
+      ],
+      "title": "CloudStorageWriteSettings",
+      "type": "object"
+    },
+    "SampleUsers": {
+      "description": "Settings for generating a sample dataset of users.",
+      "properties": {
+        "orientation": {
+          "default": "row",
+          "title": "Orientation",
+          "type": "string"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/MinimalFieldInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "SAMPLE_USERS": {
+          "title": "Sample Users",
+          "type": "boolean"
+        },
+        "class_name": {
+          "default": "sample_users",
+          "title": "Class Name",
+          "type": "string"
+        },
+        "size": {
+          "default": 100,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "SAMPLE_USERS"
+      ],
+      "title": "SampleUsers",
+      "type": "object"
+    },
+    "NodeSettings_manual_input": {
+      "description": "Settings for a node that allows direct data entry in the UI.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "raw_data_format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RawData"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "NodeManualInput",
+      "type": "object"
+    },
+    "NodeSettings_filter": {
+      "description": "Settings for a node that filters rows based on a condition.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "filter_input": {
+          "$ref": "#/$defs/FilterInput"
+        }
+      },
+      "required": [
+        "filter_input"
+      ],
+      "title": "NodeFilter",
+      "type": "object"
+    },
+    "NodeSettings_formula": {
+      "description": "Settings for a node that applies a formula to create/modify a column.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "function": {
+          "$ref": "#/$defs/FunctionInput",
+          "default": null
+        }
+      },
+      "title": "NodeFormula",
+      "type": "object"
+    },
+    "NodeSettings_select": {
+      "description": "Settings for a node that selects, renames, and reorders columns.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "keep_missing": {
+          "default": true,
+          "title": "Keep Missing",
+          "type": "boolean"
+        },
+        "select_input": {
+          "items": {
+            "$ref": "#/$defs/SelectInput"
+          },
+          "title": "Select Input",
+          "type": "array"
+        },
+        "sorted_by": {
+          "anyOf": [
+            {
+              "enum": [
+                "none",
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "none",
+          "title": "Sorted By"
+        }
+      },
+      "title": "NodeSelect",
+      "type": "object"
+    },
+    "NodeSettings_sort": {
+      "description": "Settings for a node that sorts the data by one or more columns.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "sort_input": {
+          "items": {
+            "$ref": "#/$defs/SortByInput"
+          },
+          "title": "Sort Input",
+          "type": "array"
+        }
+      },
+      "title": "NodeSort",
+      "type": "object"
+    },
+    "NodeSettings_record_id": {
+      "description": "Settings for a node that adds a unique record ID column.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "record_id_input": {
+          "$ref": "#/$defs/RecordIdInput"
+        }
+      },
+      "required": [
+        "record_id_input"
+      ],
+      "title": "NodeRecordId",
+      "type": "object"
+    },
+    "NodeSettings_sample": {
+      "description": "Settings for a node that samples a subset of the data.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "sample_size": {
+          "default": 1000,
+          "title": "Sample Size",
+          "type": "integer"
+        }
+      },
+      "title": "NodeSample",
+      "type": "object"
+    },
+    "NodeSettings_unique": {
+      "description": "Settings for a node that returns the unique rows from the data.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "unique_input": {
+          "$ref": "#/$defs/UniqueInput"
+        }
+      },
+      "required": [
+        "unique_input"
+      ],
+      "title": "NodeUnique",
+      "type": "object"
+    },
+    "NodeSettings_group_by": {
+      "description": "Settings for a node that performs a group-by and aggregation operation.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "groupby_input": {
+          "$ref": "#/$defs/GroupByInput",
+          "default": null
+        }
+      },
+      "title": "NodeGroupBy",
+      "type": "object"
+    },
+    "NodeSettings_pivot": {
+      "description": "Settings for a node that pivots data from a long to a wide format.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "pivot_input": {
+          "$ref": "#/$defs/PivotInput",
+          "default": null
+        },
+        "output_fields": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/MinimalFieldInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Fields"
+        }
+      },
+      "title": "NodePivot",
+      "type": "object"
+    },
+    "NodeSettings_unpivot": {
+      "description": "Settings for a node that unpivots data from a wide to a long format.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "unpivot_input": {
+          "$ref": "#/$defs/UnpivotInput",
+          "default": null
+        }
+      },
+      "title": "NodeUnpivot",
+      "type": "object"
+    },
+    "NodeSettings_text_to_rows": {
+      "description": "Settings for a node that splits a text column into multiple rows.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "text_to_rows_input": {
+          "$ref": "#/$defs/TextToRowsInput"
+        }
+      },
+      "required": [
+        "text_to_rows_input"
+      ],
+      "title": "NodeTextToRows",
+      "type": "object"
+    },
+    "NodeSettings_graph_solver": {
+      "description": "Settings for a node that solves graph-based problems (e.g., connected components).",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "graph_solver_input": {
+          "$ref": "#/$defs/GraphSolverInput"
+        }
+      },
+      "required": [
+        "graph_solver_input"
+      ],
+      "title": "NodeGraphSolver",
+      "type": "object"
+    },
+    "NodeSettings_polars_code": {
+      "description": "Settings for a node that executes arbitrary user-provided Polars code.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "polars_code_input": {
+          "$ref": "#/$defs/PolarsCodeInput"
+        }
+      },
+      "required": [
+        "polars_code_input"
+      ],
+      "title": "NodePolarsCode",
+      "type": "object"
+    },
+    "NodeSettings_join": {
+      "description": "Settings for a node that performs a standard SQL-style join.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "auto_generate_selection": {
+          "default": true,
+          "title": "Auto Generate Selection",
+          "type": "boolean"
+        },
+        "verify_integrity": {
+          "default": true,
+          "title": "Verify Integrity",
+          "type": "boolean"
+        },
+        "join_input": {
+          "$ref": "#/$defs/JoinInput"
+        },
+        "auto_keep_all": {
+          "default": true,
+          "title": "Auto Keep All",
+          "type": "boolean"
+        },
+        "auto_keep_right": {
+          "default": true,
+          "title": "Auto Keep Right",
+          "type": "boolean"
+        },
+        "auto_keep_left": {
+          "default": true,
+          "title": "Auto Keep Left",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "join_input"
+      ],
+      "title": "NodeJoin",
+      "type": "object"
+    },
+    "NodeSettings_cross_join": {
+      "description": "Settings for a node that performs a cross join.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "auto_generate_selection": {
+          "default": true,
+          "title": "Auto Generate Selection",
+          "type": "boolean"
+        },
+        "verify_integrity": {
+          "default": true,
+          "title": "Verify Integrity",
+          "type": "boolean"
+        },
+        "cross_join_input": {
+          "$ref": "#/$defs/CrossJoinInput"
+        },
+        "auto_keep_all": {
+          "default": true,
+          "title": "Auto Keep All",
+          "type": "boolean"
+        },
+        "auto_keep_right": {
+          "default": true,
+          "title": "Auto Keep Right",
+          "type": "boolean"
+        },
+        "auto_keep_left": {
+          "default": true,
+          "title": "Auto Keep Left",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cross_join_input"
+      ],
+      "title": "NodeCrossJoin",
+      "type": "object"
+    },
+    "NodeSettings_fuzzy_match": {
+      "description": "Settings for a node that performs a fuzzy join based on string similarity.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "auto_generate_selection": {
+          "default": true,
+          "title": "Auto Generate Selection",
+          "type": "boolean"
+        },
+        "verify_integrity": {
+          "default": true,
+          "title": "Verify Integrity",
+          "type": "boolean"
+        },
+        "join_input": {
+          "$ref": "#/$defs/FuzzyMatchInput"
+        },
+        "auto_keep_all": {
+          "default": true,
+          "title": "Auto Keep All",
+          "type": "boolean"
+        },
+        "auto_keep_right": {
+          "default": true,
+          "title": "Auto Keep Right",
+          "type": "boolean"
+        },
+        "auto_keep_left": {
+          "default": true,
+          "title": "Auto Keep Left",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "join_input"
+      ],
+      "title": "NodeFuzzyMatch",
+      "type": "object"
+    },
+    "NodeSettings_record_count": {
+      "description": "Settings for a node that counts the number of records.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        }
+      },
+      "title": "NodeRecordCount",
+      "type": "object"
+    },
+    "NodeSettings_explore_data": {
+      "description": "Settings for a node that provides an interactive data exploration interface.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "graphic_walker_input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GraphicWalkerInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "NodeExploreData",
+      "type": "object"
+    },
+    "NodeSettings_union": {
+      "description": "Settings for a node that concatenates multiple data inputs.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "union_input": {
+          "$ref": "#/$defs/UnionInput"
+        }
+      },
+      "title": "NodeUnion",
+      "type": "object"
+    },
+    "NodeSettings_output": {
+      "description": "Settings for a node that writes its input to a file.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "output_settings": {
+          "$ref": "#/$defs/OutputSettings"
+        }
+      },
+      "required": [
+        "output_settings"
+      ],
+      "title": "NodeOutput",
+      "type": "object"
+    },
+    "NodeSettings_read": {
+      "description": "Settings for a node that reads data from a file.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "received_file": {
+          "$ref": "#/$defs/ReceivedTable"
+        }
+      },
+      "required": [
+        "received_file"
+      ],
+      "title": "NodeRead",
+      "type": "object"
+    },
+    "NodeSettings_database_reader": {
+      "description": "Settings for a node that reads from a database.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "database_settings": {
+          "$ref": "#/$defs/DatabaseSettings"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/MinimalFieldInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        }
+      },
+      "required": [
+        "database_settings"
+      ],
+      "title": "NodeDatabaseReader",
+      "type": "object"
+    },
+    "NodeSettings_database_writer": {
+      "description": "Settings for a node that writes data to a database.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "database_write_settings": {
+          "$ref": "#/$defs/DatabaseWriteSettings"
+        }
+      },
+      "required": [
+        "database_write_settings"
+      ],
+      "title": "NodeDatabaseWriter",
+      "type": "object"
+    },
+    "NodeSettings_cloud_storage_reader": {
+      "description": "Settings for a node that reads from a cloud storage service (S3, GCS, etc.).",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "cloud_storage_settings": {
+          "$ref": "#/$defs/CloudStorageReadSettings"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/MinimalFieldInfo"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        }
+      },
+      "required": [
+        "cloud_storage_settings"
+      ],
+      "title": "NodeCloudStorageReader",
+      "type": "object"
+    },
+    "NodeSettings_cloud_storage_writer": {
+      "description": "Settings for a node that writes to a cloud storage service.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "cloud_storage_settings": {
+          "$ref": "#/$defs/CloudStorageWriteSettings"
+        }
+      },
+      "required": [
+        "cloud_storage_settings"
+      ],
+      "title": "NodeCloudStorageWriter",
+      "type": "object"
+    },
+    "NodeSettings_external_source": {
+      "description": "Settings for a node that connects to a registered external data source.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "source_settings": {
+          "$ref": "#/$defs/SampleUsers"
+        }
+      },
+      "required": [
+        "identifier",
+        "source_settings"
+      ],
+      "title": "NodeExternalSource",
+      "type": "object"
+    },
+    "NodeSettings_promise": {
+      "description": "A placeholder node for an operation that has not yet been configured.",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "node_type": {
+          "title": "Node Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_type"
+      ],
+      "title": "NodePromise",
+      "type": "object"
+    },
+    "NodeSettings_user_defined": {
+      "description": "Settings for a node that contains the user defined node information",
+      "properties": {
+        "cache_results": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Cache Results"
+        },
+        "settings": {
+          "title": "Settings"
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "title": "UserDefinedNode",
+      "type": "object"
+    },
+    "FlowfileNode": {
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "integer",
+          "description": "Unique identifier for this node within the flow"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "manual_input",
+            "filter",
+            "formula",
+            "select",
+            "sort",
+            "record_id",
+            "sample",
+            "unique",
+            "group_by",
+            "pivot",
+            "unpivot",
+            "text_to_rows",
+            "graph_solver",
+            "polars_code",
+            "join",
+            "cross_join",
+            "fuzzy_match",
+            "record_count",
+            "explore_data",
+            "union",
+            "output",
+            "read",
+            "database_reader",
+            "database_writer",
+            "cloud_storage_reader",
+            "cloud_storage_writer",
+            "external_source",
+            "promise",
+            "user_defined"
+          ],
+          "description": "The type of node (determines what settings are available)"
+        },
+        "is_start_node": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this node is a starting point for the flow (no inputs)"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "",
+          "description": "Optional description of what this node does"
+        },
+        "x_position": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": 0,
+          "description": "X coordinate on the canvas"
+        },
+        "y_position": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": 0,
+          "description": "Y coordinate on the canvas"
+        },
+        "left_input_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Node ID for left input (used by join nodes)"
+        },
+        "right_input_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Node ID for right input (used by join nodes)"
+        },
+        "input_ids": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer"
+          },
+          "description": "List of node IDs that provide input to this node"
+        },
+        "outputs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer"
+          },
+          "description": "List of node IDs that this node outputs to"
+        },
+        "setting_input": {
+          "description": "Node-specific settings (structure depends on node type)"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "manual_input"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_manual_input"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "filter"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_filter"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "formula"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_formula"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "select"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_select"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "sort"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_sort"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "record_id"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_record_id"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "sample"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_sample"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "unique"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_unique"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "group_by"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_group_by"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "pivot"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_pivot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "unpivot"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_unpivot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text_to_rows"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_text_to_rows"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "graph_solver"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_graph_solver"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "polars_code"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_polars_code"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "join"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_join"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cross_join"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_cross_join"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "fuzzy_match"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_fuzzy_match"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "record_count"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_record_count"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "explore_data"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_explore_data"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "union"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_union"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "output"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_output"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "read"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_read"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "database_reader"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_database_reader"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "database_writer"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_database_writer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cloud_storage_reader"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_cloud_storage_reader"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "cloud_storage_writer"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_cloud_storage_writer"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "external_source"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_external_source"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "promise"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_promise"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "user_defined"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "setting_input": {
+                "$ref": "#/$defs/NodeSettings_user_defined"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "flowfile_version": {
+      "type": "string",
+      "description": "Version of the Flowfile format",
+      "examples": [
+        "0.5.0",
+        "0.5.1",
+        "0.5.2"
+      ]
+    },
+    "flowfile_id": {
+      "type": "integer",
+      "description": "Unique identifier for this flow"
+    },
+    "flowfile_name": {
+      "type": "string",
+      "description": "Human-readable name for this flow"
+    },
+    "flowfile_settings": {
+      "type": "object",
+      "description": "Global settings for the flow",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Description of the flow"
+        },
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "Development",
+            "Performance"
+          ],
+          "default": "Performance",
+          "description": "Execution mode - Development for debugging, Performance for production"
+        },
+        "execution_location": {
+          "type": "string",
+          "enum": [
+            "local",
+            "remote"
+          ],
+          "default": "local",
+          "description": "Where to execute the flow - locally or on a remote worker"
+        },
+        "auto_save": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to automatically save changes"
+        },
+        "show_detailed_progress": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to show detailed progress during execution"
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "description": "List of nodes in the flow",
+      "items": {
+        "$ref": "#/$defs/FlowfileNode"
+      }
+    }
+  }
+}
