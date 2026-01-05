@@ -348,6 +348,52 @@ def ensure_compatibility_node_polars(node_polars: input_schema.NodePolarsCode):
             node_polars.polars_code_input = new_polars_code_input
 
 
+def ensure_compatibility_node_filter(node_filter: input_schema.NodeFilter):
+    """Migrate old NodeFilter structure:
+    - FilterInput dataclass -> BaseModel
+    - filter_type -> mode
+    - BasicFilter.filter_type -> BasicFilter.operator
+    - BasicFilter.filter_value -> BasicFilter.value
+    """
+    if not hasattr(node_filter, "filter_input") or node_filter.filter_input is None:
+        return
+
+    filter_input = node_filter.filter_input
+
+    # Check if already migrated (is a Pydantic model)
+    if not _is_dataclass_instance(filter_input):
+        return
+
+    from flowfile_core.schemas import transform_schema
+
+    # Build the new FilterInput data with field name mappings
+    filter_data = {
+        # filter_type -> mode
+        "mode": getattr(filter_input, "filter_type", "basic"),
+        "advanced_filter": getattr(filter_input, "advanced_filter", ""),
+    }
+
+    # Handle BasicFilter migration
+    basic_filter = getattr(filter_input, "basic_filter", None)
+    if basic_filter is not None:
+        if _is_dataclass_instance(basic_filter):
+            # Map old field names to new ones
+            basic_filter_data = {
+                "field": getattr(basic_filter, "field", ""),
+                # filter_type -> operator
+                "operator": getattr(basic_filter, "filter_type", "equals"),
+                # filter_value -> value
+                "value": getattr(basic_filter, "filter_value", ""),
+            }
+            filter_data["basic_filter"] = transform_schema.BasicFilter.model_validate(basic_filter_data)
+        else:
+            filter_data["basic_filter"] = basic_filter
+
+    # Create new validated FilterInput and replace
+    new_filter_input = transform_schema.FilterInput.model_validate(filter_data)
+    node_filter.filter_input = new_filter_input
+
+
 # =============================================================================
 # FLOW-LEVEL COMPATIBILITY
 # =============================================================================
@@ -396,6 +442,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - NodeSelect (position attributes, dataclass -> BaseModel)
     - NodeJoin/NodeFuzzyMatch (join input positions, dataclass -> BaseModel)
     - NodePolarsCode (depending_on_ids, dataclass -> BaseModel)
+    - NodeFilter (FilterInput dataclass -> BaseModel, filter_type -> mode)
     - Node descriptions
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
@@ -417,6 +464,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_joins(setting_input)
         elif class_name == "NodePolarsCode":
             ensure_compatibility_node_polars(setting_input)
+        elif class_name == "NodeFilter":
+            ensure_compatibility_node_filter(setting_input)
 
         ensure_description(setting_input)
 
