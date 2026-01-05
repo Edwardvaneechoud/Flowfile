@@ -40,8 +40,14 @@ export const useAuthStore = defineStore('auth', {
         const success = await authService.login(username, password)
 
         if (success) {
-          this.user = { username }
           this.isAuthenticated = true
+          // Fetch full user info including is_admin
+          const userInfo = await authService.getCurrentUser()
+          if (userInfo) {
+            this.user = userInfo
+          } else {
+            this.user = { username }
+          }
           return true
         } else {
           this.error = 'Invalid username or password'

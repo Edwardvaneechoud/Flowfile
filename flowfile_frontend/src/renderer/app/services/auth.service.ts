@@ -138,15 +138,11 @@ class AuthService {
 
   /**
    * Get current user information from the backend
+   * Always fetches from backend to ensure we have up-to-date info (including is_admin)
    */
   async getCurrentUser(): Promise<UserInfo | null> {
     if (!this.hasValidToken()) {
       return null;
-    }
-
-    // If we have a stored username, return it
-    if (this.currentUsername.value) {
-      return { username: this.currentUsername.value };
     }
 
     try {
@@ -159,6 +155,10 @@ class AuthService {
       return null;
     } catch (error) {
       console.error('Failed to get current user:', error);
+      // Fall back to cached username if available
+      if (this.currentUsername.value) {
+        return { username: this.currentUsername.value };
+      }
       return null;
     }
   }
