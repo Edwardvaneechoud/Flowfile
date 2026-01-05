@@ -2,6 +2,7 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
+import { useAuthStore } from "../stores/auth-store";
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -79,8 +80,14 @@ const router = createRouter({
 });
 
 // Navigation guard for authentication
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
+  const authStore = useAuthStore();
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
+
+  // Initialize auth store if authenticated but user info not loaded (e.g., page refresh)
+  if (authService.isAuthenticated() && !authStore.user) {
+    await authStore.initialize();
+  }
 
   // Check if route requires auth
   if (requiresAuth) {
