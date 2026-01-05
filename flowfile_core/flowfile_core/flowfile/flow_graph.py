@@ -1017,7 +1017,6 @@ class FlowGraph:
             setting_input=function_settings,
             input_node_ids=[function_settings.depending_on_id],
         )
-        # TODO: Add validation here
         if error != "":
             node = self.get_node(function_settings.node_id)
             node.results.errors = error
