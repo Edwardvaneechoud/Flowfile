@@ -91,12 +91,12 @@ const handleLogout = () => {
 
 .sidebar-footer {
   margin-top: auto;
-  padding: var(--spacing-4);
+  padding: var(--spacing-3);
   border-top: 1px solid var(--color-border-primary);
   display: flex;
-  justify-content: center;
-  gap: var(--spacing-3);
+  flex-direction: column;
   align-items: center;
+  gap: var(--spacing-2);
 }
 
 .footer-btn-wrapper {
@@ -106,9 +106,9 @@ const handleLogout = () => {
 .footer-btn-wrapper::after {
   content: attr(data-tooltip);
   position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%);
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
   padding: 6px 10px;
   background-color: var(--color-gray-900);
   color: white;
@@ -125,11 +125,11 @@ const handleLogout = () => {
 .footer-btn-wrapper::before {
   content: '';
   position: absolute;
-  left: 50%;
-  bottom: calc(100% + 2px);
-  transform: translateX(-50%);
+  left: calc(100% + 2px);
+  top: 50%;
+  transform: translateY(-50%);
   border: 6px solid transparent;
-  border-top-color: var(--color-gray-900);
+  border-right-color: var(--color-gray-900);
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.2s ease, visibility 0.2s ease;
