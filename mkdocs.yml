@@ -96,6 +96,8 @@ nav:
         - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
         - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
         - Export to Python: users/visual-editor/tutorials/code-generator.md
+      - Node Designer: users/visual-editor/node-designer.md
+      - Settings: users/visual-editor/settings.md
 
     - Python API:
       - Overview: users/python-api/index.md
