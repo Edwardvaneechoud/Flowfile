@@ -11,22 +11,36 @@ This module generates and provides a JSON Schema for Flowfile YAML files, enabli
 
 To enable YAML autocompletion and validation in VS Code:
 
-### Option 1: Per-file modeline (Recommended)
+### Prerequisites
+
+Install the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) for VS Code.
+
+### Option 1: Online URL (Recommended)
 
 Add this comment at the top of your Flowfile YAML files:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/tools/yaml_schema/flowfile.schema.json
+```
+
+This works anywhere without needing a local copy of the schema.
+
+### Option 2: Local file reference
+
+If working within the Flowfile repository:
 
 ```yaml
 # yaml-language-server: $schema=./path/to/tools/yaml_schema/flowfile.schema.json
 ```
 
-### Option 2: Workspace settings
+### Option 3: Workspace settings
 
 Create or update `.vscode/settings.json` in your project:
 
 ```json
 {
   "yaml.schemas": {
-    "./tools/yaml_schema/flowfile.schema.json": [
+    "https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/tools/yaml_schema/flowfile.schema.json": [
       "**/flows/**/*.yaml",
       "**/flows/**/*.yml",
       "**/*.flowfile.yaml"
@@ -34,10 +48,6 @@ Create or update `.vscode/settings.json` in your project:
   }
 }
 ```
-
-### Prerequisites
-
-Install the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) for VS Code.
 
 ## Regenerating the Schema
 

@@ -151,10 +151,13 @@ def merge_definitions(base_defs: dict, new_defs: dict, prefix: str = "") -> dict
 def generate_flowfile_schema() -> dict[str, Any]:
     """Generate the complete JSON Schema for Flowfile YAML files."""
 
+    # GitHub raw URL for the schema (available after merge to main)
+    schema_url = "https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/tools/yaml_schema/flowfile.schema.json"
+
     # Start with the base schema structure
     schema: dict[str, Any] = {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "$id": "https://flowfile.dev/schemas/flowfile.schema.json",
+        "$id": schema_url,
         "title": "Flowfile YAML Schema",
         "description": "Schema for Flowfile data flow definition files (.yaml, .yml)",
         "type": "object",

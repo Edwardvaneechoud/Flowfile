@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://flowfile.dev/schemas/flowfile.schema.json",
+  "$id": "https://raw.githubusercontent.com/Edwardvaneechoud/Flowfile/main/tools/yaml_schema/flowfile.schema.json",
   "title": "Flowfile YAML Schema",
   "description": "Schema for Flowfile data flow definition files (.yaml, .yml)",
   "type": "object",
