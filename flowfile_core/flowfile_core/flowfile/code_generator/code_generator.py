@@ -223,7 +223,7 @@ class FlowGraphToPolarsConverter:
         """Handle filter nodes."""
         input_df = input_vars.get("main", "df")
 
-        if settings.filter_input.filter_type == "advanced":
+        if settings.filter_input.is_advanced():
             # Parse the advanced filter expression
             self.imports.add(
                 "from polars_expr_transformer.process.polars_expr_transformer import simple_function_to_expr"
@@ -234,8 +234,11 @@ class FlowGraphToPolarsConverter:
         else:
             # Handle basic filter
             basic = settings.filter_input.basic_filter
-            filter_expr = self._create_basic_filter_expr(basic)
-            self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
+            if basic is not None:
+                filter_expr = self._create_basic_filter_expr(basic)
+                self._add_code(f"{var_name} = {input_df}.filter({filter_expr})")
+            else:
+                self._add_code(f"{var_name} = {input_df}  # No filter applied")
         self._add_code("")
 
     def _handle_record_count(self, settings: input_schema.NodeRecordCount, var_name: str, input_vars: dict[str, str]):
@@ -1102,20 +1105,104 @@ class FlowGraphToPolarsConverter:
         return re.sub(pattern, replace_expr, expr)
 
     def _create_basic_filter_expr(self, basic: transform_schema.BasicFilter) -> str:
-        """Create Polars expression from basic filter."""
-        col = f'pl.col("{basic.field}")'
+        """Create Polars expression from basic filter.
 
-        if basic.filter_type == "equals":
-            return f'{col} == "{basic.filter_value}"'
-        elif basic.filter_type == "not_equals":
-            return f'{col} != "{basic.filter_value}"'
-        elif basic.filter_type == "greater":
-            return f"{col} > {basic.filter_value}"
-        elif basic.filter_type == "less":
-            return f"{col} < {basic.filter_value}"
-        elif basic.filter_type == "in":
-            values = basic.filter_value.split(",")
-            return f"pl.col('{col}').is_in({values})"
+        Generates proper Polars code for all supported filter operators.
+
+        Args:
+            basic: The BasicFilter configuration.
+
+        Returns:
+            A string containing valid Polars filter expression code.
+        """
+        from flowfile_core.schemas.transform_schema import FilterOperator
+
+        col = f'pl.col("{basic.field}")'
+        value = basic.value
+        value2 = basic.value2
+
+        # Determine if value is numeric (for proper quoting)
+        is_numeric = value.replace(".", "", 1).replace("-", "", 1).isnumeric() if value else False
+
+        # Get the operator
+        try:
+            operator = basic.get_operator()
+        except (ValueError, AttributeError):
+            operator = FilterOperator.from_symbol(str(basic.operator))
+
+        # Generate expression based on operator
+        if operator == FilterOperator.EQUALS:
+            if is_numeric:
+                return f"{col} == {value}"
+            return f'{col} == "{value}"'
+
+        elif operator == FilterOperator.NOT_EQUALS:
+            if is_numeric:
+                return f"{col} != {value}"
+            return f'{col} != "{value}"'
+
+        elif operator == FilterOperator.GREATER_THAN:
+            if is_numeric:
+                return f"{col} > {value}"
+            return f'{col} > "{value}"'
+
+        elif operator == FilterOperator.GREATER_THAN_OR_EQUALS:
+            if is_numeric:
+                return f"{col} >= {value}"
+            return f'{col} >= "{value}"'
+
+        elif operator == FilterOperator.LESS_THAN:
+            if is_numeric:
+                return f"{col} < {value}"
+            return f'{col} < "{value}"'
+
+        elif operator == FilterOperator.LESS_THAN_OR_EQUALS:
+            if is_numeric:
+                return f"{col} <= {value}"
+            return f'{col} <= "{value}"'
+
+        elif operator == FilterOperator.CONTAINS:
+            return f'{col}.str.contains("{value}")'
+
+        elif operator == FilterOperator.NOT_CONTAINS:
+            return f'{col}.str.contains("{value}").not_()'
+
+        elif operator == FilterOperator.STARTS_WITH:
+            return f'{col}.str.starts_with("{value}")'
+
+        elif operator == FilterOperator.ENDS_WITH:
+            return f'{col}.str.ends_with("{value}")'
+
+        elif operator == FilterOperator.IS_NULL:
+            return f"{col}.is_null()"
+
+        elif operator == FilterOperator.IS_NOT_NULL:
+            return f"{col}.is_not_null()"
+
+        elif operator == FilterOperator.IN:
+            values = [v.strip() for v in value.split(",")]
+            if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
+                values_str = ", ".join(values)
+            else:
+                values_str = ", ".join(f'"{v}"' for v in values)
+            return f"{col}.is_in([{values_str}])"
+
+        elif operator == FilterOperator.NOT_IN:
+            values = [v.strip() for v in value.split(",")]
+            if all(v.replace(".", "", 1).replace("-", "", 1).isnumeric() for v in values):
+                values_str = ", ".join(values)
+            else:
+                values_str = ", ".join(f'"{v}"' for v in values)
+            return f"{col}.is_in([{values_str}]).not_()"
+
+        elif operator == FilterOperator.BETWEEN:
+            if value2 is None:
+                return f"{col}  # BETWEEN requires two values"
+            if is_numeric and value2.replace(".", "", 1).replace("-", "", 1).isnumeric():
+                return f"({col} >= {value}) & ({col} <= {value2})"
+            return f'({col} >= "{value}") & ({col} <= "{value2}")'
+
+        # Fallback
         return col
 
     def _get_polars_dtype(self, dtype_str: str) -> str:

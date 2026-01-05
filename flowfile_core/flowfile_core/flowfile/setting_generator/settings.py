@@ -75,7 +75,13 @@ def cross_join(node_data: "NodeData") -> NodeData:
 @setting_generator_method
 def filter(node_data: "NodeData") -> NodeData:
     if node_data.main_input:
-        fi = transform_schema.FilterInput(basic_filter=transform_schema.BasicFilter(), filter_type="advanced")
+        # Default to basic mode with an empty basic filter
+        basic_filter = transform_schema.BasicFilter(
+            field="",
+            operator=transform_schema.FilterOperator.EQUALS,
+            value="",
+        )
+        fi = transform_schema.FilterInput(basic_filter=basic_filter, mode="basic")
         node_data.setting_input = input_schema.NodeFilter(
             flow_id=node_data.flow_id, node_id=node_data.node_id, filter_input=fi
         )
