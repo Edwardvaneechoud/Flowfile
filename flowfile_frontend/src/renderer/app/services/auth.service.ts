@@ -196,21 +196,33 @@ class AuthService {
     if (this.refreshPromise) {
       return this.refreshPromise;
     }
-    
+
     // If the token is valid, return it immediately
     if (this.hasValidToken()) {
       return this.token.value;
     }
-    
-    // Otherwise, refresh the token
-    console.log('Token invalid or expired, refreshing...');
+
+    // In Docker mode, don't try to auto-refresh - require manual login
+    if (!this.isElectronMode.value) {
+      console.log('Docker mode: no valid token, login required');
+      return null;
+    }
+
+    // In Electron mode, refresh the token automatically
+    console.log('Electron mode: token invalid or expired, refreshing...');
     this.refreshPromise = this.refreshToken();
     const newToken = await this.refreshPromise;
     this.refreshPromise = null;
     return newToken;
   }
-  
+
   private async refreshToken(): Promise<string | null> {
+    // Only auto-refresh in Electron mode
+    if (!this.isElectronMode.value) {
+      console.log('Docker mode: cannot auto-refresh, login required');
+      return null;
+    }
+
     console.log('Attempting to refresh token');
     const success = await this.getElectronToken();
     if (!success) {
@@ -276,34 +288,57 @@ axios.interceptors.response.use(
   },
   async (error) => {
     const originalRequest = error.config;
-    
+    const requestUrl = originalRequest?.url || '';
+
+    // Never retry for auth/token requests - these are login attempts
+    const isAuthRequest = requestUrl.includes('/auth/token') || requestUrl.includes('/auth/');
+
     // If the error is 401 and we haven't already tried to refresh the token
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      console.log('Received 401 error, clearing any invalid tokens and retrying');
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
+      console.log('Received 401 error, checking if we can refresh token');
       originalRequest._retry = true;
-      
-      // Clear any existing tokens first
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_token_expiration');
-      
-      // Force a completely fresh authentication
-      const authInstance = new AuthService();
-      
-      // Force token refresh with a clean state
-      await authInstance.initialize();
-      const newToken = await authInstance.getToken();
-      
-      if (newToken) {
-        console.log('Successfully obtained new token after 401 error');
-        // Update the authorization header with the new token
-        originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
-        // Retry the original request
-        return axios(originalRequest);
+
+      // Check if we're in Electron mode (can auto-refresh) or Docker mode (need login)
+      const isElectron = !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+
+      if (isElectron) {
+        // In Electron mode, try to auto-refresh the token
+        console.log('Electron mode: attempting auto-refresh');
+
+        // Clear any existing tokens first
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_token_expiration');
+
+        // Force a completely fresh authentication
+        const authInstance = new AuthService();
+
+        // Force token refresh with a clean state
+        await authInstance.initialize();
+        const newToken = await authInstance.getToken();
+
+        if (newToken) {
+          console.log('Successfully obtained new token after 401 error');
+          // Update the authorization header with the new token
+          originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
+          // Retry the original request
+          return axios(originalRequest);
+        } else {
+          console.error('Failed to get new token after 401 error');
+        }
       } else {
-        console.error('Failed to get new token after 401 error');
+        // In Docker mode, clear tokens and redirect to login
+        console.log('Docker mode: 401 received, redirecting to login');
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('auth_token_expiration');
+        localStorage.removeItem('auth_username');
+
+        // Redirect to login page if not already there
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
     }
-    
+
     return Promise.reject(error);
   }
 );
