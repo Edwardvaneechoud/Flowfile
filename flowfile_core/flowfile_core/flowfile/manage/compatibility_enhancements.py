@@ -394,6 +394,37 @@ def ensure_compatibility_node_filter(node_filter: input_schema.NodeFilter):
     node_filter.filter_input = new_filter_input
 
 
+def ensure_compatibility_node_groupby(node_groupby: input_schema.NodeGroupBy):
+    """Migrate old NodeGroupBy structure:
+    - GroupByInput dataclass -> BaseModel
+    - AggColl dataclass -> BaseModel
+    """
+    if not hasattr(node_groupby, "groupby_input") or node_groupby.groupby_input is None:
+        return
+
+    groupby_input = node_groupby.groupby_input
+
+    # Check if already migrated (is a Pydantic model)
+    if not _is_dataclass_instance(groupby_input):
+        return
+
+    from flowfile_core.schemas import transform_schema
+
+    # Migrate each AggColl in agg_cols
+    agg_cols = getattr(groupby_input, "agg_cols", []) or []
+    new_agg_cols = []
+    for agg_col in agg_cols:
+        if _is_dataclass_instance(agg_col):
+            new_agg_col = _migrate_dataclass_to_basemodel(agg_col, transform_schema.AggColl)
+            new_agg_cols.append(new_agg_col)
+        else:
+            new_agg_cols.append(agg_col)
+
+    # Create new validated GroupByInput and replace
+    new_groupby_input = transform_schema.GroupByInput(agg_cols=new_agg_cols)
+    node_groupby.groupby_input = new_groupby_input
+
+
 # =============================================================================
 # FLOW-LEVEL COMPATIBILITY
 # =============================================================================
@@ -443,6 +474,7 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - NodeJoin/NodeFuzzyMatch (join input positions, dataclass -> BaseModel)
     - NodePolarsCode (depending_on_ids, dataclass -> BaseModel)
     - NodeFilter (FilterInput dataclass -> BaseModel, filter_type -> mode)
+    - NodeGroupBy (GroupByInput/AggColl dataclass -> BaseModel)
     - Node descriptions
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
@@ -466,6 +498,8 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_polars(setting_input)
         elif class_name == "NodeFilter":
             ensure_compatibility_node_filter(setting_input)
+        elif class_name == "NodeGroupBy":
+            ensure_compatibility_node_groupby(setting_input)
 
         ensure_description(setting_input)
 
