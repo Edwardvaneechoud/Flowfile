@@ -58,10 +58,10 @@ def get_current_user_sync(token: str, db: Session):
     except JWTError:
         raise credentials_exception
 
-    # In Electron mode, if token is valid, return default user
+    # In Electron mode, if token is valid, return default user (always admin in electron mode)
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if token_data.username == "local_user":
-            electron_user = User(username="local_user", id=1, disabled=False)
+            electron_user = User(username="local_user", id=1, disabled=False, is_admin=True)
             return electron_user
         else:
             # Invalid username in token
@@ -73,7 +73,15 @@ def get_current_user_sync(token: str, db: Session):
             raise credentials_exception
         if user.disabled:
             raise HTTPException(status_code=400, detail="Inactive user")
-        return user
+        # Convert to Pydantic User model with is_admin
+        return User(
+            username=user.username,
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            disabled=user.disabled,
+            is_admin=user.is_admin
+        )
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -97,10 +105,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     except JWTError:
         raise credentials_exception
 
-    # In Electron mode, if token is valid, return default user
+    # In Electron mode, if token is valid, return default user (always admin in electron mode)
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if token_data.username == "local_user":
-            electron_user = User(username="local_user", id=1, disabled=False)
+            electron_user = User(username="local_user", id=1, disabled=False, is_admin=True)
             return electron_user
         else:
             # Invalid username in token
@@ -112,7 +120,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             raise credentials_exception
         if user.disabled:
             raise HTTPException(status_code=400, detail="Inactive user")
-        return user
+        # Convert to Pydantic User model with is_admin
+        return User(
+            username=user.username,
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            disabled=user.disabled,
+            is_admin=user.is_admin
+        )
 
 
 def get_current_active_user(current_user=Depends(get_current_user)):
@@ -163,7 +179,7 @@ async def get_current_user_from_query(
     # Handle authentication based on deployment mode (same as your existing logic)
     if os.environ.get("FLOWFILE_MODE") == "electron":
         if token_data.username == "local_user":
-            electron_user = User(username="local_user", id=1, disabled=False)
+            electron_user = User(username="local_user", id=1, disabled=False, is_admin=True)
             return electron_user
         else:
             raise credentials_exception
@@ -174,4 +190,22 @@ async def get_current_user_from_query(
             raise credentials_exception
         if user.disabled:
             raise HTTPException(status_code=400, detail="Inactive user")
-        return user
+        # Convert to Pydantic User model with is_admin
+        return User(
+            username=user.username,
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            disabled=user.disabled,
+            is_admin=user.is_admin
+        )
+
+
+async def get_current_admin_user(current_user: User = Depends(get_current_user)):
+    """Dependency that requires the current user to be an admin"""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user

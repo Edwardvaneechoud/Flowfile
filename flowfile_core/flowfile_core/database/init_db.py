@@ -66,13 +66,14 @@ def create_docker_admin_user(db: Session):
         logger.info(f"Admin user '{admin_username}' already exists, skipping creation.")
         return False
 
-    # Create user with hashed password
+    # Create user with hashed password and admin privileges
     hashed_password = get_password_hash(admin_password)
     admin_user = db_models.User(
         username=admin_username,
         email=f"{admin_username}@flowfile.app",
         full_name="Admin User",
-        hashed_password=hashed_password
+        hashed_password=hashed_password,
+        is_admin=True
     )
     db.add(admin_user)
     db.commit()
