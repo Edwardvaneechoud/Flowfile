@@ -84,29 +84,27 @@ def _is_sensitive_system_path(path: Path) -> bool:
 def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
     """Validate a file path is safe and within allowed_base.
 
-    Uses os.path.normpath + startswith pattern recognized by CodeQL as safe.
+    Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.
     """
     try:
-        # Block path traversal patterns early
+        # Block obvious path traversal patterns early
         if '..' in user_path:
             return None
 
-        # Get the base path as a normalized string
-        base_path = os.path.normpath(str(allowed_base.resolve()))
+        # Get the base path as a normalized, real path string
+        base_path = os.path.realpath(str(allowed_base.resolve()))
 
-        # Normalize the full path using CodeQL's recognized safe pattern
-        if os.path.isabs(user_path):
-            fullpath = os.path.normpath(user_path)
-        else:
-            fullpath = os.path.normpath(os.path.join(base_path, user_path))
+        # Always resolve the user path relative to the allowed base directory
+        candidate_path = os.path.join(base_path, user_path)
+        fullpath = os.path.realpath(candidate_path)
 
-        # CodeQL recognizes this startswith check as proper sanitization
+        # Ensure the resolved path stays within the allowed base directory
         if not fullpath.startswith(base_path + os.sep) and fullpath != base_path:
             return None
 
         result = Path(fullpath)
 
-        # Defense in depth
+        # Defense in depth: block known sensitive system paths
         if _is_sensitive_system_path(result):
             return None
 
