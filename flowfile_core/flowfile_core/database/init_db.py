@@ -4,6 +4,7 @@ import secrets
 import string
 import logging
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from flowfile_core.database import models as db_models
 from flowfile_core.database.connection import engine, SessionLocal
 from flowfile_core.auth.password import get_password_hash
@@ -13,6 +14,33 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 logger = logging.getLogger(__name__)
 
+
+def run_migrations():
+    """Run database migrations to update schema for existing databases."""
+    with engine.connect() as conn:
+        # Check if users table exists
+        result = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+        ))
+        if not result.fetchone():
+            # Table doesn't exist yet, create_all will handle it with the new schema
+            logger.info("Users table does not exist, will be created with new schema")
+            return
+
+        # Check if is_admin column exists in users table
+        result = conn.execute(text("PRAGMA table_info(users)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if 'is_admin' not in columns:
+            logger.info("Adding is_admin column to users table")
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
+            conn.commit()
+            logger.info("Migration complete: is_admin column added")
+
+
+# Run migrations BEFORE create_all to update existing tables
+run_migrations()
+# Then create any new tables (this will include is_admin for new databases)
 db_models.Base.metadata.create_all(bind=engine)
 
 
@@ -63,7 +91,13 @@ def create_docker_admin_user(db: Session):
     ).first()
 
     if existing_user:
-        logger.info(f"Admin user '{admin_username}' already exists, skipping creation.")
+        # Ensure existing admin user has is_admin=True
+        if not existing_user.is_admin:
+            existing_user.is_admin = True
+            db.commit()
+            logger.info(f"Admin user '{admin_username}' updated with admin privileges.")
+        else:
+            logger.info(f"Admin user '{admin_username}' already exists with admin privileges.")
         return False
 
     # Create user with hashed password and admin privileges
