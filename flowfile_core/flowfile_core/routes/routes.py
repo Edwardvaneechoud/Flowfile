@@ -57,30 +57,6 @@ file_explorer = SecureFileExplorer(
 )
 
 
-def _is_sensitive_system_path(path: Path) -> bool:
-    """Check if a path is a sensitive system path that should be blocked."""
-    try:
-        resolved = path.resolve()
-        # Normalize to forward slashes and lowercase for consistent comparison
-        path_str = str(resolved).replace('\\', '/').lower()
-
-        # Block sensitive Unix paths
-        sensitive_unix = ['/etc/', '/etc', '/var/', '/root/', '/boot/', '/sys/', '/proc/', '/dev/']
-        for sensitive in sensitive_unix:
-            if path_str == sensitive.rstrip('/') or path_str.startswith(sensitive):
-                return True
-
-        # Block sensitive Windows paths (normalized to forward slashes)
-        sensitive_windows = ['/windows/', '/system32/', '/syswow64/', '/programdata/']
-        for sensitive in sensitive_windows:
-            if sensitive in path_str:
-                return True
-
-        return False
-    except (ValueError, RuntimeError, OSError):
-        return True  # Block on error
-
-
 def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
     """Validate a file path is safe and within allowed_base.
 
@@ -113,33 +89,33 @@ def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
 def _validate_flow_file_path(user_path: str) -> Optional[Path]:
     """Validate a file path for flow operations (import/save/excel).
 
-    Less restrictive than sandbox mode - allows absolute paths to project
-    directories but blocks path traversal and sensitive system paths.
-
-    Uses os.path.realpath to safely resolve the path.
+    Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.
+    Allows paths within:
+    - Current working directory (for development/testing)
+    - User data directory (home directory or /data/user in Docker)
+    - Flowfile storage directory (~/.flowfile)
     """
     try:
         # Block path traversal patterns
         if '..' in user_path:
             return None
 
-        # Use realpath for safe path resolution (CodeQL-recognized safe pattern)
+        # Use realpath for safe path resolution
         fullpath = os.path.realpath(user_path)
-        path_normalized = fullpath.replace('\\', '/').lower()
 
-        # Block sensitive Unix paths
-        sensitive_unix = ['/etc/', '/etc', '/var/', '/root/', '/boot/', '/sys/', '/proc/', '/dev/']
-        for sensitive in sensitive_unix:
-            if path_normalized == sensitive.rstrip('/') or path_normalized.startswith(sensitive):
-                return None
+        # Define allowed base directories
+        allowed_bases = [
+            os.path.realpath(os.getcwd()),  # Current working directory
+            os.path.realpath(str(storage.user_data_directory)),  # User data (home)
+            os.path.realpath(str(storage.base_directory)),  # Flowfile storage
+        ]
 
-        # Block sensitive Windows paths
-        sensitive_windows = ['/windows/', '/system32/', '/syswow64/', '/programdata/']
-        for sensitive in sensitive_windows:
-            if sensitive in path_normalized:
-                return None
+        # Check against allowed bases (CodeQL-safe pattern)
+        for base_path in allowed_bases:
+            if fullpath.startswith(base_path + os.sep) or fullpath == base_path:
+                return Path(fullpath)
 
-        return Path(fullpath)
+        return None
 
     except (ValueError, RuntimeError, OSError):
         return None
