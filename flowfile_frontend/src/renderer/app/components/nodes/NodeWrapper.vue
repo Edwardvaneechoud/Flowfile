@@ -298,37 +298,28 @@ const copyNode = () => {
     nodeTemplate: props.data.nodeTemplate,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
-
-  console.log("Node copied:", nodeCopyValue);
   closeContextMenu();
 };
 
 const deleteNode = () => {
-  console.log("Deleting node");
   if (nodeStore.vueFlowInstance) {
-    let vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
+    const vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
     vueFlow.removeNodes(props.data.id.toLocaleString(), true);
   }
-
   closeContextMenu();
 };
 
 const runNode = async () => {
-  console.log("Running node:", props.data.id);
   closeContextMenu();
 
-  // Check if already fetching this node
   if (isPollingActive(`node_${props.data.id}`)) {
-    console.log("Fetch already in progress for this node");
     return;
   }
 
   isRunning.value = true;
   try {
-    // Use the composable to trigger node fetch with proper state management
     await triggerNodeFetch(props.data.id);
 
-    // Set up a watcher for when the fetch completes
     const checkInterval = setInterval(() => {
       if (!isPollingActive(`node_${props.data.id}`)) {
         clearInterval(checkInterval);
@@ -336,7 +327,6 @@ const runNode = async () => {
       }
     }, 1000);
 
-    // Safety timeout to prevent infinite checking (1 minute max)
     setTimeout(() => {
       clearInterval(checkInterval);
       isRunning.value = false;
@@ -348,16 +338,12 @@ const runNode = async () => {
 };
 
 const toggleCache = async () => {
-  console.log("Toggling cache for node:", props.data.id);
   try {
-    // Get current node data to toggle cache
     const nodeData = await nodeStore.getNodeData(props.data.id, false);
     if (nodeData && nodeData.setting_input) {
       const newCacheValue = !nodeData.setting_input.cache_results;
       nodeData.setting_input.cache_results = newCacheValue;
       isCached.value = newCacheValue;
-
-      // Update the node settings
       await nodeStore.updateSettingsDirectly(nodeData.setting_input);
     }
   } catch (error) {

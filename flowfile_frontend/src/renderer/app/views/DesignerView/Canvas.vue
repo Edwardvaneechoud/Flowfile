@@ -230,7 +230,6 @@ const handleDrop = (event: DragEvent) => {
   }
 };
 
-// Helper to convert snake_case to snake_case (identity) and handle node type
 const toSnakeCase = (str: string): string => {
   return str
     .replace(/([a-z])([A-Z])/g, "$1_$2")
