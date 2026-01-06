@@ -86,6 +86,30 @@ def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
         return None
 
 
+def _validate_path_under_cwd(user_path: str) -> str:
+    """Validate that a user-provided path resolves to within the current working directory.
+
+    Uses the exact pattern from CodeQL documentation for py/path-injection:
+    - os.path.normpath for path normalization
+    - os.path.join to combine base with user input
+    - startswith check to ensure path stays within base
+
+    Args:
+        user_path: The user-provided path string
+
+    Returns:
+        The validated, normalized full path as a string
+
+    Raises:
+        HTTPException: 403 if path escapes the allowed directory
+    """
+    base_path = os.path.normpath(os.getcwd())
+    fullpath = os.path.normpath(os.path.join(base_path, user_path))
+    if not fullpath.startswith(base_path):
+        raise HTTPException(403, 'Access denied')
+    return fullpath
+
+
 def get_node_model(setting_name_ref: str):
     """(Internal) Retrieves a node's Pydantic model from the input_schema module by its name."""
     logger.info("Getting node model for: " + setting_name_ref)
@@ -652,27 +676,17 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session."""
-    # Exact pattern from CodeQL documentation
-    base_path = os.path.normpath(os.getcwd())
-    fullpath = os.path.normpath(os.path.join(base_path, flow_path))
-    if not fullpath.startswith(base_path):
-        raise HTTPException(403, 'Access denied')
-
-    if not os.path.exists(fullpath):
+    validated_path = _validate_path_under_cwd(flow_path)
+    if not os.path.exists(validated_path):
         raise HTTPException(404, 'File not found')
-    return flow_file_handler.import_flow(Path(fullpath))
+    return flow_file_handler.import_flow(Path(validated_path))
 
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
-        # Exact pattern from CodeQL documentation
-        base_path = os.path.normpath(os.getcwd())
-        fullpath = os.path.normpath(os.path.join(base_path, flow_path))
-        if not fullpath.startswith(base_path):
-            raise HTTPException(403, 'Access denied')
-        flow_path = fullpath
+        flow_path = _validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -739,13 +753,8 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=list[str])
 async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    # Exact pattern from CodeQL documentation
-    base_path = os.path.normpath(os.getcwd())
-    fullpath = os.path.normpath(os.path.join(base_path, path))
-    if not fullpath.startswith(base_path):
-        raise HTTPException(403, 'Access denied')
-
-    sheet_names = excel_file_manager.get_sheet_names(fullpath)
+    validated_path = _validate_path_under_cwd(path)
+    sheet_names = excel_file_manager.get_sheet_names(validated_path)
     if sheet_names:
         return sheet_names
     else:
