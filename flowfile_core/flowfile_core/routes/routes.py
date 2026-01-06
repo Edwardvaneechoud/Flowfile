@@ -656,25 +656,28 @@ def import_saved_flow(flow_path: str) -> int:
     if '..' in flow_path:
         raise HTTPException(403, 'Access denied')
 
-    # CodeQL-safe pattern: join to safe root, realpath, then startswith check
-    safe_root = os.path.realpath(os.getcwd())
-    fullpath = os.path.realpath(os.path.join(safe_root, flow_path))
+    # Try each allowed base directory
+    allowed_bases = [
+        os.path.realpath(os.getcwd()),
+        os.path.realpath(str(storage.user_data_directory)),
+        os.path.realpath(str(storage.base_directory)),
+    ]
 
-    if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-        # Try user data directory as fallback
-        safe_root = os.path.realpath(str(storage.user_data_directory))
-        fullpath = os.path.realpath(os.path.join(safe_root, flow_path))
-        if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-            # Try flowfile storage as fallback
-            safe_root = os.path.realpath(str(storage.base_directory))
-            fullpath = os.path.realpath(os.path.join(safe_root, flow_path))
-            if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-                raise HTTPException(403, 'Access denied')
+    validated_path = None
+    for safe_root in allowed_bases:
+        # CodeQL-safe pattern: join, realpath, startswith
+        candidate = os.path.join(safe_root, flow_path)
+        fullpath = os.path.realpath(candidate)
+        if fullpath.startswith(safe_root + os.sep) or fullpath == safe_root:
+            validated_path = fullpath
+            break
 
-    # Path is now validated - check existence
-    if not os.path.exists(fullpath):
+    if validated_path is None:
+        raise HTTPException(403, 'Access denied')
+
+    if not os.path.exists(validated_path):
         raise HTTPException(404, 'File not found')
-    return flow_file_handler.import_flow(Path(fullpath))
+    return flow_file_handler.import_flow(Path(validated_path))
 
 
 @router.get('/save_flow', tags=['editor'])
@@ -685,20 +688,25 @@ def save_flow(flow_id: int, flow_path: str = None):
         if '..' in flow_path:
             raise HTTPException(403, 'Access denied')
 
-        # CodeQL-safe pattern: join to safe root, realpath, then startswith check
-        safe_root = os.path.realpath(os.getcwd())
-        fullpath = os.path.realpath(os.path.join(safe_root, flow_path))
+        # Try each allowed base directory
+        allowed_bases = [
+            os.path.realpath(os.getcwd()),
+            os.path.realpath(str(storage.user_data_directory)),
+            os.path.realpath(str(storage.base_directory)),
+        ]
 
-        if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-            safe_root = os.path.realpath(str(storage.user_data_directory))
-            fullpath = os.path.realpath(os.path.join(safe_root, flow_path))
-            if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-                safe_root = os.path.realpath(str(storage.base_directory))
-                fullpath = os.path.realpath(os.path.join(safe_root, flow_path))
-                if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-                    raise HTTPException(403, 'Access denied')
+        validated_path = None
+        for safe_root in allowed_bases:
+            candidate = os.path.join(safe_root, flow_path)
+            fullpath = os.path.realpath(candidate)
+            if fullpath.startswith(safe_root + os.sep) or fullpath == safe_root:
+                validated_path = fullpath
+                break
 
-        flow_path = fullpath
+        if validated_path is None:
+            raise HTTPException(403, 'Access denied')
+
+        flow_path = validated_path
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -769,20 +777,25 @@ async def get_excel_sheet_names(path: str) -> list[str] | None:
     if '..' in path:
         raise HTTPException(403, 'Access denied')
 
-    # CodeQL-safe pattern: join to safe root, realpath, then startswith check
-    safe_root = os.path.realpath(os.getcwd())
-    fullpath = os.path.realpath(os.path.join(safe_root, path))
+    # Try each allowed base directory
+    allowed_bases = [
+        os.path.realpath(os.getcwd()),
+        os.path.realpath(str(storage.user_data_directory)),
+        os.path.realpath(str(storage.base_directory)),
+    ]
 
-    if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-        safe_root = os.path.realpath(str(storage.user_data_directory))
-        fullpath = os.path.realpath(os.path.join(safe_root, path))
-        if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-            safe_root = os.path.realpath(str(storage.base_directory))
-            fullpath = os.path.realpath(os.path.join(safe_root, path))
-            if not fullpath.startswith(safe_root + os.sep) and fullpath != safe_root:
-                raise HTTPException(403, 'Access denied')
+    validated_path = None
+    for safe_root in allowed_bases:
+        candidate = os.path.join(safe_root, path)
+        fullpath = os.path.realpath(candidate)
+        if fullpath.startswith(safe_root + os.sep) or fullpath == safe_root:
+            validated_path = fullpath
+            break
 
-    sheet_names = excel_file_manager.get_sheet_names(fullpath)
+    if validated_path is None:
+        raise HTTPException(403, 'Access denied')
+
+    sheet_names = excel_file_manager.get_sheet_names(validated_path)
     if sheet_names:
         return sheet_names
     else:
