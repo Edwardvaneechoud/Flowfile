@@ -53,6 +53,20 @@
                   <i :class="showNewPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
                 </button>
               </div>
+              <ul v-if="newUser.password" class="password-requirements">
+                <li :class="{ valid: passwordChecks.minLength }">
+                  <i :class="passwordChecks.minLength ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  8+ characters
+                </li>
+                <li :class="{ valid: passwordChecks.hasNumber }">
+                  <i :class="passwordChecks.hasNumber ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  Number
+                </li>
+                <li :class="{ valid: passwordChecks.hasSpecial }">
+                  <i :class="passwordChecks.hasSpecial ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  Special char
+                </li>
+              </ul>
             </div>
 
             <div class="form-field">
@@ -93,7 +107,7 @@
             <button
               type="submit"
               class="btn btn-primary"
-              :disabled="!newUser.username || !newUser.password || isSubmitting"
+              :disabled="!newUser.username || !isPasswordValid || isSubmitting"
             >
               <i class="fa-solid fa-user-plus"></i>
               {{ isSubmitting ? "Creating..." : "Create User" }}
@@ -351,6 +365,19 @@ const newUser = ref<UserCreate>({
 });
 const showNewPassword = ref(false);
 const isSubmitting = ref(false);
+
+// Password validation
+const passwordChecks = computed(() => ({
+  minLength: newUser.value.password.length >= 8,
+  hasNumber: /\d/.test(newUser.value.password),
+  hasSpecial: /[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/.test(newUser.value.password),
+}));
+
+const isPasswordValid = computed(() =>
+  passwordChecks.value.minLength &&
+  passwordChecks.value.hasNumber &&
+  passwordChecks.value.hasSpecial
+);
 
 // Edit modal
 const showEditModal = ref(false);
@@ -616,6 +643,36 @@ onMounted(() => {
 
 .toggle-visibility:hover {
   color: var(--color-text-primary);
+}
+
+.password-requirements {
+  list-style: none;
+  padding: 0;
+  margin: var(--spacing-2) 0 0 0;
+  font-size: var(--font-size-xs);
+  display: flex;
+  gap: var(--spacing-3);
+}
+
+.password-requirements li {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  color: var(--color-text-secondary);
+}
+
+.password-requirements li i {
+  width: 12px;
+  font-size: 10px;
+  color: var(--color-danger);
+}
+
+.password-requirements li.valid {
+  color: var(--color-success);
+}
+
+.password-requirements li.valid i {
+  color: var(--color-success);
 }
 
 /* Uses centralized .status-message from _modals.css, just add margin */

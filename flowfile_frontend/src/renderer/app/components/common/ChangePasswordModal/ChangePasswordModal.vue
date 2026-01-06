@@ -51,7 +51,7 @@
                   :type="showNewPassword ? 'text' : 'password'"
                   class="form-input"
                   :class="{ 'is-error': errors.newPassword }"
-                  placeholder="Enter new password (min 6 characters)"
+                  placeholder="Enter new password"
                   required
                 />
                 <button
@@ -64,7 +64,20 @@
                 </button>
               </div>
               <span v-if="errors.newPassword" class="form-error">{{ errors.newPassword }}</span>
-              <span class="form-hint">Password must be at least 6 characters</span>
+              <ul class="password-requirements">
+                <li :class="{ valid: passwordChecks.minLength }">
+                  <i :class="passwordChecks.minLength ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  At least 8 characters
+                </li>
+                <li :class="{ valid: passwordChecks.hasNumber }">
+                  <i :class="passwordChecks.hasNumber ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  At least one number
+                </li>
+                <li :class="{ valid: passwordChecks.hasSpecial }">
+                  <i :class="passwordChecks.hasSpecial ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  At least one special character
+                </li>
+              </ul>
             </div>
 
             <div class="form-field">
@@ -145,10 +158,23 @@ const showConfirmPassword = ref(false);
 const isSubmitting = ref(false);
 const serverError = ref('');
 
+// Password validation checks
+const passwordChecks = computed(() => ({
+  minLength: formData.value.newPassword.length >= 8,
+  hasNumber: /\d/.test(formData.value.newPassword),
+  hasSpecial: /[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/.test(formData.value.newPassword),
+}));
+
+const isPasswordValid = computed(() =>
+  passwordChecks.value.minLength &&
+  passwordChecks.value.hasNumber &&
+  passwordChecks.value.hasSpecial
+);
+
 const isFormValid = computed(() => {
   return (
     formData.value.currentPassword.length > 0 &&
-    formData.value.newPassword.length >= 6 &&
+    isPasswordValid.value &&
     formData.value.confirmPassword === formData.value.newPassword
   );
 });
@@ -181,8 +207,8 @@ const validateForm = (): boolean => {
   if (!formData.value.newPassword) {
     errors.value.newPassword = 'New password is required';
     isValid = false;
-  } else if (formData.value.newPassword.length < 6) {
-    errors.value.newPassword = 'Password must be at least 6 characters';
+  } else if (!isPasswordValid.value) {
+    errors.value.newPassword = 'Password does not meet requirements';
     isValid = false;
   }
 
@@ -243,5 +269,33 @@ const close = () => {
 
 .form {
   margin-top: var(--spacing-2);
+}
+
+.password-requirements {
+  list-style: none;
+  padding: 0;
+  margin: var(--spacing-2) 0 0 0;
+  font-size: var(--font-size-xs);
+}
+
+.password-requirements li {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) 0;
+  color: var(--color-text-secondary);
+}
+
+.password-requirements li i {
+  width: 14px;
+  color: var(--color-danger);
+}
+
+.password-requirements li.valid {
+  color: var(--color-success);
+}
+
+.password-requirements li.valid i {
+  color: var(--color-success);
 }
 </style>

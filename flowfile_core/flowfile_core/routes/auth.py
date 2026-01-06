@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user, create_access_token
 from flowfile_core.auth.models import Token, User, UserCreate, UserUpdate, ChangePassword
-from flowfile_core.auth.password import verify_password, get_password_hash
+from flowfile_core.auth.password import verify_password, get_password_hash, validate_password, PASSWORD_REQUIREMENTS
 from flowfile_core.database.connection import get_db
 from flowfile_core.database import models as db_models
 
@@ -107,6 +107,14 @@ async def create_user(
                 detail="Email already exists"
             )
 
+    # Validate password requirements
+    is_valid, error_message = validate_password(user_data.password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message
+        )
+
     # Create new user with must_change_password=True
     hashed_password = get_password_hash(user_data.password)
     new_user = db_models.User(
@@ -185,6 +193,13 @@ async def update_user(
         user.is_admin = user_data.is_admin
 
     if user_data.password is not None:
+        # Validate password requirements
+        is_valid, error_message = validate_password(user_data.password)
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=error_message
+            )
         user.hashed_password = get_password_hash(user_data.password)
         # Reset must_change_password when admin sets a new password
         user.must_change_password = True
@@ -261,11 +276,12 @@ async def change_own_password(
             detail="Current password is incorrect"
         )
 
-    # Validate new password
-    if len(password_data.new_password) < 6:
+    # Validate new password requirements
+    is_valid, error_message = validate_password(password_data.new_password)
+    if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be at least 6 characters"
+            detail=error_message
         )
 
     # Update password and clear must_change_password flag
@@ -283,3 +299,9 @@ async def change_own_password(
         is_admin=user.is_admin,
         must_change_password=user.must_change_password
     )
+
+
+@router.get("/password-requirements")
+async def get_password_requirements():
+    """Get password requirements for client-side validation"""
+    return PASSWORD_REQUIREMENTS
