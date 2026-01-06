@@ -410,15 +410,13 @@ export default function useDragAndDrop() {
     // Map old node IDs to new node IDs
     const nodeIdMapping: Map<number, number> = new Map()
 
-    // Calculate the bounding box of original nodes to compute relative positions
-    let minX = Infinity, minY = Infinity
-    for (const node of multiCopyValue.nodes) {
-      // We'll get positions from the node data when creating
-      // For now, use the first node as reference
-    }
-
-    // First pass: create all nodes and build the ID mapping
-    const nodeCreationPromises: Promise<void>[] = []
+    // Pre-assign all node IDs and calculate positions
+    const nodeInfos: Array<{
+      node: typeof multiCopyValue.nodes[0],
+      newNodeId: number,
+      offsetX: number,
+      offsetY: number
+    }> = []
 
     for (let i = 0; i < multiCopyValue.nodes.length; i++) {
       const node = multiCopyValue.nodes[i]
@@ -426,61 +424,72 @@ export default function useDragAndDrop() {
       nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId)
 
       // Calculate offset position for each node (stagger them)
-      const offsetX = baseX + (i % 3) * 50
-      const offsetY = baseY + Math.floor(i / 3) * 50
+      const offsetX = baseX + (i % 3) * 200
+      const offsetY = baseY + Math.floor(i / 3) * 150
 
-      const createPromise = getComponentRaw(node.type).then((component) => {
-        const newNode: Node = {
-          id: String(newNodeId),
-          type: "custom-node",
-          position: {
-            x: offsetX,
-            y: offsetY,
-          },
-          data: {
-            id: newNodeId,
-            label: node.label,
-            component: markRaw(component),
-            inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
-              id: `input-${i}`,
-              position: Position.Left,
-            })),
-            outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
-              id: `output-${i}`,
-              position: Position.Right,
-            })),
-            nodeTemplate: node.nodeTemplate,
-          },
-        }
-        const nodePromise: NodePromise = {
-          node_id: newNodeId,
-          flow_id: flowId,
-          node_type: node.typeSnakeCase,
-          pos_x: offsetX,
-          pos_y: offsetY,
-          cache_results: true,
-        }
-        FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise)
-        addNodes(newNode)
-      })
-
-      nodeCreationPromises.push(createPromise)
+      nodeInfos.push({ node, newNodeId, offsetX, offsetY })
     }
 
-    // Wait for all nodes to be created
-    await Promise.all(nodeCreationPromises)
+    // First pass: Create all UI nodes and wait for components to load
+    const uiNodePromises = nodeInfos.map(async ({ node, newNodeId, offsetX, offsetY }) => {
+      const component = await getComponentRaw(node.type)
+      const newNode: Node = {
+        id: String(newNodeId),
+        type: "custom-node",
+        position: {
+          x: offsetX,
+          y: offsetY,
+        },
+        data: {
+          id: newNodeId,
+          label: node.label,
+          component: markRaw(component),
+          inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
+            id: `input-${i}`,
+            position: Position.Left,
+          })),
+          outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
+            id: `output-${i}`,
+            position: Position.Right,
+          })),
+          nodeTemplate: node.nodeTemplate,
+        },
+      }
+      addNodes(newNode)
+      return { node, newNodeId, offsetX, offsetY }
+    })
 
-    // Second pass: create connections between the new nodes
-    await nextTick() // Wait for nodes to be added to the flow
+    // Wait for all UI nodes to be created
+    const createdNodes = await Promise.all(uiNodePromises)
 
-    for (const edge of multiCopyValue.edges) {
+    // Second pass: Copy all nodes in the backend and wait for completion
+    const backendCopyPromises = createdNodes.map(async ({ node, newNodeId, offsetX, offsetY }) => {
+      const nodePromise: NodePromise = {
+        node_id: newNodeId,
+        flow_id: flowId,
+        node_type: node.typeSnakeCase,
+        pos_x: offsetX,
+        pos_y: offsetY,
+        cache_results: true,
+      }
+      await FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise)
+    })
+
+    // Wait for ALL backend copy operations to complete
+    await Promise.all(backendCopyPromises)
+
+    // Wait for Vue to update
+    await nextTick()
+
+    // Third pass: Create connections between the new nodes (after all nodes exist)
+    const connectionPromises = multiCopyValue.edges.map(async (edge) => {
       const newSourceId = nodeIdMapping.get(edge.sourceNodeId)
       const newTargetId = nodeIdMapping.get(edge.targetNodeId)
 
       if (newSourceId !== undefined && newTargetId !== undefined) {
         // Create the edge in the UI
         const newEdge = {
-          id: `e${newSourceId}-${newTargetId}`,
+          id: `e${newSourceId}-${newTargetId}-${edge.sourceHandle}-${edge.targetHandle}`,
           source: String(newSourceId),
           target: String(newTargetId),
           sourceHandle: edge.sourceHandle,
@@ -499,9 +508,12 @@ export default function useDragAndDrop() {
             connection_class: edge.sourceHandle as any,
           },
         }
-        FlowApi.connectNode(flowId, nodeConnection)
+        await FlowApi.connectNode(flowId, nodeConnection)
       }
-    }
+    })
+
+    // Wait for all connections to be created
+    await Promise.all(connectionPromises)
   }
 
   return {

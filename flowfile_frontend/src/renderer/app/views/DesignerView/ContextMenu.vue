@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { ContextMenuAction } from "./types";
 
 const props = defineProps({
@@ -24,21 +24,32 @@ const props = defineProps({
     type: Function,
     required: true,
   },
+  selectedNodesCount: {
+    type: Number,
+    default: 0,
+  },
 });
 
 const emit = defineEmits(["action"]);
 
 const menuRef = ref<HTMLElement | null>(null);
 
-// Define menu actions based on the target type
-const getMenuActions = () => {
-  return [
+// Define menu actions based on the target type and selection state
+const getMenuActions = computed(() => {
+  const actions = [
     { id: "fit-view", label: "Fit View", icon: "🔍" },
     { id: "zoom-in", label: "Zoom In", icon: "🔍+" },
     { id: "zoom-out", label: "Zoom Out", icon: "🔍-" },
     { id: "paste-node", label: "Paste Node", icon: "📋" },
   ];
-};
+
+  // Add group action if multiple nodes are selected
+  if (props.selectedNodesCount >= 2) {
+    actions.push({ id: "group-nodes", label: `Group ${props.selectedNodesCount} Nodes`, icon: "📦" });
+  }
+
+  return actions;
+});
 
 const handleAction = (actionId: string): void => {
   emit("action", {
@@ -95,7 +106,7 @@ onUnmounted(() => {
     </div>
     <div class="context-menu-items">
       <div
-        v-for="action in getMenuActions()"
+        v-for="action in getMenuActions"
         :key="action.id"
         class="context-menu-item"
         @click="handleAction(action.id)"

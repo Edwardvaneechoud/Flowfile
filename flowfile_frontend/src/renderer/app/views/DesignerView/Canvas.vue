@@ -336,6 +336,81 @@ const copyValue = async (x: number, y: number) => {
   createCopyNode(nodeCopyInput);
 };
 
+// Group selected nodes into a visual group
+const groupSelectedNodes = () => {
+  const selectedNodes = instance.getSelectedNodes.value;
+
+  if (selectedNodes.length < 2) {
+    return;
+  }
+
+  // Calculate the bounding box of selected nodes
+  let minX = Infinity, minY = Infinity;
+  let maxX = -Infinity, maxY = -Infinity;
+
+  for (const node of selectedNodes) {
+    const nodeWidth = 200; // Approximate node width
+    const nodeHeight = 100; // Approximate node height
+
+    minX = Math.min(minX, node.position.x);
+    minY = Math.min(minY, node.position.y);
+    maxX = Math.max(maxX, node.position.x + nodeWidth);
+    maxY = Math.max(maxY, node.position.y + nodeHeight);
+  }
+
+  // Add padding around the group
+  const padding = 40;
+  const groupX = minX - padding;
+  const groupY = minY - padding - 30; // Extra space for label
+  const groupWidth = maxX - minX + padding * 2;
+  const groupHeight = maxY - minY + padding * 2 + 30;
+
+  // Create a unique group ID
+  const groupId = `group-${Date.now()}`;
+
+  // Create the group node
+  const groupNode = {
+    id: groupId,
+    type: "group",
+    position: { x: groupX, y: groupY },
+    style: {
+      width: `${groupWidth}px`,
+      height: `${groupHeight}px`,
+      backgroundColor: "rgba(59, 130, 246, 0.08)",
+      border: "2px dashed rgba(59, 130, 246, 0.4)",
+      borderRadius: "12px",
+    },
+    data: {
+      label: "Node Group",
+    },
+    selectable: true,
+    draggable: true,
+  };
+
+  // Add the group node first
+  instance.addNodes([groupNode]);
+
+  // Update selected nodes to be children of the group
+  const nodeUpdates = selectedNodes.map((node: any) => ({
+    id: node.id,
+    parentNode: groupId,
+    extent: "parent" as const,
+    position: {
+      x: node.position.x - groupX,
+      y: node.position.y - groupY,
+    },
+  }));
+
+  // Update each node to be a child of the group
+  for (const update of nodeUpdates) {
+    instance.updateNode(update.id, {
+      parentNode: update.parentNode,
+      extent: update.extent,
+      position: update.position,
+    });
+  }
+};
+
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
   const { actionId, position } = actionData;
   if (actionId === "fit-view") {
@@ -346,6 +421,8 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
     instance.zoomOut();
   } else if (actionId === "paste-node") {
     copyValue(position.x, position.y);
+  } else if (actionId === "group-nodes") {
+    groupSelectedNodes();
   }
 };
 
@@ -387,6 +464,10 @@ const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
       emit("run", nodeStore.flow_id);
     }
+  } else if (eventKeyClicked && event.shiftKey && key === "g" && !isInputElement) {
+    // Cmd+Shift+G: Group selected nodes
+    event.preventDefault();
+    groupSelectedNodes();
   } else if (eventKeyClicked && key === "g") {
     if (nodeStore.flow_id) {
       event.preventDefault();
@@ -459,6 +540,7 @@ defineExpose({
         :target-type="contextMenuTarget.type"
         :target-id="contextMenuTarget.id"
         :on-close="closeContextMenu"
+        :selected-nodes-count="instance.getSelectedNodes.value.length"
         @action="handleContextMenuAction"
       />
     </main>

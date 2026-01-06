@@ -159,8 +159,7 @@ import { useFlowStore } from "../../stores/flow-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
-import { FlowApi } from "../../api";
-import { NodeApi } from "../../services/api";
+import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
 import type { NodeTemplate } from "../../types";
 
@@ -168,6 +167,16 @@ const nodeStore = useNodeStore();
 const flowStore = useFlowStore();
 const nodeEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
+
+// Use the flow execution composable with persistent polling
+const { triggerNodeFetch, isPollingActive } = useFlowExecution(
+  flowStore.flowId,
+  { interval: 2000, enabled: true },
+  {
+    persistPolling: true,
+    pollingKey: `node_wrapper_${flowStore.flowId}`,
+  },
+);
 
 const mouseX = ref<number>(0);
 const mouseY = ref<number>(0);
@@ -306,15 +315,36 @@ const deleteNode = () => {
 
 const runNode = async () => {
   console.log("Running node:", props.data.id);
+  closeContextMenu();
+
+  // Check if already fetching this node
+  if (isPollingActive(`node_${props.data.id}`)) {
+    console.log("Fetch already in progress for this node");
+    return;
+  }
+
   isRunning.value = true;
   try {
-    await FlowApi.triggerNodeFetch(flowStore.flowId, props.data.id);
+    // Use the composable to trigger node fetch with proper state management
+    await triggerNodeFetch(props.data.id);
+
+    // Set up a watcher for when the fetch completes
+    const checkInterval = setInterval(() => {
+      if (!isPollingActive(`node_${props.data.id}`)) {
+        clearInterval(checkInterval);
+        isRunning.value = false;
+      }
+    }, 1000);
+
+    // Safety timeout to prevent infinite checking (1 minute max)
+    setTimeout(() => {
+      clearInterval(checkInterval);
+      isRunning.value = false;
+    }, 60000);
   } catch (error) {
     console.error("Error running node:", error);
-  } finally {
     isRunning.value = false;
   }
-  closeContextMenu();
 };
 
 const toggleCache = async () => {
