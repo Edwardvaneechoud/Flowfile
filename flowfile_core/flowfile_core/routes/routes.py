@@ -104,11 +104,42 @@ def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
 
         result = Path(fullpath)
 
-        # Defense in depth: block known sensitive system paths
-        if _is_sensitive_system_path(result):
+        return result
+
+    except (ValueError, RuntimeError, OSError):
+        return None
+
+
+def _validate_flow_file_path(user_path: str) -> Optional[Path]:
+    """Validate a file path for flow operations (import/save/excel).
+
+    Less restrictive than sandbox mode - allows absolute paths to project
+    directories but blocks path traversal and sensitive system paths.
+
+    Uses os.path.realpath to safely resolve the path.
+    """
+    try:
+        # Block path traversal patterns
+        if '..' in user_path:
             return None
 
-        return result
+        # Use realpath for safe path resolution (CodeQL-recognized safe pattern)
+        fullpath = os.path.realpath(user_path)
+        path_normalized = fullpath.replace('\\', '/').lower()
+
+        # Block sensitive Unix paths
+        sensitive_unix = ['/etc/', '/etc', '/var/', '/root/', '/boot/', '/sys/', '/proc/', '/dev/']
+        for sensitive in sensitive_unix:
+            if path_normalized == sensitive.rstrip('/') or path_normalized.startswith(sensitive):
+                return None
+
+        # Block sensitive Windows paths
+        sensitive_windows = ['/windows/', '/system32/', '/syswow64/', '/programdata/']
+        for sensitive in sensitive_windows:
+            if sensitive in path_normalized:
+                return None
+
+        return Path(fullpath)
 
     except (ValueError, RuntimeError, OSError):
         return None
@@ -680,7 +711,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session."""
-    validated_path = _validate_file_path(flow_path, storage.user_data_directory)
+    validated_path = _validate_flow_file_path(flow_path)
     if validated_path is None:
         raise HTTPException(403, 'Access denied')
     if not validated_path.exists():
@@ -692,7 +723,7 @@ def import_saved_flow(flow_path: str) -> int:
 def save_flow(flow_id: int, flow_path: str = None):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
-        validated_path = _validate_file_path(flow_path, storage.user_data_directory)
+        validated_path = _validate_flow_file_path(flow_path)
         if validated_path is None:
             raise HTTPException(403, 'Access denied')
         flow_path = str(validated_path)
@@ -762,7 +793,7 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=list[str])
 async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    validated_path = _validate_file_path(path, storage.user_data_directory)
+    validated_path = _validate_flow_file_path(path)
     if validated_path is None:
         raise HTTPException(403, 'Access denied')
     sheet_names = excel_file_manager.get_sheet_names(str(validated_path))
