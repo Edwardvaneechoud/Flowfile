@@ -237,6 +237,83 @@ def _build_output_table_settings(output_settings: Any, file_type: str) -> dict:
     return {"file_type": "csv", "delimiter": ",", "encoding": "utf-8"}
 
 
+def ensure_compatibility_node_groupby(node_groupby: input_schema.NodeGroupBy):
+    """Migrate old NodeGroupBy structure:
+    - GroupByInput dataclass -> BaseModel
+    - AggColl dataclass -> BaseModel
+    """
+    if not hasattr(node_groupby, "groupby_input") or node_groupby.groupby_input is None:
+        return
+
+    groupby_input = node_groupby.groupby_input
+
+    # Check if already migrated (is a Pydantic model)
+    if not _is_dataclass_instance(groupby_input):
+        return
+
+    from flowfile_core.schemas import transform_schema
+
+    # Migrate each AggColl in agg_cols
+    agg_cols = getattr(groupby_input, "agg_cols", []) or []
+    new_agg_cols = []
+    for agg_col in agg_cols:
+        if _is_dataclass_instance(agg_col):
+            new_agg_col = _migrate_dataclass_to_basemodel(agg_col, transform_schema.AggColl)
+            new_agg_cols.append(new_agg_col)
+        else:
+            new_agg_cols.append(agg_col)
+
+    # Create new validated GroupByInput and replace
+    new_groupby_input = transform_schema.GroupByInput(agg_cols=new_agg_cols)
+    node_groupby.groupby_input = new_groupby_input
+
+
+def ensure_compatibility_node_filter(node_filter: input_schema.NodeFilter):
+    """Migrate old NodeFilter structure:
+    - FilterInput dataclass -> BaseModel
+    - filter_type -> mode
+    - BasicFilter.filter_type -> BasicFilter.operator
+    - BasicFilter.filter_value -> BasicFilter.value
+    """
+    if not hasattr(node_filter, "filter_input") or node_filter.filter_input is None:
+        return
+
+    filter_input = node_filter.filter_input
+
+    # Check if already migrated (is a Pydantic model)
+    if not _is_dataclass_instance(filter_input):
+        return
+
+    from flowfile_core.schemas import transform_schema
+
+    # Build the new FilterInput data with field name mappings
+    filter_data = {
+        # filter_type -> mode
+        "mode": getattr(filter_input, "filter_type", "basic"),
+        "advanced_filter": getattr(filter_input, "advanced_filter", ""),
+    }
+
+    # Handle BasicFilter migration
+    basic_filter = getattr(filter_input, "basic_filter", None)
+    if basic_filter is not None:
+        if _is_dataclass_instance(basic_filter):
+            # Map old field names to new ones
+            basic_filter_data = {
+                "field": getattr(basic_filter, "field", ""),
+                # filter_type -> operator
+                "operator": getattr(basic_filter, "filter_type", "equals"),
+                # filter_value -> value
+                "value": getattr(basic_filter, "filter_value", ""),
+            }
+            filter_data["basic_filter"] = transform_schema.BasicFilter.model_validate(basic_filter_data)
+        else:
+            filter_data["basic_filter"] = basic_filter
+
+    # Create new validated FilterInput and replace
+    new_filter_input = transform_schema.FilterInput.model_validate(filter_data)
+    node_filter.filter_input = new_filter_input
+
+
 def ensure_compatibility_node_select(node_select: input_schema.NodeSelect):
     """Ensure NodeSelect has position attributes, sorted_by field, and handle dataclass migrations."""
     if not hasattr(node_select, "select_input"):
@@ -364,10 +441,10 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
         return flow_storage_obj
 
     fs = flow_storage_obj.flow_settings
-
     if not hasattr(fs, "execution_location"):
         fs.execution_location = "remote"
-
+    elif fs.execution_location == "auto":
+        fs.execution_location = "remote"
     if not hasattr(fs, "is_running"):
         fs.is_running = False
 
@@ -399,7 +476,6 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
     - Node descriptions
     """
     flow_storage_obj = ensure_flow_settings(flow_storage_obj, flow_path)
-
     for _id, node_information in flow_storage_obj.data.items():
         if not hasattr(node_information, "setting_input") or node_information.setting_input is None:
             continue
@@ -417,7 +493,10 @@ def ensure_compatibility(flow_storage_obj: schemas.FlowInformation, flow_path: s
             ensure_compatibility_node_joins(setting_input)
         elif class_name == "NodePolarsCode":
             ensure_compatibility_node_polars(setting_input)
-
+        elif class_name == "NodeFilter":
+            ensure_compatibility_node_filter(setting_input)
+        elif class_name == "NodeGroupBy":
+            ensure_compatibility_node_groupby(setting_input)
         ensure_description(setting_input)
 
     return flow_storage_obj
