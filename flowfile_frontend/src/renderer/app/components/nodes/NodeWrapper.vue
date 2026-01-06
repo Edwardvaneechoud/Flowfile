@@ -78,6 +78,40 @@
       <!-- Teleport Context Menu to body -->
       <Teleport v-if="showMenu" to="body">
         <div ref="menuEl" class="context-menu" :style="contextMenuStyle">
+          <div class="context-menu-item" @click="runNode">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>{{ isRunning ? 'Running...' : 'Run Now' }}</span>
+          </div>
+          <div class="context-menu-item" @click="toggleCache">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+              <path d="M3 3v5h5"></path>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+              <path d="M16 21h5v-5"></path>
+            </svg>
+            <span>{{ isCached ? 'Disable Cache' : 'Enable Cache' }}</span>
+          </div>
+          <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="copyNode">
             <svg
               width="14"
@@ -94,7 +128,7 @@
             </svg>
             <span>Copy</span>
           </div>
-          <div class="context-menu-item" @click="deleteNode">
+          <div class="context-menu-item context-menu-item-danger" @click="deleteNode">
             <svg
               width="14"
               height="14"
@@ -105,10 +139,9 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <path
-                d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"
-              ></path>
-              <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+              <path d="M3 6h18"></path>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             </svg>
             <span>Delete</span>
           </div>
@@ -122,15 +155,28 @@
 import { Handle } from "@vue-flow/core";
 import { computed, ref, onMounted, nextTick, watch, onUnmounted } from "vue";
 import { useNodeStore } from "../../stores/column-store";
+import { useFlowStore } from "../../stores/flow-store";
 import { VueFlowStore } from "@vue-flow/core";
 import { NodeCopyValue } from "../../views/DesignerView/types";
 import { toSnakeCase } from "../../views/DesignerView/utils";
+import { useFlowExecution } from "../../composables/useFlowExecution";
 import GenericNode from "./GenericNode.vue";
 import type { NodeTemplate } from "../../types";
 
 const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 const nodeEl = ref<HTMLElement | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
+
+// Use the flow execution composable with persistent polling
+const { triggerNodeFetch, isPollingActive } = useFlowExecution(
+  flowStore.flowId,
+  { interval: 2000, enabled: true },
+  {
+    persistPolling: true,
+    pollingKey: `node_wrapper_${flowStore.flowId}`,
+  },
+);
 
 const mouseX = ref<number>(0);
 const mouseY = ref<number>(0);
@@ -138,6 +184,8 @@ const editMode = ref<boolean>(false);
 const showMenu = ref<boolean>(false);
 const contextMenuX = ref<number>(0);
 const contextMenuY = ref<number>(0);
+const isCached = ref<boolean>(false);
+const isRunning = ref<boolean>(false);
 
 const CHAR_LIMIT = 100;
 
@@ -171,7 +219,7 @@ const onTitleClick = (event: MouseEvent) => {
   mouseY.value = event.clientY;
 };
 
-const showContextMenu = (event: MouseEvent) => {
+const showContextMenu = async (event: MouseEvent) => {
   event.preventDefault();
   event.stopPropagation();
 
@@ -182,6 +230,16 @@ const showContextMenu = (event: MouseEvent) => {
   contextMenuX.value = event.clientX;
   contextMenuY.value = event.clientY;
   showMenu.value = true;
+
+  // Load the current cache state
+  try {
+    const nodeData = await nodeStore.getNodeData(props.data.id, true);
+    if (nodeData && nodeData.setting_input) {
+      isCached.value = nodeData.setting_input.cache_results || false;
+    }
+  } catch (error) {
+    console.error("Error loading node data:", error);
+  }
 
   setTimeout(() => {
     window.addEventListener("click", handleClickOutsideMenu);
@@ -240,18 +298,57 @@ const copyNode = () => {
     nodeTemplate: props.data.nodeTemplate,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
-
-  console.log("Node copied:", nodeCopyValue);
   closeContextMenu();
 };
 
 const deleteNode = () => {
-  console.log("Deleting node");
   if (nodeStore.vueFlowInstance) {
-    let vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
+    const vueFlow: VueFlowStore = nodeStore.vueFlowInstance;
     vueFlow.removeNodes(props.data.id.toLocaleString(), true);
   }
+  closeContextMenu();
+};
 
+const runNode = async () => {
+  closeContextMenu();
+
+  if (isPollingActive(`node_${props.data.id}`)) {
+    return;
+  }
+
+  isRunning.value = true;
+  try {
+    await triggerNodeFetch(props.data.id);
+
+    const checkInterval = setInterval(() => {
+      if (!isPollingActive(`node_${props.data.id}`)) {
+        clearInterval(checkInterval);
+        isRunning.value = false;
+      }
+    }, 1000);
+
+    setTimeout(() => {
+      clearInterval(checkInterval);
+      isRunning.value = false;
+    }, 60000);
+  } catch (error) {
+    console.error("Error running node:", error);
+    isRunning.value = false;
+  }
+};
+
+const toggleCache = async () => {
+  try {
+    const nodeData = await nodeStore.getNodeData(props.data.id, false);
+    if (nodeData && nodeData.setting_input) {
+      const newCacheValue = !nodeData.setting_input.cache_results;
+      nodeData.setting_input.cache_results = newCacheValue;
+      isCached.value = newCacheValue;
+      await nodeStore.updateSettingsDirectly(nodeData.setting_input);
+    }
+  } catch (error) {
+    console.error("Error toggling cache:", error);
+  }
   closeContextMenu();
 };
 
@@ -285,7 +382,9 @@ const descriptionTextStyle = computed(() => {
 });
 
 const handleKeyDown = (event: KeyboardEvent) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "c") {
+  // Normalize key to lowercase to handle Caps Lock being on
+  const key = event.key.toLowerCase();
+  if ((event.metaKey || event.ctrlKey) && key === "c") {
     const isNodeSelected = nodeStore.node_id === props.data.id;
     const target = event.target as HTMLElement;
     const isTargetNodeButton = target.classList.contains("node-button");
@@ -551,5 +650,23 @@ onMounted(async () => {
 
 .context-menu-item span {
   font-family: var(--font-family-base);
+}
+
+.context-menu-divider {
+  height: 1px;
+  background-color: var(--color-border-primary);
+  margin: 4px 0;
+}
+
+.context-menu-item-danger {
+  color: #dc3545;
+}
+
+.context-menu-item-danger:hover {
+  background-color: rgba(220, 53, 69, 0.1);
+}
+
+.context-menu-item-danger svg {
+  color: #dc3545;
 }
 </style>

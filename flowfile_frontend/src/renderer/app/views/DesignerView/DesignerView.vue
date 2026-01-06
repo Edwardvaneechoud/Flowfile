@@ -50,6 +50,7 @@
     class="canvas"
     @save="headerButtons?.openSaveModal()"
     @run="headerButtons?.runFlow()"
+    @new="headerButtons?.handleQuickCreateAction()"
   />
 </template>
 
