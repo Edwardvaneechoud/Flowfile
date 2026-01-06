@@ -58,8 +58,6 @@
 
 <script lang="ts" setup>
 import {
-  defineProps,
-  defineEmits,
   ref,
   computed,
   watch,

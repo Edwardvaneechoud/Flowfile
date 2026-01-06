@@ -105,13 +105,10 @@
 <script lang="ts" setup>
 import {
   ref,
-  defineProps,
   computed,
   onMounted,
   onUnmounted,
   watchEffect,
-  defineEmits,
-  defineExpose,
 } from "vue";
 import { SelectInput } from "../nodeInput";
 import { useNodeStore } from "../../../../stores/column-store";
