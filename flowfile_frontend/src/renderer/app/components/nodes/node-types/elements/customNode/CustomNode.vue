@@ -5,7 +5,6 @@
   </div>
   <!-- This wrapper prevents rendering until the schema and formData are ready -->
   <div v-else-if="schema && formData && nodeUserDefined" class="custom-node-wrapper">
-
     <div v-if="schema.intro" class="listbox-subtitle">
       {{ schema.intro }}
     </div>
