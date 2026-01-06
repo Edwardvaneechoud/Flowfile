@@ -39,7 +39,7 @@ const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const rawCustomNode = markRaw(CustomNode);
-const { updateEdge, addEdges, fitView, screenToFlowCoordinate } = useVueFlow();
+const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
@@ -384,9 +384,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
     // Select all nodes
     event.preventDefault();
     const allNodes = instance.getNodes.value;
-    allNodes.forEach((node: any) => {
-      node.selected = true;
-    });
+    addSelectedNodes(allNodes);
   } else if (eventKeyClicked && key === "c" && !isInputElement) {
     // Copy selected nodes
     copySelectedNodes();
