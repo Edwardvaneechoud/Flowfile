@@ -89,7 +89,7 @@ def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
 def _validate_flow_file_path(user_path: str) -> Optional[Path]:
     """Validate a file path for flow operations (import/save/excel).
 
-    Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.
+    Uses os.path.join + os.path.realpath + startswith pattern recognized by CodeQL as safe.
     Allows paths within:
     - Current working directory (for development/testing)
     - User data directory (home directory or /data/user in Docker)
@@ -100,9 +100,6 @@ def _validate_flow_file_path(user_path: str) -> Optional[Path]:
         if '..' in user_path:
             return None
 
-        # Use realpath for safe path resolution
-        fullpath = os.path.realpath(user_path)
-
         # Define allowed base directories
         allowed_bases = [
             os.path.realpath(os.getcwd()),  # Current working directory
@@ -110,8 +107,12 @@ def _validate_flow_file_path(user_path: str) -> Optional[Path]:
             os.path.realpath(str(storage.base_directory)),  # Flowfile storage
         ]
 
-        # Check against allowed bases (CodeQL-safe pattern)
+        # CodeQL-safe pattern: join to base first, then realpath, then startswith check
+        # Note: os.path.join(base, abs_path) returns abs_path if abs_path is absolute,
+        # so absolute paths outside allowed bases will fail the startswith check
         for base_path in allowed_bases:
+            candidate_path = os.path.join(base_path, user_path)
+            fullpath = os.path.realpath(candidate_path)
             if fullpath.startswith(base_path + os.sep) or fullpath == base_path:
                 return Path(fullpath)
 
