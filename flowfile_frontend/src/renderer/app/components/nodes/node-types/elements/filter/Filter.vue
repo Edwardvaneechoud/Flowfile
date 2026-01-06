@@ -32,6 +32,7 @@
               <div class="filter-field">
                 <label class="filter-label">Operator</label>
                 <column-selector
+                  v-model="operatorDisplayValue"
                   :value="getOperatorLabel(nodeFilter.filter_input.basic_filter.operator)"
                   :column-options="operatorLabels"
                   @update:value="(value: string) => handleOperatorChange(value)"
@@ -118,6 +119,11 @@ const currentOperator = computed((): FilterOperator => {
   return op as FilterOperator;
 });
 
+const operatorDisplayValue = computed({
+  get: () => getOperatorLabel(nodeFilter.value?.filter_input?.basic_filter?.operator),
+  set: (val: string) => handleOperatorChange(val),
+});
+
 function convertLegacyOperator(symbol: string): FilterOperator {
   const legacyMapping: Record<string, FilterOperator> = {
     "=": "equals",
@@ -137,6 +143,11 @@ function convertLegacyOperator(symbol: string): FilterOperator {
     in: "in",
     not_in: "not_in",
     between: "between",
+    not_equals: "not_equals",
+    greater_than: "greater_than",
+    greater_than_or_equals: "greater_than_or_equals",
+    less_than: "less_than",
+    less_than_or_equals: "less_than_or_equals",
   };
   return legacyMapping[symbol] || "equals";
 }

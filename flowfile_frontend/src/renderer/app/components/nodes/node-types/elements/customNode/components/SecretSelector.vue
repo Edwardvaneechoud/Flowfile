@@ -62,7 +62,7 @@ const filteredSecrets = computed(() => {
     return secrets.value;
   }
   return secrets.value.filter((secret) =>
-    secret.name.toLowerCase().startsWith(props.schema.name_prefix!.toLowerCase())
+    secret.name.toLowerCase().startsWith(props.schema.name_prefix!.toLowerCase()),
   );
 });
 

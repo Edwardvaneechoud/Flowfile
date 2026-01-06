@@ -14,8 +14,8 @@
         <div class="help-section">
           <h4>Overview</h4>
           <p>
-            The process method is where you write your data transformation logic. It receives
-            input LazyFrames from connected nodes and returns a transformed LazyFrame.
+            The process method is where you write your data transformation logic. It receives input
+            LazyFrames from connected nodes and returns a transformed LazyFrame.
           </p>
         </div>
 
@@ -58,32 +58,24 @@ api_key = secret.get_secret_value()</code></pre>
           <div class="pattern-grid">
             <div class="pattern-item">
               <h5>Filter Rows</h5>
-              <pre
-                class="help-code-small"
-              ><code>lf = inputs[0]
+              <pre class="help-code-small"><code>lf = inputs[0]
 return lf.filter(pl.col("column") > 10)</code></pre>
             </div>
             <div class="pattern-item">
               <h5>Select Columns</h5>
-              <pre
-                class="help-code-small"
-              ><code>lf = inputs[0]
+              <pre class="help-code-small"><code>lf = inputs[0]
 return lf.select(["col1", "col2"])</code></pre>
             </div>
             <div class="pattern-item">
               <h5>Add New Column</h5>
-              <pre
-                class="help-code-small"
-              ><code>lf = inputs[0]
+              <pre class="help-code-small"><code>lf = inputs[0]
 return lf.with_columns(
     pl.col("a").alias("new_col")
 )</code></pre>
             </div>
             <div class="pattern-item">
               <h5>Group & Aggregate</h5>
-              <pre
-                class="help-code-small"
-              ><code>lf = inputs[0]
+              <pre class="help-code-small"><code>lf = inputs[0]
 return lf.group_by("category").agg(
     pl.col("value").sum()
 )</code></pre>

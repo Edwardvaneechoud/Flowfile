@@ -10,7 +10,7 @@
           class="icon-preview"
           @error="handleImageError"
         />
-        <span class="icon-name">{{ modelValue || 'Select icon...' }}</span>
+        <span class="icon-name">{{ modelValue || "Select icon..." }}</span>
         <i class="fa-solid fa-chevron-down dropdown-arrow"></i>
       </div>
 
@@ -24,8 +24,8 @@
             <input
               type="file"
               accept=".png,.jpg,.jpeg,.svg,.gif,.webp"
-              @change="handleFileUpload"
               hidden
+              @change="handleFileUpload"
             />
           </label>
         </div>
@@ -50,8 +50,8 @@
               <span class="icon-filename">{{ icon.file_name }}</span>
               <button
                 class="delete-icon-btn"
-                @click.stop="deleteIcon(icon.file_name)"
                 title="Delete icon"
+                @click.stop="deleteIcon(icon.file_name)"
               >
                 <i class="fa-solid fa-times"></i>
               </button>
@@ -86,17 +86,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import axios from 'axios';
-import type { IconInfo } from './types';
-import { getImageUrl, getCustomIconUrl as getCustomIconUrlUtil, getDefaultIconUrl } from '../../features/designer/utils';
+import { ref, onMounted } from "vue";
+import axios from "axios";
+import type { IconInfo } from "./types";
+import {
+  getImageUrl,
+  getCustomIconUrl as getCustomIconUrlUtil,
+  getDefaultIconUrl,
+} from "../../features/designer/utils";
 
 const props = defineProps<{
   modelValue: string;
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: string): void;
+  (e: "update:modelValue", value: string): void;
 }>();
 
 const showDropdown = ref(false);
@@ -113,17 +117,17 @@ function toggleDropdown() {
 async function loadIcons() {
   loading.value = true;
   try {
-    const response = await axios.get('/user_defined_components/list-icons');
+    const response = await axios.get("/user_defined_components/list-icons");
     customIcons.value = response.data;
   } catch (error) {
-    console.error('Failed to load icons:', error);
+    console.error("Failed to load icons:", error);
   } finally {
     loading.value = false;
   }
 }
 
 function selectIcon(iconName: string) {
-  emit('update:modelValue', iconName);
+  emit("update:modelValue", iconName);
   showDropdown.value = false;
 }
 
@@ -133,27 +137,27 @@ async function handleFileUpload(event: Event) {
   if (!file) return;
 
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append("file", file);
 
   try {
-    const response = await axios.post('/user_defined_components/upload-icon', formData, {
+    const response = await axios.post("/user_defined_components/upload-icon", formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        "Content-Type": "multipart/form-data",
       },
     });
 
     // Select the newly uploaded icon
-    emit('update:modelValue', response.data.file_name);
+    emit("update:modelValue", response.data.file_name);
 
     // Reload icon list
     await loadIcons();
   } catch (error: any) {
-    const errorMsg = error.response?.data?.detail || error.message || 'Failed to upload icon';
+    const errorMsg = error.response?.data?.detail || error.message || "Failed to upload icon";
     alert(`Error uploading icon: ${errorMsg}`);
   }
 
   // Reset the input
-  target.value = '';
+  target.value = "";
 }
 
 async function deleteIcon(iconName: string) {
@@ -164,13 +168,13 @@ async function deleteIcon(iconName: string) {
 
     // If the deleted icon was selected, reset to default
     if (props.modelValue === iconName) {
-      emit('update:modelValue', 'user-defined-icon.png');
+      emit("update:modelValue", "user-defined-icon.png");
     }
 
     // Reload icon list
     await loadIcons();
   } catch (error: any) {
-    const errorMsg = error.response?.data?.detail || error.message || 'Failed to delete icon';
+    const errorMsg = error.response?.data?.detail || error.message || "Failed to delete icon";
     alert(`Error deleting icon: ${errorMsg}`);
   }
 }

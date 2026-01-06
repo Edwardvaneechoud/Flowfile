@@ -24,7 +24,7 @@ const vueGraphicWalkerRef = ref<InstanceType<typeof VueGraphicWalker> | null>(nu
 // Map theme store values to graphic-walker appearance values
 const graphicWalkerAppearance = computed(() => {
   const theme = themeStore.mode;
-  if (theme === 'system') return 'media';
+  if (theme === "system") return "media";
   return theme; // 'light' or 'dark'
 });
 
