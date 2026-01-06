@@ -92,6 +92,7 @@ def create_fake_data_raw(
     first_names = partial(fake.first_name)
     last_names = partial(fake.last_name)
     domain_names = [fake.domain_name() for _ in range(10)]  # Pre-generate a small list
+
     def sales_data():
         return fake.random_int(0, 1000)
 

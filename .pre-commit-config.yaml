@@ -1,0 +1,39 @@
+# Pre-commit hooks configuration
+# See https://pre-commit.com for more information
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version should match the version in pyproject.toml
+    rev: v0.8.6
+    hooks:
+      # Run the linter
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
+      # Run the formatter
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Identify invalid files
+      - id: check-ast
+      - id: check-yaml
+      - id: check-json
+        exclude: 'tsconfig.*\.json$'  # Exclude TypeScript config files (they use JSONC with comments)
+      - id: check-toml
+      # Check for files that would conflict in case-insensitive filesystems
+      - id: check-case-conflict
+      # Check for merge conflicts
+      - id: check-merge-conflict
+      # Check for debugger imports
+      - id: debug-statements
+      # Make sure files end with newline
+      - id: end-of-file-fixer
+      # Trim trailing whitespace
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      # Check for large files
+      - id: check-added-large-files
+        args: ['--maxkb=1000']

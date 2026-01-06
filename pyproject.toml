@@ -88,6 +88,7 @@ mkdocstrings = "^0.30.0"
 mkdocstrings-python = "^1.16.12"
 griffe-pydantic = "^1.1.6"
 ruff = "^0.8.0"
+pre-commit = "^4.0.0"
 
 [build-system]
 requires = ["poetry-core"]

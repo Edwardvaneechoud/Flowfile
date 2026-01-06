@@ -86,4 +86,4 @@ open_graph_in_editor(aggregated_df.flow_graph)
 
 - **Inspect Data Flow**: See exactly how your data is transformed step by step
 - **Debugging**: Identify issues in your data pipeline visually
-- **Documentation**: Share your data transformation logic with teammates 
+- **Documentation**: Share your data transformation logic with teammates

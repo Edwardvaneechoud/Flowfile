@@ -6,11 +6,11 @@
 
 <p align="center">
   <b>Main Repository</b>: <a href="https://github.com/Edwardvaneechoud/Flowfile">Edwardvaneechoud/Flowfile</a><br>
-  <b>Documentation</b>: 
-  <a href="https://edwardvaneechoud.github.io/Flowfile/">Website</a> - 
-  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_core/README.md">Core</a> - 
-  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_worker/README.md">Worker</a> - 
-  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_frontend/README.md">Frontend</a> - 
+  <b>Documentation</b>:
+  <a href="https://edwardvaneechoud.github.io/Flowfile/">Website</a> -
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_core/README.md">Core</a> -
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_worker/README.md">Worker</a> -
+  <a href="https://github.com/Edwardvaneechoud/Flowfile/blob/main/flowfile_frontend/README.md">Frontend</a> -
   <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
 </p>
 

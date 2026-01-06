@@ -80,4 +80,3 @@ We welcome contributions! Adding a new node requires changes across the stack:
 - **Frontend**: Currently, you must also manually create a Vue component for the node's configuration form in the visual editor.
 
 For a more detailed breakdown, please read the **[Contributing section in our Design Philosophy guide](design-philosophy.md#contributing)**.
-

@@ -22,4 +22,3 @@ def test_prepare_for_fuzzy_match():
 
     assert fuzzy_match_input_manager.used_join_mapping[0].left_col == '_FLOWFILE_JOIN_KEY_LEFT_name', 'Left column should still be named name'
     assert fuzzy_match_input_manager.used_join_mapping[0].right_col == '_FLOWFILE_JOIN_KEY_RIGHT_name_right', 'Right column should be renamed to name_right'
-

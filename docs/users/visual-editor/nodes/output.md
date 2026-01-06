@@ -117,4 +117,3 @@ The **Cloud Storage Writer** node allows you to save your processed data directl
 ### ![Explore Data](../../../assets/images/nodes/explore_data.png){ width="50" height="50" } Explore Data
 
 The Explore Data node provides interactive data exploration and analysis capabilities.
-

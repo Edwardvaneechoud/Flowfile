@@ -21,9 +21,7 @@ def run_migrations():
     """Run database migrations to update schema for existing databases."""
     with engine.connect() as conn:
         # Check if users table exists
-        result = conn.execute(text(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
-        ))
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'"))
         if not result.fetchone():
             logger.info("Users table does not exist, will be created with new schema")
             return
@@ -33,14 +31,14 @@ def run_migrations():
         columns = [row[1] for row in result.fetchall()]
 
         # Add is_admin column if missing
-        if 'is_admin' not in columns:
+        if "is_admin" not in columns:
             logger.info("Adding is_admin column to users table")
             conn.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
             conn.commit()
             logger.info("Migration complete: is_admin column added")
 
         # Add must_change_password column if missing
-        if 'must_change_password' not in columns:
+        if "must_change_password" not in columns:
             logger.info("Adding must_change_password column to users table")
             conn.execute(text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0"))
             conn.commit()
@@ -56,7 +54,7 @@ db_models.Base.metadata.create_all(bind=engine)
 def create_default_local_user(db: Session):
     local_user = db.query(db_models.User).filter(db_models.User.username == "local_user").first()
     if not local_user:
-        random_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        random_password = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
         hashed_password = pwd_context.hash(random_password)
 
         local_user = db_models.User(
@@ -64,7 +62,7 @@ def create_default_local_user(db: Session):
             email="local@flowfile.app",
             full_name="Local User",
             hashed_password=hashed_password,
-            must_change_password=False  # Local user doesn't need to change password
+            must_change_password=False,  # Local user doesn't need to change password
         )
         db.add(local_user)
         db.commit()
@@ -95,9 +93,7 @@ def create_docker_admin_user(db: Session):
         return False
 
     # Check if user already exists
-    existing_user = db.query(db_models.User).filter(
-        db_models.User.username == admin_username
-    ).first()
+    existing_user = db.query(db_models.User).filter(db_models.User.username == admin_username).first()
 
     if existing_user:
         # Ensure existing admin user has is_admin=True
@@ -117,7 +113,7 @@ def create_docker_admin_user(db: Session):
         full_name="Admin User",
         hashed_password=hashed_password,
         is_admin=True,
-        must_change_password=True  # Force password change on first login
+        must_change_password=True,  # Force password change on first login
     )
     db.add(admin_user)
     db.commit()
@@ -137,4 +133,3 @@ def init_db():
 if __name__ == "__main__":
     init_db()
     print("Local user created successfully")
-

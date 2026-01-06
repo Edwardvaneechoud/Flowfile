@@ -29,6 +29,6 @@ module.exports = {
     '@typescript-eslint/no-explicit-any': 0,
     'vue/multi-word-component-names': 0,
     'vue/no-lone-template': 0,
-    'linebreak-style': ['error', 'unix'] 
+    'linebreak-style': ['error', 'unix']
   },
 }

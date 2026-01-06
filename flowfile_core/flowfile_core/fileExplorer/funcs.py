@@ -135,7 +135,6 @@ class SecureFileExplorer:
         try:
             # Handle relative paths from current directoryb
             if isinstance(path, str):
-
                 # Remove any suspicious patterns
                 if path.startswith("/"):
                     # For absolute paths or parent references, resolve from sandbox root
@@ -383,7 +382,7 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
     """
     try:
         # Block obvious path traversal patterns early
-        if '..' in user_path:
+        if ".." in user_path:
             return None
 
         # Get the base path as a normalized, real path string
@@ -436,7 +435,7 @@ def validate_path_under_cwd(user_path: str) -> str:
     if fullpath.startswith(base_path):
         return fullpath
 
-    raise HTTPException(403, 'Access denied')
+    raise HTTPException(403, "Access denied")
 
 
 # Alias for backward compatibility

@@ -26,4 +26,3 @@ def find_parent_directory(target_dir_name, start_path=None):
         current_path = current_path.parent
 
     raise FileNotFoundError(f"Directory '{target_dir_name}' not found")
-

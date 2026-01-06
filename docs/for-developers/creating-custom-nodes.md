@@ -73,7 +73,7 @@ class GreetingNode(CustomNodeBase):
     node_category: str = "Text Processing"
     title: str = "Add Personal Greetings"
     intro: str = "Transform names into personalized greetings"
-    
+
     settings_schema: GreetingSettings = GreetingSettings()
 
     def process(self, input_df: pl.LazyFrame) -> pl.LazyFrame:
@@ -81,27 +81,27 @@ class GreetingNode(CustomNodeBase):
         name_col = self.settings_schema.main_config.name_column.value
         style = self.settings_schema.main_config.greeting_style.value
         custom = self.settings_schema.main_config.custom_message.value
-        
+
         # Define greeting logic
         if style == "formal":
             greeting_expr = pl.concat_str([
-                pl.lit("Hello, "), 
-                pl.col(name_col), 
+                pl.lit("Hello, "),
+                pl.col(name_col),
                 pl.lit(f". {custom}")
             ])
         elif style == "casual":
             greeting_expr = pl.concat_str([
-                pl.lit("Hey "), 
-                pl.col(name_col), 
+                pl.lit("Hey "),
+                pl.col(name_col),
                 pl.lit(f"! {custom}")
             ])
         else:  # enthusiastic
             greeting_expr = pl.concat_str([
-                pl.lit("OMG HI "), 
-                pl.col(name_col).str.to_uppercase(), 
+                pl.lit("OMG HI "),
+                pl.col(name_col).str.to_uppercase(),
                 pl.lit(f"!!! {custom} 🎉")
             ])
-        
+
         return input_df.with_columns([
             greeting_expr.alias("greeting")
         ])
@@ -141,7 +141,7 @@ class MyCustomNode(CustomNodeBase):
 
     # 2. Settings Schema - The UI configuration
     settings_schema: MySettings = MySettings()
-    
+
     # 3. Processing Logic - What the node actually does
     def process(self, input_df: pl.LazyFrame) -> pl.LazyFrame:
         # Your transformation logic here
@@ -184,7 +184,7 @@ class MyNodeSettings(NodeSettings):
         input_column=ColumnSelector(...),
         operation_type=SingleSelect(...)
     )
-    
+
     advanced_options: Section = Section(
         title="Advanced Options",
         description="Fine-tune behavior",
@@ -341,7 +341,7 @@ data_types=[Types.Numeric, Types.Date]  # Numbers and dates only
 class DataQualityNode(CustomNodeBase):
     node_name: str = "Data Quality Checker"
     node_category: str = "Data Validation"
-    
+
     settings_schema: DataQualitySettings = DataQualitySettings(
         validation_rules=Section(
             title="Validation Rules",
@@ -366,7 +366,7 @@ class DataQualityNode(CustomNodeBase):
     def process(self, input_df: pl.LazyFrame) -> pl.LazyFrame:
         columns = self.settings_schema.validation_rules.columns_to_check.value
         threshold = self.settings_schema.validation_rules.null_threshold.value
-        
+
         # Calculate quality metrics
         quality_checks = []
         for col in columns:
@@ -376,7 +376,7 @@ class DataQualityNode(CustomNodeBase):
                 "null_percentage": null_pct,
                 "quality_flag": "PASS" if null_pct <= threshold else "FAIL"
             })
-        
+
         # Add quality flags to original data
         result_df = input_df
         for check in quality_checks:
@@ -384,7 +384,7 @@ class DataQualityNode(CustomNodeBase):
                 result_df = result_df.with_columns([
                     pl.col(check["column"]).is_null().alias(f"{check['column']}_has_issues")
                 ])
-        
+
         return result_df
 ```
 
@@ -394,7 +394,7 @@ class DataQualityNode(CustomNodeBase):
 class TextCleanerNode(CustomNodeBase):
     node_name: str = "Text Cleaner"
     node_category: str = "Text Processing"
-    
+
     settings_schema: TextCleanerSettings = TextCleanerSettings(
         cleaning_options=Section(
             title="Cleaning Options",
@@ -425,10 +425,10 @@ class TextCleanerNode(CustomNodeBase):
         text_col = self.settings_schema.cleaning_options.text_column.value
         operations = self.settings_schema.cleaning_options.operations.value
         output_col = self.settings_schema.cleaning_options.output_column.value
-        
+
         # Start with original text
         expr = pl.col(text_col)
-        
+
         # Apply selected operations
         if "lowercase" in operations:
             expr = expr.str.to_lowercase()
@@ -440,14 +440,14 @@ class TextCleanerNode(CustomNodeBase):
             expr = expr.str.replace_all(r"\d+", "")
         if "trim" in operations:
             expr = expr.str.strip_chars()
-            
+
         return input_df.with_columns([expr.alias(output_col)])
 ```
 
 ## Best Practices
 
 ### 1. Performance
-Try to use Polars expressions and lazy evaluation to keep your nodes efficient. 
+Try to use Polars expressions and lazy evaluation to keep your nodes efficient.
 A collect will be executed in the core process and can cause issues when using remote compute.
 
 

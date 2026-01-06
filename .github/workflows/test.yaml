@@ -52,7 +52,7 @@ jobs:
           cd flowfile_frontend
           npm install
           npm run build:web
-          
+
           # Create the static directory if it doesn't exist
           mkdir -p ../flowfile/flowfile/web/static
 
@@ -112,7 +112,7 @@ jobs:
           cd flowfile_frontend
           npm install
           npm run build:web
-          
+
           # Create the static directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path ../flowfile/flowfile/web/static | Out-Null
 

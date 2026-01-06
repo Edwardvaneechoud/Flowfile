@@ -20,7 +20,7 @@
 
 Download the latest installer for your platform:
 - **Windows**: [Flowfile-Setup.exe](https://github.com/Edwardvaneechoud/Flowfile/releases)
-- **macOS**: [Flowfile.dmg](https://github.com/Edwardvaneechoud/Flowfile/releases) 
+- **macOS**: [Flowfile.dmg](https://github.com/Edwardvaneechoud/Flowfile/releases)
 
 > **Note**: You may see security warnings since the installer isn't signed. On Windows, click "More info" → "Run anyway". On macOS, right-click → "Open" → confirm.
 
@@ -59,14 +59,14 @@ npm run dev:web  # Terminal 3 (port 8080)
   <h3 style="color: #00CED1; margin-top: 0; font-size: clamp(1.1rem, 2.5vw, 1.3rem);">Non-Technical Users</h3>
   <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>Perfect for:</strong> Analysts, business users, Excel power users</p>
   <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>No coding required!</strong></p>
-  
+
   <ul style="list-style: none; padding: 0; margin: 1rem 0;">
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Drag and drop interface</li>
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Visual data preview</li>
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Export to Excel/CSV</li>
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Built-in transformations</li>
   </ul>
-  
+
   <a href="#non-technical-quickstart" style="display: inline-block; background: #00CED1; color: white; padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); border-radius: 8px; text-decoration: none; font-weight: bold; margin-top: 1rem; font-size: clamp(0.9rem, 2vw, 1rem); text-align: center; width: 100%; box-sizing: border-box;">Start Visual Tutorial →</a>
 </div>
 
@@ -74,14 +74,14 @@ npm run dev:web  # Terminal 3 (port 8080)
   <h3 style="color: #8B5CF6; margin-top: 0; font-size: clamp(1.1rem, 2.5vw, 1.3rem);">Technical Users</h3>
   <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>Perfect for:</strong> Developers, data scientists, engineers</p>
   <p style="font-size: clamp(0.9rem, 2vw, 1rem);"><strong>Full programmatic control!</strong></p>
-  
+
   <ul style="list-style: none; padding: 0; margin: 1rem 0;">
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Polars-compatible API</li>
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Cloud storage integration</li>
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Version control friendly</li>
     <li style="padding: 0.25rem 0; font-size: clamp(0.85rem, 2vw, 0.95rem);">✅ Complex dynamic logic</li>
   </ul>
-  
+
   <a href="#technical-quickstart" style="display: inline-block; background: #8B5CF6; color: white; padding: clamp(0.6rem, 2vw, 0.8rem) clamp(1rem, 3vw, 1.5rem); border-radius: 8px; text-decoration: none; font-weight: bold; margin-top: 1rem; font-size: clamp(0.9rem, 2vw, 1rem); text-align: center; width: 100%; box-sizing: border-box;">Start Python Tutorial →</a>
 </div>
 
@@ -292,28 +292,28 @@ import flowfile as ff
 pipeline = (
     # Extract: Read partitioned parquet files from S3
     ff.scan_parquet_from_cloud_storage(
-        "s3://data-lake/sales/year=2024/month=*", 
+        "s3://data-lake/sales/year=2024/month=*",
         connection_name="production-data",
         description="Load Q1-Q4 2024 sales data"
     )
-    
+
     # Transform: Clean and enrich
     .filter(
-        (ff.col("status") == "completed") & 
+        (ff.col("status") == "completed") &
         (ff.col("amount") > 0),
         description="Keep only valid completed transactions"
     )
-    
+
     # Add calculated fields
     .with_columns([
         # Business logic
         (ff.col("amount") * ff.col("quantity")).alias("line_total"),
         (ff.col("amount") * ff.col("quantity") * 0.1).alias("tax"),
-        
+
         # Date features for analytics
         ff.col("order_date").dt.quarter().alias("quarter"),
         ff.col("order_date").dt.day_of_week().alias("day_of_week"),
-        
+
         # Customer segmentation
         ff.when(ff.col("customer_lifetime_value") > 10000)
             .then(ff.lit("VIP"))
@@ -321,7 +321,7 @@ pipeline = (
             .then(ff.lit("Regular"))
             .otherwise(ff.lit("New"))
             .alias("customer_segment"),
-        
+
         # Region mapping
         ff.when(ff.col("state").is_in(["CA", "OR", "WA"]))
             .then(ff.lit("West"))
@@ -332,27 +332,27 @@ pipeline = (
             .otherwise(ff.lit("Midwest"))
             .alias("region")
     ], description="Add business metrics and segments")
-    
+
     # Complex aggregation
     .group_by(["region", "quarter", "customer_segment"])
     .agg([
         # Revenue metrics
         ff.col("line_total").sum().alias("total_revenue"),
         ff.col("tax").sum().alias("total_tax"),
-        
+
         # Order metrics
         ff.col("order_id").n_unique().alias("unique_orders"),
         ff.col("customer_id").n_unique().alias("unique_customers"),
-        
+
         # Performance metrics
         ff.col("line_total").mean().round(2).alias("avg_order_value"),
         ff.col("quantity").sum().alias("units_sold"),
-        
+
         # Statistical metrics
         ff.col("line_total").std().round(2).alias("revenue_std"),
         ff.col("line_total").quantile(0.5).alias("median_order_value")
     ])
-    
+
     # Final cleanup
     .sort(["region", "quarter", "total_revenue"], descending=[False, False, True])
     .filter(ff.col("total_revenue") > 1000)  # Remove noise
@@ -435,27 +435,27 @@ import flowfile as ff
 
 def data_quality_pipeline(df: ff.FlowFrame) -> ff.FlowFrame:
     """Reusable data quality check pipeline"""
-    
+
     # Record initial count
     initial_count = df.select(ff.col("*").count().alias("count"))
-    
+
     # Apply quality filters
     clean_df = (
         df
         # Remove nulls in critical fields
         .drop_nulls(subset=["order_id", "customer_id", "amount"])
-        
+
         # Validate data ranges
         .filter(
             (ff.col("amount").is_between(0, 1000000)) &
             (ff.col("quantity") > 0) &
             (ff.col("order_date") <= datetime.now())
         )
-        
+
         # Remove duplicates
         .unique(subset=["order_id"], keep="first")
     )
-    
+
     # Log quality metrics
     final_count = clean_df.select(ff.col("*").count().alias("count"))
     print(f"Initial count: {initial_count.collect()[0]['count']}")
@@ -529,9 +529,9 @@ enriched_orders = (
         # Handle missing values from left joins
         ff.col("customer_segment").fill_null("Unknown"),
         ff.col("product_category").fill_null("Other"),
-        
+
         # Calculate metrics
-        (ff.col("unit_price") * ff.col("quantity") * 
+        (ff.col("unit_price") * ff.col("quantity") *
          (ff.lit(1) - ff.col("discount_rate").fill_null(0))).alias("net_revenue")
     ])
 )

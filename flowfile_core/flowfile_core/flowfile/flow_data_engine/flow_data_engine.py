@@ -204,7 +204,13 @@ class FlowDataEngine:
 
     def __init__(
         self,
-        raw_data: list[dict] | list[Any] | dict[str, Any] | ParquetFile | pl.DataFrame | pl.LazyFrame | input_schema.RawData = None,
+        raw_data: list[dict]
+        | list[Any]
+        | dict[str, Any]
+        | ParquetFile
+        | pl.DataFrame
+        | pl.LazyFrame
+        | input_schema.RawData = None,
         path_ref: str = None,
         name: str = None,
         optimize_memory: bool = True,
@@ -519,9 +525,7 @@ class FlowDataEngine:
             raise Exception(f"Failed to write JSON to cloud storage: {str(e)}")
 
     @classmethod
-    def from_cloud_storage_obj(
-        cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal
-    ) -> FlowDataEngine:
+    def from_cloud_storage_obj(cls, settings: cloud_storage_schemas.CloudStorageReadSettingsInternal) -> FlowDataEngine:
         """Creates a FlowDataEngine from an object in cloud storage.
 
         This method supports reading from various cloud storage providers like AWS S3,
@@ -2114,9 +2118,7 @@ class FlowDataEngine:
         schema = sorted(self.schema, key=lambda x: column_order.index(x.column_name))
         return FlowDataEngine(df, schema=schema, number_of_records=self.number_of_records)
 
-    def apply_flowfile_formula(
-        self, func: str, col_name: str, output_data_type: pl.DataType = None
-    ) -> FlowDataEngine:
+    def apply_flowfile_formula(self, func: str, col_name: str, output_data_type: pl.DataType = None) -> FlowDataEngine:
         """Applies a formula to create a new column or transform an existing one.
 
         Args:

@@ -44,7 +44,7 @@ from typing import List
 
 from flowfile_core.flowfile.node_designer import (
     CustomNodeBase,
-    Section, 
+    Section,
     NodeSettings,
     TextInput,
     NumericInput,
@@ -70,7 +70,7 @@ class EmojiMoodSection(Section):
         required=True,
         data_types=Types.Numeric  # Only show numeric columns
     )
-    
+
     mood_type: SingleSelect = SingleSelect(
         label="Emoji Mood Logic",
         options=[
@@ -84,14 +84,14 @@ class EmojiMoodSection(Section):
         ],
         default="performance"
     )
-    
+
     threshold_value: NumericInput = NumericInput(
         label="Mood Threshold",
         default=50.0,
         min_value=0,
         max_value=100
     )
-    
+
     emoji_column_name: TextInput = TextInput(
         label="New Emoji Column Name",
         default="mood_emoji",
@@ -113,13 +113,13 @@ class EmojiStyleSection(Section):
         ],
         default="normal"
     )
-    
+
     add_random_sparkle: ToggleSwitch = ToggleSwitch(
         label="Add Random Sparkles ✨",
         default=True,
         description="Randomly sprinkle ✨ for extra pizzazz"
     )
-    
+
     emoji_categories: MultiSelect = MultiSelect(
         label="Allowed Emoji Categories",
         options=[
@@ -143,7 +143,7 @@ class EmojiSettings(NodeSettings):
         title="Mood Detection 😊",
         description="Configure how to detect the vibe of your data"
     )
-    
+
     style_options: EmojiStyleSection = EmojiStyleSection(
         title="Emoji Style 🎨",
         description="Fine-tune your emoji experience"
@@ -160,11 +160,11 @@ class EmojiGenerator(CustomNodeBase):
     node_group: str = "custom"
     title: str = "Emoji Generator"
     intro: str = "Transform boring data into fun emoji-filled datasets! 🚀"
-    
+
     # I/O configuration
     number_of_inputs: int = 1
     number_of_outputs: int = 1
-    
+
     # Link to our settings schema
     settings_schema: EmojiSettings = EmojiSettings()
 
@@ -573,10 +573,9 @@ Save this as `~/.flowfile/user_defined_nodes/emoji_generator.py`, restart Flowfi
 
 ## Congratulations! 🎉
 
-You've successfully created a fully functional custom node 
+You've successfully created a fully functional custom node
 
 - ✅ Multi-section UI with 6 different component types
 - ✅ Complex processing logic with multiple mood themes
 - ✅ Advanced features like intensity control and random effects
 - ✅ Professional documentation and structure
-

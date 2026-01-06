@@ -134,10 +134,7 @@ class FlowfileHandler:
             name = create_flow_name()
         if not flow_path:
             flow_path = get_flow_save_location(name)
-        flow_info = FlowSettings(
-            name=name, flow_id=next_id, save_location=str(flow_path),
-            path=str(flow_path)
-        )
+        flow_info = FlowSettings(name=name, flow_id=next_id, save_location=str(flow_path), path=str(flow_path))
         flow = self.register_flow(flow_info, user_id=user_id)
         flow.save_flow(flow.flow_settings.path)
         return next_id

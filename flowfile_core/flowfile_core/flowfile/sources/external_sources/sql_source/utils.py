@@ -232,7 +232,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "tinyint unsigned": pl.UInt8,
     "mediumint unsigned": pl.UInt32,
     "year": pl.Int16,
-
     # --- Floats & Decimals ---
     "numeric": pl.Decimal,
     "decimal": pl.Decimal,
@@ -247,12 +246,10 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "double precision": pl.Float64,
     "binary_float": pl.Float32,  # Oracle
     "binary_double": pl.Float64,  # Oracle
-
     # --- Booleans ---
     "boolean": pl.Boolean,
     "bool": pl.Boolean,
     "bit": pl.Boolean,  # Note: PostgreSQL 'bit' is varying, but MSSQL/MySQL 'bit' is boolean. Defaulting to Bool.
-
     # --- Strings / Text ---
     "varchar": pl.Utf8,
     "varchar2": pl.Utf8,  # Oracle
@@ -279,7 +276,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "xmltype": pl.Utf8,
     "json": pl.Utf8,
     "jsonb": pl.Utf8,
-
     # --- Network / Specialized Strings (Postgres) ---
     "uuid": pl.Utf8,
     "cidr": pl.Utf8,
@@ -292,7 +288,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "geography": pl.Utf8,
     "hierarchyid": pl.Utf8,
     "bit varying": pl.Utf8,
-
     # --- Dates & Times ---
     "date": pl.Date,
     "datetime": pl.Datetime,
@@ -306,12 +301,10 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "time": pl.Time,
     "time without time zone": pl.Time,
     "time with time zone": pl.Time,
-
     # --- Durations / Intervals ---
     "interval": pl.Duration,
     "interval year to month": pl.Duration,  # Oracle
     "interval day to second": pl.Duration,  # Oracle
-
     # --- Binary ---
     "bytea": pl.Binary,  # Postgres
     "binary": pl.Binary,
@@ -324,7 +317,6 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     "long raw": pl.Binary,  # Oracle
     "bfile": pl.Binary,  # Oracle
     "image": pl.Binary,  # MSSQL
-
     # --- Other ---
     "null": None,
     "sql_variant": pl.Object,
