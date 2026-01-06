@@ -652,61 +652,27 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session."""
-    # Block path traversal patterns
-    if '..' in flow_path:
+    # Exact pattern from CodeQL documentation
+    base_path = os.path.normpath(os.getcwd())
+    fullpath = os.path.normpath(os.path.join(base_path, flow_path))
+    if not fullpath.startswith(base_path):
         raise HTTPException(403, 'Access denied')
 
-    # Try each allowed base directory
-    allowed_bases = [
-        os.path.realpath(os.getcwd()),
-        os.path.realpath(str(storage.user_data_directory)),
-        os.path.realpath(str(storage.base_directory)),
-    ]
-
-    validated_path = None
-    for safe_root in allowed_bases:
-        # CodeQL-safe pattern: join, realpath, startswith
-        candidate = os.path.join(safe_root, flow_path)
-        fullpath = os.path.realpath(candidate)
-        if fullpath.startswith(safe_root + os.sep) or fullpath == safe_root:
-            validated_path = fullpath
-            break
-
-    if validated_path is None:
-        raise HTTPException(403, 'Access denied')
-
-    if not os.path.exists(validated_path):
+    if not os.path.exists(fullpath):
         raise HTTPException(404, 'File not found')
-    return flow_file_handler.import_flow(Path(validated_path))
+    return flow_file_handler.import_flow(Path(fullpath))
 
 
 @router.get('/save_flow', tags=['editor'])
 def save_flow(flow_id: int, flow_path: str = None):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
-        # Block path traversal patterns
-        if '..' in flow_path:
+        # Exact pattern from CodeQL documentation
+        base_path = os.path.normpath(os.getcwd())
+        fullpath = os.path.normpath(os.path.join(base_path, flow_path))
+        if not fullpath.startswith(base_path):
             raise HTTPException(403, 'Access denied')
-
-        # Try each allowed base directory
-        allowed_bases = [
-            os.path.realpath(os.getcwd()),
-            os.path.realpath(str(storage.user_data_directory)),
-            os.path.realpath(str(storage.base_directory)),
-        ]
-
-        validated_path = None
-        for safe_root in allowed_bases:
-            candidate = os.path.join(safe_root, flow_path)
-            fullpath = os.path.realpath(candidate)
-            if fullpath.startswith(safe_root + os.sep) or fullpath == safe_root:
-                validated_path = fullpath
-                break
-
-        if validated_path is None:
-            raise HTTPException(403, 'Access denied')
-
-        flow_path = validated_path
+        flow_path = fullpath
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -773,29 +739,13 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=list[str])
 async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    # Block path traversal patterns
-    if '..' in path:
+    # Exact pattern from CodeQL documentation
+    base_path = os.path.normpath(os.getcwd())
+    fullpath = os.path.normpath(os.path.join(base_path, path))
+    if not fullpath.startswith(base_path):
         raise HTTPException(403, 'Access denied')
 
-    # Try each allowed base directory
-    allowed_bases = [
-        os.path.realpath(os.getcwd()),
-        os.path.realpath(str(storage.user_data_directory)),
-        os.path.realpath(str(storage.base_directory)),
-    ]
-
-    validated_path = None
-    for safe_root in allowed_bases:
-        candidate = os.path.join(safe_root, path)
-        fullpath = os.path.realpath(candidate)
-        if fullpath.startswith(safe_root + os.sep) or fullpath == safe_root:
-            validated_path = fullpath
-            break
-
-    if validated_path is None:
-        raise HTTPException(403, 'Access denied')
-
-    sheet_names = excel_file_manager.get_sheet_names(validated_path)
+    sheet_names = excel_file_manager.get_sheet_names(fullpath)
     if sheet_names:
         return sheet_names
     else:
