@@ -10,10 +10,12 @@ from flowfile_core.flowfile.database_connection_manager.db_connections import (
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import (
     SqlSource,
+    UnsafeSQLError,
     create_sql_source_from_db_settings,
     get_polars_type,
     get_query_columns,
     get_table_column_types,
+    validate_sql_query,
 )
 from flowfile_core.schemas.input_schema import (
     DatabaseConnection,
@@ -358,3 +360,219 @@ def test_error_sql_source_validate():
     error_message = str(excinfo.value)
     assert 'relation "public.moviess" does not exist' in error_message
     assert 'SELECT * FROM public.moviess LIMIT 1' in error_message
+
+
+# ============================================================================
+# SQL Query Validation Tests (no Docker required)
+# ============================================================================
+
+
+class TestSQLQueryValidation:
+    """Tests for SQL query validation - these don't require a database connection."""
+
+    def test_valid_select_query(self):
+        """Test that valid SELECT queries pass validation."""
+        valid_queries = [
+            "SELECT * FROM users",
+            "SELECT id, name FROM users WHERE id = 1",
+            "SELECT a.id, b.name FROM users a JOIN orders b ON a.id = b.user_id",
+            "select * from users",  # lowercase
+            "  SELECT * FROM users  ",  # whitespace
+            "SELECT COUNT(*) FROM users GROUP BY status",
+            "SELECT * FROM users ORDER BY id LIMIT 10",
+        ]
+        for query in valid_queries:
+            validate_sql_query(query)  # Should not raise
+
+    def test_valid_cte_query(self):
+        """Test that valid CTE (WITH) queries pass validation."""
+        valid_queries = [
+            "WITH cte AS (SELECT * FROM users) SELECT * FROM cte",
+            "WITH active_users AS (SELECT * FROM users WHERE active = true) SELECT * FROM active_users",
+            "with cte as (select * from users) select * from cte",  # lowercase
+        ]
+        for query in valid_queries:
+            validate_sql_query(query)  # Should not raise
+
+    def test_empty_query_rejected(self):
+        """Test that empty queries are rejected."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("")
+        assert "cannot be empty" in str(exc_info.value)
+
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            validate_sql_query("   ")
+        assert "cannot be empty" in str(exc_info.value)
+
+    def test_drop_statement_rejected(self):
+        """Test that DROP statements are blocked."""
+        dangerous_queries = [
+            "DROP TABLE users",
+            "DROP DATABASE mydb",
+            "DROP INDEX idx_users",
+            "drop table users",  # lowercase
+            "  DROP TABLE users",  # with whitespace
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            assert "DROP statements are not allowed" in str(exc_info.value)
+
+    def test_delete_statement_rejected(self):
+        """Test that DELETE statements are blocked."""
+        dangerous_queries = [
+            "DELETE FROM users",
+            "DELETE FROM users WHERE id = 1",
+            "delete from users",  # lowercase
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            # DELETE doesn't start with SELECT, so it gets caught as non-SELECT
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_update_statement_rejected(self):
+        """Test that UPDATE statements are blocked."""
+        dangerous_queries = [
+            "UPDATE users SET name = 'test'",
+            "UPDATE users SET name = 'test' WHERE id = 1",
+            "update users set name = 'test'",  # lowercase
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            # UPDATE doesn't start with SELECT
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_insert_statement_rejected(self):
+        """Test that INSERT statements are blocked."""
+        dangerous_queries = [
+            "INSERT INTO users (name) VALUES ('test')",
+            "INSERT INTO users SELECT * FROM other_table",
+            "insert into users (name) values ('test')",  # lowercase
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            # INSERT doesn't start with SELECT
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_create_statement_rejected(self):
+        """Test that CREATE statements are blocked."""
+        dangerous_queries = [
+            "CREATE TABLE users (id INT)",
+            "CREATE INDEX idx_users ON users(id)",
+            "CREATE DATABASE newdb",
+            "create table users (id int)",  # lowercase
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            # CREATE doesn't start with SELECT
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_alter_statement_rejected(self):
+        """Test that ALTER statements are blocked."""
+        dangerous_queries = [
+            "ALTER TABLE users ADD COLUMN email VARCHAR(255)",
+            "ALTER TABLE users DROP COLUMN email",
+            "alter table users add column email varchar(255)",  # lowercase
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            # ALTER doesn't start with SELECT
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_truncate_statement_rejected(self):
+        """Test that TRUNCATE statements are blocked."""
+        dangerous_queries = [
+            "TRUNCATE TABLE users",
+            "TRUNCATE users",
+            "truncate table users",  # lowercase
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            # TRUNCATE doesn't start with SELECT
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_grant_revoke_rejected(self):
+        """Test that GRANT and REVOKE statements are blocked."""
+        dangerous_queries = [
+            "GRANT SELECT ON users TO public",
+            "REVOKE SELECT ON users FROM public",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_sql_injection_via_comments_blocked(self):
+        """Test that SQL injection attempts via comments are blocked."""
+        # These try to hide malicious SQL in comments
+        dangerous_queries = [
+            "SELECT * FROM users; -- DROP TABLE users",
+            "SELECT * FROM users /* DROP TABLE users */",
+            "SELECT * FROM users; DROP TABLE users",
+        ]
+        # The first query might pass the SELECT check but contains DROP
+        # The second should have comment stripped and DROP detected
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            error_msg = str(exc_info.value)
+            assert "DROP" in error_msg or "Only SELECT" in error_msg
+
+    def test_subquery_with_dangerous_statement_blocked(self):
+        """Test that dangerous statements hidden in subqueries are blocked."""
+        dangerous_queries = [
+            "SELECT * FROM (DELETE FROM users RETURNING *) AS deleted",
+            "SELECT * FROM users WHERE id IN (SELECT id FROM users; DROP TABLE users)",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            error_msg = str(exc_info.value)
+            assert "DELETE" in error_msg or "DROP" in error_msg
+
+    def test_exec_call_statements_rejected(self):
+        """Test that EXEC and CALL statements are blocked."""
+        dangerous_queries = [
+            "EXEC sp_some_procedure",
+            "EXECUTE sp_some_procedure",
+            "CALL some_procedure()",
+        ]
+        for query in dangerous_queries:
+            with pytest.raises(UnsafeSQLError) as exc_info:
+                validate_sql_query(query)
+            assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_sql_source_rejects_unsafe_query(self):
+        """Test that SqlSource constructor rejects unsafe queries."""
+        with pytest.raises(UnsafeSQLError) as exc_info:
+            SqlSource(
+                connection_string="postgresql://test:test@localhost/test",
+                query="DROP TABLE users"
+            )
+        assert "Only SELECT queries are allowed" in str(exc_info.value)
+
+    def test_sql_source_accepts_safe_query(self):
+        """Test that SqlSource constructor accepts safe SELECT queries."""
+        # This should not raise - it's a valid SELECT query
+        sql_source = SqlSource(
+            connection_string="postgresql://test:test@localhost/test",
+            query="SELECT * FROM users WHERE id = 1"
+        )
+        assert sql_source.query == "SELECT * FROM users WHERE id = 1"
+        assert sql_source.query_mode == "query"
+
+    def test_table_mode_bypasses_validation(self):
+        """Test that table mode (auto-generated queries) bypasses validation."""
+        # Table mode generates its own SELECT query, so no user input validation needed
+        sql_source = SqlSource(
+            connection_string="postgresql://test:test@localhost/test",
+            table_name="users"
+        )
+        assert sql_source.query_mode == "table"
+        assert "SELECT * FROM users" in sql_source.query

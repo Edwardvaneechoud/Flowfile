@@ -1,3 +1,4 @@
+import re
 from collections.abc import Generator
 from typing import Any, Literal
 
@@ -13,6 +14,115 @@ from flowfile_core.schemas.input_schema import DatabaseSettings, MinimalFieldInf
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 
 QueryMode = Literal["table", "query"]
+
+
+class UnsafeSQLError(ValueError):
+    """Raised when a SQL query contains unsafe operations."""
+
+    pass
+
+
+def validate_sql_query(query: str) -> None:
+    """
+    Validate that a SQL query is safe for execution (read-only SELECT statements only).
+
+    This function checks that the query:
+    1. Is a SELECT statement (not INSERT, UPDATE, DELETE, etc.)
+    2. Does not contain DDL statements (DROP, CREATE, ALTER, TRUNCATE)
+    3. Does not contain other dangerous operations
+
+    Args:
+        query: The SQL query string to validate
+
+    Raises:
+        UnsafeSQLError: If the query contains unsafe operations
+    """
+    if not query or not query.strip():
+        raise UnsafeSQLError("SQL query cannot be empty")
+
+    # Normalize the query: remove comments and extra whitespace
+    normalized = _remove_sql_comments(query)
+    normalized = " ".join(normalized.split()).upper()
+
+    # Check if query starts with SELECT (allowing for WITH clauses / CTEs)
+    if not _is_select_query(normalized):
+        raise UnsafeSQLError(
+            "Only SELECT queries are allowed. "
+            "The query must start with SELECT or WITH (for common table expressions)."
+        )
+
+    # Check for dangerous DDL statements
+    ddl_patterns = [
+        (r"\bDROP\s+", "DROP statements are not allowed"),
+        (r"\bCREATE\s+", "CREATE statements are not allowed"),
+        (r"\bALTER\s+", "ALTER statements are not allowed"),
+        (r"\bTRUNCATE\s+", "TRUNCATE statements are not allowed"),
+        (r"\bRENAME\s+", "RENAME statements are not allowed"),
+    ]
+
+    for pattern, error_msg in ddl_patterns:
+        if re.search(pattern, normalized):
+            raise UnsafeSQLError(error_msg)
+
+    # Check for dangerous DML statements (these shouldn't appear in a SELECT)
+    dml_patterns = [
+        (r"\bINSERT\s+INTO\b", "INSERT statements are not allowed"),
+        (r"\bUPDATE\s+\w+\s+SET\b", "UPDATE statements are not allowed"),
+        (r"\bDELETE\s+FROM\b", "DELETE statements are not allowed"),
+    ]
+
+    for pattern, error_msg in dml_patterns:
+        if re.search(pattern, normalized):
+            raise UnsafeSQLError(error_msg)
+
+    # Check for dangerous operations that could be used maliciously
+    dangerous_patterns = [
+        (r"\bEXEC(UTE)?\s*\(", "EXECUTE statements are not allowed"),
+        (r"\bCALL\s+", "CALL statements (stored procedures) are not allowed"),
+        (r"\bGRANT\s+", "GRANT statements are not allowed"),
+        (r"\bREVOKE\s+", "REVOKE statements are not allowed"),
+    ]
+
+    for pattern, error_msg in dangerous_patterns:
+        if re.search(pattern, normalized):
+            raise UnsafeSQLError(error_msg)
+
+
+def _remove_sql_comments(query: str) -> str:
+    """
+    Remove SQL comments from a query string.
+
+    Handles:
+    - Single line comments (-- comment)
+    - Multi-line comments (/* comment */)
+    """
+    # Remove multi-line comments
+    result = re.sub(r"/\*.*?\*/", " ", query, flags=re.DOTALL)
+    # Remove single-line comments
+    result = re.sub(r"--.*$", " ", result, flags=re.MULTILINE)
+    return result
+
+
+def _is_select_query(normalized_query: str) -> bool:
+    """
+    Check if a normalized (uppercase, whitespace-cleaned) query is a SELECT statement.
+
+    Allows:
+    - SELECT ...
+    - WITH ... SELECT ... (CTEs)
+    """
+    # Check for direct SELECT
+    if normalized_query.startswith("SELECT ") or normalized_query.startswith("SELECT\t"):
+        return True
+
+    # Check for WITH clause (CTE) that leads to SELECT
+    if normalized_query.startswith("WITH ") or normalized_query.startswith("WITH\t"):
+        # CTEs should eventually have a SELECT
+        # Make sure there's a SELECT after the WITH clause and no dangerous statements
+        if " SELECT " in normalized_query or "\tSELECT " in normalized_query:
+            return True
+
+    return False
 
 
 def get_query_columns(engine: Engine, query_text: str):
@@ -95,6 +205,8 @@ class BaseSqlSource:
 
         # Set query mode and build query if needed
         if query is not None:
+            # Validate user-provided queries for safety (read-only SELECT only)
+            validate_sql_query(query)
             self.query_mode = "query"
             self.query = query
         elif table_name is not None:
