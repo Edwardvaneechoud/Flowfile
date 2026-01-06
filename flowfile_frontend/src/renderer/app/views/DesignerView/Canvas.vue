@@ -60,6 +60,7 @@ const contextMenuTarget = ref({ type: "pane", id: "" });
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
+  (e: "new"): void;
 }>();
 
 interface NodeChange {
@@ -265,9 +266,17 @@ const copySelectedNodes = () => {
     localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
     localStorage.removeItem("copiedMultiNodes");
   } else {
-    // Multiple nodes copy - use new multi-node format
+    // Multiple nodes copy - calculate bounding box and store relative positions
     const selectedNodeIds = new Set(selectedNodes.map((n) => n.data.id));
 
+    // Find bounding box of selection
+    let minX = Infinity, minY = Infinity;
+    for (const node of selectedNodes) {
+      minX = Math.min(minX, node.position.x);
+      minY = Math.min(minY, node.position.y);
+    }
+
+    // Store nodes with their relative positions from the top-left of the bounding box
     const nodes: NodeCopyValue[] = selectedNodes.map((node) => ({
       nodeIdToCopyFrom: node.data.id,
       type: node.data.nodeTemplate?.item || node.data.component?.__name || "unknown",
@@ -280,6 +289,8 @@ const copySelectedNodes = () => {
       flowIdToCopyFrom: nodeStore.flow_id,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
+      relativeX: node.position.x - minX,
+      relativeY: node.position.y - minY,
     }));
 
     // Find edges that connect nodes within the selection
@@ -377,6 +388,10 @@ const handleKeyDown = (event: KeyboardEvent) => {
     // Paste nodes
     copyValue(clickedPosition.value.x, clickedPosition.value.y);
     event.preventDefault();
+  } else if (eventKeyClicked && key === "n") {
+    // Create new flow
+    event.preventDefault();
+    emit("new");
   } else if (eventKeyClicked && key === "s") {
     if (nodeStore.flow_id) {
       event.preventDefault();

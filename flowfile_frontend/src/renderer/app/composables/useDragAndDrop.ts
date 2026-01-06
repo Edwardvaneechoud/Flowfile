@@ -410,7 +410,7 @@ export default function useDragAndDrop() {
     // Map old node IDs to new node IDs
     const nodeIdMapping: Map<number, number> = new Map()
 
-    // Pre-assign all node IDs and calculate positions
+    // Pre-assign all node IDs and calculate positions using relative positions
     const nodeInfos: Array<{
       node: typeof multiCopyValue.nodes[0],
       newNodeId: number,
@@ -423,9 +423,9 @@ export default function useDragAndDrop() {
       const newNodeId = getId()
       nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId)
 
-      // Calculate offset position for each node (stagger them)
-      const offsetX = baseX + (i % 3) * 200
-      const offsetY = baseY + Math.floor(i / 3) * 150
+      // Use relative positions if available, otherwise fall back to staggered layout
+      const offsetX = baseX + (node.relativeX ?? (i % 3) * 200)
+      const offsetY = baseY + (node.relativeY ?? Math.floor(i / 3) * 150)
 
       nodeInfos.push({ node, newNodeId, offsetX, offsetY })
     }

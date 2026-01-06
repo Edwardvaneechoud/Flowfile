@@ -19,6 +19,9 @@ export interface NodeCopyValue {
   typeSnakeCase: string
   flowIdToCopyFrom: number
   nodeTemplate?: NodeTemplate
+  // Relative position from top-left of selection bounding box (for multi-node copy)
+  relativeX?: number
+  relativeY?: number
 }
 
 export interface NodeCopyInput extends NodeCopyValue {
