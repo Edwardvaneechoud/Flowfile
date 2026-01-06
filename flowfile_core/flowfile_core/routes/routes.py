@@ -87,12 +87,16 @@ def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
 
 
 def _validate_path_under_cwd(user_path: str) -> str:
-    """Validate that a user-provided path resolves to within the current working directory.
+    """Validate that a user-provided path resolves to within allowed directories.
 
     Uses the exact pattern from CodeQL documentation for py/path-injection:
     - os.path.normpath for path normalization
     - os.path.join to combine base with user input
     - startswith check to ensure path stays within base
+
+    Allowed directories:
+    - Current working directory (for development/testing)
+    - Flowfile storage directory (~/.flowfile)
 
     Args:
         user_path: The user-provided path string
@@ -101,13 +105,21 @@ def _validate_path_under_cwd(user_path: str) -> str:
         The validated, normalized full path as a string
 
     Raises:
-        HTTPException: 403 if path escapes the allowed directory
+        HTTPException: 403 if path escapes the allowed directories
     """
+    # Try current working directory first
     base_path = os.path.normpath(os.getcwd())
     fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if not fullpath.startswith(base_path):
-        raise HTTPException(403, 'Access denied')
-    return fullpath
+    if fullpath.startswith(base_path):
+        return fullpath
+
+    # Try flowfile storage directory (~/.flowfile)
+    base_path = os.path.normpath(str(storage.base_directory))
+    fullpath = os.path.normpath(os.path.join(base_path, user_path))
+    if fullpath.startswith(base_path):
+        return fullpath
+
+    raise HTTPException(403, 'Access denied')
 
 
 def get_node_model(setting_name_ref: str):
