@@ -1,9 +1,12 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
+from fastapi import HTTPException
 from pydantic import BaseModel
+
+from shared.storage_config import storage
 
 
 class FileInfo(BaseModel):
@@ -364,6 +367,76 @@ def get_files_from_directory(
         return None
     except Exception as e:
         raise type(e)(f"Error scanning directory {dir_name}: {str(e)}") from e
+
+
+def validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
+    """Validate a file path is safe and within allowed_base.
+
+    Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.
+
+    Args:
+        user_path: The user-provided path string
+        allowed_base: The base directory that the path must be within
+
+    Returns:
+        The validated Path object, or None if validation fails
+    """
+    try:
+        # Block obvious path traversal patterns early
+        if '..' in user_path:
+            return None
+
+        # Get the base path as a normalized, real path string
+        base_path = os.path.realpath(str(allowed_base.resolve()))
+
+        # Always resolve the user path relative to the allowed base directory
+        candidate_path = os.path.join(base_path, user_path)
+        fullpath = os.path.realpath(candidate_path)
+
+        # Ensure the resolved path stays within the allowed base directory
+        if not fullpath.startswith(base_path + os.sep) and fullpath != base_path:
+            return None
+
+        return Path(fullpath)
+
+    except (ValueError, RuntimeError, OSError):
+        return None
+
+
+def validate_path_under_cwd(user_path: str) -> str:
+    """Validate that a user-provided path resolves to within allowed directories.
+
+    Uses the exact pattern from CodeQL documentation for py/path-injection:
+    - os.path.normpath for path normalization
+    - os.path.join to combine base with user input
+    - startswith check to ensure path stays within base
+
+    Allowed directories:
+    - Current working directory (for development/testing)
+    - Flowfile storage directory (~/.flowfile)
+
+    Args:
+        user_path: The user-provided path string
+
+    Returns:
+        The validated, normalized full path as a string
+
+    Raises:
+        HTTPException: 403 if path escapes the allowed directories
+    """
+    # Try current working directory first
+    base_path = os.path.normpath(os.getcwd())
+    fullpath = os.path.normpath(os.path.join(base_path, user_path))
+    if fullpath.startswith(base_path):
+        return fullpath
+
+    # Try flowfile storage directory (~/.flowfile)
+    base_path = os.path.normpath(str(storage.base_directory))
+    fullpath = os.path.normpath(os.path.join(base_path, user_path))
+    if fullpath.startswith(base_path):
+        return fullpath
+
+    raise HTTPException(403, 'Access denied')
 
 
 # Alias for backward compatibility

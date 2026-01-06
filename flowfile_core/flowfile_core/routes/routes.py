@@ -29,7 +29,9 @@ from flowfile_core.database.connection import get_db
 from flowfile_core.fileExplorer.funcs import (
     SecureFileExplorer,
     FileInfo,
-    get_files_from_directory
+    get_files_from_directory,
+    validate_file_path,
+    validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
@@ -55,71 +57,6 @@ file_explorer = SecureFileExplorer(
     start_path=storage.user_data_directory,
     sandbox_root=storage.user_data_directory
 )
-
-
-def _validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
-    """Validate a file path is safe and within allowed_base.
-
-    Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.
-    """
-    try:
-        # Block obvious path traversal patterns early
-        if '..' in user_path:
-            return None
-
-        # Get the base path as a normalized, real path string
-        base_path = os.path.realpath(str(allowed_base.resolve()))
-
-        # Always resolve the user path relative to the allowed base directory
-        candidate_path = os.path.join(base_path, user_path)
-        fullpath = os.path.realpath(candidate_path)
-
-        # Ensure the resolved path stays within the allowed base directory
-        if not fullpath.startswith(base_path + os.sep) and fullpath != base_path:
-            return None
-
-        result = Path(fullpath)
-
-        return result
-
-    except (ValueError, RuntimeError, OSError):
-        return None
-
-
-def _validate_path_under_cwd(user_path: str) -> str:
-    """Validate that a user-provided path resolves to within allowed directories.
-
-    Uses the exact pattern from CodeQL documentation for py/path-injection:
-    - os.path.normpath for path normalization
-    - os.path.join to combine base with user input
-    - startswith check to ensure path stays within base
-
-    Allowed directories:
-    - Current working directory (for development/testing)
-    - Flowfile storage directory (~/.flowfile)
-
-    Args:
-        user_path: The user-provided path string
-
-    Returns:
-        The validated, normalized full path as a string
-
-    Raises:
-        HTTPException: 403 if path escapes the allowed directories
-    """
-    # Try current working directory first
-    base_path = os.path.normpath(os.getcwd())
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
-
-    # Try flowfile storage directory (~/.flowfile)
-    base_path = os.path.normpath(str(storage.base_directory))
-    fullpath = os.path.normpath(os.path.join(base_path, user_path))
-    if fullpath.startswith(base_path):
-        return fullpath
-
-    raise HTTPException(403, 'Access denied')
 
 
 def get_node_model(setting_name_ref: str):
@@ -688,7 +625,7 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
 @router.get('/import_flow/', tags=['editor'], response_model=int)
 def import_saved_flow(flow_path: str) -> int:
     """Imports a flow from a saved `.yaml` and registers it as a new session."""
-    validated_path = _validate_path_under_cwd(flow_path)
+    validated_path = validate_path_under_cwd(flow_path)
     if not os.path.exists(validated_path):
         raise HTTPException(404, 'File not found')
     return flow_file_handler.import_flow(Path(validated_path))
@@ -698,7 +635,7 @@ def import_saved_flow(flow_path: str) -> int:
 def save_flow(flow_id: int, flow_path: str = None):
     """Saves the current state of a flow to a `.yaml`."""
     if flow_path is not None:
-        flow_path = _validate_path_under_cwd(flow_path)
+        flow_path = validate_path_under_cwd(flow_path)
     flow = flow_file_handler.get_flow(flow_id)
     flow.save_flow(flow_path=flow_path)
 
@@ -765,7 +702,7 @@ async def get_instant_function_result(flow_id: int, node_id: int, func_string: s
 @router.get('/api/get_xlsx_sheet_names', tags=['excel_reader'], response_model=list[str])
 async def get_excel_sheet_names(path: str) -> list[str] | None:
     """Retrieves the sheet names from an Excel file."""
-    validated_path = _validate_path_under_cwd(path)
+    validated_path = validate_path_under_cwd(path)
     sheet_names = excel_file_manager.get_sheet_names(validated_path)
     if sheet_names:
         return sheet_names
