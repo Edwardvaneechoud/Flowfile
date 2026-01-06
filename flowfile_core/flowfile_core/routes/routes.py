@@ -501,6 +501,8 @@ def create_flow(flow_path: str = None, name: str = None, current_user=Depends(ge
         elif name not in flow_path and not (name.endswith(".yaml") or name.endswith(".yml")):
             flow_path = str(Path(flow_path) / (name + ".yaml"))
     if flow_path is not None:
+        # Validate path is within allowed sandbox
+        flow_path = validate_path_under_cwd(flow_path)
         flow_path_ref = Path(flow_path)
         if not flow_path_ref.parent.exists():
             raise HTTPException(422, "The directory does not exist")
