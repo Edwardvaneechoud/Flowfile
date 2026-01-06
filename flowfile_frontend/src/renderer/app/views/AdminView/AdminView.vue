@@ -279,7 +279,7 @@
               </div>
             </div>
 
-            <div class="form-field checkbox-field" v-if="editUser?.id !== currentUserId">
+            <div v-if="editUser?.id !== currentUserId" class="checkbox-group">
               <label class="checkbox-label">
                 <input
                   v-model="editFormData.is_admin"
@@ -288,9 +288,6 @@
                 />
                 <span>Administrator</span>
               </label>
-            </div>
-
-            <div class="form-field checkbox-field" v-if="editUser?.id !== currentUserId">
               <label class="checkbox-label">
                 <input
                   v-model="editFormData.disabled"
@@ -562,6 +559,14 @@ onMounted(() => {
   align-items: center;
 }
 
+.checkbox-group {
+  display: flex;
+  gap: var(--spacing-6);
+  margin-top: var(--spacing-4);
+  padding-top: var(--spacing-4);
+  border-top: 1px solid var(--color-border-light);
+}
+
 .checkbox-label {
   display: flex;
   align-items: center;
@@ -573,6 +578,7 @@ onMounted(() => {
   width: 18px;
   height: 18px;
   cursor: pointer;
+  accent-color: var(--color-accent);
 }
 
 .users-table-container {
