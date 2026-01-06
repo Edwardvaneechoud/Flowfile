@@ -154,12 +154,12 @@
                 <td>{{ user.email || '-' }}</td>
                 <td>{{ user.full_name || '-' }}</td>
                 <td>
-                  <span :class="['badge', user.is_admin ? 'badge-admin' : 'badge-user']">
+                  <span :class="['badge', user.is_admin ? 'badge-primary' : 'badge-secondary']">
                     {{ user.is_admin ? 'Admin' : 'User' }}
                   </span>
                 </td>
                 <td>
-                  <span :class="['badge', user.disabled ? 'badge-disabled' : 'badge-active']">
+                  <span :class="['badge', user.disabled ? 'badge-danger' : 'badge-success']">
                     {{ user.disabled ? 'Disabled' : 'Active' }}
                   </span>
                 </td>
@@ -167,7 +167,7 @@
                   <span v-if="user.must_change_password" class="badge badge-warning">
                     <i class="fa-solid fa-exclamation-triangle"></i> Must Change
                   </span>
-                  <span v-else class="badge badge-ok">
+                  <span v-else class="badge badge-muted">
                     <i class="fa-solid fa-check"></i> OK
                   </span>
                 </td>
@@ -589,68 +589,9 @@ onMounted(() => {
   color: var(--color-accent);
 }
 
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: var(--border-radius-sm);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-}
-
-.badge-admin {
-  background-color: var(--color-accent);
-  color: var(--color-text-inverse);
-}
-
-.badge-user {
-  background-color: var(--color-background-muted);
-  color: var(--color-text-secondary);
-}
-
-.badge-active {
-  background-color: var(--color-success);
-  color: var(--color-text-inverse);
-}
-
-.badge-disabled {
-  background-color: var(--color-danger);
-  color: var(--color-text-inverse);
-}
-
-.badge-warning {
-  background-color: var(--color-warning);
-  color: var(--color-text-inverse);
-}
-
-.badge-warning i {
-  margin-right: 4px;
-}
-
-.badge-ok {
-  background-color: var(--color-background-muted);
-  color: var(--color-text-tertiary);
-}
-
-.badge-ok i {
-  margin-right: 4px;
-}
-
-.btn-warning {
-  color: var(--color-warning);
-}
-
-.btn-warning:hover {
-  background-color: var(--color-warning-light);
-}
-
 .action-buttons {
   display: flex;
   gap: var(--spacing-2);
-}
-
-.btn-sm {
-  padding: var(--spacing-1) var(--spacing-2);
-  font-size: var(--font-size-xs);
 }
 
 .password-field {
@@ -677,26 +618,9 @@ onMounted(() => {
   color: var(--color-text-primary);
 }
 
+/* Uses centralized .status-message from _modals.css, just add margin */
 .status-message {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  padding: var(--spacing-3) var(--spacing-4);
-  border-radius: var(--border-radius-md);
   margin-bottom: var(--spacing-4);
-  font-size: var(--font-size-sm);
-}
-
-.status-success {
-  background-color: var(--color-success-light);
-  color: var(--color-success);
-  border: 1px solid var(--color-success);
-}
-
-.status-error {
-  background-color: var(--color-danger-light);
-  color: var(--color-danger);
-  border: 1px solid var(--color-danger);
 }
 
 .fade-enter-active,

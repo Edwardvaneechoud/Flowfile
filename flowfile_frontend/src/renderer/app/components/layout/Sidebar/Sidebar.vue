@@ -99,48 +99,9 @@ const handleLogout = () => {
   gap: var(--spacing-2);
 }
 
+/* Uses centralized [data-tooltip] styles from _modals.css */
 .footer-btn-wrapper {
   position: relative;
-}
-
-.footer-btn-wrapper::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 6px 10px;
-  background-color: var(--color-gray-900);
-  color: var(--color-text-inverse);
-  font-size: var(--font-size-xs);
-  border-radius: var(--border-radius-sm);
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s ease, visibility 0.2s ease;
-  pointer-events: none;
-  z-index: 1000;
-}
-
-.footer-btn-wrapper::before {
-  content: '';
-  position: absolute;
-  left: calc(100% + 2px);
-  top: 50%;
-  transform: translateY(-50%);
-  border: 6px solid transparent;
-  border-right-color: var(--color-gray-900);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.2s ease, visibility 0.2s ease;
-  pointer-events: none;
-  z-index: 1000;
-}
-
-.footer-btn-wrapper:hover::after,
-.footer-btn-wrapper:hover::before {
-  opacity: 1;
-  visibility: visible;
 }
 
 .logout-button {
