@@ -1,1 +1,1 @@
-export const databaseTypes = ["postgresql", "mysql"]
+export const databaseTypes = ["postgresql", "mysql"];

@@ -12,4 +12,4 @@ export {
   createDirectory,
   getFileTree,
   getLocalFiles,
-} from '../../../api/file.api'
+} from "../../../api/file.api";

@@ -1,15 +1,13 @@
 import axios from "axios";
 
-
 type InputType = "text" | "number" | "secret" | "array" | "date" | "boolean";
-
 
 // --- Base component definition ---
 interface BaseComponent {
   label?: string;
   value: any;
   default: any;
-  input_type: InputType
+  input_type: InputType;
 }
 
 // --- Specific component types for the discriminated union ---
@@ -62,7 +60,6 @@ export interface SecretSelectorComponent extends BaseComponent {
   name_prefix?: string;
 }
 
-
 // --- Section Component Type ---
 
 export interface SectionComponent {
@@ -109,12 +106,17 @@ export interface CustomNodeSchema {
 /**
  * Fetches the complete UI definition for a custom node from the backend.
  */
-export async function getCustomNodeSchema(flowId: number, nodeId: number): Promise<CustomNodeSchema> {
-  const response = await axios.get<CustomNodeSchema>(`/user_defined_components/custom-node-schema`, {
+export async function getCustomNodeSchema(
+  flowId: number,
+  nodeId: number,
+): Promise<CustomNodeSchema> {
+  const response = await axios.get<CustomNodeSchema>(
+    `/user_defined_components/custom-node-schema`,
+    {
       params: { flow_id: flowId, node_id: nodeId },
       headers: { accept: "application/json" },
-  })
-  
+    },
+  );
+
   return response.data;
 }
-

@@ -1,15 +1,15 @@
 // secretManager/composables/useSecrets.ts
-import { ref, computed } from 'vue';
-import type { Ref } from 'vue';
-import { fetchSecretsApi, addSecretApi, getSecretValueApi, deleteSecretApi } from './secretApi';
-import type { Secret, SecretInput } from './secretTypes';
+import { ref, computed } from "vue";
+import type { Ref } from "vue";
+import { fetchSecretsApi, addSecretApi, getSecretValueApi, deleteSecretApi } from "./secretApi";
+import type { Secret, SecretInput } from "./secretTypes";
 
 export function useSecretManager() {
   const secrets: Ref<Secret[]> = ref([]);
   const isLoading = ref(true);
-  const searchTerm = ref('');
+  const searchTerm = ref("");
   const visibleSecrets = ref<string[]>([]);
-  const copyMessage = ref('');
+  const copyMessage = ref("");
 
   // Filtered and sorted secrets
   const filteredSecrets = computed(() => {
@@ -18,9 +18,7 @@ export function useSecretManager() {
       return sortedSecrets;
     }
     const term = searchTerm.value.toLowerCase();
-    return sortedSecrets.filter(secret =>
-      secret.name.toLowerCase().includes(term)
-    );
+    return sortedSecrets.filter((secret) => secret.name.toLowerCase().includes(term));
   });
 
   // Load secrets from API
@@ -30,7 +28,7 @@ export function useSecretManager() {
     try {
       secrets.value = await fetchSecretsApi();
     } catch (error) {
-      console.error('Failed to load secrets:', error);
+      console.error("Failed to load secrets:", error);
       secrets.value = []; // Clear secrets on error
       throw error; // Allow caller to handle notification
     } finally {
@@ -41,7 +39,7 @@ export function useSecretManager() {
   // Add a new secret
   const addSecret = async (secretInput: SecretInput) => {
     // Basic validation: Check if secret name already exists (case-sensitive)
-    if (secrets.value.some(s => s.name === secretInput.name)) {
+    if (secrets.value.some((s) => s.name === secretInput.name)) {
       throw new Error(`Secret with name "${secretInput.name}" already exists.`);
     }
 
@@ -50,7 +48,7 @@ export function useSecretManager() {
       await loadSecrets(); // Reload the list after adding
       return secretInput.name; // Return name for success feedback
     } catch (error) {
-      console.error('Failed to add secret:', error);
+      console.error("Failed to add secret:", error);
       throw error; // Allow caller to handle notification
     }
   };
@@ -67,27 +65,27 @@ export function useSecretManager() {
 
   // Copy secret value to clipboard
   const copySecretToClipboard = async (secretName: string) => {
-    copyMessage.value = ''; // Clear previous message
+    copyMessage.value = ""; // Clear previous message
     try {
       const secretValue = await getSecretValueApi(secretName);
       await navigator.clipboard.writeText(secretValue);
       copyMessage.value = `Value for '${secretName}' copied!`;
-      
+
       // Auto-clear message after delay
       setTimeout(() => {
-        copyMessage.value = '';
+        copyMessage.value = "";
       }, 2500);
-      
+
       return true;
     } catch (error) {
-      console.error('Failed to copy secret:', error);
+      console.error("Failed to copy secret:", error);
       copyMessage.value = `Failed to copy ${secretName}.`;
-      
+
       // Auto-clear error message after delay
       setTimeout(() => {
-        copyMessage.value = '';
+        copyMessage.value = "";
       }, 3000);
-      
+
       throw error; // Allow caller to handle notification
     }
   };
@@ -99,7 +97,7 @@ export function useSecretManager() {
       await loadSecrets(); // Refresh the list
       return secretName; // Return name for success feedback
     } catch (error) {
-      console.error('Failed to delete secret:', error);
+      console.error("Failed to delete secret:", error);
       throw error; // Allow caller to handle notification
     }
   };
@@ -115,6 +113,6 @@ export function useSecretManager() {
     addSecret,
     toggleSecretVisibility,
     copySecretToClipboard,
-    deleteSecret
+    deleteSecret,
   };
 }

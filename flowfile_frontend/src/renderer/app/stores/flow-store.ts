@@ -1,10 +1,10 @@
 // Flow Store - Manages flow ID and flow-level state
-import { defineStore } from 'pinia';
-import type { VueFlowStore } from '@vue-flow/core';
+import { defineStore } from "pinia";
+import type { VueFlowStore } from "@vue-flow/core";
 
-const FLOW_ID_STORAGE_KEY = 'last_flow_id';
+const FLOW_ID_STORAGE_KEY = "last_flow_id";
 
-export const useFlowStore = defineStore('flow', {
+export const useFlowStore = defineStore("flow", {
   state: () => {
     const savedFlowId = sessionStorage.getItem(FLOW_ID_STORAGE_KEY);
     const initialFlowId = savedFlowId ? parseInt(savedFlowId) : -1;
@@ -25,7 +25,7 @@ export const useFlowStore = defineStore('flow', {
       try {
         sessionStorage.setItem(FLOW_ID_STORAGE_KEY, flowId.toString());
       } catch (error) {
-        console.warn('Failed to store flow ID in session storage:', error);
+        console.warn("Failed to store flow ID in session storage:", error);
       }
     },
 

@@ -1,7 +1,7 @@
 // src/app/services/axios-setup.ts
-import axios, { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
-import authService from './auth.service';
-import { flowfileCorebaseURL } from '../../config/constants';
+import axios, { InternalAxiosRequestConfig, AxiosResponse, AxiosError } from "axios";
+import authService from "./auth.service";
+import { flowfileCorebaseURL } from "../../config/constants";
 
 axios.defaults.baseURL = flowfileCorebaseURL;
 axios.defaults.withCredentials = true;
@@ -9,28 +9,28 @@ axios.defaults.withCredentials = true;
 // Add auth token to all requests
 axios.interceptors.request.use(
   async (config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> => {
-    if (config.headers && config.headers['X-Skip-Auth-Header']) {
-      delete config.headers['X-Skip-Auth-Header'];
+    if (config.headers && config.headers["X-Skip-Auth-Header"]) {
+      delete config.headers["X-Skip-Auth-Header"];
       return config;
     }
 
     try {
       const token = await authService.getToken();
-      
+
       if (token) {
         config.headers = config.headers || {};
         config.headers.Authorization = `Bearer ${token}`;
       }
-      
+
       return config;
     } catch (error) {
-      console.error('Error in request interceptor:', error);
+      console.error("Error in request interceptor:", error);
       return config;
     }
   },
   (error: AxiosError) => {
     return Promise.reject(error);
-  }
+  },
 );
 
 // Handle auth errors and refresh token if needed
@@ -40,26 +40,23 @@ axios.interceptors.response.use(
   },
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-    
+
     // If 401 Unauthorized and not retried yet
-    if (
-      error.response?.status === 401 &&
-      !originalRequest._retry
-    ) {
+    if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      
+
       try {
         await authService.getToken();
         return axios(originalRequest);
       } catch (refreshError) {
-        console.error('Token refresh failed:', refreshError);
+        console.error("Token refresh failed:", refreshError);
         authService.logout();
         return Promise.reject(error);
       }
     }
-    
+
     return Promise.reject(error);
-  }
+  },
 );
 
 export default axios;

@@ -111,7 +111,7 @@ def get_master_key() -> str:
         return b"06t640eu3AG2FmglZS0n0zrEdqadoT7lYDwgSmKyxE4=".decode()
 
     # Next check if running in Docker
-    if os.environ.get("RUNNING_IN_DOCKER") == "true":
+    if os.environ.get("FLOWFILE_MODE") == "docker":
         return get_docker_secret_key()
 
     # Otherwise read from local storage

@@ -1,9 +1,8 @@
 import { NodePolarsCode, PolarsCodeInput } from "../../../baseNode/nodeInput";
 
-
 export const createPolarsCodeNode = (flowId: number, nodeId: number): NodePolarsCode => {
-    const polarsCodeInput: PolarsCodeInput = {
-        polars_code: `# Example of usage (you can remove this)
+  const polarsCodeInput: PolarsCodeInput = {
+    polars_code: `# Example of usage (you can remove this)
 # Single line transformations:
 #   input_df.filter(pl.col('column_name') > 0)
 
@@ -19,17 +18,17 @@ export const createPolarsCodeNode = (flowId: number, nodeId: number): NodePolars
 #   output_df = pl.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
 
 # Your code here:
-input_df`
-    }
-    
-    const nodePolarsCode: NodePolarsCode = {
-        flow_id: flowId,
-        node_id: nodeId,
-        pos_x: 0,
-        pos_y: 0,
-        polars_code_input: polarsCodeInput,
-        cache_results: false,
-    }
-    
-    return nodePolarsCode
-}
+input_df`,
+  };
+
+  const nodePolarsCode: NodePolarsCode = {
+    flow_id: flowId,
+    node_id: nodeId,
+    pos_x: 0,
+    pos_y: 0,
+    polars_code_input: polarsCodeInput,
+    cache_results: false,
+  };
+
+  return nodePolarsCode;
+};

@@ -7,4 +7,4 @@ export {
   addSecretApi,
   getSecretValueApi,
   deleteSecretApi,
-} from '../../api/secrets.api'
+} from "../../api/secrets.api";

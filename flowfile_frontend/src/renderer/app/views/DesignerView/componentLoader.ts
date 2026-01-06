@@ -9,15 +9,15 @@ const componentCache: Map<string, Promise<DefineComponent>> = new Map();
  */
 export function getComponent(): Promise<DefineComponent> {
   // Always return the same GenericNode component for ALL nodes
-  const cacheKey = 'generic-node';
-  
+  const cacheKey = "generic-node";
+
   if (componentCache.has(cacheKey)) {
     return componentCache.get(cacheKey)!;
   }
-  
+
   // Just return the GenericNode component wrapped in a Promise
   const componentPromise = Promise.resolve(markRaw(GenericNode as any));
-  
+
   componentCache.set(cacheKey, componentPromise);
   return componentPromise;
 }

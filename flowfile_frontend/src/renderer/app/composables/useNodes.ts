@@ -1,40 +1,44 @@
 // composables/useNodes.ts
 // Node templates composable for managing available nodes
-import { ref, onMounted, DefineComponent, markRaw } from "vue"
-import axios from "axios"
-import type { NodeTemplate } from "../types"
-import { ENV } from "../../config/environment"
+import { ref, onMounted, DefineComponent, markRaw } from "vue";
+import axios from "axios";
+import type { NodeTemplate } from "../types";
+import { ENV } from "../../config/environment";
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
-const nodeModules = import.meta.glob('../features/designer/nodes/elements/**/*.vue')
+const nodeModules = import.meta.glob("../features/designer/nodes/elements/**/*.vue");
 
 // Utility function to convert snake_case to TitleCase
 function toTitleCase(str: string): string {
   return str
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join('')
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join("");
 }
 
 // Utility function to convert snake_case to camelCase
 function toCamelCase(str: string): string {
-  const parts = str.split('_')
-  return parts[0].toLowerCase() + parts.slice(1)
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join('')
+  const parts = str.split("_");
+  return (
+    parts[0].toLowerCase() +
+    parts
+      .slice(1)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join("")
+  );
 }
 
 // Validate that a string only contains safe characters for module paths
 function isValidModuleName(name: string): boolean {
-  return /^[a-zA-Z][a-zA-Z0-9]*$/.test(name)
+  return /^[a-zA-Z][a-zA-Z0-9]*$/.test(name);
 }
 
 // Cache for node templates - persists for the entire session
-let nodeTemplatesCache: NodeTemplate[] | null = null
-let cachePromise: Promise<NodeTemplate[]> | null = null
+let nodeTemplatesCache: NodeTemplate[] | null = null;
+let cachePromise: Promise<NodeTemplate[]> | null = null;
 
 // Component cache to avoid re-importing
-const componentCache: Map<string, Promise<DefineComponent>> = new Map()
+const componentCache: Map<string, Promise<DefineComponent>> = new Map();
 
 /**
  * Fetches node templates with caching to minimize API calls
@@ -43,33 +47,32 @@ const componentCache: Map<string, Promise<DefineComponent>> = new Map()
 async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
   // If we already have cached data, return it immediately
   if (nodeTemplatesCache !== null) {
-    return nodeTemplatesCache
+    return nodeTemplatesCache;
   }
 
   // If a fetch is already in progress, wait for it to complete
   // This prevents multiple simultaneous API calls
   if (cachePromise !== null) {
-    return cachePromise
+    return cachePromise;
   }
 
   // Start a new fetch and cache the promise
-  cachePromise = axios.get("/node_list")
-    .then(response => {
-      const allNodes = response.data as NodeTemplate[]
+  cachePromise = axios
+    .get("/node_list")
+    .then((response) => {
+      const allNodes = response.data as NodeTemplate[];
       // Apply production filter if needed
-      nodeTemplatesCache = ENV.isProduction
-        ? allNodes.filter(node => node.prod_ready)
-        : allNodes
-      return nodeTemplatesCache
+      nodeTemplatesCache = ENV.isProduction ? allNodes.filter((node) => node.prod_ready) : allNodes;
+      return nodeTemplatesCache;
     })
-    .catch(error => {
-      console.error("Failed to fetch node templates:", error)
+    .catch((error) => {
+      console.error("Failed to fetch node templates:", error);
       // Reset the promise on error so it can be retried
-      cachePromise = null
-      throw error
-    })
+      cachePromise = null;
+      throw error;
+    });
 
-  return cachePromise
+  return cachePromise;
 }
 
 /**
@@ -77,8 +80,8 @@ async function fetchNodeTemplates(): Promise<NodeTemplate[]> {
  * Useful for forcing a refresh if needed
  */
 export function clearNodeTemplatesCache(): void {
-  nodeTemplatesCache = null
-  cachePromise = null
+  nodeTemplatesCache = null;
+  cachePromise = null;
 }
 
 /**
@@ -87,11 +90,11 @@ export function clearNodeTemplatesCache(): void {
  */
 export async function getNodeTemplateByItem(item: string): Promise<NodeTemplate | undefined> {
   try {
-    const allNodes = await fetchNodeTemplates()
-    return allNodes.find(node => node.item === item)
+    const allNodes = await fetchNodeTemplates();
+    return allNodes.find((node) => node.item === item);
   } catch (error) {
-    console.error(`Failed to get node template for item ${item}:`, error)
-    return undefined
+    console.error(`Failed to get node template for item ${item}:`, error);
+    return undefined;
   }
 }
 
@@ -101,19 +104,19 @@ export async function getNodeTemplateByItem(item: string): Promise<NodeTemplate 
  */
 export async function getNodeTemplatesByItems(items: string[]): Promise<Map<string, NodeTemplate>> {
   try {
-    const allNodes = await fetchNodeTemplates()
-    const templateMap = new Map<string, NodeTemplate>()
+    const allNodes = await fetchNodeTemplates();
+    const templateMap = new Map<string, NodeTemplate>();
 
     for (const node of allNodes) {
       if (items.includes(node.item)) {
-        templateMap.set(node.item, node)
+        templateMap.set(node.item, node);
       }
     }
 
-    return templateMap
+    return templateMap;
   } catch (error) {
-    console.error("Failed to get node templates by items:", error)
-    return new Map()
+    console.error("Failed to get node templates by items:", error);
+    return new Map();
   }
 }
 
@@ -121,88 +124,89 @@ export async function getNodeTemplatesByItems(items: string[]): Promise<Map<stri
  * Gets a Vue component for a node, with caching
  */
 export async function getComponent(node: NodeTemplate | string): Promise<DefineComponent> {
-  const nodeItem = typeof node === 'string' ? node : node.item
+  const nodeItem = typeof node === "string" ? node : node.item;
 
   // Check component cache first
   if (componentCache.has(nodeItem)) {
-    return componentCache.get(nodeItem)!
+    return componentCache.get(nodeItem)!;
   }
 
   // If we have a string, we need to fetch the NodeTemplate first
-  const nodeTemplate = typeof node === 'string'
-    ? await getNodeTemplateByItem(node)
-    : node
+  const nodeTemplate = typeof node === "string" ? await getNodeTemplateByItem(node) : node;
 
   if (!nodeTemplate) {
-    throw new Error(`Node template not found for item: ${nodeItem}`)
+    throw new Error(`Node template not found for item: ${nodeItem}`);
   }
 
-  const formattedItemName = toTitleCase(nodeTemplate.item)
-  const dirName = toCamelCase(nodeTemplate.item)
+  const formattedItemName = toTitleCase(nodeTemplate.item);
+  const dirName = toCamelCase(nodeTemplate.item);
 
   // Use CustomNode for nodes marked as custom_node, otherwise use specific component
   const modulePath = nodeTemplate.custom_node
-    ? '../features/designer/nodes/elements/customNode/CustomNode.vue'
-    : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`
+    ? "../features/designer/nodes/elements/customNode/CustomNode.vue"
+    : `../features/designer/nodes/elements/${dirName}/${formattedItemName}.vue`;
 
-  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node)
+  console.log("Loading component:", formattedItemName, "custom_node:", nodeTemplate.custom_node);
 
   // Validate module names to prevent path traversal (only needed for non-custom nodes)
-  if (!nodeTemplate.custom_node && (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName))) {
-    throw new Error(`Invalid module name: ${formattedItemName}`)
+  if (
+    !nodeTemplate.custom_node &&
+    (!isValidModuleName(formattedItemName) || !isValidModuleName(dirName))
+  ) {
+    throw new Error(`Invalid module name: ${formattedItemName}`);
   }
 
-  const moduleLoader = nodeModules[modulePath]
+  const moduleLoader = nodeModules[modulePath];
 
-  if (!moduleLoader || typeof moduleLoader !== 'function') {
-    const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`)
-    console.error("Failed to load component:", formattedItemName, error)
-    console.log('Available modules:', Object.keys(nodeModules))
-    throw error
+  if (!moduleLoader || typeof moduleLoader !== "function") {
+    const error = new Error(`Component not found: ${formattedItemName} at ${modulePath}`);
+    console.error("Failed to load component:", formattedItemName, error);
+    console.log("Available modules:", Object.keys(nodeModules));
+    throw error;
   }
 
   // Create and cache the component promise
-  const validatedLoader = moduleLoader
+  const validatedLoader = moduleLoader;
   const componentPromise = validatedLoader()
     .then((module: any) => {
-      const component = markRaw(module.default)
-      return component
+      const component = markRaw(module.default);
+      return component;
     })
-    .catch(error => {
-      console.error("Failed to load component:", formattedItemName, error)
+    .catch((error) => {
+      console.error("Failed to load component:", formattedItemName, error);
       // Remove from cache on error so it can be retried
-      componentCache.delete(nodeItem)
-      throw error
-    })
+      componentCache.delete(nodeItem);
+      throw error;
+    });
 
-  componentCache.set(nodeItem, componentPromise)
-  return componentPromise
+  componentCache.set(nodeItem, componentPromise);
+  return componentPromise;
 }
 
 /**
  * Hook for using node templates in Vue components
  */
 export const useNodes = () => {
-  const nodes = ref<NodeTemplate[]>([])
-  const loading = ref(false)
-  const error = ref<Error | null>(null)
+  const nodes = ref<NodeTemplate[]>([]);
+  const loading = ref(false);
+  const error = ref<Error | null>(null);
 
   const fetchNodes = async () => {
-    loading.value = true
-    error.value = null
+    loading.value = true;
+    error.value = null;
 
     try {
-      nodes.value = await fetchNodeTemplates()
+      nodes.value = await fetchNodeTemplates();
     } catch (err) {
-      error.value = err as Error
-      nodes.value = []
+      error.value = err as Error;
+      nodes.value = [];
     } finally {
-      loading.value = false
+      loading.value = false;
     }
-  }
+  };
 
   // Fetch on mount
-  onMounted(fetchNodes)
+  onMounted(fetchNodes);
 
   return {
     nodes,
@@ -210,11 +214,11 @@ export const useNodes = () => {
     error,
     refetch: fetchNodes,
     clearCache: () => {
-      clearNodeTemplatesCache()
-      return fetchNodes()
-    }
-  }
-}
+      clearNodeTemplatesCache();
+      return fetchNodes();
+    },
+  };
+};
 
 /**
  * Preloads all node templates and optionally their components
@@ -222,18 +226,18 @@ export const useNodes = () => {
  */
 export async function preloadNodeTemplates(loadComponents = false): Promise<void> {
   try {
-    const templates = await fetchNodeTemplates()
+    const templates = await fetchNodeTemplates();
 
     if (loadComponents) {
       // Preload all components in parallel
-      const componentPromises = templates.map(template =>
-        getComponent(template).catch(err =>
-          console.warn(`Failed to preload component for ${template.item}:`, err)
-        )
-      )
-      await Promise.all(componentPromises)
+      const componentPromises = templates.map((template) =>
+        getComponent(template).catch((err) =>
+          console.warn(`Failed to preload component for ${template.item}:`, err),
+        ),
+      );
+      await Promise.all(componentPromises);
     }
   } catch (error) {
-    console.error("Failed to preload node templates:", error)
+    console.error("Failed to preload node templates:", error);
   }
 }
