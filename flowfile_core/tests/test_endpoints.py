@@ -1098,3 +1098,127 @@ def test_flow_run_status():
     response = client.get("/flow/run_status", params={'flow_id': flow_id})
     assert response.status_code == 200, 'Flow run status not retrieved'
     assert response.json()['end_time'] is not None, 'Flow should have ended'
+
+
+# =============================================================================
+# Path Traversal Security Tests
+# =============================================================================
+
+def test_get_local_files_path_traversal_blocked():
+    """Test that get_local_files blocks access to directories outside sandbox."""
+    # Attempt to access /etc directory (should be blocked)
+    response = client.get("/files/files_in_local_directory/", params={'directory': '/etc'})
+    assert response.status_code == 403, 'Path traversal to /etc should be blocked'
+    assert 'Access denied' in response.json()['detail'], 'Should return access denied message'
+
+
+def test_get_local_files_path_traversal_with_dots():
+    """Test that get_local_files blocks path traversal using .. patterns."""
+    response = client.get("/files/files_in_local_directory/",
+                          params={'directory': '../../../etc'})
+    assert response.status_code == 403, 'Path traversal with .. should be blocked'
+
+
+def test_upload_file_sanitizes_filename():
+    """Test that upload_file sanitizes filenames to prevent path traversal."""
+    import io
+    # Create a file with a malicious filename containing path traversal
+    malicious_filename = "../../../etc/cron.d/evil"
+    file_content = b"malicious content"
+
+    files = {'file': (malicious_filename, io.BytesIO(file_content), 'application/octet-stream')}
+    response = client.post("/upload/", files=files)
+
+    assert response.status_code == 200, 'Upload should succeed with sanitized filename'
+    result = response.json()
+    # The filename should be sanitized to just 'evil' (basename without ..)
+    assert result['filename'] == 'evil', f"Filename should be sanitized to 'evil', got: {result['filename']}"
+    assert '../' not in result['filepath'], 'Filepath should not contain path traversal sequences'
+    # Normalize path separators for cross-platform comparison
+    normalized_filepath = result['filepath'].replace('\\', '/')
+    assert normalized_filepath == 'uploads/evil', f"Filepath should be 'uploads/evil', got: {result['filepath']}"
+
+    # Clean up uploaded file
+    if os.path.exists(result['filepath']):
+        os.remove(result['filepath'])
+
+
+def test_upload_file_sanitizes_filename_with_multiple_traversals():
+    """Test that upload_file handles multiple path traversal attempts."""
+    import io
+    malicious_filename = "..%2F..%2F..%2Fetc/passwd"
+    file_content = b"test content"
+
+    files = {'file': (malicious_filename, io.BytesIO(file_content), 'application/octet-stream')}
+    response = client.post("/upload/", files=files)
+
+    assert response.status_code == 200, 'Upload should succeed with sanitized filename'
+    result = response.json()
+    assert '../' not in result['filename'], 'Filename should not contain path traversal'
+    assert '/' not in result['filename'], 'Filename should not contain directory separators'
+
+    # Clean up
+    if os.path.exists(result['filepath']):
+        os.remove(result['filepath'])
+
+
+def test_import_flow_path_traversal_blocked():
+    """Test that import_flow blocks access to files outside sandbox."""
+    # Attempt to import /etc/passwd (should be blocked)
+    response = client.get("/import_flow/", params={'flow_path': '/etc/passwd'})
+    assert response.status_code == 403, 'Path traversal to /etc/passwd should be blocked'
+    assert 'Access denied' in response.json()['detail'], 'Should return access denied message'
+
+
+def test_import_flow_path_traversal_with_dots():
+    """Test that import_flow blocks path traversal using .. patterns."""
+    response = client.get("/import_flow/", params={'flow_path': '../../../etc/passwd'})
+    assert response.status_code == 403, 'Path traversal with .. should be blocked'
+
+
+def test_save_flow_path_traversal_blocked():
+    """Test that save_flow blocks saving to paths outside sandbox."""
+
+    flow_id = create_flow_with_manual_input()
+    response = client.get("/save_flow", params={'flow_id': flow_id, 'flow_path': '/etc/malicious.yaml'})
+    assert response.status_code == 403, 'Path traversal to /etc should be blocked'
+    assert 'Access denied' in response.json()['detail'], 'Should return access denied message'
+
+
+def test_save_flow_path_traversal_with_dots():
+    """Test that save_flow blocks path traversal using .. patterns."""
+    flow_id = create_flow_with_manual_input()
+
+    response = client.get("/save_flow",
+                          params={'flow_id': flow_id, 'flow_path': '../../../etc/malicious.yaml'})
+    assert response.status_code == 403, 'Path traversal with .. should be blocked'
+
+
+def test_get_excel_sheet_names_path_traversal_blocked():
+    """Test that get_excel_sheet_names blocks access to files outside sandbox."""
+    # Attempt to read /etc/passwd (should be blocked)
+    response = client.get("/api/get_xlsx_sheet_names", params={'path': '/etc/passwd'})
+    assert response.status_code == 403, 'Path traversal to /etc/passwd should be blocked'
+    assert 'Access denied' in response.json()['detail'], 'Should return access denied message'
+
+
+def test_get_excel_sheet_names_path_traversal_with_dots():
+    """Test that get_excel_sheet_names blocks path traversal using .. patterns."""
+    response = client.get("/api/get_xlsx_sheet_names", params={'path': '../../../etc/passwd'})
+    assert response.status_code == 403, 'Path traversal with .. should be blocked'
+
+
+def test_get_available_flow_files_path_traversal_blocked():
+    """Test that available_flow_files blocks access to directories outside sandbox."""
+    # Attempt to scan /etc directory (should return empty or be blocked)
+    response = client.get("/files/available_flow_files", params={'path': '/etc'})
+    # Should return empty list for paths outside sandbox (graceful handling)
+    assert response.status_code == 200, 'Should return 200 with empty list'
+    assert response.json() == [], 'Should return empty list for paths outside sandbox'
+
+
+def test_get_available_flow_files_path_traversal_with_dots():
+    """Test that available_flow_files blocks path traversal using .. patterns."""
+    response = client.get("/files/available_flow_files", params={'path': '../../../etc'})
+    assert response.status_code == 200, 'Should return 200 with empty list'
+    assert response.json() == [], 'Should return empty list for path traversal attempts'
