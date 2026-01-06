@@ -2,7 +2,7 @@
 // Drag and drop composable for flow canvas
 import { useVueFlow, Node, Position } from "@vue-flow/core"
 import { ref, watch, markRaw, nextTick } from "vue"
-import type { NodeTemplate, NodeInput, VueFlowInput, NodeCopyInput, NodePromise } from "../types"
+import type { NodeTemplate, NodeInput, VueFlowInput, NodeCopyInput, NodePromise, MultiNodeCopyValue, EdgeCopyValue, NodeConnection } from "../types"
 import { FlowApi } from "../api"
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
@@ -398,6 +398,112 @@ export default function useDragAndDrop() {
       })
   }
 
+  /**
+   * Creates multiple copied nodes with their connections preserved
+   */
+  async function createMultiCopyNodes(
+    multiCopyValue: MultiNodeCopyValue,
+    baseX: number,
+    baseY: number,
+    flowId: number
+  ): Promise<void> {
+    // Map old node IDs to new node IDs
+    const nodeIdMapping: Map<number, number> = new Map()
+
+    // Calculate the bounding box of original nodes to compute relative positions
+    let minX = Infinity, minY = Infinity
+    for (const node of multiCopyValue.nodes) {
+      // We'll get positions from the node data when creating
+      // For now, use the first node as reference
+    }
+
+    // First pass: create all nodes and build the ID mapping
+    const nodeCreationPromises: Promise<void>[] = []
+
+    for (let i = 0; i < multiCopyValue.nodes.length; i++) {
+      const node = multiCopyValue.nodes[i]
+      const newNodeId = getId()
+      nodeIdMapping.set(node.nodeIdToCopyFrom, newNodeId)
+
+      // Calculate offset position for each node (stagger them)
+      const offsetX = baseX + (i % 3) * 50
+      const offsetY = baseY + Math.floor(i / 3) * 50
+
+      const createPromise = getComponentRaw(node.type).then((component) => {
+        const newNode: Node = {
+          id: String(newNodeId),
+          type: "custom-node",
+          position: {
+            x: offsetX,
+            y: offsetY,
+          },
+          data: {
+            id: newNodeId,
+            label: node.label,
+            component: markRaw(component),
+            inputs: Array.from({ length: node.numberOfInputs }, (_, i) => ({
+              id: `input-${i}`,
+              position: Position.Left,
+            })),
+            outputs: Array.from({ length: node.numberOfOutputs }, (_, i) => ({
+              id: `output-${i}`,
+              position: Position.Right,
+            })),
+            nodeTemplate: node.nodeTemplate,
+          },
+        }
+        const nodePromise: NodePromise = {
+          node_id: newNodeId,
+          flow_id: flowId,
+          node_type: node.typeSnakeCase,
+          pos_x: offsetX,
+          pos_y: offsetY,
+          cache_results: true,
+        }
+        FlowApi.copyNode(node.nodeIdToCopyFrom, multiCopyValue.flowIdToCopyFrom, nodePromise)
+        addNodes(newNode)
+      })
+
+      nodeCreationPromises.push(createPromise)
+    }
+
+    // Wait for all nodes to be created
+    await Promise.all(nodeCreationPromises)
+
+    // Second pass: create connections between the new nodes
+    await nextTick() // Wait for nodes to be added to the flow
+
+    for (const edge of multiCopyValue.edges) {
+      const newSourceId = nodeIdMapping.get(edge.sourceNodeId)
+      const newTargetId = nodeIdMapping.get(edge.targetNodeId)
+
+      if (newSourceId !== undefined && newTargetId !== undefined) {
+        // Create the edge in the UI
+        const newEdge = {
+          id: `e${newSourceId}-${newTargetId}`,
+          source: String(newSourceId),
+          target: String(newTargetId),
+          sourceHandle: edge.sourceHandle,
+          targetHandle: edge.targetHandle,
+        }
+        addEdges([newEdge])
+
+        // Create the connection in the backend
+        const nodeConnection: NodeConnection = {
+          input_connection: {
+            node_id: newTargetId,
+            connection_class: edge.targetHandle as any,
+          },
+          output_connection: {
+            node_id: newSourceId,
+            connection_class: edge.sourceHandle as any,
+          },
+        }
+        FlowApi.connectNode(flowId, nodeConnection)
+      }
+    }
+  }
+
   return {
     draggedType,
     isDragOver,
@@ -407,6 +513,7 @@ export default function useDragAndDrop() {
     onDragOver,
     onDrop,
     createCopyNode,
+    createMultiCopyNodes,
     importFlow,
   }
 }

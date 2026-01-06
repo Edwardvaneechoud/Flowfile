@@ -31,7 +31,7 @@ import DataPreview from "../../features/designer/dataPreview.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
-import { NodeCopyInput, NodeCopyValue, ContextMenuAction, CursorPosition } from "./types";
+import { NodeCopyInput, NodeCopyValue, MultiNodeCopyValue, EdgeCopyValue, ContextMenuAction, CursorPosition } from "./types";
 import { applyStandardLayout } from "./editorLayoutInterface";
 
 const itemStore = useItemStore();
@@ -49,7 +49,7 @@ const edges = ref([]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
-const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode } = useDragAndDrop();
+const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode, createMultiCopyNodes } = useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
@@ -229,11 +229,99 @@ const handleDrop = (event: DragEvent) => {
   }
 };
 
+// Helper to convert snake_case to snake_case (identity) and handle node type
+const toSnakeCase = (str: string): string => {
+  return str
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toLowerCase();
+};
+
+// Copy selected nodes (single or multiple) to localStorage
+const copySelectedNodes = () => {
+  const selectedNodes = instance.getSelectedNodes.value;
+  const allEdges = instance.getEdges.value;
+
+  if (selectedNodes.length === 0) {
+    return;
+  }
+
+  if (selectedNodes.length === 1) {
+    // Single node copy - use existing format for backward compatibility
+    const node = selectedNodes[0];
+    const nodeCopyValue: NodeCopyValue = {
+      nodeIdToCopyFrom: node.data.id,
+      type: node.data.nodeTemplate?.item || node.data.component?.__name || "unknown",
+      label: node.data.label,
+      description: "",
+      numberOfInputs: node.data.inputs.length,
+      numberOfOutputs: node.data.outputs.length,
+      typeSnakeCase:
+        node.data.nodeTemplate?.item || toSnakeCase(node.data.component?.__name || "unknown"),
+      flowIdToCopyFrom: nodeStore.flow_id,
+      multi: node.data.nodeTemplate?.multi,
+      nodeTemplate: node.data.nodeTemplate,
+    };
+    localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
+    localStorage.removeItem("copiedMultiNodes");
+  } else {
+    // Multiple nodes copy - use new multi-node format
+    const selectedNodeIds = new Set(selectedNodes.map((n) => n.data.id));
+
+    const nodes: NodeCopyValue[] = selectedNodes.map((node) => ({
+      nodeIdToCopyFrom: node.data.id,
+      type: node.data.nodeTemplate?.item || node.data.component?.__name || "unknown",
+      label: node.data.label,
+      description: "",
+      numberOfInputs: node.data.inputs.length,
+      numberOfOutputs: node.data.outputs.length,
+      typeSnakeCase:
+        node.data.nodeTemplate?.item || toSnakeCase(node.data.component?.__name || "unknown"),
+      flowIdToCopyFrom: nodeStore.flow_id,
+      multi: node.data.nodeTemplate?.multi,
+      nodeTemplate: node.data.nodeTemplate,
+    }));
+
+    // Find edges that connect nodes within the selection
+    const edges: EdgeCopyValue[] = allEdges
+      .filter((edge) => {
+        const sourceId = parseInt(edge.source);
+        const targetId = parseInt(edge.target);
+        return selectedNodeIds.has(sourceId) && selectedNodeIds.has(targetId);
+      })
+      .map((edge) => ({
+        sourceNodeId: parseInt(edge.source),
+        targetNodeId: parseInt(edge.target),
+        sourceHandle: edge.sourceHandle || "output-0",
+        targetHandle: edge.targetHandle || "input-0",
+      }));
+
+    const multiNodeCopyValue: MultiNodeCopyValue = {
+      nodes,
+      edges,
+      flowIdToCopyFrom: nodeStore.flow_id,
+    };
+
+    localStorage.setItem("copiedMultiNodes", JSON.stringify(multiNodeCopyValue));
+    localStorage.removeItem("copiedNode");
+  }
+};
+
 const copyValue = async (x: number, y: number) => {
   const flowPosition = screenToFlowCoordinate({
     x: x,
     y: y,
   });
+
+  // Check for multi-node copy first
+  const copiedMultiNodesStr = localStorage.getItem("copiedMultiNodes");
+  if (copiedMultiNodesStr) {
+    const multiNodeCopyValue: MultiNodeCopyValue = JSON.parse(copiedMultiNodesStr);
+    await createMultiCopyNodes(multiNodeCopyValue, flowPosition.x, flowPosition.y, nodeStore.flow_id);
+    return;
+  }
+
+  // Fall back to single node copy
   const copiedNodeStr = localStorage.getItem("copiedNode");
   if (!copiedNodeStr) return;
 
@@ -273,26 +361,33 @@ const hideLogViewer = () => {
 
 const handleKeyDown = (event: KeyboardEvent) => {
   let eventKeyClicked = event.ctrlKey || event.metaKey;
-  if (eventKeyClicked && event.key === "v" && event.target) {
-    const target = event.target as HTMLElement;
-    const isInputElement =
-      target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-    if (isInputElement) {
-      return;
-    }
+  // Normalize key to lowercase to handle Caps Lock being on
+  const key = event.key.toLowerCase();
+
+  // Skip if typing in an input field
+  const target = event.target as HTMLElement;
+  const isInputElement =
+    target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+  if (eventKeyClicked && key === "c" && !isInputElement) {
+    // Copy selected nodes
+    copySelectedNodes();
+    event.preventDefault();
+  } else if (eventKeyClicked && key === "v" && !isInputElement) {
+    // Paste nodes
     copyValue(clickedPosition.value.x, clickedPosition.value.y);
     event.preventDefault();
-  } else if (eventKeyClicked && event.key == "s") {
+  } else if (eventKeyClicked && key === "s") {
     if (nodeStore.flow_id) {
       event.preventDefault();
       emit("save", nodeStore.flow_id);
     }
-  } else if (eventKeyClicked && event.key == "e") {
+  } else if (eventKeyClicked && key === "e") {
     if (nodeStore.flow_id) {
       event.preventDefault();
       emit("run", nodeStore.flow_id);
     }
-  } else if (eventKeyClicked && event.key == "g") {
+  } else if (eventKeyClicked && key === "g") {
     if (nodeStore.flow_id) {
       event.preventDefault();
       nodeStore.toggleCodeGenerator();

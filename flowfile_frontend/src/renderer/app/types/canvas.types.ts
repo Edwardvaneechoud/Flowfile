@@ -28,6 +28,23 @@ export interface NodeCopyInput extends NodeCopyValue {
 }
 
 // ============================================================================
+// Multi-Node Copy Types (for copying multiple nodes with connections)
+// ============================================================================
+
+export interface EdgeCopyValue {
+  sourceNodeId: number
+  targetNodeId: number
+  sourceHandle: string
+  targetHandle: string
+}
+
+export interface MultiNodeCopyValue {
+  nodes: NodeCopyValue[]
+  edges: EdgeCopyValue[]
+  flowIdToCopyFrom: number
+}
+
+// ============================================================================
 // Cursor and Context Menu Types
 // ============================================================================
 
