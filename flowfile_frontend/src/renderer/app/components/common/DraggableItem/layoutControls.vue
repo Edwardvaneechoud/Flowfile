@@ -111,7 +111,12 @@ onMounted(() => {
     const maxX = window.innerWidth - buttonSize - boundaryMargin;
     const maxY = window.innerHeight - buttonSize - boundaryMargin;
 
-    if (parsed.x <= maxX && parsed.y <= maxY && parsed.x >= boundaryMargin && parsed.y >= boundaryMargin) {
+    if (
+      parsed.x <= maxX &&
+      parsed.y <= maxY &&
+      parsed.x >= boundaryMargin &&
+      parsed.y >= boundaryMargin
+    ) {
       position.value = parsed;
     } else {
       // Reset to bottom-right corner if saved position is out of bounds

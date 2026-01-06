@@ -31,11 +31,7 @@
             <thead>
               <tr class="header-row">
                 <th class="row-number-header">#</th>
-                <th
-                  v-for="col in columns"
-                  :key="col.id"
-                  class="column-header-cell"
-                >
+                <th v-for="col in columns" :key="col.id" class="column-header-cell">
                   <div class="column-header">
                     <div class="header-top">
                       <input
@@ -86,11 +82,7 @@
                   />
                 </td>
                 <td class="row-actions">
-                  <button
-                    class="delete-row-btn"
-                    title="Delete row"
-                    @click="deleteRow(row.id)"
-                  >
+                  <button class="delete-row-btn" title="Delete row" @click="deleteRow(row.id)">
                     <i class="fas fa-times" />
                   </button>
                 </td>
@@ -333,7 +325,7 @@ const handleCellKeydown = (event: KeyboardEvent, row: Row, col: Column) => {
       addRow();
       // Focus first cell of new row after Vue updates DOM
       setTimeout(() => {
-        const newRowCells = document.querySelectorAll('.data-row:last-child .input-cell');
+        const newRowCells = document.querySelectorAll(".data-row:last-child .input-cell");
         if (newRowCells.length > 0) {
           (newRowCells[0] as HTMLInputElement).focus();
         }
