@@ -96,10 +96,11 @@ def _remove_sql_comments(query: str) -> str:
     - Single line comments (-- comment)
     - Multi-line comments (/* comment */)
     """
-    # Remove multi-line comments
-    result = re.sub(r"/\*.*?\*/", " ", query, flags=re.DOTALL)
-    # Remove single-line comments
-    result = re.sub(r"--.*$", " ", result, flags=re.MULTILINE)
+    # Remove multi-line comments using a non-backtracking pattern
+    # Matches /* followed by (non-* chars OR * not followed by /) then */
+    result = re.sub(r"/\*(?:[^*]|\*(?!/))*\*/", " ", query)
+    # Remove single-line comments - explicitly match non-newline chars to avoid backtracking
+    result = re.sub(r"--[^\r\n]*", " ", result)
     return result
 
 
