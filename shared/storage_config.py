@@ -19,6 +19,11 @@ DirectoryOptions = Literal[
 ]
 
 
+def _is_docker_mode() -> bool:
+    """Check if running in Docker mode based on FLOWFILE_MODE."""
+    return os.environ.get("FLOWFILE_MODE") == "docker"
+
+
 class FlowfileStorage:
     """Centralized storage manager for Flowfile applications."""
 
@@ -31,7 +36,7 @@ class FlowfileStorage:
     def base_directory(self) -> Path:
         """Get the base Flowfile storage directory (for internal container communication)."""
         if self._base_dir is None:
-            if os.environ.get("RUNNING_IN_DOCKER") == "true":
+            if _is_docker_mode():
                 # In Docker, internal storage stays inside /app
                 base_path = os.environ.get("FLOWFILE_STORAGE_DIR", "/app/internal_storage")
             else:
@@ -48,7 +53,7 @@ class FlowfileStorage:
     def user_data_directory(self) -> Path:
         """Get the user data directory (completely separate from application code)."""
         if self._user_data_dir is None:
-            if os.environ.get("RUNNING_IN_DOCKER") == "true":
+            if _is_docker_mode():
                 # In Docker, user data is at /data/user (completely outside /app)
                 user_data_path = os.environ.get("FLOWFILE_USER_DATA_DIR", "/data/user")
             else:
@@ -77,7 +82,7 @@ class FlowfileStorage:
     @property
     def flows_directory(self) -> Path:
         """Directory for flow storage (user-accessible)."""
-        if os.environ.get("RUNNING_IN_DOCKER") == "true":
+        if _is_docker_mode():
             # In Docker, flows are in separate user data area
             return self.user_data_directory / "flows"
         else:
@@ -87,7 +92,7 @@ class FlowfileStorage:
     @property
     def uploads_directory(self) -> Path:
         """Directory for user uploads (user-accessible)."""
-        if os.environ.get("RUNNING_IN_DOCKER") == "true":
+        if _is_docker_mode():
             # In Docker, uploads are in separate user data area
             return self.user_data_directory / "uploads"
         else:
@@ -97,7 +102,7 @@ class FlowfileStorage:
     @property
     def user_defined_nodes_directory(self) -> Path:
         """Directory for user-defined custom nodes (user-accessible)."""
-        if os.environ.get("RUNNING_IN_DOCKER") == "true":
+        if _is_docker_mode():
             return self.user_data_directory / "user_defined_nodes"
         else:
             return self.base_directory / "user_defined_nodes"
@@ -110,7 +115,7 @@ class FlowfileStorage:
     @property
     def outputs_directory(self) -> Path:
         """Directory for user outputs (user-accessible)."""
-        if os.environ.get("RUNNING_IN_DOCKER") == "true":
+        if _is_docker_mode():
             # In Docker, outputs are in separate user data area
             return self.user_data_directory / "outputs"
         else:

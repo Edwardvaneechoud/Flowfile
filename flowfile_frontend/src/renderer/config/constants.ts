@@ -1,1 +1,1 @@
-export const flowfileCorebaseURL = "http://localhost:63578/"
+export const flowfileCorebaseURL = "http://localhost:63578/";

@@ -1,4 +1,3 @@
 export interface NodeMultiInput {
-  dependingOnIds: number[] | null
+  dependingOnIds: number[] | null;
 }
-

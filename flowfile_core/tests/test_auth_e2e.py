@@ -143,7 +143,6 @@ def running_container(docker_client, docker_image, project_root):
         'FLOWFILE_ADMIN_PASSWORD': TEST_ADMIN_PASSWORD,
         'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
         'FLOWFILE_USER_DATA_DIR': '/app/user_data',
-        'RUNNING_IN_DOCKER': 'true',
         'PYTHONDONTWRITEBYTECODE': '1',
         'PYTHONUNBUFFERED': '1'
     }
@@ -354,7 +353,6 @@ class TestDockerE2EWithoutAdminCredentials:
             # Intentionally omitting FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD
             'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
             'FLOWFILE_USER_DATA_DIR': '/app/user_data',
-            'RUNNING_IN_DOCKER': 'true',
         }
 
         container = docker_client.containers.run(

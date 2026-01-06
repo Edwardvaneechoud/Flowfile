@@ -107,6 +107,17 @@
   border-color: var(--color-info);
 }
 
+.btn-warning {
+  color: var(--color-warning);
+  border-color: var(--color-border-primary);
+  background-color: var(--color-background-primary);
+}
+
+.btn-warning:hover:not(:disabled) {
+  background-color: var(--color-warning-light);
+  border-color: var(--color-warning);
+}
+
 .btn-ghost {
   background-color: transparent;
   color: var(--color-text-secondary);

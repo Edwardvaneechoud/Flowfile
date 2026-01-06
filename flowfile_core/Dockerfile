@@ -39,7 +39,7 @@ EXPOSE 63578
 
 # Set Python path to recognize the packages
 ENV PYTHONPATH=/app
-ENV RUNNING_IN_DOCKER=true
+ENV FLOWFILE_MODE=docker
 
 # Change working directory to where the module is located
 WORKDIR /app

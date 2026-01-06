@@ -1,6 +1,6 @@
 // src/app/services/auth.service.ts
-import axios from 'axios';
-import { ref } from 'vue';
+import axios from "axios";
+import { ref } from "vue";
 
 interface AuthResponse {
   access_token: string;
@@ -13,202 +13,259 @@ interface AuthResponse {
   };
 }
 
+interface UserInfo {
+  username: string;
+  email?: string;
+  full_name?: string;
+  is_admin?: boolean;
+  id?: number;
+}
+
 class AuthService {
   private token = ref<string | null>(null);
   private tokenExpiration = ref<number | null>(null);
   private isElectronMode = ref(false);
   private refreshPromise: Promise<string | null> | null = null;
-  
+  private currentUsername = ref<string | null>(null);
+
   constructor() {
-    // Simplified detection that works in both Docker and Electron
-    this.isElectronMode.value = true; // Always treat as Electron for now
-    
-    // Clear any potentially invalid tokens on startup
+    this.isElectronMode.value = this.detectElectronMode();
     this.clearStoredTokens();
-    
-    // Then try to load a valid token if one exists
-    const savedToken = localStorage.getItem('auth_token');
-    const savedExpiration = localStorage.getItem('auth_token_expiration');
-    
+    this.loadStoredToken();
+  }
+
+  private loadStoredToken(): void {
+    const savedToken = localStorage.getItem("auth_token");
+    const savedExpiration = localStorage.getItem("auth_token_expiration");
+    const savedUsername = localStorage.getItem("auth_username");
+
     if (savedToken && savedExpiration) {
       const expirationTime = parseInt(savedExpiration, 10);
-      
-      // Only set the token if it's not expired
       if (expirationTime > Date.now()) {
         this.token.value = savedToken;
         this.tokenExpiration.value = expirationTime;
-        console.log(`Constructor: Loaded valid token from storage, expires at ${new Date(expirationTime)}`);
+        this.currentUsername.value = savedUsername;
       } else {
-        console.log(`Constructor: Found expired token in storage, clearing it`);
         this.clearStoredTokens();
       }
     }
   }
-  
-  /**
-   * Checks local storage for invalid tokens and clears them
-   */
+
+  private detectElectronMode(): boolean {
+    // Check if running in Electron by looking for the electronAPI exposed by preload
+    // In Docker/web mode, this won't be available
+    return !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+  }
+
+  isInElectronMode(): boolean {
+    return this.isElectronMode.value;
+  }
+
   private clearStoredTokens(): void {
-    const savedExpiration = localStorage.getItem('auth_token_expiration');
-    
-    // Clear token if it's expired or if expiration is missing
+    const savedExpiration = localStorage.getItem("auth_token_expiration");
     if (!savedExpiration || parseInt(savedExpiration, 10) <= Date.now()) {
-      console.log('Clearing invalid or expired tokens from storage');
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_token_expiration');
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("auth_token_expiration");
+      localStorage.removeItem("auth_username");
     }
   }
 
   async initialize(): Promise<boolean> {
-    // First, clear any invalid tokens
     this.clearStoredTokens();
-    
-    console.log(`Initializing auth service, has valid token: ${this.hasValidToken()}`);
-    
+
     if (this.hasValidToken()) {
-      console.log('Using existing valid token');
       return true;
     }
-    
-    console.log('No valid token found, requesting new token');
-    // Always try to get a token regardless of environment
-    return await this.getElectronToken();
+
+    // In Electron mode, auto-authenticate without credentials
+    if (this.isElectronMode.value) {
+      return await this.getElectronToken();
+    }
+
+    // In Docker/web mode, require manual login
+    return false;
   }
-  
-  private async getElectronToken(): Promise<boolean> {
+
+  async login(username: string, password: string): Promise<boolean> {
     try {
-      console.log("Requesting new auth token");
-      const response = await axios.post<AuthResponse>('/auth/token', {}, {
-        headers: { 'X-Skip-Auth-Header': 'true' }
+      const formData = new FormData();
+      formData.append("username", username);
+      formData.append("password", password);
+
+      const response = await axios.post<AuthResponse>("/auth/token", formData, {
+        headers: {
+          "X-Skip-Auth-Header": "true",
+          "Content-Type": "multipart/form-data",
+        },
       });
-      
-      if (response.data && response.data.access_token) {
+
+      if (response.data?.access_token) {
         const expirationTime = response.data.expires_at || this.calculateExpiration();
-        this.setToken(response.data.access_token, expirationTime);
-        
-        console.log(`Token obtained successfully, expires at ${new Date(expirationTime)}`);
+        this.setToken(response.data.access_token, expirationTime, username);
         return true;
       }
-      
-      console.error("No access token in response");
       return false;
     } catch (error) {
-      console.error('Failed to get token:', error);
+      console.error("Login failed:", error);
       return false;
     }
   }
-  
+
+  async getCurrentUser(): Promise<UserInfo | null> {
+    if (!this.hasValidToken()) {
+      return null;
+    }
+
+    try {
+      const response = await axios.get<UserInfo>("/auth/users/me");
+      if (response.data) {
+        this.currentUsername.value = response.data.username;
+        localStorage.setItem("auth_username", response.data.username);
+        return response.data;
+      }
+      return null;
+    } catch (error) {
+      console.error("Failed to get current user:", error);
+      return this.currentUsername.value ? { username: this.currentUsername.value } : null;
+    }
+  }
+
+  requiresLogin(): boolean {
+    return !this.isElectronMode.value && !this.hasValidToken();
+  }
+
+  private async getElectronToken(): Promise<boolean> {
+    try {
+      const response = await axios.post<AuthResponse>(
+        "/auth/token",
+        {},
+        {
+          headers: { "X-Skip-Auth-Header": "true" },
+        },
+      );
+
+      if (response.data?.access_token) {
+        const expirationTime = response.data.expires_at || this.calculateExpiration();
+        this.setToken(response.data.access_token, expirationTime);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("Failed to get Electron token:", error);
+      return false;
+    }
+  }
+
   async getToken(): Promise<string | null> {
-    // If there's already a refresh in progress, wait for it
     if (this.refreshPromise) {
       return this.refreshPromise;
     }
-    
-    // If the token is valid, return it immediately
+
     if (this.hasValidToken()) {
       return this.token.value;
     }
-    
-    // Otherwise, refresh the token
-    console.log('Token invalid or expired, refreshing...');
+
+    // In Docker mode, don't auto-refresh - require manual login
+    if (!this.isElectronMode.value) {
+      return null;
+    }
+
+    // In Electron mode, refresh the token automatically
     this.refreshPromise = this.refreshToken();
     const newToken = await this.refreshPromise;
     this.refreshPromise = null;
     return newToken;
   }
-  
+
   private async refreshToken(): Promise<string | null> {
-    console.log('Attempting to refresh token');
+    if (!this.isElectronMode.value) {
+      return null;
+    }
+
     const success = await this.getElectronToken();
     if (!success) {
-      console.log('Failed to refresh token, will retry on next request');
-      // Clear any existing invalid token
       this.logout();
     }
     return success ? this.token.value : null;
   }
-  
-  private setToken(token: string, expiration: number): void {
+
+  private setToken(token: string, expiration: number, username?: string): void {
     this.token.value = token;
     this.tokenExpiration.value = expiration;
-    
-    localStorage.setItem('auth_token', token);
-    localStorage.setItem('auth_token_expiration', expiration.toString());
-    
-    console.log(`Token set, expires at ${new Date(expiration)}`);
+    localStorage.setItem("auth_token", token);
+    localStorage.setItem("auth_token_expiration", expiration.toString());
+
+    if (username) {
+      this.currentUsername.value = username;
+      localStorage.setItem("auth_username", username);
+    }
   }
-  
+
   private calculateExpiration(hoursTilExpire = 1): number {
-    // Convert hours to milliseconds (fixed the bug where it was only 59ms)
-    return Date.now() + (hoursTilExpire * 60 * 60 * 1000);
+    return Date.now() + hoursTilExpire * 60 * 60 * 1000;
   }
-  
+
   hasValidToken(): boolean {
-    const isValid = !!(
-      this.token.value && 
-      this.tokenExpiration.value && 
+    return !!(
+      this.token.value &&
+      this.tokenExpiration.value &&
       this.tokenExpiration.value > Date.now()
     );
-    
-    return isValid;
   }
-  
+
   isAuthenticated(): boolean {
     return this.hasValidToken();
   }
-  
+
   logout(): void {
     this.token.value = null;
     this.tokenExpiration.value = null;
-    
-    // Ensure tokens are removed from localStorage
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_token_expiration');
-    
-    console.log('User logged out, token cleared from memory and storage');
-    
-    // Force a check for any other potential tokens
-    this.clearStoredTokens();
+    this.currentUsername.value = null;
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_token_expiration");
+    localStorage.removeItem("auth_username");
   }
 }
 
-// Create an axios interceptor to automatically handle 401 errors
+// Axios interceptor to handle 401 errors
 axios.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    
-    // If the error is 401 and we haven't already tried to refresh the token
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      console.log('Received 401 error, clearing any invalid tokens and retrying');
+    const requestUrl = originalRequest?.url || "";
+    const isAuthRequest = requestUrl.includes("/auth/token") || requestUrl.includes("/auth/");
+
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
       originalRequest._retry = true;
-      
-      // Clear any existing tokens first
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_token_expiration');
-      
-      // Force a completely fresh authentication
-      const authInstance = new AuthService();
-      
-      // Force token refresh with a clean state
-      await authInstance.initialize();
-      const newToken = await authInstance.getToken();
-      
-      if (newToken) {
-        console.log('Successfully obtained new token after 401 error');
-        // Update the authorization header with the new token
-        originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
-        // Retry the original request
-        return axios(originalRequest);
+      const isElectron = !!(window as unknown as { electronAPI?: unknown }).electronAPI;
+
+      if (isElectron) {
+        // In Electron mode, auto-refresh the token
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_token_expiration");
+
+        const authInstance = new AuthService();
+        await authInstance.initialize();
+        const newToken = await authInstance.getToken();
+
+        if (newToken) {
+          originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
+          return axios(originalRequest);
+        }
       } else {
-        console.error('Failed to get new token after 401 error');
+        // In Docker mode, redirect to login
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_token_expiration");
+        localStorage.removeItem("auth_username");
+
+        if (!window.location.hash.includes("login")) {
+          window.location.href = "/#/login";
+        }
       }
     }
-    
+
     return Promise.reject(error);
-  }
+  },
 );
 
 export const authService = new AuthService();

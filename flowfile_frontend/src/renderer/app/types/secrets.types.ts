@@ -10,17 +10,17 @@
  * Note: The 'value' might be encrypted or masked depending on the API.
  */
 export interface Secret {
-  name: string
-  value: string
-  user_id?: string
+  name: string;
+  value: string;
+  user_id?: string;
 }
 
 /**
  * Interface representing the input for creating a new secret.
  */
 export interface SecretInput {
-  name: string
-  value: string
+  name: string;
+  value: string;
 }
 
 /**
@@ -28,6 +28,6 @@ export interface SecretInput {
  * Assumes the API returns the decrypted value in a specific structure.
  */
 export interface SecretValueResponse {
-  name: string
-  value: string
+  name: string;
+  value: string;
 }

@@ -197,9 +197,9 @@ def create_directory(new_directory: input_schema.NewDirectory) -> bool:
         raise error
 
 
-@router.post('/flow/register/', tags=['editor'])
-def register_flow(flow_data: schemas.FlowSettings) -> int:
-    """Registers a new flow session with the application.
+@router.post("/flow/register/", tags=["editor"])
+def register_flow(flow_data: schemas.FlowSettings, current_user=Depends(get_current_active_user)) -> int:
+    """Registers a new flow session with the application for the current user.
 
     Args:
         flow_data: The `FlowSettings` for the new flow.
@@ -207,13 +207,15 @@ def register_flow(flow_data: schemas.FlowSettings) -> int:
     Returns:
         The ID of the newly registered flow.
     """
-    return flow_file_handler.register_flow(flow_data)
+    user_id = current_user.id if current_user else None
+    return flow_file_handler.register_flow(flow_data, user_id=user_id)
 
 
-@router.get('/active_flowfile_sessions/', response_model=List[schemas.FlowSettings])
-async def get_active_flow_file_sessions() -> List[schemas.FlowSettings]:
-    """Retrieves a list of all currently active flow sessions."""
-    return [flf.flow_settings for flf in flow_file_handler.flowfile_flows]
+@router.get("/active_flowfile_sessions/", response_model=list[schemas.FlowSettings])
+async def get_active_flow_file_sessions(current_user=Depends(get_current_active_user)) -> list[schemas.FlowSettings]:
+    """Retrieves a list of all currently active flow sessions for the current user."""
+    user_id = current_user.id if current_user else None
+    return [flf.flow_settings for flf in flow_file_handler.get_user_flows(user_id)]
 
 
 @router.post("/node/trigger_fetch_data", tags=['editor'])
@@ -484,8 +486,8 @@ def get_generated_code(flow_id: int) -> str:
     return export_flow_to_polars(flow)
 
 
-@router.post('/editor/create_flow/', tags=['editor'])
-def create_flow(flow_path: str = None, name: str = None):
+@router.post("/editor/create_flow/", tags=["editor"])
+def create_flow(flow_path: str = None, name: str = None, current_user=Depends(get_current_active_user)):
     """Creates a new, empty flow file at the specified path and registers a session for it."""
     if flow_path is not None and name is None:
         name = Path(flow_path).stem
@@ -499,16 +501,20 @@ def create_flow(flow_path: str = None, name: str = None):
         elif name not in flow_path and not (name.endswith(".yaml") or name.endswith(".yml")):
             flow_path = str(Path(flow_path) / (name + ".yaml"))
     if flow_path is not None:
+        # Validate path is within allowed sandbox
+        flow_path = validate_path_under_cwd(flow_path)
         flow_path_ref = Path(flow_path)
         if not flow_path_ref.parent.exists():
-            raise HTTPException(422, 'The directory does not exist')
-    return flow_file_handler.add_flow(name=name, flow_path=flow_path)
+            raise HTTPException(422, "The directory does not exist")
+    user_id = current_user.id if current_user else None
+    return flow_file_handler.add_flow(name=name, flow_path=flow_path, user_id=user_id)
 
 
-@router.post('/editor/close_flow/', tags=['editor'])
-def close_flow(flow_id: int) -> None:
-    """Closes an active flow session."""
-    flow_file_handler.delete_flow(flow_id)
+@router.post("/editor/close_flow/", tags=["editor"])
+def close_flow(flow_id: int, current_user=Depends(get_current_active_user)) -> None:
+    """Closes an active flow session for the current user."""
+    user_id = current_user.id if current_user else None
+    flow_file_handler.delete_flow(flow_id, user_id=user_id)
 
 
 @router.post('/update_settings/', tags=['transform'])
@@ -622,13 +628,14 @@ async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
     return list(node.get_all_dependent_node_ids())
 
 
-@router.get('/import_flow/', tags=['editor'], response_model=int)
-def import_saved_flow(flow_path: str) -> int:
-    """Imports a flow from a saved `.yaml` and registers it as a new session."""
+@router.get("/import_flow/", tags=["editor"], response_model=int)
+def import_saved_flow(flow_path: str, current_user=Depends(get_current_active_user)) -> int:
+    """Imports a flow from a saved `.yaml` and registers it as a new session for the current user."""
     validated_path = validate_path_under_cwd(flow_path)
     if not os.path.exists(validated_path):
-        raise HTTPException(404, 'File not found')
-    return flow_file_handler.import_flow(Path(validated_path))
+        raise HTTPException(404, "File not found")
+    user_id = current_user.id if current_user else None
+    return flow_file_handler.import_flow(Path(validated_path), user_id=user_id)
 
 
 @router.get('/save_flow', tags=['editor'])

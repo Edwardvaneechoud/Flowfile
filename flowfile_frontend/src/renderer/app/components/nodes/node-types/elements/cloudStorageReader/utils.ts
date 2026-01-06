@@ -1,7 +1,9 @@
 import { NodeCloudStorageReader, CloudStorageReadSettings } from "../../../baseNode/nodeInput";
 
-
-export const createNodeCloudStorageReader = (flowId: number, nodeId: number): NodeCloudStorageReader => {
+export const createNodeCloudStorageReader = (
+  flowId: number,
+  nodeId: number,
+): NodeCloudStorageReader => {
   const cloudStorageReadSettings: CloudStorageReadSettings = {
     auth_mode: "aws-cli",
     scan_mode: "directory",
@@ -12,14 +14,14 @@ export const createNodeCloudStorageReader = (flowId: number, nodeId: number): No
     delta_version: undefined,
   };
   const nodePolarsCode: NodeCloudStorageReader = {
-      flow_id: flowId,
-      node_id: nodeId,
-      pos_x: 0,
-      pos_y: 0,
-      cloud_storage_settings: cloudStorageReadSettings,
-      cache_results: false,
-      fields: [],
-  }
-  
-  return nodePolarsCode
-}
+    flow_id: flowId,
+    node_id: nodeId,
+    pos_x: 0,
+    pos_y: 0,
+    cloud_storage_settings: cloudStorageReadSettings,
+    cache_results: false,
+    fields: [],
+  };
+
+  return nodePolarsCode;
+};

@@ -1,4 +1,4 @@
 // DEPRECATED: Import from '@/api' or '../../api' instead
 // This file is kept for backward compatibility during migration
 
-export { NodeApi } from '../../api/node.api'
+export { NodeApi } from "../../api/node.api";

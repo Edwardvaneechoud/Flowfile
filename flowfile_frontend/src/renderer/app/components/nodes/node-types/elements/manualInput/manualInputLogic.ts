@@ -1,15 +1,20 @@
-import { ref, Ref } from 'vue'
-import { NodeManualInput, RawDataFormat } from '../../../baseNode/nodeInput'
+import { ref, Ref } from "vue";
+import { NodeManualInput, RawDataFormat } from "../../../baseNode/nodeInput";
 
-export const createManualInput = (flowId = -1, nodeId = -1, pos_x = 0, pos_y = 0): Ref<NodeManualInput> => {
+export const createManualInput = (
+  flowId = -1,
+  nodeId = -1,
+  pos_x = 0,
+  pos_y = 0,
+): Ref<NodeManualInput> => {
   const nodeManualInput: Ref<NodeManualInput> = ref({
     flow_id: flowId,
     node_id: nodeId,
     pos_x: pos_x,
     pos_y: pos_y,
     cache_input: false,
-    raw_data_format: {columns: [], data: []} as RawDataFormat,
+    raw_data_format: { columns: [], data: [] } as RawDataFormat,
     cache_results: false, // Add the missing property 'cache_results'
-  })
-  return nodeManualInput
-}
+  });
+  return nodeManualInput;
+};

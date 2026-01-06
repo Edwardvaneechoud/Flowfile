@@ -1,5 +1,5 @@
 export interface Option {
-    text: string;
-    icon?: string; // Optional icon property
-    value: string;
-  }
+  text: string;
+  icon?: string; // Optional icon property
+  value: string;
+}

@@ -88,8 +88,26 @@ DEBUG: bool = config("DEBUG", cast=bool, default=False)
 FILE_LOCATION = config("FILE_LOCATION", cast=str, default=".\\files\\")
 AVAILABLE_RAM = config("AVAILABLE_RAM", cast=int, default=8)
 WORKER_URL = config("FLOWFILE_WORKER_URL", cast=str, default=get_default_worker_url(WORKER_PORT))
-IS_RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
 TEMP_DIR = storage.temp_directory
+
+# FLOWFILE_MODE: Determines the runtime environment
+# Possible values: "electron" (desktop app), "package" (Python package), "docker" (container)
+FLOWFILE_MODE = os.getenv("FLOWFILE_MODE", "electron")
+
+def is_docker_mode() -> bool:
+    """Check if running in Docker container mode"""
+    return FLOWFILE_MODE == "docker"
+
+def is_electron_mode() -> bool:
+    """Check if running in Electron desktop app mode"""
+    return FLOWFILE_MODE == "electron"
+
+def is_package_mode() -> bool:
+    """Check if running as Python package"""
+    return FLOWFILE_MODE == "package"
+
+# Legacy compatibility - will be removed in future versions
+IS_RUNNING_IN_DOCKER = is_docker_mode()
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 120

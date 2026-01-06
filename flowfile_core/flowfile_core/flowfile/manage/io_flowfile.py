@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
-from flowfile_core.configs.settings import IS_RUNNING_IN_DOCKER
+from flowfile_core.configs.settings import is_docker_mode
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.manage.compatibility_enhancements import ensure_compatibility, load_flowfile_pickle
 from flowfile_core.schemas import input_schema, schemas
@@ -29,7 +29,7 @@ def _validate_flow_path(flow_path: Path) -> Path:
 
     # Allow paths within known safe directories
 
-    if IS_RUNNING_IN_DOCKER:
+    if is_docker_mode():
         safe_directories = [
             storage.flows_directory,
             storage.uploads_directory,

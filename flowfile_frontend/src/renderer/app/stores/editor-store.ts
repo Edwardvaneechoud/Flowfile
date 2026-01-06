@@ -1,10 +1,10 @@
 // Editor Store - Manages drawer, editor UI state, log viewer, and code generator
-import { defineStore } from 'pinia';
-import { ref, shallowRef } from 'vue';
-import type { Component } from 'vue';
-import type { NodeTitleInfo } from '../types';
+import { defineStore } from "pinia";
+import { ref, shallowRef } from "vue";
+import type { Component } from "vue";
+import type { NodeTitleInfo } from "../types";
 
-export const useEditorStore = defineStore('editor', {
+export const useEditorStore = defineStore("editor", {
   state: () => ({
     // Drawer state
     isDrawerOpen: false,
@@ -14,8 +14,8 @@ export const useEditorStore = defineStore('editor', {
     drawCloseFunction: null as any,
 
     // Editor state
-    initialEditorData: '' as string,
-    inputCode: '',
+    initialEditorData: "" as string,
+    inputCode: "",
 
     // Log viewer state
     hideLogViewerForThisRun: false,
@@ -41,7 +41,7 @@ export const useEditorStore = defineStore('editor', {
   actions: {
     // ========== Drawer Management ==========
     async executeDrawCloseFunction() {
-      console.log('Executing draw close function');
+      console.log("Executing draw close function");
       if (this.drawCloseFunction) {
         this.drawCloseFunction();
       }
@@ -51,7 +51,11 @@ export const useEditorStore = defineStore('editor', {
       this.drawCloseFunction = f;
     },
 
-    openDrawer(component: Component, nodeTitleInfo: NodeTitleInfo, props: Record<string, any> = {}) {
+    openDrawer(
+      component: Component,
+      nodeTitleInfo: NodeTitleInfo,
+      props: Record<string, any> = {},
+    ) {
       this.activeDrawerComponent = component;
       this.drawerProps = { ...nodeTitleInfo, ...props };
       this.isDrawerOpen = true;
@@ -79,7 +83,7 @@ export const useEditorStore = defineStore('editor', {
     },
 
     openAnalysisDrawer(closeFunction?: () => void) {
-      console.log('openAnalysisDrawer in editor-store.ts');
+      console.log("openAnalysisDrawer in editor-store.ts");
       if (this.isAnalysisOpen) {
         this.pushNodeData();
       }
@@ -92,7 +96,7 @@ export const useEditorStore = defineStore('editor', {
     closeAnalysisDrawer() {
       this.isAnalysisOpen = false;
       if (this.drawCloseFunction) {
-        console.log('closeDrawer in editor-store.ts');
+        console.log("closeDrawer in editor-store.ts");
         this.pushNodeData();
       }
     },
@@ -108,7 +112,7 @@ export const useEditorStore = defineStore('editor', {
 
     // ========== Log Viewer ==========
     showLogViewer() {
-      console.log('triggered show log viewer');
+      console.log("triggered show log viewer");
       this.isShowingLogViewer = this.displayLogViewer;
     },
 
@@ -117,12 +121,13 @@ export const useEditorStore = defineStore('editor', {
     },
 
     toggleLogViewer() {
-      console.log('triggered toggle log viewer');
+      console.log("triggered toggle log viewer");
       this.isShowingLogViewer = !this.isShowingLogViewer;
     },
 
     updateLogViewerVisibility(showResult: boolean) {
-      this.isShowingLogViewer = this.displayLogViewer && showResult && !this.hideLogViewerForThisRun;
+      this.isShowingLogViewer =
+        this.displayLogViewer && showResult && !this.hideLogViewerForThisRun;
     },
 
     // ========== Editor Data ==========

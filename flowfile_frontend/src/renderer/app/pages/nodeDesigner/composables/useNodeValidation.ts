@@ -1,9 +1,9 @@
 /**
  * Composable for node validation
  */
-import { ref } from 'vue';
-import type { ValidationError, NodeMetadata, DesignerSection } from '../types';
-import { toSnakeCase } from './useCodeGeneration';
+import { ref } from "vue";
+import type { ValidationError, NodeMetadata, DesignerSection } from "../types";
+import { toSnakeCase } from "./useCodeGeneration";
 
 export function useNodeValidation() {
   const validationErrors = ref<ValidationError[]>([]);
@@ -12,28 +12,29 @@ export function useNodeValidation() {
   function validateSettings(
     nodeMetadata: NodeMetadata,
     sections: DesignerSection[],
-    processCode: string
+    processCode: string,
   ): ValidationError[] {
     const errors: ValidationError[] = [];
 
     // Validate node metadata
     if (!nodeMetadata.node_name.trim()) {
-      errors.push({ field: 'node_name', message: 'Node name is required' });
+      errors.push({ field: "node_name", message: "Node name is required" });
     } else if (!/^[a-zA-Z][a-zA-Z0-9_\s]*$/.test(nodeMetadata.node_name)) {
       errors.push({
-        field: 'node_name',
-        message: 'Node name must start with a letter and contain only letters, numbers, spaces, and underscores',
+        field: "node_name",
+        message:
+          "Node name must start with a letter and contain only letters, numbers, spaces, and underscores",
       });
     }
 
     if (!nodeMetadata.node_category.trim()) {
-      errors.push({ field: 'node_category', message: 'Category is required' });
+      errors.push({ field: "node_category", message: "Category is required" });
     }
 
     // Check for duplicate section names
     const sectionNames = new Set<string>();
     sections.forEach((section, index) => {
-      const name = section.name || toSnakeCase(section.title || 'section');
+      const name = section.name || toSnakeCase(section.title || "section");
       if (sectionNames.has(name)) {
         errors.push({ field: `section_${index}`, message: `Duplicate section name: "${name}"` });
       }
@@ -59,11 +60,11 @@ export function useNodeValidation() {
     });
 
     // Validate Python code syntax (basic check)
-    if (!processCode.includes('def process')) {
-      errors.push({ field: 'process_code', message: 'Process method definition is missing' });
+    if (!processCode.includes("def process")) {
+      errors.push({ field: "process_code", message: "Process method definition is missing" });
     }
-    if (!processCode.includes('return')) {
-      errors.push({ field: 'process_code', message: 'Process method must return a value' });
+    if (!processCode.includes("return")) {
+      errors.push({ field: "process_code", message: "Process method must return a value" });
     }
 
     return errors;
