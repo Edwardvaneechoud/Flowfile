@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -369,7 +369,7 @@ def get_files_from_directory(
         raise type(e)(f"Error scanning directory {dir_name}: {str(e)}") from e
 
 
-def validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
+def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
     """Validate a file path is safe and within allowed_base.
 
     Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.

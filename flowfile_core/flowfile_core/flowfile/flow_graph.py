@@ -80,7 +80,7 @@ except PackageNotFoundError:
 
 def represent_list_json(dumper, data):
     """Use inline style for short simple lists, block style for complex ones."""
-    if len(data) <= 10 and all(isinstance(item, (int, str, float, bool, type(None))) for item in data):
+    if len(data) <= 10 and all(isinstance(item, int | str | float | bool | type(None)) for item in data):
         return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=False)
 
@@ -564,7 +564,7 @@ class FlowGraph:
             accessed_secrets = custom_node.get_accessed_secrets()
             if accessed_secrets:
                 logger.info(f"Node '{user_defined_node_settings.node_id}' accessed secrets: {accessed_secrets}")
-            if isinstance(output, (pl.LazyFrame, pl.DataFrame)):
+            if isinstance(output, pl.LazyFrame | pl.DataFrame):
                 return FlowDataEngine(output)
             return None
 
@@ -2348,7 +2348,7 @@ class FlowGraph:
                 for o in node_info.outputs:
                     outputs[o] += 1
                 connections = []
-                for output_node_id, n_connections in outputs.items():
+                for output_node_id, _n_connections in outputs.items():
                     leading_to_node = self.get_node(output_node_id)
                     input_types = leading_to_node.get_input_type(node_info.id)
                     for input_type in input_types:

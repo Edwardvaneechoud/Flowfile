@@ -164,7 +164,7 @@ def calculate_schema_logic(
                 include_header=True, header_name="column_name", column_names=stats_headers
             ).to_dicts()
         }
-        for i, (col_stat, n_unique_values) in enumerate(zip(stats.values(), n_unique_per_cols, strict=False)):
+        for _i, (col_stat, n_unique_values) in enumerate(zip(stats.values(), n_unique_per_cols, strict=False)):
             col_stat["n_unique"] = n_unique_values
             col_stat["examples"] = ", ".join({str(col_stat["min"]), str(col_stat["max"])})
             col_stat["null_count"] = int(float(col_stat["null_count"]))

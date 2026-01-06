@@ -4,7 +4,7 @@ import inspect
 import os
 import re
 from collections.abc import Iterable, Iterator, Mapping
-from typing import Any, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Literal, Union, get_args, get_origin
 
 import polars as pl
 from pl_fuzzy_frame_match import FuzzyMapping
@@ -198,7 +198,7 @@ class FlowFrame:
                 )
                 pl_data = pl_df.lazy()
             except Exception as e:
-                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}")
+                raise ValueError(f"Could not dconvert data to a polars DataFrame: {e}") from e
             # Create a FlowDataEngine to get data in the right format for manual input
             flow_table = FlowDataEngine(raw_data=pl_data)
             raw_data_format = input_schema.RawData(
@@ -239,7 +239,7 @@ class FlowFrame:
         node_id: int | None = None,
         parent_node_id: int | None = None,
         **kwargs,  # Accept and ignore any other kwargs for API compatibility
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Unified constructor for FlowFrame.
 
@@ -291,7 +291,7 @@ class FlowFrame:
                 )
                 pl_data = pl_df.lazy()
             except Exception as e:
-                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}")
+                raise ValueError(f"Could not convert data to a Polars DataFrame: {e}") from e
 
             flow_table = FlowDataEngine(raw_data=pl_data)
             raw_data_format = input_schema.RawData(
@@ -344,8 +344,8 @@ class FlowFrame:
                 node_id=new_node_id,
                 parent_node_id=self.node_id,
             )
-        except AttributeError:
-            raise ValueError("Could not execute the function")
+        except AttributeError as e:
+            raise ValueError("Could not execute the function") from e
 
     @staticmethod
     def _generate_sort_polars_code(
@@ -384,7 +384,7 @@ class FlowFrame:
         multithreaded: bool = True,
         maintain_order: bool = False,
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Sort the dataframe by the given columns.
         """
@@ -405,7 +405,7 @@ class FlowFrame:
         if maintain_order or not multithreaded:
             use_polars_code_path = True
 
-        is_nulls_last_list = isinstance(nulls_last, (list, tuple))
+        is_nulls_last_list = isinstance(nulls_last, list | tuple)
         if is_nulls_last_list and any(val for val in nulls_last if val is not False):
             use_polars_code_path = True
         elif not is_nulls_last_list and nulls_last is not False:
@@ -550,7 +550,8 @@ class FlowFrame:
                 target_obj = getattr(self.data, effective_method_name)(*group_expr_list, **group_kwargs)
                 if not pl_expr_list:
                     raise ValueError(
-                        "Aggregation expressions (polars_expr) are required for group_by().agg() in serialization fallback."
+                        "Aggregation expressions (polars_expr) are required for "
+                        "group_by().agg() in serialization fallback."
                     )
                 result_lazyframe_or_expr = target_obj.agg(*pl_expr_list, **current_kwargs_expr)
             elif effective_method_name:
@@ -559,7 +560,8 @@ class FlowFrame:
                 )
             else:
                 raise ValueError(
-                    "Cannot execute Polars operation: method_name is missing and could not be inferred for serialization fallback."
+                    "Cannot execute Polars operation: method_name is missing and could not be "
+                    "inferred for serialization fallback."
                 )
             try:
                 if isinstance(result_lazyframe_or_expr, pl.LazyFrame):
@@ -615,7 +617,7 @@ class FlowFrame:
         coalesce: bool = None,
         maintain_order: Literal[None, "left", "right", "left_right", "right_left"] = None,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Add a join operation to the Logical Plan.
 
@@ -714,7 +716,7 @@ class FlowFrame:
             and suffix == "_right"
         )
 
-    def _ensure_same_graph(self, other: "FlowFrame") -> None:
+    def _ensure_same_graph(self, other: FlowFrame) -> None:
         """Ensure both FlowFrames are in the same graph, combining if necessary."""
         if self.flow_graph.flow_id != other.flow_graph.flow_id:
             combined_graph, node_mappings = combine_flow_graphs_with_mapping(self.flow_graph, other.flow_graph)
@@ -754,7 +756,7 @@ class FlowFrame:
 
     def _execute_polars_code_join(
         self,
-        other: "FlowFrame",
+        other: FlowFrame,
         new_node_id: int,
         on: list[str | Column] | str | Column,
         left_on: list[str | Column] | str | Column,
@@ -768,7 +770,7 @@ class FlowFrame:
         coalesce: bool,
         maintain_order: Literal[None, "left", "right", "left_right", "right_left"],
         description: str,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """Execute join using Polars code approach."""
         # Build the code arguments
         code_kwargs = self._build_polars_join_kwargs(
@@ -843,12 +845,12 @@ class FlowFrame:
 
     def _execute_native_join(
         self,
-        other: "FlowFrame",
+        other: FlowFrame,
         new_node_id: int,
         join_mappings: list | None,
         how: str,
         description: str,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """Execute join using native FlowFile join nodes."""
         # Create select inputs for both frames
 
@@ -896,9 +898,9 @@ class FlowFrame:
     def _add_cross_join_node(
         self,
         new_node_id: int,
-        join_input: "transform_schema.CrossJoinInput",
+        join_input: transform_schema.CrossJoinInput,
         description: str,
-        other: "FlowFrame",
+        other: FlowFrame,
     ) -> None:
         """Add a cross join node to the graph."""
         cross_join_settings = input_schema.NodeCrossJoin(
@@ -916,9 +918,9 @@ class FlowFrame:
     def _add_regular_join_node(
         self,
         new_node_id: int,
-        join_input: "transform_schema.JoinInput",
+        join_input: transform_schema.JoinInput,
         description: str,
-        other: "FlowFrame",
+        other: FlowFrame,
     ) -> None:
         """Add a regular join node to the graph."""
         join_settings = input_schema.NodeJoin(
@@ -935,7 +937,7 @@ class FlowFrame:
         )
         self.flow_graph.add_join(join_settings)
 
-    def _add_number_of_records(self, new_node_id: int, description: str = None) -> "FlowFrame":
+    def _add_number_of_records(self, new_node_id: int, description: str = None) -> FlowFrame:
         node_number_of_records = input_schema.NodeRecordCount(
             flow_id=self.flow_graph.flow_id,
             node_id=new_node_id,
@@ -948,7 +950,7 @@ class FlowFrame:
         self.flow_graph.add_record_count(node_number_of_records)
         return self._create_child_frame(new_node_id)
 
-    def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> "FlowFrame":
+    def rename(self, mapping: Mapping[str, str], *, strict: bool = True, description: str = None) -> FlowFrame:
         """Rename columns based on a mapping or function."""
         return self.select(
             [col(old_name).alias(new_name) for old_name, new_name in mapping.items()],
@@ -958,7 +960,7 @@ class FlowFrame:
 
     def select(
         self, *columns: str | Expr | Selector, description: str | None = None, _keep_missing: bool = False
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Select columns from the frame.
         """
@@ -1068,7 +1070,7 @@ class FlowFrame:
         flowfile_formula: str | None = None,
         description: str | None = None,
         **constraints: Any,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Filter rows based on a predicate.
         """
@@ -1083,7 +1085,7 @@ class FlowFrame:
 
             processed_predicates = []
             for pred_item in predicates:
-                if isinstance(pred_item, (tuple, list, Iterator)):
+                if isinstance(pred_item, tuple | list | Iterator):
                     # If it's a sequence, extend the processed_predicates with its elements
                     processed_predicates.extend(list(pred_item))
                 else:
@@ -1184,7 +1186,7 @@ class FlowFrame:
         description: str = None,
         convert_to_absolute_path: bool = True,
         **kwargs: Any,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data to a Parquet file. Creates a standard Output node if only
         'path' and standard options are provided. Falls back to a Polars Code node
@@ -1207,7 +1209,7 @@ class FlowFrame:
         """
         new_node_id = generate_node_id()
 
-        is_path_input = isinstance(path, (str, os.PathLike))
+        is_path_input = isinstance(path, str | os.PathLike)
         if isinstance(path, os.PathLike):
             file_str = str(path)
         elif isinstance(path, str):
@@ -1275,9 +1277,9 @@ class FlowFrame:
         description: str = None,
         convert_to_absolute_path: bool = True,
         **kwargs: Any,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         new_node_id = generate_node_id()
-        is_path_input = isinstance(file, (str, os.PathLike))
+        is_path_input = isinstance(file, str | os.PathLike)
         if isinstance(file, os.PathLike):
             file_str = str(file)
         elif isinstance(file, str):
@@ -1346,7 +1348,7 @@ class FlowFrame:
         connection_name: str | None = None,
         compression: Literal["snappy", "gzip", "brotli", "lz4", "zstd"] = "snappy",
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in Parquet format.
 
@@ -1380,7 +1382,7 @@ class FlowFrame:
         delimiter: str = ";",
         encoding: CsvEncoding = "utf8",
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in CSV format.
 
@@ -1415,7 +1417,7 @@ class FlowFrame:
         connection_name: str | None = None,
         write_mode: Literal["overwrite", "append"] = "overwrite",
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in Delta Lake format.
 
@@ -1445,7 +1447,7 @@ class FlowFrame:
         path: str,
         connection_name: str | None = None,
         description: str | None = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Write the data frame to cloud storage in JSON format.
 
@@ -1490,7 +1492,7 @@ class FlowFrame:
                 by_cols.append(col_expr)
             elif isinstance(col_expr, Selector):
                 by_cols.append(col_expr)
-            elif isinstance(col_expr, (list, tuple)):
+            elif isinstance(col_expr, list | tuple):
                 by_cols.extend(col_expr)
 
         for new_name, col_expr in named_by.items():
@@ -1523,7 +1525,7 @@ class FlowFrame:
             return self.data.collect(*args, **kwargs)
         return self.data
 
-    def _with_flowfile_formula(self, flowfile_formula: str, output_column_name, description: str = None) -> "FlowFrame":
+    def _with_flowfile_formula(self, flowfile_formula: str, output_column_name, description: str = None) -> FlowFrame:
         new_node_id = generate_node_id()
         function_settings = input_schema.NodeFormula(
             flow_id=self.flow_graph.flow_id,
@@ -1552,7 +1554,7 @@ class FlowFrame:
     def limit(self, n: int, description: str = None):
         return self.head(n, description)
 
-    def cache(self) -> "FlowFrame":
+    def cache(self) -> FlowFrame:
         setting_input = self.get_node_settings().setting_input
         setting_input.cache_results = True
         self.data.cache()
@@ -1572,7 +1574,7 @@ class FlowFrame:
         sort_columns: bool = False,
         separator: str = "_",
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Pivot a DataFrame from long to wide format.
 
@@ -1663,7 +1665,7 @@ class FlowFrame:
             code = f"""
     # Perform pivot operation
     result = input_df.pivot(
-        on={on_repr}, 
+        on={on_repr},
         index={index_repr},
         values={values_repr},
         aggregate_function='{aggregate_function}',
@@ -1694,7 +1696,7 @@ class FlowFrame:
         variable_name: str = "variable",
         value_name: str = "value",
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Unpivot a DataFrame from wide to long format.
 
@@ -1729,7 +1731,7 @@ class FlowFrame:
         can_use_native = True
         if on is None:
             value_columns = []
-        elif isinstance(on, (str, Selector)):
+        elif isinstance(on, str | Selector):
             if isinstance(on, Selector):
                 can_use_native = False
             value_columns = [on]
@@ -1775,7 +1777,7 @@ class FlowFrame:
             code = f"""
     # Perform unpivot operation
     output_df = input_df.unpivot(
-        on={on_repr}, 
+        on={on_repr},
         index={index_repr},
         variable_name="{variable_name}",
         value_name="{value_name}"
@@ -1795,12 +1797,12 @@ class FlowFrame:
 
     def concat(
         self,
-        other: "FlowFrame" | list["FlowFrame"],
+        other: FlowFrame | list[FlowFrame],
         how: str = "vertical",
         rechunk: bool = False,
         parallel: bool = True,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Combine multiple FlowFrames into a single FlowFrame.
 
@@ -1913,7 +1915,7 @@ class FlowFrame:
 
     def _detect_cum_count_record_id(
         self, expr: Any, new_node_id: int, description: str | None = None
-    ) -> tuple[bool, Optional["FlowFrame"]]:
+    ) -> tuple[bool, FlowFrame | None]:
         """
         Detect if the expression is a cum_count operation and use record_id if possible.
 
@@ -2032,7 +2034,7 @@ class FlowFrame:
         output_column_names: list[str] | None = None,
         description: str | None = None,
         **named_exprs: Expr | Any,  # Allow Any for implicit lit conversion
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Add or replace columns in the DataFrame.
         """
@@ -2110,7 +2112,7 @@ class FlowFrame:
         else:
             raise ValueError("Either exprs/named_exprs or flowfile_formulas with output_column_names must be provided")
 
-    def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> "FlowFrame":
+    def with_row_index(self, name: str = "index", offset: int = 0, description: str = None) -> FlowFrame:
         """
         Add a row index as the first column in the DataFrame.
 
@@ -2166,7 +2168,7 @@ class FlowFrame:
         columns: str | Column | Iterable[str | Column],
         *more_columns: str | Column,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Explode the dataframe to long format by exploding the given columns.
 
@@ -2190,7 +2192,7 @@ class FlowFrame:
 
         all_columns = []
 
-        if isinstance(columns, (list, tuple)):
+        if isinstance(columns, list | tuple):
             all_columns.extend([col.column_name if isinstance(col, Column) else col for col in columns])
         else:
             all_columns.append(columns.column_name if isinstance(columns, Column) else columns)
@@ -2219,10 +2221,10 @@ class FlowFrame:
 
     def fuzzy_match(
         self,
-        other: "FlowFrame",
+        other: FlowFrame,
         fuzzy_mappings: list[FuzzyMapping],
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         self._ensure_same_graph(other)
 
         # Step 3: Generate new node ID
@@ -2253,7 +2255,7 @@ class FlowFrame:
         delimiter: str = None,
         split_by_column: str = None,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Split text in a column into multiple rows.
 
@@ -2314,12 +2316,12 @@ class FlowFrame:
 
     def unique(
         self,
-        subset: Union[str, "Expr", list[Union[str, "Expr"]]] = None,
+        subset: str | Expr | list[str | Expr] = None,
         *,
         keep: Literal["first", "last", "any", "none"] = "any",
         maintain_order: bool = False,
         description: str = None,
-    ) -> "FlowFrame":
+    ) -> FlowFrame:
         """
         Drop duplicate rows from this dataframe.
 
@@ -2353,7 +2355,7 @@ class FlowFrame:
         can_use_native = True
         if subset is not None:
             # Convert to list if single item
-            if not isinstance(subset, (list, tuple)):
+            if not isinstance(subset, list | tuple):
                 subset = [subset]
 
             # Extract column names
@@ -2395,7 +2397,7 @@ class FlowFrame:
             # Generate polars code for more complex cases
             if subset is None:
                 subset_str = "None"
-            elif isinstance(subset, (list, tuple)):
+            elif isinstance(subset, list | tuple):
                 # Format each item in the subset list
                 items = []
                 for item in subset:

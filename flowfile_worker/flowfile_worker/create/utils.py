@@ -34,7 +34,7 @@ def create_fake_data(n_records: int = 1000) -> pl.DataFrame:
         return fake.phone_number()
 
     data = []
-    for i in range(n_records):
+    for _i in range(n_records):
         name = generate_name()
         data.append(
             dict(

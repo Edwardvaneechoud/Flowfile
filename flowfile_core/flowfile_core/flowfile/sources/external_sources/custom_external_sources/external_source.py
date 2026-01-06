@@ -70,7 +70,7 @@ class CustomExternalSource(ExternalDataSource):
         first_col = schema[0]
         if isinstance(first_col, dict):
             return [FlowfileColumn(**col) for col in schema]
-        elif isinstance(first_col, (list, tuple)):
+        elif isinstance(first_col, list | tuple):
             return [FlowfileColumn.from_input(column_name=col[0], data_type=col[1]) for col in schema]
         elif isinstance(first_col, str):
             return [FlowfileColumn.from_input(column_name=col, data_type="varchar") for col in schema]
@@ -99,7 +99,7 @@ class CustomExternalSource(ExternalDataSource):
 
     def get_sample(self, n: int = 10000):
         data = self.get_iter()
-        for i in range(n):
+        for _i in range(n):
             try:
                 yield next(data)
             except StopIteration:

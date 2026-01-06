@@ -99,7 +99,7 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
         return None
 
     # Handle primitives
-    if isinstance(obj, (str, int, float, bool)):
+    if isinstance(obj, str | int | float | bool):
         return obj
 
     # Cycle detection
@@ -137,7 +137,7 @@ def convert_to_dict(obj: Any, _seen: set = None) -> Any:
             return {k: convert_to_dict(v, _seen) for k, v in obj.items()}
 
         # Handle lists and tuples - convert both to lists for clean YAML
-        if isinstance(obj, (list, tuple)):
+        if isinstance(obj, list | tuple):
             return [convert_to_dict(item, _seen) for item in obj]
 
         # Handle sets

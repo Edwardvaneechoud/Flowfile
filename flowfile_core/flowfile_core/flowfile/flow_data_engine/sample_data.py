@@ -49,7 +49,7 @@ def create_fake_data(n_records: int = 1000, optimized: bool = True) -> pl.DataFr
         return fake.phone_number()
 
     data = []
-    for i in range(max_n_records):
+    for _i in range(max_n_records):
         name = generate_name()
         data.append(
             dict(
@@ -92,7 +92,8 @@ def create_fake_data_raw(
     first_names = partial(fake.first_name)
     last_names = partial(fake.last_name)
     domain_names = [fake.domain_name() for _ in range(10)]  # Pre-generate a small list
-    sales_data = lambda: fake.random_int(0, 1000)
+    def sales_data():
+        return fake.random_int(0, 1000)
 
     def generate_name():
         return f"{first_names()} {last_names()}"

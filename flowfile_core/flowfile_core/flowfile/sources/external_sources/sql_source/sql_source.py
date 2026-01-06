@@ -302,8 +302,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
     def get_iter(self) -> Generator[dict[str, Any], None, None]:
         logger.warning("Getting data in iteration, this is suboptimal")
         data = self.data_getter()
-        for row in data:
-            yield row
+        yield from data
 
     def get_df(self):
         df = self.get_pl_df()

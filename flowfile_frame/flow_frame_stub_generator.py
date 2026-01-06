@@ -52,7 +52,7 @@ def format_default_value(param: inspect.Parameter) -> str | None:
 
     default = param.default
 
-    if isinstance(default, (str, int, float, bool, type(None))):
+    if isinstance(default, str | int | float | bool | type(None)):
         return repr(default)
 
     type_name = type(default).__name__
