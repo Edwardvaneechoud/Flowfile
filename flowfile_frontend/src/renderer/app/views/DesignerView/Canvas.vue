@@ -380,7 +380,14 @@ const handleKeyDown = (event: KeyboardEvent) => {
   const isInputElement =
     target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
-  if (eventKeyClicked && key === "c" && !isInputElement) {
+  if (eventKeyClicked && key === "a" && !isInputElement) {
+    // Select all nodes
+    event.preventDefault();
+    const allNodes = instance.getNodes.value;
+    allNodes.forEach((node: any) => {
+      node.selected = true;
+    });
+  } else if (eventKeyClicked && key === "c" && !isInputElement) {
     // Copy selected nodes
     copySelectedNodes();
     event.preventDefault();
