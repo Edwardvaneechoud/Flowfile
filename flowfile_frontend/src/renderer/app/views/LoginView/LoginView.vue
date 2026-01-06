@@ -68,51 +68,49 @@
       </form>
 
       <div class="login-footer">
-        <p class="footer-text">
-          Flowfile - Visual Data Processing
-        </p>
+        <p class="footer-text">Flowfile - Visual Data Processing</p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useAuthStore } from '../../stores/auth-store'
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import { useAuthStore } from "../../stores/auth-store";
 
-const router = useRouter()
-const authStore = useAuthStore()
+const router = useRouter();
+const authStore = useAuthStore();
 
-const username = ref('')
-const password = ref('')
-const showPassword = ref(false)
-const isLoading = ref(false)
-const error = ref('')
+const username = ref("");
+const password = ref("");
+const showPassword = ref(false);
+const isLoading = ref(false);
+const error = ref("");
 
 const handleLogin = async () => {
   if (!username.value || !password.value) {
-    return
+    return;
   }
 
-  isLoading.value = true
-  error.value = ''
+  isLoading.value = true;
+  error.value = "";
 
   try {
-    const success = await authStore.login(username.value, password.value)
+    const success = await authStore.login(username.value, password.value);
 
     if (success) {
-      router.push({ name: 'designer' })
+      router.push({ name: "designer" });
     } else {
-      error.value = authStore.authError || 'Invalid username or password'
+      error.value = authStore.authError || "Invalid username or password";
     }
   } catch (err) {
-    error.value = 'An error occurred during login. Please try again.'
-    console.error('Login error:', err)
+    error.value = "An error occurred during login. Please try again.";
+    console.error("Login error:", err);
   } finally {
-    isLoading.value = false
+    isLoading.value = false;
   }
-}
+};
 </script>
 
 <style scoped>
@@ -121,7 +119,11 @@ const handleLogin = async () => {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, var(--color-background-secondary) 0%, var(--color-background-primary) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--color-background-secondary) 0%,
+    var(--color-background-primary) 100%
+  );
   padding: var(--spacing-4);
 }
 
@@ -222,7 +224,9 @@ const handleLogin = async () => {
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-primary);
   border-radius: var(--border-radius-md);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .form-input.with-icon {

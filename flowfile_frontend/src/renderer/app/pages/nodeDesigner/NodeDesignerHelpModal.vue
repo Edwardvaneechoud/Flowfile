@@ -61,21 +61,15 @@
 
             <h4>Quick Start</h4>
             <ol class="steps-list">
-              <li>
-                <strong>Set metadata</strong> - Name your node and choose a category
-              </li>
-              <li>
-                <strong>Add sections</strong> - Create UI sections to organize your settings
-              </li>
+              <li><strong>Set metadata</strong> - Name your node and choose a category</li>
+              <li><strong>Add sections</strong> - Create UI sections to organize your settings</li>
               <li>
                 <strong>Add components</strong> - Drag components from the palette into sections
               </li>
               <li>
                 <strong>Configure properties</strong> - Select a component to edit its properties
               </li>
-              <li>
-                <strong>Write process code</strong> - Implement your transformation logic
-              </li>
+              <li><strong>Write process code</strong> - Implement your transformation logic</li>
               <li><strong>Save</strong> - Your node is ready to use!</li>
             </ol>
           </div>
@@ -100,22 +94,20 @@
 
             <h4>Component Palette (Left)</h4>
             <p>
-              Contains all available UI components. Drag them into a section on the Design Canvas
-              to add them to your node.
+              Contains all available UI components. Drag them into a section on the Design Canvas to
+              add them to your node.
             </p>
 
             <h4>Design Canvas (Center)</h4>
             <ul class="help-list">
               <li>
-                <strong>Node Metadata</strong> - Set your node's name, category, title,
-                description, and number of inputs/outputs
+                <strong>Node Metadata</strong> - Set your node's name, category, title, description,
+                and number of inputs/outputs
               </li>
               <li>
                 <strong>UI Sections</strong> - Organize your components into collapsible sections
               </li>
-              <li>
-                <strong>Process Method</strong> - Write your Python transformation code
-              </li>
+              <li><strong>Process Method</strong> - Write your Python transformation code</li>
             </ul>
 
             <h4>Property Editor (Right)</h4>
@@ -224,9 +216,7 @@
           <div v-if="activeTab === 'code'" class="tab-panel">
             <h4>Process Method</h4>
             <p>The process method receives input data and returns transformed output:</p>
-            <pre
-              class="help-code"
-            ><code>def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
+            <pre class="help-code"><code>def process(self, *inputs: pl.LazyFrame) -> pl.LazyFrame:
     lf = inputs[0]  # First input
     # Your transformation logic here
     return lf</code></pre>
@@ -336,8 +326,8 @@ actual_key = api_key.get_secret_value()</code></pre>
               <div class="tip-content">
                 <h5>Use secrets for sensitive data</h5>
                 <p>
-                  Never hardcode API keys or passwords. Use the Secret Selector component for
-                  secure credential access.
+                  Never hardcode API keys or passwords. Use the Secret Selector component for secure
+                  credential access.
                 </p>
               </div>
             </div>

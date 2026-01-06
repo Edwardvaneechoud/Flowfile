@@ -1,7 +1,4 @@
-import {
-  NodeCloudStorageWriter,
-  CloudStorageWriteSettings,
-} from "../../../baseNode/nodeInput";
+import { NodeCloudStorageWriter, CloudStorageWriteSettings } from "../../../baseNode/nodeInput";
 
 /**
  * Creates a default NodeCloudStorageWriter object with initial settings.
@@ -11,7 +8,7 @@ import {
  */
 export const createNodeCloudStorageWriter = (
   flowId: number,
-  nodeId: number
+  nodeId: number,
 ): NodeCloudStorageWriter => {
   const cloudStorageWriteSettings: CloudStorageWriteSettings = {
     auth_mode: "aws-cli", // Default to local credentials

@@ -629,21 +629,35 @@ const applyStickyPosition = () => {
 
         if (wasRightAligned) {
           // Maintain distance from right edge
-          const distanceFromRight = prevWindowWidth.value - itemState.value.left - itemState.value.width;
-          itemState.value.left = Math.max(0, newWindowWidth - itemState.value.width - distanceFromRight);
+          const distanceFromRight =
+            prevWindowWidth.value - itemState.value.left - itemState.value.width;
+          itemState.value.left = Math.max(
+            0,
+            newWindowWidth - itemState.value.width - distanceFromRight,
+          );
         }
 
         if (wasBottomAligned) {
           // Maintain distance from bottom edge
-          const distanceFromBottom = prevWindowHeight.value - itemState.value.top - itemState.value.height;
-          itemState.value.top = Math.max(0, newWindowHeight - itemState.value.height - distanceFromBottom);
+          const distanceFromBottom =
+            prevWindowHeight.value - itemState.value.top - itemState.value.height;
+          itemState.value.top = Math.max(
+            0,
+            newWindowHeight - itemState.value.height - distanceFromBottom,
+          );
         }
       }
 
       // Clamp to ensure item stays visible
       const minVisible = 100; // Minimum visible pixels
-      itemState.value.left = Math.max(0, Math.min(itemState.value.left, newWindowWidth - minVisible));
-      itemState.value.top = Math.max(0, Math.min(itemState.value.top, newWindowHeight - minVisible));
+      itemState.value.left = Math.max(
+        0,
+        Math.min(itemState.value.left, newWindowWidth - minVisible),
+      );
+      itemState.value.top = Math.max(
+        0,
+        Math.min(itemState.value.top, newWindowHeight - minVisible),
+      );
 
       // Clamp width/height if they exceed viewport
       if (itemState.value.width > newWindowWidth) {
@@ -803,7 +817,8 @@ onMounted(() => {
 
     // Ensure stickynessPosition is restored from initial state (props.initialPosition)
     // This guarantees sticky items like logViewer snap back to their original position
-    const initialStickyPosition = itemStore.initialItemStates[props.id]?.stickynessPosition || props.initialPosition;
+    const initialStickyPosition =
+      itemStore.initialItemStates[props.id]?.stickynessPosition || props.initialPosition;
     if (initialStickyPosition && initialStickyPosition !== "free") {
       itemState.value.stickynessPosition = initialStickyPosition;
       nextTick(() => {

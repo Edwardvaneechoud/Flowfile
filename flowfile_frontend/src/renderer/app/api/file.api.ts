@@ -1,14 +1,14 @@
 // File API Service - Handles file system operations
 // Consolidated from features/designer/components/fileBrowser/fileSystemApi.ts
-import axios from '../services/axios.config'
-import type { FileInfo, DirectoryContentsParams } from '../types'
+import axios from "../services/axios.config";
+import type { FileInfo, DirectoryContentsParams } from "../types";
 
 const handleApiError = (error: any): never => {
   throw {
-    message: error.response?.data?.detail || 'An unknown error occurred',
+    message: error.response?.data?.detail || "An unknown error occurred",
     status: error.response?.status || 500,
-  }
-}
+  };
+};
 
 export class FileApi {
   /**
@@ -16,10 +16,10 @@ export class FileApi {
    */
   static async getCurrentDirectoryContents(params?: DirectoryContentsParams): Promise<FileInfo[]> {
     try {
-      const response = await axios.get<FileInfo[]>('files/current_directory_contents/', { params })
-      return response.data
+      const response = await axios.get<FileInfo[]>("files/current_directory_contents/", { params });
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -28,15 +28,15 @@ export class FileApi {
    */
   static async getDirectoryContents(
     directory: string,
-    params?: DirectoryContentsParams
+    params?: DirectoryContentsParams,
   ): Promise<FileInfo[]> {
     try {
-      const response = await axios.get<FileInfo[]>('files/directory_contents/', {
+      const response = await axios.get<FileInfo[]>("files/directory_contents/", {
         params: { directory, ...params },
-      })
-      return response.data
+      });
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -45,10 +45,10 @@ export class FileApi {
    */
   static async navigateUp(): Promise<string> {
     try {
-      const response = await axios.post<string>('files/navigate_up/')
-      return response.data
+      const response = await axios.post<string>("files/navigate_up/");
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -57,12 +57,12 @@ export class FileApi {
    */
   static async navigateInto(directoryName: string): Promise<string> {
     try {
-      const response = await axios.post<string>('files/navigate_into/', null, {
+      const response = await axios.post<string>("files/navigate_into/", null, {
         params: { directory_name: directoryName },
-      })
-      return response.data
+      });
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -71,12 +71,12 @@ export class FileApi {
    */
   static async navigateTo(directoryPath: string): Promise<string> {
     try {
-      const response = await axios.post<string>('files/navigate_to/', null, {
+      const response = await axios.post<string>("files/navigate_to/", null, {
         params: { directory_name: directoryPath },
-      })
-      return response.data
+      });
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -85,10 +85,10 @@ export class FileApi {
    */
   static async getCurrentPath(): Promise<string> {
     try {
-      const response = await axios.get<string>('files/current_path/')
-      return response.data
+      const response = await axios.get<string>("files/current_path/");
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -97,12 +97,12 @@ export class FileApi {
    */
   static async createDirectory(directoryName: string): Promise<boolean> {
     try {
-      const response = await axios.post<boolean>('files/create_directory', {
+      const response = await axios.post<boolean>("files/create_directory", {
         name: directoryName,
-      })
-      return response.data
+      });
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -111,10 +111,10 @@ export class FileApi {
    */
   static async getFileTree(): Promise<FileInfo[]> {
     try {
-      const response = await axios.get<FileInfo[]>('files/tree/')
-      return response.data
+      const response = await axios.get<FileInfo[]>("files/tree/");
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 
@@ -123,12 +123,12 @@ export class FileApi {
    */
   static async getLocalFiles(directory: string): Promise<FileInfo[]> {
     try {
-      const response = await axios.get<FileInfo[]>('files/files_in_local_directory/', {
+      const response = await axios.get<FileInfo[]>("files/files_in_local_directory/", {
         params: { directory },
-      })
-      return response.data
+      });
+      return response.data;
     } catch (error) {
-      return handleApiError(error)
+      return handleApiError(error);
     }
   }
 }
@@ -137,12 +137,12 @@ export class FileApi {
 // Legacy function exports for backward compatibility
 // ============================================================================
 
-export const getCurrentDirectoryContents = FileApi.getCurrentDirectoryContents
-export const getDirectoryContents = FileApi.getDirectoryContents
-export const navigateUp = FileApi.navigateUp
-export const navigateInto = FileApi.navigateInto
-export const navigateTo = FileApi.navigateTo
-export const getCurrentPath = FileApi.getCurrentPath
-export const createDirectory = FileApi.createDirectory
-export const getFileTree = FileApi.getFileTree
-export const getLocalFiles = FileApi.getLocalFiles
+export const getCurrentDirectoryContents = FileApi.getCurrentDirectoryContents;
+export const getDirectoryContents = FileApi.getDirectoryContents;
+export const navigateUp = FileApi.navigateUp;
+export const navigateInto = FileApi.navigateInto;
+export const navigateTo = FileApi.navigateTo;
+export const getCurrentPath = FileApi.getCurrentPath;
+export const createDirectory = FileApi.createDirectory;
+export const getFileTree = FileApi.getFileTree;
+export const getLocalFiles = FileApi.getLocalFiles;

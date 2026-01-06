@@ -1,9 +1,9 @@
 /**
  * Composable for session storage persistence
  */
-import { watch, onMounted } from 'vue';
-import { STORAGE_KEY } from '../constants';
-import type { NodeMetadata, DesignerSection } from '../types';
+import { watch, onMounted } from "vue";
+import { STORAGE_KEY } from "../constants";
+import type { NodeMetadata, DesignerSection } from "../types";
 
 interface StorageState {
   nodeMetadata: NodeMetadata;
@@ -14,7 +14,7 @@ interface StorageState {
 export function useSessionStorage(
   getState: () => StorageState,
   setState: (state: Partial<StorageState>) => void,
-  resetState: () => void
+  resetState: () => void,
 ) {
   function saveToSessionStorage() {
     const state = getState();
@@ -28,7 +28,7 @@ export function useSessionStorage(
         const state = JSON.parse(saved);
         setState(state);
       } catch (e) {
-        console.error('Failed to load from session storage:', e);
+        console.error("Failed to load from session storage:", e);
       }
     }
   }
@@ -40,9 +40,13 @@ export function useSessionStorage(
 
   // Setup auto-save watcher
   function setupAutoSave(watchSources: () => any[]) {
-    watch(watchSources, () => {
-      saveToSessionStorage();
-    }, { deep: true });
+    watch(
+      watchSources,
+      () => {
+        saveToSessionStorage();
+      },
+      { deep: true },
+    );
   }
 
   // Load on mount

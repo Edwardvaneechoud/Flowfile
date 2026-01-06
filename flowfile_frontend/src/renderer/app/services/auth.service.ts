@@ -1,6 +1,6 @@
 // src/app/services/auth.service.ts
-import axios from 'axios';
-import { ref } from 'vue';
+import axios from "axios";
+import { ref } from "vue";
 
 interface AuthResponse {
   access_token: string;
@@ -35,9 +35,9 @@ class AuthService {
   }
 
   private loadStoredToken(): void {
-    const savedToken = localStorage.getItem('auth_token');
-    const savedExpiration = localStorage.getItem('auth_token_expiration');
-    const savedUsername = localStorage.getItem('auth_username');
+    const savedToken = localStorage.getItem("auth_token");
+    const savedExpiration = localStorage.getItem("auth_token_expiration");
+    const savedUsername = localStorage.getItem("auth_username");
 
     if (savedToken && savedExpiration) {
       const expirationTime = parseInt(savedExpiration, 10);
@@ -60,13 +60,13 @@ class AuthService {
   isInElectronMode(): boolean {
     return this.isElectronMode.value;
   }
-  
+
   private clearStoredTokens(): void {
-    const savedExpiration = localStorage.getItem('auth_token_expiration');
+    const savedExpiration = localStorage.getItem("auth_token_expiration");
     if (!savedExpiration || parseInt(savedExpiration, 10) <= Date.now()) {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_token_expiration');
-      localStorage.removeItem('auth_username');
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("auth_token_expiration");
+      localStorage.removeItem("auth_username");
     }
   }
 
@@ -89,13 +89,13 @@ class AuthService {
   async login(username: string, password: string): Promise<boolean> {
     try {
       const formData = new FormData();
-      formData.append('username', username);
-      formData.append('password', password);
+      formData.append("username", username);
+      formData.append("password", password);
 
-      const response = await axios.post<AuthResponse>('/auth/token', formData, {
+      const response = await axios.post<AuthResponse>("/auth/token", formData, {
         headers: {
-          'X-Skip-Auth-Header': 'true',
-          'Content-Type': 'multipart/form-data',
+          "X-Skip-Auth-Header": "true",
+          "Content-Type": "multipart/form-data",
         },
       });
 
@@ -106,7 +106,7 @@ class AuthService {
       }
       return false;
     } catch (error) {
-      console.error('Login failed:', error);
+      console.error("Login failed:", error);
       return false;
     }
   }
@@ -117,15 +117,15 @@ class AuthService {
     }
 
     try {
-      const response = await axios.get<UserInfo>('/auth/users/me');
+      const response = await axios.get<UserInfo>("/auth/users/me");
       if (response.data) {
         this.currentUsername.value = response.data.username;
-        localStorage.setItem('auth_username', response.data.username);
+        localStorage.setItem("auth_username", response.data.username);
         return response.data;
       }
       return null;
     } catch (error) {
-      console.error('Failed to get current user:', error);
+      console.error("Failed to get current user:", error);
       return this.currentUsername.value ? { username: this.currentUsername.value } : null;
     }
   }
@@ -136,9 +136,13 @@ class AuthService {
 
   private async getElectronToken(): Promise<boolean> {
     try {
-      const response = await axios.post<AuthResponse>('/auth/token', {}, {
-        headers: { 'X-Skip-Auth-Header': 'true' }
-      });
+      const response = await axios.post<AuthResponse>(
+        "/auth/token",
+        {},
+        {
+          headers: { "X-Skip-Auth-Header": "true" },
+        },
+      );
 
       if (response.data?.access_token) {
         const expirationTime = response.data.expires_at || this.calculateExpiration();
@@ -147,7 +151,7 @@ class AuthService {
       }
       return false;
     } catch (error) {
-      console.error('Failed to get Electron token:', error);
+      console.error("Failed to get Electron token:", error);
       return false;
     }
   }
@@ -188,17 +192,17 @@ class AuthService {
   private setToken(token: string, expiration: number, username?: string): void {
     this.token.value = token;
     this.tokenExpiration.value = expiration;
-    localStorage.setItem('auth_token', token);
-    localStorage.setItem('auth_token_expiration', expiration.toString());
+    localStorage.setItem("auth_token", token);
+    localStorage.setItem("auth_token_expiration", expiration.toString());
 
     if (username) {
       this.currentUsername.value = username;
-      localStorage.setItem('auth_username', username);
+      localStorage.setItem("auth_username", username);
     }
   }
 
   private calculateExpiration(hoursTilExpire = 1): number {
-    return Date.now() + (hoursTilExpire * 60 * 60 * 1000);
+    return Date.now() + hoursTilExpire * 60 * 60 * 1000;
   }
 
   hasValidToken(): boolean {
@@ -217,9 +221,9 @@ class AuthService {
     this.token.value = null;
     this.tokenExpiration.value = null;
     this.currentUsername.value = null;
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_token_expiration');
-    localStorage.removeItem('auth_username');
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_token_expiration");
+    localStorage.removeItem("auth_username");
   }
 }
 
@@ -228,8 +232,8 @@ axios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    const requestUrl = originalRequest?.url || '';
-    const isAuthRequest = requestUrl.includes('/auth/token') || requestUrl.includes('/auth/');
+    const requestUrl = originalRequest?.url || "";
+    const isAuthRequest = requestUrl.includes("/auth/token") || requestUrl.includes("/auth/");
 
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
       originalRequest._retry = true;
@@ -237,31 +241,31 @@ axios.interceptors.response.use(
 
       if (isElectron) {
         // In Electron mode, auto-refresh the token
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_token_expiration');
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_token_expiration");
 
         const authInstance = new AuthService();
         await authInstance.initialize();
         const newToken = await authInstance.getToken();
 
         if (newToken) {
-          originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
+          originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
           return axios(originalRequest);
         }
       } else {
         // In Docker mode, redirect to login
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_token_expiration');
-        localStorage.removeItem('auth_username');
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_token_expiration");
+        localStorage.removeItem("auth_username");
 
-        if (!window.location.hash.includes('login')) {
-          window.location.href = '/#/login';
+        if (!window.location.hash.includes("login")) {
+          window.location.href = "/#/login";
         }
       }
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 export const authService = new AuthService();

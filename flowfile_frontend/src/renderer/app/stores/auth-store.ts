@@ -1,23 +1,23 @@
-import { defineStore } from 'pinia'
-import authService from '../services/auth.service'
+import { defineStore } from "pinia";
+import authService from "../services/auth.service";
 
 export interface User {
-  username: string
-  email?: string
-  full_name?: string
-  is_admin?: boolean
-  id?: number
-  must_change_password?: boolean
+  username: string;
+  email?: string;
+  full_name?: string;
+  is_admin?: boolean;
+  id?: number;
+  must_change_password?: boolean;
 }
 
 interface AuthState {
-  user: User | null
-  isAuthenticated: boolean
-  isLoading: boolean
-  error: string | null
+  user: User | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  error: string | null;
 }
 
-export const useAuthStore = defineStore('auth', {
+export const useAuthStore = defineStore("auth", {
   state: (): AuthState => ({
     user: null,
     isAuthenticated: false,
@@ -35,81 +35,81 @@ export const useAuthStore = defineStore('auth', {
 
   actions: {
     async login(username: string, password: string): Promise<boolean> {
-      this.isLoading = true
-      this.error = null
+      this.isLoading = true;
+      this.error = null;
 
       try {
-        const success = await authService.login(username, password)
+        const success = await authService.login(username, password);
 
         if (success) {
-          this.isAuthenticated = true
+          this.isAuthenticated = true;
           // Fetch full user info including is_admin
-          const userInfo = await authService.getCurrentUser()
+          const userInfo = await authService.getCurrentUser();
           if (userInfo) {
-            this.user = userInfo
+            this.user = userInfo;
           } else {
-            this.user = { username }
+            this.user = { username };
           }
-          return true
+          return true;
         } else {
-          this.error = 'Invalid username or password'
-          return false
+          this.error = "Invalid username or password";
+          return false;
         }
       } catch (error) {
-        this.error = error instanceof Error ? error.message : 'Login failed'
-        return false
+        this.error = error instanceof Error ? error.message : "Login failed";
+        return false;
       } finally {
-        this.isLoading = false
+        this.isLoading = false;
       }
     },
 
     async initialize(): Promise<boolean> {
-      this.isLoading = true
+      this.isLoading = true;
 
       try {
-        const authenticated = await authService.initialize()
-        this.isAuthenticated = authenticated
+        const authenticated = await authService.initialize();
+        this.isAuthenticated = authenticated;
 
         if (authenticated) {
           // Try to get user info from the backend
-          const userInfo = await authService.getCurrentUser()
+          const userInfo = await authService.getCurrentUser();
           if (userInfo) {
-            this.user = userInfo
+            this.user = userInfo;
           }
         }
 
-        return authenticated
+        return authenticated;
       } catch (error) {
-        console.error('Failed to initialize auth:', error)
-        this.isAuthenticated = false
-        return false
+        console.error("Failed to initialize auth:", error);
+        this.isAuthenticated = false;
+        return false;
       } finally {
-        this.isLoading = false
+        this.isLoading = false;
       }
     },
 
     logout() {
-      authService.logout()
-      this.user = null
-      this.isAuthenticated = false
-      this.error = null
+      authService.logout();
+      this.user = null;
+      this.isAuthenticated = false;
+      this.error = null;
     },
 
     clearError() {
-      this.error = null
+      this.error = null;
     },
 
     async refreshUserInfo() {
-      const userInfo = await authService.getCurrentUser()
+      const userInfo = await authService.getCurrentUser();
       if (userInfo) {
-        this.user = userInfo
+        this.user = userInfo;
       }
     },
 
     clearMustChangePassword() {
       if (this.user) {
-        this.user.must_change_password = false
+        this.user.must_change_password = false;
       }
     },
   },
-})
+});

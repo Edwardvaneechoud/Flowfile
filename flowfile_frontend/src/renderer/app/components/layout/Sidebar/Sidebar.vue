@@ -11,10 +11,7 @@
         <ThemeToggle />
       </div>
       <div v-if="showLogout" class="footer-btn-wrapper" data-tooltip="Sign out">
-        <button
-          class="logout-button"
-          @click="handleLogout"
-        >
+        <button class="logout-button" @click="handleLogout">
           <i class="fa-solid fa-right-from-bracket"></i>
         </button>
       </div>
@@ -50,7 +47,7 @@ const authStore = useAuthStore();
 const items = computed(() => {
   const isAdmin = authStore.isAdmin;
   const isElectron = authService.isInElectronMode();
-  return NavigationRoutes.routes.filter(route => {
+  return NavigationRoutes.routes.filter((route) => {
     // Hide routes marked as hideInElectron when in Electron mode
     if (route.hideInElectron && isElectron) return false;
     // Show route if it doesn't require admin, or if user is admin
@@ -63,7 +60,7 @@ const showLogout = computed(() => !authService.isInElectronMode());
 
 const handleLogout = () => {
   authService.logout();
-  router.push({ name: 'login' });
+  router.push({ name: "login" });
 };
 </script>
 

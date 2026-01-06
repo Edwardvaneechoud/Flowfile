@@ -6,6 +6,6 @@
 // ============================================================================
 
 export interface InstantFuncResult {
-  success: boolean
-  result: string
+  success: boolean;
+  result: string;
 }

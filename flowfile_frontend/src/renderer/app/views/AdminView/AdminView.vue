@@ -3,7 +3,13 @@
     <!-- Status Message -->
     <Transition name="fade">
       <div v-if="statusMessage" :class="['status-message', `status-${statusMessage.type}`]">
-        <i :class="statusMessage.type === 'success' ? 'fa-solid fa-check-circle' : 'fa-solid fa-exclamation-circle'"></i>
+        <i
+          :class="
+            statusMessage.type === 'success'
+              ? 'fa-solid fa-check-circle'
+              : 'fa-solid fa-exclamation-circle'
+          "
+        ></i>
         <span>{{ statusMessage.text }}</span>
       </div>
     </Transition>
@@ -55,15 +61,21 @@
               </div>
               <ul v-if="newUser.password" class="password-requirements">
                 <li :class="{ valid: passwordChecks.minLength }">
-                  <i :class="passwordChecks.minLength ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  <i
+                    :class="passwordChecks.minLength ? 'fa-solid fa-check' : 'fa-solid fa-times'"
+                  ></i>
                   8+ characters
                 </li>
                 <li :class="{ valid: passwordChecks.hasNumber }">
-                  <i :class="passwordChecks.hasNumber ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  <i
+                    :class="passwordChecks.hasNumber ? 'fa-solid fa-check' : 'fa-solid fa-times'"
+                  ></i>
                   Number
                 </li>
                 <li :class="{ valid: passwordChecks.hasSpecial }">
-                  <i :class="passwordChecks.hasSpecial ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  <i
+                    :class="passwordChecks.hasSpecial ? 'fa-solid fa-check' : 'fa-solid fa-times'"
+                  ></i>
                   Special char
                 </li>
               </ul>
@@ -93,11 +105,7 @@
 
             <div class="form-field checkbox-field">
               <label class="checkbox-label">
-                <input
-                  v-model="newUser.is_admin"
-                  type="checkbox"
-                  class="form-checkbox"
-                />
+                <input v-model="newUser.is_admin" type="checkbox" class="form-checkbox" />
                 <span>Administrator</span>
               </label>
             </div>
@@ -158,23 +166,27 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="user in filteredUsers" :key="user.id" :class="{ 'disabled-row': user.disabled }">
+              <tr
+                v-for="user in filteredUsers"
+                :key="user.id"
+                :class="{ 'disabled-row': user.disabled }"
+              >
                 <td>
                   <div class="user-cell">
                     <i class="fa-solid fa-user"></i>
                     <span>{{ user.username }}</span>
                   </div>
                 </td>
-                <td>{{ user.email || '-' }}</td>
-                <td>{{ user.full_name || '-' }}</td>
+                <td>{{ user.email || "-" }}</td>
+                <td>{{ user.full_name || "-" }}</td>
                 <td>
                   <span :class="['badge', user.is_admin ? 'badge-primary' : 'badge-secondary']">
-                    {{ user.is_admin ? 'Admin' : 'User' }}
+                    {{ user.is_admin ? "Admin" : "User" }}
                   </span>
                 </td>
                 <td>
                   <span :class="['badge', user.disabled ? 'badge-danger' : 'badge-success']">
-                    {{ user.disabled ? 'Disabled' : 'Active' }}
+                    {{ user.disabled ? "Disabled" : "Active" }}
                   </span>
                 </td>
                 <td>
@@ -281,19 +293,11 @@
 
             <div v-if="editUser?.id !== currentUserId" class="checkbox-group">
               <label class="checkbox-label">
-                <input
-                  v-model="editFormData.is_admin"
-                  type="checkbox"
-                  class="form-checkbox"
-                />
+                <input v-model="editFormData.is_admin" type="checkbox" class="form-checkbox" />
                 <span>Administrator</span>
               </label>
               <label class="checkbox-label">
-                <input
-                  v-model="editFormData.disabled"
-                  type="checkbox"
-                  class="form-checkbox"
-                />
+                <input v-model="editFormData.disabled" type="checkbox" class="form-checkbox" />
                 <span>Disabled</span>
               </label>
             </div>
@@ -320,7 +324,8 @@
         </div>
         <div class="modal-content">
           <p>
-            Are you sure you want to delete the user <strong>{{ userToDelete?.username }}</strong>?
+            Are you sure you want to delete the user <strong>{{ userToDelete?.username }}</strong
+            >?
           </p>
           <p class="warning-text">
             This will also delete all their secrets, database connections, and cloud connections.
@@ -342,7 +347,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useAuthStore } from "../../stores/auth-store";
-import userService, { type User, type UserCreate, type UserUpdate } from "../../services/user.service";
+import userService, {
+  type User,
+  type UserCreate,
+  type UserUpdate,
+} from "../../services/user.service";
 
 const authStore = useAuthStore();
 const currentUserId = computed(() => authStore.currentUser?.id);
@@ -370,10 +379,11 @@ const passwordChecks = computed(() => ({
   hasSpecial: /[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/.test(newUser.value.password),
 }));
 
-const isPasswordValid = computed(() =>
-  passwordChecks.value.minLength &&
-  passwordChecks.value.hasNumber &&
-  passwordChecks.value.hasSpecial
+const isPasswordValid = computed(
+  () =>
+    passwordChecks.value.minLength &&
+    passwordChecks.value.hasNumber &&
+    passwordChecks.value.hasSpecial,
 );
 
 // Edit modal
@@ -396,7 +406,7 @@ const filteredUsers = computed(() => {
     (user) =>
       user.username.toLowerCase().includes(term) ||
       user.email?.toLowerCase().includes(term) ||
-      user.full_name?.toLowerCase().includes(term)
+      user.full_name?.toLowerCase().includes(term),
   );
 });
 
@@ -407,23 +417,28 @@ const loadUsers = async () => {
     users.value = await userService.getUsers();
   } catch (error) {
     console.error("Failed to load users:", error);
-    showStatus('error', "Failed to load users. Please try again.");
+    showStatus("error", "Failed to load users. Please try again.");
   } finally {
     isLoading.value = false;
   }
 };
 
 // Status message state
-const statusMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null);
+const statusMessage = ref<{ type: "success" | "error"; text: string } | null>(null);
 
-const showStatus = (type: 'success' | 'error', text: string) => {
+const showStatus = (type: "success" | "error", text: string) => {
   statusMessage.value = { type, text };
-  setTimeout(() => { statusMessage.value = null; }, 4000);
+  setTimeout(() => {
+    statusMessage.value = null;
+  }, 4000);
 };
 
 const getErrorMessage = (error: unknown): string => {
   const axiosError = error as { response?: { data?: { detail?: string } } };
-  return axiosError.response?.data?.detail || (error instanceof Error ? error.message : "An error occurred");
+  return (
+    axiosError.response?.data?.detail ||
+    (error instanceof Error ? error.message : "An error occurred")
+  );
 };
 
 // Create user
@@ -436,9 +451,9 @@ const handleAddUser = async () => {
     newUser.value = { username: "", password: "", email: "", full_name: "", is_admin: false };
     showNewPassword.value = false;
     await loadUsers();
-    showStatus('success', "User created successfully");
+    showStatus("success", "User created successfully");
   } catch (error: unknown) {
-    showStatus('error', getErrorMessage(error));
+    showStatus("error", getErrorMessage(error));
   } finally {
     isSubmitting.value = false;
   }
@@ -489,9 +504,9 @@ const handleUpdateUser = async () => {
     await userService.updateUser(editUser.value.id, updateData);
     closeEditModal();
     await loadUsers();
-    showStatus('success', "User updated successfully");
+    showStatus("success", "User updated successfully");
   } catch (error: unknown) {
-    showStatus('error', getErrorMessage(error));
+    showStatus("error", getErrorMessage(error));
   } finally {
     isUpdating.value = false;
   }
@@ -516,9 +531,9 @@ const handleDeleteUser = async () => {
     await userService.deleteUser(userToDelete.value.id);
     closeDeleteModal();
     await loadUsers();
-    showStatus('success', "User deleted successfully");
+    showStatus("success", "User deleted successfully");
   } catch (error: unknown) {
-    showStatus('error', getErrorMessage(error));
+    showStatus("error", getErrorMessage(error));
   } finally {
     isDeleting.value = false;
   }
@@ -529,9 +544,9 @@ const handleForcePasswordChange = async (user: User) => {
   try {
     await userService.updateUser(user.id, { must_change_password: true });
     await loadUsers();
-    showStatus('success', `${user.username} will be required to change password on next login`);
+    showStatus("success", `${user.username} will be required to change password on next login`);
   } catch (error: unknown) {
-    showStatus('error', getErrorMessage(error));
+    showStatus("error", getErrorMessage(error));
   }
 };
 

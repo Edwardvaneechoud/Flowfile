@@ -2,7 +2,7 @@
   <div class="code-editor-section">
     <div class="code-editor-header">
       <h4>Process Method</h4>
-      <button class="help-btn" @click="showHelp = true" title="Show help">
+      <button class="help-btn" title="Show help" @click="showHelp = true">
         <i class="fa-solid fa-circle-question"></i>
         <span>Help</span>
       </button>

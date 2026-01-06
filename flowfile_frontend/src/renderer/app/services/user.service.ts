@@ -1,5 +1,5 @@
 // src/app/services/user.service.ts
-import axios from 'axios';
+import axios from "axios";
 
 export interface User {
   id: number;
@@ -33,7 +33,7 @@ class UserService {
    * Get all users (admin only)
    */
   async getUsers(): Promise<User[]> {
-    const response = await axios.get<User[]>('/auth/users');
+    const response = await axios.get<User[]>("/auth/users");
     return response.data;
   }
 
@@ -41,7 +41,7 @@ class UserService {
    * Create a new user (admin only)
    */
   async createUser(userData: UserCreate): Promise<User> {
-    const response = await axios.post<User>('/auth/users', userData);
+    const response = await axios.post<User>("/auth/users", userData);
     return response.data;
   }
 

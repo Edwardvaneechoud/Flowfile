@@ -43,7 +43,7 @@ authService
     // If not authenticated and not in Electron mode, redirect to login
     if (!authenticated && !authService.isInElectronMode()) {
       console.log("Redirecting to login page");
-      router.push({ name: 'login' });
+      router.push({ name: "login" });
     }
   })
   .catch((error) => {
@@ -52,6 +52,6 @@ authService
 
     // On error, if not in Electron mode, redirect to login
     if (!authService.isInElectronMode()) {
-      router.push({ name: 'login' });
+      router.push({ name: "login" });
     }
   });

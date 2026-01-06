@@ -1,14 +1,14 @@
 // Results Store - Manages run results, node results, and caching
-import { defineStore } from 'pinia';
+import { defineStore } from "pinia";
 import type {
   RunInformation,
   RunInformationDictionary,
   NodeResult,
   NodeValidation,
   NodeValidationInput,
-} from '../types';
+} from "../types";
 
-export const useResultsStore = defineStore('results', {
+export const useResultsStore = defineStore("results", {
   state: () => ({
     runResults: {} as RunInformationDictionary,
     runNodeResults: {} as Record<number, Record<number, NodeResult>>,
@@ -39,7 +39,7 @@ export const useResultsStore = defineStore('results', {
     },
 
     resetNodeResult(): void {
-      console.log('Clearing node results');
+      console.log("Clearing node results");
       this.runNodeResults = {};
     },
 
@@ -59,9 +59,9 @@ export const useResultsStore = defineStore('results', {
     setNodeValidation(
       flowId: number,
       nodeId: number | string,
-      nodeValidationInput: NodeValidationInput
+      nodeValidationInput: NodeValidationInput,
     ): void {
-      if (typeof nodeId === 'string') {
+      if (typeof nodeId === "string") {
         nodeId = parseInt(nodeId);
       }
       this.initializeValidationCache(flowId);
@@ -77,11 +77,13 @@ export const useResultsStore = defineStore('results', {
     },
 
     getNodeValidation(flowId: number, nodeId: number): NodeValidation {
-      return this.runNodeValidations[flowId]?.[nodeId] || {
-        isValid: true,
-        error: '',
-        validationTime: 0,
-      };
+      return (
+        this.runNodeValidations[flowId]?.[nodeId] || {
+          isValid: true,
+          error: "",
+          validationTime: 0,
+        }
+      );
     },
 
     // ========== Run Results Management ==========

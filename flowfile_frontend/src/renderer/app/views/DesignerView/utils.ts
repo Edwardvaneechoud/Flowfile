@@ -1,5 +1,3 @@
-
-
 export function toCamelCase(str: string) {
   return str
     .split("_")
@@ -22,11 +20,13 @@ export function toTitleCase(str: string): string {
 export function toSnakeCase(str: string): string {
   // Handle empty strings
   if (!str) return str;
-  
-  return str
-    // Insert underscore before any uppercase letter and convert to lowercase
-    .replace(/([A-Z])/g, '_$1')
-    // Handle consecutive uppercase letters (like API, HTTP)
-    .replace(/^_/, '')
-    .toLowerCase();
+
+  return (
+    str
+      // Insert underscore before any uppercase letter and convert to lowercase
+      .replace(/([A-Z])/g, "_$1")
+      // Handle consecutive uppercase letters (like API, HTTP)
+      .replace(/^_/, "")
+      .toLowerCase()
+  );
 }

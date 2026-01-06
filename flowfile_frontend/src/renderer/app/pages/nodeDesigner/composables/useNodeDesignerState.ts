@@ -1,9 +1,9 @@
 /**
  * Composable for managing Node Designer state
  */
-import { ref, reactive, computed } from 'vue';
-import type { DesignerSection, DesignerComponent, NodeMetadata } from '../types';
-import { defaultNodeMetadata, defaultProcessCode } from '../constants';
+import { ref, reactive, computed } from "vue";
+import type { DesignerSection, DesignerComponent, NodeMetadata } from "../types";
+import { defaultNodeMetadata, defaultProcessCode } from "../constants";
 
 export function useNodeDesignerState() {
   // Node metadata
@@ -20,14 +20,16 @@ export function useNodeDesignerState() {
   // Computed: currently selected component
   const selectedComponent = computed(() => {
     if (selectedSectionIndex.value !== null && selectedComponentIndex.value !== null) {
-      return sections.value[selectedSectionIndex.value]?.components[selectedComponentIndex.value] || null;
+      return (
+        sections.value[selectedSectionIndex.value]?.components[selectedComponentIndex.value] || null
+      );
     }
     return null;
   });
 
   // Computed: can save (basic validation)
   const canSave = computed(() => {
-    return nodeMetadata.node_name.trim() !== '' && nodeMetadata.node_category.trim() !== '';
+    return nodeMetadata.node_name.trim() !== "" && nodeMetadata.node_category.trim() !== "";
   });
 
   // Section management
@@ -57,10 +59,10 @@ export function useNodeDesignerState() {
 
   function sanitizeSectionName(index: number) {
     let name = sections.value[index].name;
-    name = name.replace(/[\s-]+/g, '_');
-    name = name.replace(/[^a-zA-Z0-9_]/g, '');
+    name = name.replace(/[\s-]+/g, "_");
+    name = name.replace(/[^a-zA-Z0-9_]/g, "");
     if (/^[0-9]/.test(name)) {
-      name = '_' + name;
+      name = "_" + name;
     }
     name = name.toLowerCase();
     sections.value[index].name = name;

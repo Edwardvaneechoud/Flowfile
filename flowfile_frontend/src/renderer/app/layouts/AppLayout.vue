@@ -39,11 +39,15 @@ const mustShowPasswordModal = computed(() => {
 });
 
 // Watch for changes and show modal
-watch(mustShowPasswordModal, (newVal) => {
-  if (newVal) {
-    showPasswordModal.value = true;
-  }
-}, { immediate: true });
+watch(
+  mustShowPasswordModal,
+  (newVal) => {
+    if (newVal) {
+      showPasswordModal.value = true;
+    }
+  },
+  { immediate: true },
+);
 
 const toggleCollapse = () => {
   isCollapse.value = !isCollapse.value;

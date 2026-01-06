@@ -1,5 +1,8 @@
-import { NodeDatabaseWriter, DatabaseWriteSettings, DatabaseConnection } from "../../../baseNode/nodeInput";
-
+import {
+  NodeDatabaseWriter,
+  DatabaseWriteSettings,
+  DatabaseConnection,
+} from "../../../baseNode/nodeInput";
 
 export const createNodeDatabaseWriter = (flowId: number, nodeId: number): NodeDatabaseWriter => {
   const databaseWriteSettings: DatabaseWriteSettings = {
@@ -18,13 +21,13 @@ export const createNodeDatabaseWriter = (flowId: number, nodeId: number): NodeDa
     } as DatabaseConnection,
   };
   const nodePolarsCode: NodeDatabaseWriter = {
-      flow_id: flowId,
-      node_id: nodeId,
-      pos_x: 0,
-      pos_y: 0,
-      database_write_settings: databaseWriteSettings,
-      cache_results: false,
-  }
-  
-  return nodePolarsCode
-}
+    flow_id: flowId,
+    node_id: nodeId,
+    pos_x: 0,
+    pos_y: 0,
+    database_write_settings: databaseWriteSettings,
+    cache_results: false,
+  };
+
+  return nodePolarsCode;
+};

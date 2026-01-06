@@ -7,13 +7,13 @@ import { useAuthStore } from "../stores/auth-store";
 const routes: Array<RouteRecordRaw> = [
   {
     path: "/",
-    redirect: "/main"
+    redirect: "/main",
   },
   {
     path: "/login",
     name: "login",
     component: () => import("../views/LoginView/LoginView.vue"),
-    meta: { requiresAuth: false }
+    meta: { requiresAuth: false },
   },
   {
     path: "/main",
@@ -23,7 +23,7 @@ const routes: Array<RouteRecordRaw> = [
       {
         path: "",
         name: "main",
-        redirect: { name: "designer" }
+        redirect: { name: "designer" },
       },
       {
         path: "designer",
@@ -64,14 +64,14 @@ const routes: Array<RouteRecordRaw> = [
         name: "admin",
         path: "admin",
         component: () => import("../views/AdminView/AdminView.vue"),
-        meta: { requiresAdmin: true, hideInElectron: true }
+        meta: { requiresAdmin: true, hideInElectron: true },
       },
     ],
   },
   {
     path: "/:pathMatch(.*)*",
-    redirect: { name: "designer" }
-  }
+    redirect: { name: "designer" },
+  },
 ];
 
 const router = createRouter({
@@ -82,8 +82,8 @@ const router = createRouter({
 // Navigation guard for authentication
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
-  const requiresAuth = to.matched.some(record => record.meta.requiresAuth !== false);
-  const hideInElectron = to.matched.some(record => record.meta.hideInElectron);
+  const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
+  const hideInElectron = to.matched.some((record) => record.meta.hideInElectron);
 
   // Initialize auth store if authenticated but user info not loaded (e.g., page refresh)
   if (authService.isAuthenticated() && !authStore.user) {
@@ -92,7 +92,7 @@ router.beforeEach(async (to, _from, next) => {
 
   // Block routes that are hidden in Electron mode (e.g., admin/user management)
   if (hideInElectron && authService.isInElectronMode()) {
-    next({ name: 'designer' });
+    next({ name: "designer" });
     return;
   }
 
@@ -108,13 +108,13 @@ router.beforeEach(async (to, _from, next) => {
     if (authService.isAuthenticated()) {
       next();
     } else {
-      next({ name: 'login' });
+      next({ name: "login" });
     }
   } else {
     // Route doesn't require auth (like login page)
     // If already authenticated and going to login, redirect to main
-    if (to.name === 'login' && authService.isAuthenticated()) {
-      next({ name: 'designer' });
+    if (to.name === "login" && authService.isAuthenticated()) {
+      next({ name: "designer" });
     } else {
       next();
     }

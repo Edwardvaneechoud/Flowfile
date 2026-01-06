@@ -5,7 +5,7 @@
         <div class="modal-header">
           <h3 class="modal-title">
             <i class="fa-solid fa-key"></i>
-            {{ isForced ? 'Password Change Required' : 'Change Password' }}
+            {{ isForced ? "Password Change Required" : "Change Password" }}
           </h3>
           <button v-if="!isForced" class="modal-close" aria-label="Close" @click="close">
             <i class="fa-solid fa-times"></i>
@@ -39,7 +39,9 @@
                   <i :class="showCurrentPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
                 </button>
               </div>
-              <span v-if="errors.currentPassword" class="form-error">{{ errors.currentPassword }}</span>
+              <span v-if="errors.currentPassword" class="form-error">{{
+                errors.currentPassword
+              }}</span>
             </div>
 
             <div class="form-field">
@@ -66,15 +68,21 @@
               <span v-if="errors.newPassword" class="form-error">{{ errors.newPassword }}</span>
               <ul class="password-requirements">
                 <li :class="{ valid: passwordChecks.minLength }">
-                  <i :class="passwordChecks.minLength ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  <i
+                    :class="passwordChecks.minLength ? 'fa-solid fa-check' : 'fa-solid fa-times'"
+                  ></i>
                   At least 8 characters
                 </li>
                 <li :class="{ valid: passwordChecks.hasNumber }">
-                  <i :class="passwordChecks.hasNumber ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  <i
+                    :class="passwordChecks.hasNumber ? 'fa-solid fa-check' : 'fa-solid fa-times'"
+                  ></i>
                   At least one number
                 </li>
                 <li :class="{ valid: passwordChecks.hasSpecial }">
-                  <i :class="passwordChecks.hasSpecial ? 'fa-solid fa-check' : 'fa-solid fa-times'"></i>
+                  <i
+                    :class="passwordChecks.hasSpecial ? 'fa-solid fa-check' : 'fa-solid fa-times'"
+                  ></i>
                   At least one special character
                 </li>
               </ul>
@@ -101,7 +109,9 @@
                   <i :class="showConfirmPassword ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
                 </button>
               </div>
-              <span v-if="errors.confirmPassword" class="form-error">{{ errors.confirmPassword }}</span>
+              <span v-if="errors.confirmPassword" class="form-error">{{
+                errors.confirmPassword
+              }}</span>
             </div>
 
             <div v-if="serverError" class="form-field">
@@ -118,7 +128,7 @@
             @click="handleSubmit"
           >
             <i v-if="isSubmitting" class="fa-solid fa-spinner fa-spin"></i>
-            {{ isSubmitting ? 'Changing...' : 'Change Password' }}
+            {{ isSubmitting ? "Changing..." : "Change Password" }}
           </button>
         </div>
       </div>
@@ -127,8 +137,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
-import axios from 'axios';
+import { ref, computed, watch } from "vue";
+import axios from "axios";
 
 const props = defineProps<{
   show: boolean;
@@ -136,27 +146,27 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'success'): void;
+  (e: "close"): void;
+  (e: "success"): void;
 }>();
 
 const formData = ref({
-  currentPassword: '',
-  newPassword: '',
-  confirmPassword: '',
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
 });
 
 const errors = ref({
-  currentPassword: '',
-  newPassword: '',
-  confirmPassword: '',
+  currentPassword: "",
+  newPassword: "",
+  confirmPassword: "",
 });
 
 const showCurrentPassword = ref(false);
 const showNewPassword = ref(false);
 const showConfirmPassword = ref(false);
 const isSubmitting = ref(false);
-const serverError = ref('');
+const serverError = ref("");
 
 // Password validation checks
 const passwordChecks = computed(() => ({
@@ -165,10 +175,11 @@ const passwordChecks = computed(() => ({
   hasSpecial: /[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/.test(formData.value.newPassword),
 }));
 
-const isPasswordValid = computed(() =>
-  passwordChecks.value.minLength &&
-  passwordChecks.value.hasNumber &&
-  passwordChecks.value.hasSpecial
+const isPasswordValid = computed(
+  () =>
+    passwordChecks.value.minLength &&
+    passwordChecks.value.hasNumber &&
+    passwordChecks.value.hasSpecial,
 );
 
 const isFormValid = computed(() => {
@@ -180,43 +191,46 @@ const isFormValid = computed(() => {
 });
 
 // Reset form when modal opens/closes
-watch(() => props.show, (newVal) => {
-  if (newVal) {
-    resetForm();
-  }
-});
+watch(
+  () => props.show,
+  (newVal) => {
+    if (newVal) {
+      resetForm();
+    }
+  },
+);
 
 const resetForm = () => {
-  formData.value = { currentPassword: '', newPassword: '', confirmPassword: '' };
-  errors.value = { currentPassword: '', newPassword: '', confirmPassword: '' };
+  formData.value = { currentPassword: "", newPassword: "", confirmPassword: "" };
+  errors.value = { currentPassword: "", newPassword: "", confirmPassword: "" };
   showCurrentPassword.value = false;
   showNewPassword.value = false;
   showConfirmPassword.value = false;
-  serverError.value = '';
+  serverError.value = "";
 };
 
 const validateForm = (): boolean => {
-  errors.value = { currentPassword: '', newPassword: '', confirmPassword: '' };
+  errors.value = { currentPassword: "", newPassword: "", confirmPassword: "" };
   let isValid = true;
 
   if (!formData.value.currentPassword) {
-    errors.value.currentPassword = 'Current password is required';
+    errors.value.currentPassword = "Current password is required";
     isValid = false;
   }
 
   if (!formData.value.newPassword) {
-    errors.value.newPassword = 'New password is required';
+    errors.value.newPassword = "New password is required";
     isValid = false;
   } else if (!isPasswordValid.value) {
-    errors.value.newPassword = 'Password does not meet requirements';
+    errors.value.newPassword = "Password does not meet requirements";
     isValid = false;
   }
 
   if (!formData.value.confirmPassword) {
-    errors.value.confirmPassword = 'Please confirm your new password';
+    errors.value.confirmPassword = "Please confirm your new password";
     isValid = false;
   } else if (formData.value.confirmPassword !== formData.value.newPassword) {
-    errors.value.confirmPassword = 'Passwords do not match';
+    errors.value.confirmPassword = "Passwords do not match";
     isValid = false;
   }
 
@@ -227,19 +241,19 @@ const handleSubmit = async () => {
   if (!validateForm()) return;
 
   isSubmitting.value = true;
-  serverError.value = '';
+  serverError.value = "";
 
   try {
-    await axios.post('/auth/users/me/change-password', {
+    await axios.post("/auth/users/me/change-password", {
       current_password: formData.value.currentPassword,
       new_password: formData.value.newPassword,
     });
 
-    emit('success');
+    emit("success");
     close();
   } catch (error: unknown) {
     const axiosError = error as { response?: { data?: { detail?: string } } };
-    serverError.value = axiosError.response?.data?.detail || 'Failed to change password';
+    serverError.value = axiosError.response?.data?.detail || "Failed to change password";
   } finally {
     isSubmitting.value = false;
   }
@@ -253,7 +267,7 @@ const handleBackdropClick = () => {
 
 const close = () => {
   if (!props.isForced) {
-    emit('close');
+    emit("close");
   }
 };
 </script>

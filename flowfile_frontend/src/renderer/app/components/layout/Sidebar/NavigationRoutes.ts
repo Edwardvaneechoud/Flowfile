@@ -32,15 +32,15 @@ export default {
       name: "databaseManager",
       displayName: "menu.databaseManager",
       meta: {
-        icon: "fa-solid fa-database"
-      }
+        icon: "fa-solid fa-database",
+      },
     },
     {
       name: "cloudConnectionManager",
       displayName: "menu.cloudConnectionManager",
       meta: {
-        icon: "fa-solid fa-cloud"
-      }
+        icon: "fa-solid fa-cloud",
+      },
     },
     {
       name: "secretManager",
