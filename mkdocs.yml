@@ -98,6 +98,7 @@ nav:
         - Export to Python: users/visual-editor/tutorials/code-generator.md
       - Node Designer: users/visual-editor/node-designer.md
       - Settings: users/visual-editor/settings.md
+      - Docker Deployment: users/visual-editor/docker-deployment.md
 
     - Python API:
       - Overview: users/python-api/index.md
