@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, Field, SecretStr, computed_field
 
@@ -9,6 +9,29 @@ from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encr
 from flowfile_core.types import DataType, TypeSpec
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
+
+
+class ActionOption(NamedTuple):
+    """
+    A named tuple representing an action option with a value and display label.
+
+    Use this to define actions with custom labels in ColumnActionInput:
+        actions=[
+            ActionOption("sum", "Sum"),
+            ActionOption("avg", "Average"),
+            "count"  # plain strings also work
+        ]
+    """
+
+    value: str
+    """The internal value used in the data."""
+
+    label: str
+    """The display label shown in the UI."""
+
+
+# Type alias for action specifications - accepts strings or ActionOption tuples
+ActionSpec = str | ActionOption
 
 
 def normalize_input_to_data_types(v: Any) -> Literal["ALL"] | list[DataType]:
@@ -409,10 +432,15 @@ class ColumnActionInput(FlowfileInComponent):
             data_types="String"
         )
 
-    Example - Aggregations:
+    Example - Aggregations with ActionOption:
         ColumnActionInput(
             label="Aggregations",
-            actions=[("sum", "Sum"), ("count", "Count"), ("mean", "Average")],
+            actions=[
+                ActionOption("sum", "Sum"),
+                ActionOption("count", "Count"),
+                ActionOption("mean", "Average"),
+                "min",  # plain strings also work
+            ],
             output_name_template="{column}_{action}",
             show_group_by=True
         )
@@ -421,9 +449,9 @@ class ColumnActionInput(FlowfileInComponent):
     component_type: Literal["ColumnActionInput"] = "ColumnActionInput"
     input_type: InputType = "array"
 
-    # Configurable actions - list of action names or (value, label) tuples
-    actions: list[str | tuple[str, str]] = Field(default_factory=list)
-    """Actions available for selection. Can be strings or (value, label) tuples."""
+    # Configurable actions - list of action names or ActionOption tuples
+    actions: list[ActionSpec] = Field(default_factory=list)
+    """Actions available for selection. Can be strings or ActionOption(value, label) tuples."""
 
     # Template for auto-generating output names
     # Supports placeholders: {column}, {action}
