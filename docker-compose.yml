@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   flowfile-frontend:
     platform: linux/amd64
@@ -50,6 +48,7 @@ services:
       - flowfile_master_key
 
   flowfile-worker:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: flowfile_worker/Dockerfile
