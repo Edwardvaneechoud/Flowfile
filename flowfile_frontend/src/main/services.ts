@@ -203,7 +203,8 @@ export function startProcess(
           console.error(`${name} failed to become responsive after ${elapsed}ms (${attempt} attempts)`);
           try {
             childProcess.kill("SIGTERM");
-          } catch (e) {
+          } catch {
+            // Process may have already exited
           }
           resolve(null);
           return;

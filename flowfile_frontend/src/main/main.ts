@@ -13,7 +13,6 @@ import {
   setupAppIpcHandlers,
   updateDockerStatus,
   updateServicesStatus,
-  getAppState,
 } from "./ipcHandlers";
 
 async function checkDocker(): Promise<{
