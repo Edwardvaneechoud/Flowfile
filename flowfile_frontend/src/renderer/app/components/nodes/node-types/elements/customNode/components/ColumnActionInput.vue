@@ -304,73 +304,82 @@ onUnmounted(() => {
 .component-container {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--spacing-4);
 }
 
 .config-section {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
-  background-color: var(--color-background-secondary, #f5f7fa);
-  border-radius: 8px;
+  gap: var(--spacing-3);
+  padding: var(--spacing-4);
+  background-color: var(--color-background-secondary);
+  border-radius: var(--border-radius-lg);
 }
 
 .config-row {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--spacing-1);
 }
 
 .config-label {
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary, #606266);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
 }
 
 .column-list-wrapper {
-  margin-top: 0.5rem;
+  margin-top: var(--spacing-2);
+}
+
+.listbox-subtitle {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-2);
 }
 
 .listbox {
   max-height: 200px;
   overflow-y: auto;
-  border: 1px solid var(--color-border-primary, #dcdfe6);
-  border-radius: 8px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-lg);
   padding: 0;
   margin: 0;
   list-style: none;
+  background-color: var(--color-background-primary);
 }
 
 .listbox li {
-  padding: 8px 12px;
+  padding: var(--spacing-2) var(--spacing-3);
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color var(--transition-normal) var(--transition-timing);
+  color: var(--color-text-primary);
 }
 
 .listbox li:hover {
-  background-color: var(--color-background-hover, #f5f7fa);
+  background-color: var(--color-background-hover);
 }
 
 .listbox li.is-selected {
-  background-color: var(--color-primary-light, #ecf5ff);
-  color: var(--color-primary, #409eff);
+  background-color: var(--color-background-selected);
+  color: var(--color-accent);
 }
 
 .column-type {
-  font-size: 0.75rem;
-  color: var(--color-text-tertiary, #909399);
-  margin-left: 8px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  margin-left: var(--spacing-2);
 }
 
 .context-menu {
   position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary, #fff);
-  padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
+  z-index: var(--z-index-dropdown);
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-background-primary);
+  padding: var(--spacing-2);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--border-radius-sm);
   user-select: none;
 }
 
@@ -378,59 +387,67 @@ onUnmounted(() => {
   display: block;
   background: none;
   border: none;
-  padding: 6px 12px;
+  padding: var(--spacing-1-5) var(--spacing-3);
   text-align: left;
   width: 100%;
   cursor: pointer;
-  border-radius: 4px;
-  font-size: 0.875rem;
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-base);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast) var(--transition-timing);
 }
 
 .context-menu button:hover {
-  background-color: var(--color-background-hover, #f0f0f0);
+  background-color: var(--color-background-hover);
 }
 
 .table-wrapper {
   max-height: 300px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--border-radius-lg);
   overflow: auto;
+  border: 1px solid var(--color-border-primary);
 }
 
 .styled-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: var(--font-size-base);
+  background-color: var(--color-background-primary);
 }
 
 .styled-table thead {
-  background-color: var(--color-background-secondary, #f5f7fa);
+  background-color: var(--table-header-bg);
   position: sticky;
   top: 0;
 }
 
 .styled-table th,
 .styled-table td {
-  padding: 10px 12px;
+  padding: var(--spacing-2-5) var(--spacing-3);
   text-align: left;
-  border-bottom: 1px solid var(--color-border-primary, #ebeef5);
+  border-bottom: 1px solid var(--table-border);
 }
 
 .styled-table th {
-  font-weight: 600;
-  color: var(--color-text-secondary, #606266);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.styled-table td {
+  color: var(--color-text-primary);
 }
 
 .styled-table tbody tr:hover {
-  background-color: var(--color-background-hover, #f5f7fa);
+  background-color: var(--table-row-hover);
 }
 
 .empty-state {
-  padding: 2rem;
+  padding: var(--spacing-8);
   text-align: center;
-  color: var(--color-text-secondary, #909399);
-  background-color: var(--color-background-secondary, #f5f7fa);
-  border-radius: 8px;
+  color: var(--color-text-secondary);
+  background-color: var(--color-background-secondary);
+  border-radius: var(--border-radius-lg);
 }
 
 .empty-state p {
@@ -438,8 +455,8 @@ onUnmounted(() => {
 }
 
 .empty-state .hint {
-  font-size: 0.875rem;
-  margin-top: 0.5rem;
-  color: var(--color-text-tertiary, #c0c4cc);
+  font-size: var(--font-size-base);
+  margin-top: var(--spacing-2);
+  color: var(--color-text-tertiary);
 }
 </style>
