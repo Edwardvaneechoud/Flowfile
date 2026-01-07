@@ -12,7 +12,6 @@
           filterable
           placeholder="Select columns to group by..."
           style="width: 100%"
-          size="default"
           @change="emitUpdate"
         >
           <el-option
@@ -35,7 +34,6 @@
           clearable
           placeholder="Select column to order by..."
           style="width: 100%"
-          size="default"
           @change="emitUpdate"
         >
           <el-option
