@@ -4,6 +4,18 @@ Hands-on guides for building real-world data pipelines with the visual editor.
 
 ## Available Tutorials
 
+### [Docker Deployment](docker-deployment.md)
+Deploy Flowfile using Docker Compose for multi-user team environments and production setups with full authentication and secrets management.
+
+**You'll learn:**
+
+- Setting up Docker Compose deployment
+- Configuring multi-user authentication
+- Managing secrets securely
+- Production hardening and best practices
+
+---
+
 ### [Database Connectivity](database-connectivity.md)
 Learn how to connect to PostgreSQL databases, read data, apply transformations, and write results back. Perfect for building ETL pipelines with databases like Supabase.
 
@@ -47,9 +59,10 @@ Each tutorial includes:
 
 ## Suggested Learning Path
 
-1. **Start with Database Connectivity** if you work with databases
-2. **Move to Cloud Storage** for S3 and cloud data
-3. **Learn Export to Code** when ready to deploy
+1. **Start with Docker Deployment** to set up your team environment
+2. **Learn Database Connectivity** if you work with databases
+3. **Move to Cloud Storage** for S3 and cloud data
+4. **Use Export to Code** when ready to deploy pipelines
 
 ## Coming Soon
 
