@@ -1,6 +1,5 @@
 <template>
   <div>
-    {{ props.selectInputs }}
     <div v-if="dataLoaded">
       <div v-if="hasMissingFields" class="remove-missing-fields" @click="removeMissingFields">
         <UnavailableField tooltip-text="Field not available click for removing them for memory" />
