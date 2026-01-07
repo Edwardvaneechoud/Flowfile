@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -135,7 +135,6 @@ class SecureFileExplorer:
         try:
             # Handle relative paths from current directoryb
             if isinstance(path, str):
-
                 # Remove any suspicious patterns
                 if path.startswith("/"):
                     # For absolute paths or parent references, resolve from sandbox root
@@ -369,7 +368,7 @@ def get_files_from_directory(
         raise type(e)(f"Error scanning directory {dir_name}: {str(e)}") from e
 
 
-def validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
+def validate_file_path(user_path: str, allowed_base: Path) -> Path | None:
     """Validate a file path is safe and within allowed_base.
 
     Uses os.path.realpath + startswith pattern recognized by CodeQL as safe.
@@ -383,7 +382,7 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
     """
     try:
         # Block obvious path traversal patterns early
-        if '..' in user_path:
+        if ".." in user_path:
             return None
 
         # Get the base path as a normalized, real path string
@@ -436,7 +435,7 @@ def validate_path_under_cwd(user_path: str) -> str:
     if fullpath.startswith(base_path):
         return fullpath
 
-    raise HTTPException(403, 'Access denied')
+    raise HTTPException(403, "Access denied")
 
 
 # Alias for backward compatibility

@@ -1,16 +1,15 @@
 # app_routes/auth.py
 
 import os
-from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from flowfile_core.auth.jwt import get_current_active_user, get_current_admin_user, create_access_token
-from flowfile_core.auth.models import Token, User, UserCreate, UserUpdate, ChangePassword
-from flowfile_core.auth.password import verify_password, get_password_hash, validate_password, PASSWORD_REQUIREMENTS
-from flowfile_core.database.connection import get_db
+from flowfile_core.auth.jwt import create_access_token, get_current_active_user, get_current_admin_user
+from flowfile_core.auth.models import ChangePassword, Token, User, UserCreate, UserUpdate
+from flowfile_core.auth.password import PASSWORD_REQUIREMENTS, get_password_hash, validate_password, verify_password
 from flowfile_core.database import models as db_models
+from flowfile_core.database.connection import get_db
 
 router = APIRouter()
 
@@ -19,8 +18,8 @@ router = APIRouter()
 async def login_for_access_token(
     request: Request,
     db: Session = Depends(get_db),
-    username: Optional[str] = Form(None),
-    password: Optional[str] = Form(None)
+    username: str | None = Form(None),
+    password: str | None = Form(None),
 ):
     # In Electron mode, auto-authenticate without requiring form data
     if os.environ.get("FLOWFILE_MODE") == "electron":
@@ -35,9 +34,7 @@ async def login_for_access_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        user = db.query(db_models.User).filter(
-            db_models.User.username == username
-        ).first()
+        user = db.query(db_models.User).filter(db_models.User.username == username).first()
 
         if not user or not verify_password(password, user.hashed_password):
             raise HTTPException(
@@ -58,11 +55,9 @@ async def read_users_me(current_user=Depends(get_current_active_user)):
 
 # ============= Admin User Management Endpoints =============
 
-@router.get("/users", response_model=List[User])
-async def list_users(
-    current_user: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
+
+@router.get("/users", response_model=list[User])
+async def list_users(current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
     """List all users (admin only)"""
     users = db.query(db_models.User).all()
     return [
@@ -73,7 +68,7 @@ async def list_users(
             full_name=u.full_name,
             disabled=u.disabled,
             is_admin=u.is_admin,
-            must_change_password=u.must_change_password
+            must_change_password=u.must_change_password,
         )
         for u in users
     ]
@@ -81,39 +76,24 @@ async def list_users(
 
 @router.post("/users", response_model=User)
 async def create_user(
-    user_data: UserCreate,
-    current_user: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    user_data: UserCreate, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)
 ):
     """Create a new user (admin only)"""
     # Check if username already exists
-    existing_user = db.query(db_models.User).filter(
-        db_models.User.username == user_data.username
-    ).first()
+    existing_user = db.query(db_models.User).filter(db_models.User.username == user_data.username).first()
     if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already exists"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
 
     # Check if email already exists (if provided)
     if user_data.email:
-        existing_email = db.query(db_models.User).filter(
-            db_models.User.email == user_data.email
-        ).first()
+        existing_email = db.query(db_models.User).filter(db_models.User.email == user_data.email).first()
         if existing_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already exists"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
 
     # Validate password requirements
     is_valid, error_message = validate_password(user_data.password)
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_message
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
     # Create new user with must_change_password=True
     hashed_password = get_password_hash(user_data.password)
@@ -123,7 +103,7 @@ async def create_user(
         full_name=user_data.full_name,
         hashed_password=hashed_password,
         is_admin=user_data.is_admin,
-        must_change_password=True
+        must_change_password=True,
     )
     db.add(new_user)
     db.commit()
@@ -136,7 +116,7 @@ async def create_user(
         full_name=new_user.full_name,
         disabled=new_user.disabled,
         is_admin=new_user.is_admin,
-        must_change_password=new_user.must_change_password
+        must_change_password=new_user.must_change_password,
     )
 
 
@@ -145,42 +125,31 @@ async def update_user(
     user_id: int,
     user_data: UserUpdate,
     current_user: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Update a user (admin only)"""
     user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # Prevent admin from disabling themselves
     if user.id == current_user.id and user_data.disabled:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot disable your own account"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot disable your own account")
 
     # Prevent admin from removing their own admin status
     if user.id == current_user.id and user_data.is_admin is False:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot remove your own admin privileges"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot remove your own admin privileges")
 
     # Update fields
     if user_data.email is not None:
         # Check if email already exists for another user
-        existing_email = db.query(db_models.User).filter(
-            db_models.User.email == user_data.email,
-            db_models.User.id != user_id
-        ).first()
+        existing_email = (
+            db.query(db_models.User)
+            .filter(db_models.User.email == user_data.email, db_models.User.id != user_id)
+            .first()
+        )
         if existing_email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already exists"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
         user.email = user_data.email
 
     if user_data.full_name is not None:
@@ -196,10 +165,7 @@ async def update_user(
         # Validate password requirements
         is_valid, error_message = validate_password(user_data.password)
         if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_message
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
         user.hashed_password = get_password_hash(user_data.password)
         # Reset must_change_password when admin sets a new password
         user.must_change_password = True
@@ -217,30 +183,22 @@ async def update_user(
         full_name=user.full_name,
         disabled=user.disabled,
         is_admin=user.is_admin,
-        must_change_password=user.must_change_password
+        must_change_password=user.must_change_password,
     )
 
 
 @router.delete("/users/{user_id}")
 async def delete_user(
-    user_id: int,
-    current_user: User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    user_id: int, current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)
 ):
     """Delete a user (admin only)"""
     user = db.query(db_models.User).filter(db_models.User.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # Prevent admin from deleting themselves
     if user.id == current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete your own account"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your own account")
 
     # Delete user's secrets and connections first (cascade)
     db.query(db_models.Secret).filter(db_models.Secret.user_id == user_id).delete()
@@ -255,34 +213,24 @@ async def delete_user(
 
 # ============= User Self-Service Endpoints =============
 
+
 @router.post("/users/me/change-password", response_model=User)
 async def change_own_password(
-    password_data: ChangePassword,
-    current_user: User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    password_data: ChangePassword, current_user: User = Depends(get_current_active_user), db: Session = Depends(get_db)
 ):
     """Change the current user's password"""
     user = db.query(db_models.User).filter(db_models.User.id == current_user.id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # Verify current password
     if not verify_password(password_data.current_password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
     # Validate new password requirements
     is_valid, error_message = validate_password(password_data.new_password)
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_message
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
 
     # Update password and clear must_change_password flag
     user.hashed_password = get_password_hash(password_data.new_password)
@@ -297,7 +245,7 @@ async def change_own_password(
         full_name=user.full_name,
         disabled=user.disabled,
         is_admin=user.is_admin,
-        must_change_password=user.must_change_password
+        must_change_password=user.must_change_password,
     )
 
 

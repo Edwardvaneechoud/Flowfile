@@ -70,5 +70,3 @@ def test_write_serialized_df_to_database(pw):
     database_read_settings = DatabaseReadSettings(connection=database_connection, query='SELECT * FROM public.test_output')
     result_df = read_sql_source(database_read_settings)
     assert df.equals(result_df), "DataFrame written to the database should match the original DataFrame"
-
-

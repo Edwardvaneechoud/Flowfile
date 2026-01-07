@@ -136,7 +136,13 @@ def get_query_columns(engine: Engine, query_text: str):
 
     Returns:
         Dictionary mapping column names to string type
+
+    Raises:
+        UnsafeSQLError: If the query contains unsafe operations
     """
+    # Validate the query for safety before execution
+    validate_sql_query(query_text)
+
     with engine.connect() as connection:
         # Create a text object from the query
         query = text(query_text)
@@ -302,8 +308,7 @@ class SqlSource(BaseSqlSource, ExternalDataSource):
     def get_iter(self) -> Generator[dict[str, Any], None, None]:
         logger.warning("Getting data in iteration, this is suboptimal")
         data = self.data_getter()
-        for row in data:
-            yield row
+        yield from data
 
     def get_df(self):
         df = self.get_pl_df()

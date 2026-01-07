@@ -241,7 +241,7 @@ The **Text to Rows** node splits text from a selected column into multiple rows 
 #### **Usage**  
 1. Select the **column to split**.  
 2. Choose a **delimiter** or use another column for splitting.  
-3. (Optional) Set an **output column name**. 
+3. (Optional) Set an **output column name**.
 
 ---
 

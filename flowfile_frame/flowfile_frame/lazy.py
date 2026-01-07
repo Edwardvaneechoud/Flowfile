@@ -171,7 +171,7 @@ def _process_argument(arg: Any, can_be_expr: bool) -> tuple[str, Any, bool, str 
         Tuple of (repr_string, processed_arg_for_polars, convertible_to_code, function_source)
     """
     # Special handling for callables (but not Expr objects which might be callable)
-    if callable(arg) and not isinstance(arg, (Expr, pl.Expr)) and not hasattr(arg, "expr"):
+    if callable(arg) and not isinstance(arg, Expr | pl.Expr) and not hasattr(arg, "expr"):
         return _process_callable_arg(arg)
     repr_str = _deep_get_repr(arg, can_be_expr)
 
@@ -372,7 +372,7 @@ def _check_for_non_serializable_functions(args: list[Any], kwargs: dict[str, Any
 
     def check_value(value: Any, path: str) -> None:
         """Recursively check for non-serializable functions."""
-        if callable(value) and not isinstance(value, (type, pl.Expr)):
+        if callable(value) and not isinstance(value, type | pl.Expr):
             # Check if it's a lambda or local function
             if hasattr(value, "__name__"):
                 if value.__name__ == "<lambda>":

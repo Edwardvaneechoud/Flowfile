@@ -94,7 +94,7 @@ df.write_parquet_to_cloud_storage(
 ```python
 # Write JSON to cloud storage
 df.write_json_to_cloud_storage(
-    "s3://api-data/export.json", 
+    "s3://api-data/export.json",
     connection_name="api-storage",
     description="Export for API consumption"
 )
@@ -114,7 +114,7 @@ df.write_delta(
 # Append to existing Delta table
 new_data.write_delta(
     "s3://warehouse/customer_dim",
-    connection_name="warehouse-connection", 
+    connection_name="warehouse-connection",
     write_mode="append",
     description="Add new customers to dimension"
 )
@@ -161,7 +161,7 @@ from pydantic import SecretStr
 ff.create_cloud_storage_connection_if_not_exists(
     ff.FullCloudStorageConnection(
         connection_name="data-lake",
-        storage_type="s3", 
+        storage_type="s3",
         auth_method="access_key",
         aws_region="us-east-1",
         aws_access_key_id="your-key",
@@ -177,6 +177,6 @@ df.write_parquet_to_cloud_storage(
 ```
 
 
---- 
+---
 
 [← Previous: Reading Data](reading-data.md) | [Next: Data Types →](data-types.md)

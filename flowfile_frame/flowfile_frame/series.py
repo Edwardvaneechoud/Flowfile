@@ -32,7 +32,7 @@ class Series:
             self._name = name.name
             self._values = name.to_list()
             self._dtype = name.dtype
-        elif isinstance(name, (list, tuple)) and values is None:
+        elif isinstance(name, list | tuple) and values is None:
             self._s = pl.Series(values=name, dtype=dtype)
             self._name = ""  # Default name is empty string
             self._values = name

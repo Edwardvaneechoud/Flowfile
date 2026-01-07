@@ -665,8 +665,7 @@ class FlowNode:
         """
         for node in self.leads_to_nodes:
             yield node
-            for n in node.get_all_dependent_nodes():
-                yield n
+            yield from node.get_all_dependent_nodes()
 
     def get_all_dependent_node_ids(self) -> Generator[int, None, None]:
         """Yields the IDs of all downstream nodes recursively.
@@ -676,8 +675,7 @@ class FlowNode:
         """
         for node in self.leads_to_nodes:
             yield node.node_id
-            for n in node.get_all_dependent_node_ids():
-                yield n
+            yield from node.get_all_dependent_node_ids()
 
     @property
     def schema(self) -> list[FlowfileColumn]:

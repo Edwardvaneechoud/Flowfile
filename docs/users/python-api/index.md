@@ -3,7 +3,7 @@
 Build data pipelines programmatically with Flowfile's Polars-compatible API.
 
 
-!!! info "If You Know Polars, You Know Flowfile" 
+!!! info "If You Know Polars, You Know Flowfile"
     Our API is designed to be a seamless extension of Polars. The majority of the methods are identical, so you can leverage your existing knowledge to be productive from day one. The main additions are features that connect your code to the broader Flowfile ecosystem, like cloud integrations and UI visualization.
 
 

@@ -11,7 +11,7 @@ Flowfile allows you to create data pipelines visually by connecting nodes that r
 
 *The complete Flowfile interface showing:*
 
-- **Left sidebar**: Browse and select from available nodes 
+- **Left sidebar**: Browse and select from available nodes
 - **Center canvas**: Build your flow by arranging and connecting nodes
 - **Right sidebar**: Configure node settings and parameters
 - **Bottom panel**: Preview data at each step
@@ -172,7 +172,7 @@ Here's a typical flow that demonstrates common operations:
 ---
 
 ---
-## Want to see another example? 
+## Want to see another example?
 Checkout the [quickstart guide](../../quickstart.md#quick-start-for-non-technical-users-non-technical-quickstart)!
 
 ## Next Steps

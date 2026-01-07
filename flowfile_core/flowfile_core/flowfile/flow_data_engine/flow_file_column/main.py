@@ -268,6 +268,6 @@ def assert_if_flowfile_schema(obj: Iterable) -> bool:
     """
     Assert that the object is a valid iterable of FlowfileColumn objects.
     """
-    if isinstance(obj, (list, set, tuple)):
+    if isinstance(obj, list | set | tuple):
         return all(isinstance(item, FlowfileColumn) for item in obj)
     return False

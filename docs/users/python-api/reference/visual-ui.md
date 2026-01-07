@@ -55,7 +55,7 @@ ff.open_graph_in_editor(result.flow_graph)
 
 When you call `open_graph_in_editor()`:
 
-1. **Saves the graph** to a temporary `.flowfile` 
+1. **Saves the graph** to a temporary `.flowfile`
 2. **Checks if server is running** at `http://localhost:63578`
 3. **Starts server if needed** using `flowfile run ui --no-browser`
 4. **Imports the flow** via API endpoint
@@ -91,7 +91,7 @@ ff.open_graph_in_editor(
 # All server management functions are in flowfile.api
 from flowfile.api import (
     is_flowfile_running,
-    start_flowfile_server_process, 
+    start_flowfile_server_process,
     stop_flowfile_server_process,
     get_auth_token
 )

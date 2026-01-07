@@ -36,7 +36,7 @@ A `FlowFrame` never loads your actual data into memory until you explicitly call
 df = (
     ff.FlowFrame({
         "id": [1, 2, 3, 4, 5],
-        "amount": [500, 1200, 800, 1500, 900], 
+        "amount": [500, 1200, 800, 1500, 900],
         "category": ["A", "B", "A", "C", "B"]
     })                                # Creates manual input node
     .filter(ff.col("amount") > 1000)  # No filtering happens yet
@@ -49,7 +49,7 @@ result = df.collect()  # Everything executes at once, optimized
 ```
 
 !!! info "Performance Benefits"
-    This lazy evaluation is powered by Polars and explained in detail in our [Technical Architecture guide](../../../for-developers/architecture.md#the-power-of-lazy-evaluation). 
+    This lazy evaluation is powered by Polars and explained in detail in our [Technical Architecture guide](../../../for-developers/architecture.md#the-power-of-lazy-evaluation).
 
 #### 2. Connected to a DAG (Directed Acyclic Graph)
 Every FlowFrame has a reference to a FlowGraph that tracks every operation as a node:

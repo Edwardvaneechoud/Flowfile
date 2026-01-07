@@ -531,7 +531,7 @@ class Expr:
 
         other_expr, other_repr = _get_expr_and_repr(other)
 
-        if other_expr is None and not isinstance(other, (int, float, str, bool, type(None))):
+        if other_expr is None and not isinstance(other, int | float | str | bool | type(None)):
             raise ValueError(
                 f"Cannot perform binary operation '{op_symbol}' with operand without underlying polars expression or literal value: {other_repr}"
             )
@@ -758,7 +758,7 @@ class Expr:
     def __rpow__(self, other):
         other_expr, other_repr = _get_expr_and_repr(other)
         new_repr = f"({other_repr} ** {self._repr_str})"
-        base_expr = pl.lit(other) if not isinstance(other, (Expr, pl.Expr)) else other_expr
+        base_expr = pl.lit(other) if not isinstance(other, Expr | pl.Expr) else other_expr
         res_expr = base_expr.pow(self.expr) if self.expr is not None and base_expr is not None else None
         return Expr(res_expr, None, repr_str=new_repr, agg_func=None, is_complex=True)
 
@@ -933,7 +933,7 @@ class Expr:
     @staticmethod
     def _get_expr_repr(expr):
         """Helper to get appropriate string representation for an expression"""
-        if isinstance(expr, (Expr, Column)):
+        if isinstance(expr, Expr | Column):
             return expr._repr_str
         elif isinstance(expr, str):
             return f"pl.col('{expr}')"

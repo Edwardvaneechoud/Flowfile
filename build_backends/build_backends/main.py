@@ -50,7 +50,7 @@ def get_connectorx_metadata():
         for dist_info in glob.glob(dist_info_pattern):
             metadata_locations.append(dist_info)
 
-        # Look for egg-info directories    
+        # Look for egg-info directories
         egg_info_pattern = os.path.join(site_packages, 'connectorx*.egg-info')
         for egg_info in glob.glob(egg_info_pattern):
             metadata_locations.append(egg_info)
@@ -126,7 +126,7 @@ print("Applied connectorx metadata patch")
 """
 
 # Collect minimal snowflake dependencies
-snowflake_imports = collect_submodules('snowflake.connector', 
+snowflake_imports = collect_submodules('snowflake.connector',
     filter=lambda name: any(x in name for x in [
         'connection',
         'errors',

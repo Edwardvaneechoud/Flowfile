@@ -104,7 +104,7 @@ For a deeper dive into the technical architecture, check out [this article](http
 #### 1. Desktop Application
 The desktop version offers the best experience with a native interface and integrated services. You can either:
 
-**Option A: Download Pre-built Application** 
+**Option A: Download Pre-built Application**
 - Download the latest release from [GitHub Releases](https://github.com/Edwardvaneechoud/Flowfile/releases)
 - Run the installer for your platform (Windows, macOS, or Linux)
 > **Note:** You may see security warnings since the app isn't signed with a developer certificate yet.

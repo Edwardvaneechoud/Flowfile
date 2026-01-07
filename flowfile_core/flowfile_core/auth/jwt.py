@@ -81,7 +81,7 @@ def get_current_user_sync(token: str, db: Session):
             full_name=user.full_name,
             disabled=user.disabled,
             is_admin=user.is_admin,
-            must_change_password=user.must_change_password
+            must_change_password=user.must_change_password,
         )
 
 
@@ -129,7 +129,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             full_name=user.full_name,
             disabled=user.disabled,
             is_admin=user.is_admin,
-            must_change_password=user.must_change_password
+            must_change_password=user.must_change_password,
         )
 
 
@@ -200,15 +200,12 @@ async def get_current_user_from_query(
             full_name=user.full_name,
             disabled=user.disabled,
             is_admin=user.is_admin,
-            must_change_password=user.must_change_password
+            must_change_password=user.must_change_password,
         )
 
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):
     """Dependency that requires the current user to be an admin"""
     if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user

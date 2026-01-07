@@ -21,8 +21,7 @@ def raw_data_openpyxl(
     workbook: Workbook = load_workbook(file_path, data_only=True, read_only=True)
     sheet_name = workbook.sheetnames[0] if sheet_name is None else sheet_name
     sheet: Worksheet = workbook[sheet_name]
-    for row in sheet.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col, values_only=True):
-        yield row
+    yield from sheet.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col, values_only=True)
     workbook.close()
     del workbook
     gc.collect()

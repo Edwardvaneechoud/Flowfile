@@ -12,7 +12,7 @@ from flowfile_core.schemas import schemas
 
 def _is_iterable(obj: Any) -> bool:
     # Avoid treating strings as iterables in this context
-    return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))
+    return isinstance(obj, Iterable) and not isinstance(obj, str | bytes)
 
 
 def _check_if_convertible_to_code(expressions: list[Any]) -> bool:
@@ -77,7 +77,7 @@ def ensure_inputs_as_iterable(inputs: Any | Iterable[Any]) -> list[Any]:
     if inputs is None or (hasattr(inputs, "__len__") and len(inputs) == 0):
         return []
     # Treat strings/bytes as atomic items, everything else check if iterable
-    if isinstance(inputs, (str, bytes)) or not _is_iterable(inputs):
+    if isinstance(inputs, str | bytes) or not _is_iterable(inputs):
         return [inputs]
 
     return list(inputs)
@@ -120,7 +120,7 @@ def stringify_values(v: Any) -> str:
     elif isinstance(v, bool):
         # Handle booleans explicitly (returns "True" or "False")
         return str(v)
-    elif isinstance(v, (int, float, complex, type(None))):
+    elif isinstance(v, int | float | complex | type(None)):
         # Handle numbers and None explicitly
         return str(v)
     else:

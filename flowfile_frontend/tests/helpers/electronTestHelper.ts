@@ -28,10 +28,10 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
     }, SERVICES_STARTUP_TIMEOUT);
 
     const checkComplete = () => {
-      const isComplete = process.platform === 'win32' 
+      const isComplete = process.platform === 'win32'
         ? (servicesStarted && startupReceived && electronApp)
         : (servicesStarted && startupReceived && windowReady && electronApp);
-        
+
       if (isComplete) {
         clearTimeout(timeout);
         resolve(electronApp!);
@@ -61,7 +61,7 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
           startupReceived = true;
           checkComplete();
         }
-        
+
         if (text.includes('Window ready to show')) {
           console.log('Detected window ready');
           windowReady = true;
@@ -112,7 +112,7 @@ export async function closeElectronApp(app: ElectronApplication | undefined): Pr
       mainWindow = await app.firstWindow().catch(() => null);
       if (mainWindow) {
         console.log('Giving app chance to clean up resources...');
-        
+
         try {
           await mainWindow.evaluate(() => {
             const api = (window as any).electronAPI;

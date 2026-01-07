@@ -144,15 +144,15 @@ def read_csv(
         flow_graph = create_flow_graph()
     flow_id = flow_graph.flow_id
     current_source_path_for_native = None
-    if isinstance(source, (str, os.PathLike)):
+    if isinstance(source, str | os.PathLike):
         current_source_path_for_native = str(source)
         if "~" in current_source_path_for_native:
             current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
-    elif isinstance(source, list) and all(isinstance(s, (str, os.PathLike)) for s in source):
+    elif isinstance(source, list) and all(isinstance(s, str | os.PathLike) for s in source):
         current_source_path_for_native = str(source[0]) if source else None
         if current_source_path_for_native and "~" in current_source_path_for_native:
             current_source_path_for_native = os.path.expanduser(current_source_path_for_native)
-    elif isinstance(source, (io.BytesIO, io.StringIO)):
+    elif isinstance(source, io.BytesIO | io.StringIO):
         logger.warning("Read from bytes io from csv not supported, converting data to raw data")
         return from_dict(pl.read_csv(source), flow_graph=flow_graph, description=description)
     actual_infer_schema_length: int | None
@@ -259,9 +259,9 @@ def read_csv(
             **other_options,
         )
         polars_code_node_description = description or "Read CSV with Polars scan_csv"
-        if isinstance(source, (str, os.PathLike)):
+        if isinstance(source, str | os.PathLike):
             polars_code_node_description = description or f"Read CSV with Polars scan_csv from {Path(source).name}"
-        elif isinstance(source, list) and source and isinstance(source[0], (str, os.PathLike)):
+        elif isinstance(source, list) and source and isinstance(source[0], str | os.PathLike):
             polars_code_node_description = (
                 description or f"Read CSV with Polars scan_csv from {Path(source[0]).name} (and possibly others)"
             )
@@ -316,7 +316,7 @@ def _build_polars_code_args(
     **other_options: Any,
 ) -> str:
     source_repr: str
-    if isinstance(source, (str, Path)):
+    if isinstance(source, str | Path):
         source_repr = repr(str(source))
     elif isinstance(source, list):
         source_repr = repr([str(p) for p in source])
@@ -362,7 +362,7 @@ def _build_polars_code_args(
     all_vars = locals()
     kwargs_list = []
 
-    for param_name_key, (default_value, format_func) in param_mapping.items():
+    for param_name_key, (_default_value, format_func) in param_mapping.items():
         value = all_vars.get(param_name_key)
         formatted_value = format_func(value)
         kwargs_list.append(f"{param_name_key}={formatted_value}")
@@ -398,7 +398,7 @@ def read_parquet(
         A FlowFrame with the Parquet data
     """
     if "~" in source:
-        file_path = os.path.expanduser(source)
+        os.path.expanduser(source)
     node_id = generate_node_id()
 
     if flow_graph is None:

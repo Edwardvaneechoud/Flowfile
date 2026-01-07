@@ -1713,4 +1713,3 @@ def test_fetch_before_run_debug():
     example_data_after_run = node.get_table_example(True).data
 
     assert len(example_data_after_run) > 0, "There should be data after fetch operation"
-

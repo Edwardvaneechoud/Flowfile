@@ -114,7 +114,7 @@ def remove_comments_and_docstrings(source: str) -> str:
 
         def visit_Expr(self, node):
             # Remove standalone string literals
-            if isinstance(node.value, (ast.Str, ast.Constant)) and isinstance(getattr(node.value, "value", None), str):
+            if isinstance(node.value, ast.Str | ast.Constant) and isinstance(getattr(node.value, "value", None), str):
                 return None
             return self.generic_visit(node)
 
@@ -202,7 +202,7 @@ class PolarsCodeParser:
             tree = ast.parse(code)
             for node in ast.walk(tree):
                 # Block imports
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.Import | ast.ImportFrom):
                     raise ValueError("Import statements are not allowed")
 
                 # Block exec/eval
