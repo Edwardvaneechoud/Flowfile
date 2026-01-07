@@ -60,28 +60,32 @@ export interface SecretSelectorComponent extends BaseComponent {
   name_prefix?: string;
 }
 
-// Rolling window operation value structure
-export interface RollingOperationValue {
+// Generic column action row structure
+export interface ColumnActionRow {
   column: string;
-  function: string;
-  window_size: number;
+  action: string;
   output_name: string;
-  min_periods: number | null;
 }
 
-// Rolling window input value structure
-export interface RollingWindowValue {
-  operations: RollingOperationValue[];
+// Action option structure from backend
+export interface ActionOption {
+  value: string;
+  label: string;
+}
+
+// Generic column action input value structure
+export interface ColumnActionValue {
+  rows: ColumnActionRow[];
   group_by_columns: string[];
   order_by_column: string | null;
 }
 
-export interface RollingWindowInputComponent extends BaseComponent {
-  component_type: "RollingWindowInput";
-  operations: RollingOperationValue[];
-  group_by_columns: string[];
-  order_by_column: string | null;
-  available_functions: string[];
+export interface ColumnActionInputComponent extends BaseComponent {
+  component_type: "ColumnActionInput";
+  actions: ActionOption[];
+  output_name_template: string;
+  show_group_by: boolean;
+  show_order_by: boolean;
   data_types: string[] | "ALL";
 }
 
@@ -108,7 +112,7 @@ export type UIComponent =
   | SingleSelectComponent
   | ColumnSelectorComponent
   | SecretSelectorComponent
-  | RollingWindowInputComponent;
+  | ColumnActionInputComponent;
 
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";

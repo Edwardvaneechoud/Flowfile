@@ -79,8 +79,8 @@
               :schema="component"
             />
 
-            <RollingWindowInput
-              v-else-if="component.component_type === 'RollingWindowInput'"
+            <ColumnActionInput
+              v-else-if="component.component_type === 'ColumnActionInput'"
               v-model="formData[sectionKey][componentKey]"
               :schema="component"
               :incoming-columns="columnTypes"
@@ -113,7 +113,7 @@ import SliderInput from "./components/SliderInput.vue";
 import SingleSelect from "./components/SingleSelect.vue";
 import ColumnSelector from "./components/ColumnSelector.vue";
 import SecretSelector from "./components/SecretSelector.vue";
-import RollingWindowInput from "./components/RollingWindowInput.vue";
+import ColumnActionInput from "./components/ColumnActionInput.vue";
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);

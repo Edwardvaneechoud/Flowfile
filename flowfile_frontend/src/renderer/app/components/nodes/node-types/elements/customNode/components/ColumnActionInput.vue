@@ -2,9 +2,9 @@
   <div class="component-container">
     <label class="listbox-subtitle">{{ schema.label }}</label>
 
-    <!-- Group By and Order By Configuration -->
-    <div class="config-section">
-      <div class="config-row">
+    <!-- Optional Group By and Order By Configuration -->
+    <div v-if="schema.show_group_by || schema.show_order_by" class="config-section">
+      <div v-if="schema.show_group_by" class="config-row">
         <label class="config-label">Group By (optional)</label>
         <el-select
           v-model="localValue.group_by_columns"
@@ -27,7 +27,7 @@
         </el-select>
       </div>
 
-      <div class="config-row">
+      <div v-if="schema.show_order_by" class="config-row">
         <label class="config-label">Order By (optional)</label>
         <el-select
           v-model="localValue.order_by_column"
@@ -78,73 +78,48 @@
       }"
     >
       <button
-        v-for="func in schema.available_functions"
-        :key="func"
-        @click="addOperation(func)"
+        v-for="action in schema.actions"
+        :key="action.value"
+        @click="addRow(action.value)"
       >
-        Rolling {{ func }}
+        {{ action.label }}
       </button>
     </div>
 
-    <!-- Operations Table -->
-    <div class="listbox-subtitle">Rolling Operations</div>
-    <div v-if="localValue.operations.length > 0" class="table-wrapper">
+    <!-- Configured Rows Table -->
+    <div class="listbox-subtitle">Settings</div>
+    <div v-if="localValue.rows.length > 0" class="table-wrapper">
       <table class="styled-table">
         <thead>
           <tr>
-            <th>Column</th>
-            <th>Function</th>
-            <th>Window Size</th>
-            <th>Min Periods</th>
-            <th>Output Name</th>
+            <th>Field</th>
+            <th>Action</th>
+            <th>Output Field Name</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr
-            v-for="(operation, index) in localValue.operations"
-            :key="index"
-          >
-            <td>{{ operation.column }}</td>
+          <tr v-for="(row, index) in localValue.rows" :key="index">
+            <td>{{ row.column }}</td>
             <td>
               <el-select
-                v-model="operation.function"
+                v-model="row.action"
                 size="small"
                 @change="updateOutputName(index)"
               >
                 <el-option
-                  v-for="func in schema.available_functions"
-                  :key="func"
-                  :label="func"
-                  :value="func"
+                  v-for="action in schema.actions"
+                  :key="action.value"
+                  :label="action.label"
+                  :value="action.value"
                 />
               </el-select>
             </td>
             <td>
-              <el-input-number
-                v-model="operation.window_size"
-                :min="1"
-                :max="1000"
-                size="small"
-                style="width: 100px"
-                @change="updateOutputName(index)"
-              />
-            </td>
-            <td>
-              <el-input-number
-                v-model="operation.min_periods"
-                :min="1"
-                :max="operation.window_size"
-                size="small"
-                style="width: 100px"
-                placeholder="Default"
-              />
-            </td>
-            <td>
               <el-input
-                v-model="operation.output_name"
+                v-model="row.output_name"
                 size="small"
-                placeholder="Auto-generated"
+                @change="emitUpdate"
               />
             </td>
             <td>
@@ -153,7 +128,7 @@
                 size="small"
                 :icon="Delete"
                 circle
-                @click="removeOperation(index)"
+                @click="removeRow(index)"
               />
             </td>
           </tr>
@@ -161,8 +136,8 @@
       </table>
     </div>
     <div v-else class="empty-state">
-      <p>No rolling operations configured.</p>
-      <p class="hint">Right-click on a column above to add a rolling operation.</p>
+      <p>No rows configured.</p>
+      <p class="hint">Right-click on a column above to add a row.</p>
     </div>
   </div>
 </template>
@@ -170,24 +145,24 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, PropType } from "vue";
 import { Delete } from "@element-plus/icons-vue";
-import type { RollingWindowInputComponent, RollingOperationValue } from "../interface";
+import type { ColumnActionInputComponent, ColumnActionRow } from "../interface";
 import type { FileColumn } from "../../../../baseNode/nodeInterfaces";
 
-interface RollingWindowValue {
-  operations: RollingOperationValue[];
+interface ColumnActionValue {
+  rows: ColumnActionRow[];
   group_by_columns: string[];
   order_by_column: string | null;
 }
 
 const props = defineProps({
   schema: {
-    type: Object as PropType<RollingWindowInputComponent>,
+    type: Object as PropType<ColumnActionInputComponent>,
     required: true,
   },
   modelValue: {
-    type: Object as PropType<RollingWindowValue>,
+    type: Object as PropType<ColumnActionValue>,
     default: () => ({
-      operations: [],
+      rows: [],
       group_by_columns: [],
       order_by_column: null,
     }),
@@ -201,8 +176,8 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue"]);
 
 // Local state
-const localValue = ref<RollingWindowValue>({
-  operations: [],
+const localValue = ref<ColumnActionValue>({
+  rows: [],
   group_by_columns: [],
   order_by_column: null,
 });
@@ -234,7 +209,7 @@ watch(
   (newValue) => {
     if (newValue) {
       localValue.value = {
-        operations: newValue.operations || [],
+        rows: newValue.rows || [],
         group_by_columns: newValue.group_by_columns || [],
         order_by_column: newValue.order_by_column || null,
       };
@@ -246,6 +221,13 @@ watch(
 // Emit updates
 const emitUpdate = () => {
   emit("update:modelValue", { ...localValue.value });
+};
+
+// Generate output name from template
+const generateOutputName = (column: string, action: string): string => {
+  return props.schema.output_name_template
+    .replace("{column}", column)
+    .replace("{action}", action);
 };
 
 // Column selection handlers
@@ -276,32 +258,29 @@ const openContextMenu = (columnName: string, event: MouseEvent) => {
   showContextMenu.value = true;
 };
 
-// Operation management
-const addOperation = (func: string) => {
+// Row management
+const addRow = (action: string) => {
   selectedColumns.value.forEach((column) => {
-    const windowSize = 3;
-    const newOperation: RollingOperationValue = {
+    const newRow: ColumnActionRow = {
       column,
-      function: func,
-      window_size: windowSize,
-      output_name: `${column}_rolling_${func}_${windowSize}`,
-      min_periods: null,
+      action,
+      output_name: generateOutputName(column, action),
     };
-    localValue.value.operations.push(newOperation);
+    localValue.value.rows.push(newRow);
   });
   showContextMenu.value = false;
   selectedColumns.value = [];
   emitUpdate();
 };
 
-const removeOperation = (index: number) => {
-  localValue.value.operations.splice(index, 1);
+const removeRow = (index: number) => {
+  localValue.value.rows.splice(index, 1);
   emitUpdate();
 };
 
 const updateOutputName = (index: number) => {
-  const op = localValue.value.operations[index];
-  op.output_name = `${op.column}_rolling_${op.function}_${op.window_size}`;
+  const row = localValue.value.rows[index];
+  row.output_name = generateOutputName(row.column, row.action);
   emitUpdate();
 };
 

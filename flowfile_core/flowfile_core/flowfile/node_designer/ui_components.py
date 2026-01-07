@@ -378,112 +378,87 @@ class SecretSelector(FlowfileInComponent):
         return data
 
 
-# Rolling window function types
-RollingFunction = Literal["sum", "mean", "min", "max", "count", "std", "var", "median", "first", "last"]
-
-
-class RollingOperation(BaseModel):
+class ColumnActionInput(FlowfileInComponent):
     """
-    Represents a single rolling window operation.
+    A generic UI component for configuring column-based transformations.
 
-    This model defines how to apply a rolling window function to a specific column,
-    with optional grouping and ordering.
-    """
+    This component allows users to select columns, choose an action/transformation,
+    and optionally rename the output. It can be configured for many use cases:
+    rolling windows, aggregations, string transformations, type conversions, etc.
 
-    column: str
-    """The column to apply the rolling function to."""
+    The component displays:
+    - A list of available columns (filterable by data type)
+    - A table of configured operations with: Column, Action, Output Name
+    - Optional group by and order by selectors
 
-    function: RollingFunction
-    """The rolling window function to apply (sum, mean, min, max, etc.)."""
+    Example - Rolling Window:
+        ColumnActionInput(
+            label="Rolling Calculations",
+            actions=["sum", "mean", "min", "max"],
+            output_name_template="{column}_rolling_{action}",
+            show_group_by=True,
+            show_order_by=True,
+            data_types="Numeric"
+        )
 
-    window_size: int = 3
-    """The size of the rolling window."""
+    Example - String Transformations:
+        ColumnActionInput(
+            label="String Operations",
+            actions=["upper", "lower", "trim", "reverse"],
+            output_name_template="{column}_{action}",
+            data_types="String"
+        )
 
-    output_name: str | None = None
-    """The name for the output column. Auto-generated if not provided."""
-
-    min_periods: int | None = None
-    """Minimum number of observations required to produce a value. Defaults to window_size."""
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        # Auto-generate output name if not provided
-        if self.output_name is None:
-            self.output_name = f"{self.column}_rolling_{self.function}_{self.window_size}"
-
-
-class RollingWindowInput(FlowfileInComponent):
-    """
-    A UI component for configuring rolling window calculations.
-
-    This component allows users to define multiple rolling window operations,
-    each with a column selection, function type, window size, and output name.
-    Operations can be optionally grouped by specific columns and ordered by
-    a specified column.
-
-    Example:
-        class MyNodeSettings(NodeSettings):
-            main = Section(
-                rolling_config=RollingWindowInput(
-                    label="Rolling Window Configuration",
-                    group_by_columns=["category"],
-                    order_by_column="date",
-                    operations=[
-                        RollingOperation(column="sales", function="sum", window_size=7),
-                        RollingOperation(column="sales", function="mean", window_size=30),
-                    ]
-                )
-            )
+    Example - Aggregations:
+        ColumnActionInput(
+            label="Aggregations",
+            actions=[("sum", "Sum"), ("count", "Count"), ("mean", "Average")],
+            output_name_template="{column}_{action}",
+            show_group_by=True
+        )
     """
 
-    component_type: Literal["RollingWindowInput"] = "RollingWindowInput"
+    component_type: Literal["ColumnActionInput"] = "ColumnActionInput"
     input_type: InputType = "array"
 
-    # Configuration for the rolling window
-    operations: list[RollingOperation] = Field(default_factory=list)
-    """List of rolling window operations to apply."""
+    # Configurable actions - list of action names or (value, label) tuples
+    actions: list[str | tuple[str, str]] = Field(default_factory=list)
+    """Actions available for selection. Can be strings or (value, label) tuples."""
 
-    group_by_columns: list[str] = Field(default_factory=list)
-    """Columns to group by before applying the rolling window (for rolling by group)."""
+    # Template for auto-generating output names
+    # Supports placeholders: {column}, {action}
+    output_name_template: str = "{column}_{action}"
+    """Template for generating default output names. Use {column} and {action} placeholders."""
 
-    order_by_column: str | None = None
-    """Column to order by before applying the rolling window."""
+    # Optional grouping/ordering support
+    show_group_by: bool = False
+    """Whether to show the group by column selector."""
 
-    # Available functions for the UI dropdown
-    available_functions: list[RollingFunction] = Field(
-        default=["sum", "mean", "min", "max", "count", "std", "var", "median", "first", "last"]
-    )
-    """Functions available for selection in the UI."""
+    show_order_by: bool = False
+    """Whether to show the order by column selector."""
 
     # Type filtering for column selection
-    data_type_filter_input: TypeSpec = Field(default="Numeric", alias="data_types", repr=False, exclude=True)
-    """Filter columns by data type. Defaults to Numeric types."""
+    data_type_filter_input: TypeSpec = Field(default="ALL", alias="data_types", repr=False, exclude=True)
+    """Filter columns by data type. Defaults to ALL."""
 
     class Config:
         arbitrary_types_allowed = True
 
     def __init__(self, **data):
         super().__init__(**data)
-        # Initialize value from operations if not set
+        # Initialize value if not set
         if self.value is None:
             self.value = {
-                "operations": [op.model_dump() for op in self.operations],
-                "group_by_columns": self.group_by_columns,
-                "order_by_column": self.order_by_column,
+                "rows": [],
+                "group_by_columns": [],
+                "order_by_column": None,
             }
 
     def set_value(self, value: Any):
         """
-        Sets the value from frontend, reconstructing RollingOperation objects.
+        Sets the value from frontend.
         """
         self.value = value
-        if isinstance(value, dict):
-            if "operations" in value:
-                self.operations = [RollingOperation(**op) for op in value["operations"]]
-            if "group_by_columns" in value:
-                self.group_by_columns = value["group_by_columns"]
-            if "order_by_column" in value:
-                self.order_by_column = value["order_by_column"]
         return self
 
     @computed_field
@@ -500,9 +475,17 @@ class RollingWindowInput(FlowfileInComponent):
         Serializes the component for the frontend.
         """
         data = super().model_dump(**kwargs)
-        # Ensure operations are serialized properly
-        data["operations"] = [op.model_dump() for op in self.operations]
-        data["available_functions"] = self.available_functions
+        # Normalize actions to list of {value, label} objects for frontend
+        normalized_actions = []
+        for action in self.actions:
+            if isinstance(action, tuple):
+                normalized_actions.append({"value": action[0], "label": action[1]})
+            else:
+                normalized_actions.append({"value": action, "label": action})
+        data["actions"] = normalized_actions
+        data["output_name_template"] = self.output_name_template
+        data["show_group_by"] = self.show_group_by
+        data["show_order_by"] = self.show_order_by
         if "data_types_filter" in data and data["data_types_filter"] != "ALL":
             data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
         else:
