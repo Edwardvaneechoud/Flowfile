@@ -192,6 +192,27 @@ CORE_HOST=flowfile-core
 
 ## Authentication & User Management
 
+### What is Authentication and Why Does It Matter?
+
+When you run Flowfile on your own computer (desktop mode), you're the only user—there's no need to log in because the application knows it's just you. But when Flowfile runs on a server that multiple people access, the system needs a way to:
+
+- **Know who you are** - Verify your identity when you log in
+- **Remember you're logged in** - So you don't have to enter your password on every click
+- **Control what you can do** - Some users are administrators, others are regular users
+- **Keep your work separate** - Your flows and secrets stay private from other users
+
+Think of it like an office building: the desktop version is like working from home (no badge needed), while Docker mode is like a shared office where everyone needs a key card to get in and access their own desk.
+
+### How Login Works (The Simple Version)
+
+1. **You enter your username and password** on the login screen
+2. **Flowfile checks if they're correct** by comparing against stored credentials
+3. **If correct, you receive a "session token"** - think of it as a temporary visitor badge
+4. **Your browser stores this token** and shows it automatically on each request
+5. **The token expires after a while** (currently 60 minutes), requiring you to log in again
+
+This token system means your actual password is only sent once during login, not on every action you take.
+
 ### Understanding FLOWFILE_MODE
 
 The `FLOWFILE_MODE` environment variable controls authentication behavior:
@@ -252,6 +273,40 @@ All passwords must meet these requirements:
 - At least one number (0-9)
 
 ## Secrets Management
+
+### What Are Secrets and Why Protect Them?
+
+When building data pipelines, you often need to connect to databases, cloud services, or APIs. These connections require credentials—passwords, API keys, or access tokens. These are your "secrets."
+
+**Why not just type passwords directly into your flows?**
+
+- **Security risk** - Anyone who can view the flow can see your passwords
+- **Sharing problems** - You can't safely share flows with teammates if they contain real credentials
+- **Rotation headaches** - When you change a password, you'd have to update every flow that uses it
+
+**Flowfile's solution: A secure vault for your credentials**
+
+Think of secrets management like a safety deposit box at a bank:
+
+- You store your valuables (passwords, API keys) in the box
+- The box is locked with a special key (the master key)
+- When you need something, the bank retrieves it for you
+- Other people can't see what's in your box
+- You can change what's inside without changing the box number
+
+In Flowfile, you store secrets once, give them a name (like `production_database_password`), and then reference that name in your flows. The actual password stays encrypted and hidden.
+
+### How It Works (Non-Technical Overview)
+
+1. **You create a secret** - Give it a name and enter the sensitive value
+2. **Flowfile encrypts it** - The value is scrambled using the master key
+3. **The encrypted version is stored** - Even if someone accessed the database, they'd only see scrambled text
+4. **When needed, Flowfile decrypts it** - The master key unscrambles it temporarily for use
+5. **You never see the raw password again** - This prevents accidental exposure
+
+The master key is like the bank's vault key—without it, nothing can be decrypted. This is why backing up your master key is critical.
+
+### Technical Details
 
 Flowfile provides encrypted secrets storage for sensitive credentials like database passwords and API keys.
 
