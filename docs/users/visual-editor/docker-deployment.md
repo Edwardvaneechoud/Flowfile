@@ -57,22 +57,25 @@ Access Flowfile at: **http://localhost:8080**
 
 ## Accessing Your Data Files
 
-When running Flowfile in Docker, the containers cannot access files on your host machine unless you explicitly mount them. To work with your data files (CSV, Excel, Parquet, etc.), you need to add them to a mounted directory.
+When running Flowfile in Docker, the containers can only access files through mounted volumes. The default `docker-compose.yml` includes these mounts:
 
-### Default Data Directory
+| Mount | Type | Path in Container | Host Access |
+|-------|------|-------------------|-------------|
+| `flowfile-user-data` | Named volume | `/app/user_data/` | Docker-managed (not directly on host) |
+| `./saved_flows` | Bind mount | `/app/flowfile_core/saved_flows/` | `./saved_flows/` in project directory |
 
-The `docker-compose.yml` includes a volume mount for user data:
+### Using the Default Mounts
 
-```yaml
-volumes:
-  - flowfile-user-data:/app/user_data
+The easiest way to access your data files is to place them in the `./saved_flows/` directory in your project folder. These files will be accessible at `/app/flowfile_core/saved_flows/` inside Flowfile.
+
+```bash
+# Copy your data files to the mounted directory
+cp my_data.csv ./saved_flows/
 ```
 
-Files placed in this volume are accessible at `/app/user_data/` inside the container.
+### Adding a Custom Data Directory
 
-### Mounting a Local Directory
-
-To access files from a specific folder on your host machine, add a bind mount to the `flowfile-core` and `flowfile-worker` services in `docker-compose.yml`:
+For a dedicated data folder, add a bind mount to **both** the `flowfile-core` and `flowfile-worker` services in `docker-compose.yml`:
 
 ```yaml
 flowfile-core:
@@ -80,34 +83,31 @@ flowfile-core:
     - flowfile-user-data:/app/user_data
     - flowfile-internal-storage:/app/internal_storage
     - ./saved_flows:/app/flowfile_core/saved_flows
-    # Add your data directory here:
-    - /path/to/your/data:/app/data
+    # Add your data directory:
+    - ./data:/app/data
 
 flowfile-worker:
   volumes:
     - flowfile-user-data:/app/user_data
     - flowfile-internal-storage:/app/internal_storage
-    # Add the same mount to worker for processing:
-    - /path/to/your/data:/app/data
+    # Add the same mount to worker:
+    - ./data:/app/data
 ```
 
 !!! warning "Mount to Both Services"
     You must add the volume mount to **both** `flowfile-core` and `flowfile-worker` services. The core service handles the UI and file browsing, while the worker service processes the data.
 
-### Example: Mounting Your Documents Folder
+After adding the mount, restart the services:
 
-```yaml
-# Mount your local data folder
-- ~/Documents/flowfile-data:/app/data
+```bash
+docker-compose down && docker-compose up -d
 ```
 
-After adding this mount and restarting (`docker-compose down && docker-compose up -d`), your files will be accessible at `/app/data/` when browsing for files in Flowfile.
-
-### Using the Mounted Data
+### Using Your Data in Flowfile
 
 1. In Flowfile, add a **Read Data** node
 2. Click **Browse** to open the file explorer
-3. Navigate to `/app/data/` (or your mounted path)
+3. Navigate to your mounted path (e.g., `/app/data/` or `/app/flowfile_core/saved_flows/`)
 4. Select your file
 
 ---
