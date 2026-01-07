@@ -23,9 +23,6 @@ RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
 # Runtime stage
 FROM python:3.12-slim
 
-RUN groupadd --gid 1000 flowfile \
-    && useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home flowfile
-
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,12 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY --chown=flowfile:flowfile shared /app/shared
-COPY --chown=flowfile:flowfile tools /app/tools
-COPY --chown=flowfile:flowfile flowfile_core/flowfile_core /app/flowfile_core
+COPY shared /app/shared
+COPY tools /app/tools
+COPY flowfile_core/flowfile_core /app/flowfile_core
 
-RUN mkdir -p /app/user_data /app/internal_storage /app/flowfile_core/saved_flows \
-    && chown -R flowfile:flowfile /app
+RUN mkdir -p /app/user_data /app/internal_storage /app/flowfile_core/saved_flows
 
 ENV PYTHONPATH=/app \
     FLOWFILE_MODE=docker \
@@ -52,7 +48,5 @@ EXPOSE 63578
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:63578/docs || exit 1
-
-USER flowfile
 
 CMD ["python", "-m", "flowfile_core.main"]
