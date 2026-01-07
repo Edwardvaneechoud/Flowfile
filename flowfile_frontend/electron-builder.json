@@ -1,6 +1,9 @@
 {
   "appId": "com.flowfile.app",
   "productName": "Flowfile",
+  "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+  "asar": true,
+  "compression": "maximum",
   "directories": {
     "output": "dist",
     "buildResources": "src/assets/icons"
@@ -15,7 +18,12 @@
     "installerHeaderIcon": "src/assets/icons/win/icon.ico"
   },
   "win": {
-    "target": "nsis",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
     "icon": "src/assets/icons/win/icon.ico",
     "extraFiles": [
       {
@@ -25,7 +33,16 @@
     ]
   },
   "linux": {
-    "target": ["snap"],
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      },
+      {
+        "target": "deb",
+        "arch": ["x64"]
+      }
+    ],
     "icon": "src/assets/icons/png",
     "category": "Utility",
     "extraFiles": [
@@ -36,6 +53,12 @@
     ]
   },
   "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      }
+    ],
     "icon": "src/assets/icons/mac/icon.icns",
     "hardenedRuntime": true,
     "gatekeeperAssess": false,
@@ -49,6 +72,20 @@
       {
         "from": "src/assets/mac-config/Info.plist",
         "to": "Contents/Info.plist"
+      }
+    ]
+  },
+  "dmg": {
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
       }
     ]
   },
