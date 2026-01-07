@@ -20,6 +20,8 @@ from .ui_components import (
     IncomingColumns,
     MultiSelect,
     NumericInput,
+    RollingOperation,
+    RollingWindowInput,
     SecretSelector,
     Section,
     SingleSelect,
@@ -45,5 +47,7 @@ __all__ = [
     "IncomingColumns",
     "AvailableSecrets",
     "SecretSelector",
+    "RollingOperation",
+    "RollingWindowInput",
     "Types",
 ]

@@ -376,3 +376,135 @@ class SecretSelector(FlowfileInComponent):
         if self.name_prefix:
             data["name_prefix"] = self.name_prefix
         return data
+
+
+# Rolling window function types
+RollingFunction = Literal["sum", "mean", "min", "max", "count", "std", "var", "median", "first", "last"]
+
+
+class RollingOperation(BaseModel):
+    """
+    Represents a single rolling window operation.
+
+    This model defines how to apply a rolling window function to a specific column,
+    with optional grouping and ordering.
+    """
+
+    column: str
+    """The column to apply the rolling function to."""
+
+    function: RollingFunction
+    """The rolling window function to apply (sum, mean, min, max, etc.)."""
+
+    window_size: int = 3
+    """The size of the rolling window."""
+
+    output_name: str | None = None
+    """The name for the output column. Auto-generated if not provided."""
+
+    min_periods: int | None = None
+    """Minimum number of observations required to produce a value. Defaults to window_size."""
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Auto-generate output name if not provided
+        if self.output_name is None:
+            self.output_name = f"{self.column}_rolling_{self.function}_{self.window_size}"
+
+
+class RollingWindowInput(FlowfileInComponent):
+    """
+    A UI component for configuring rolling window calculations.
+
+    This component allows users to define multiple rolling window operations,
+    each with a column selection, function type, window size, and output name.
+    Operations can be optionally grouped by specific columns and ordered by
+    a specified column.
+
+    Example:
+        class MyNodeSettings(NodeSettings):
+            main = Section(
+                rolling_config=RollingWindowInput(
+                    label="Rolling Window Configuration",
+                    group_by_columns=["category"],
+                    order_by_column="date",
+                    operations=[
+                        RollingOperation(column="sales", function="sum", window_size=7),
+                        RollingOperation(column="sales", function="mean", window_size=30),
+                    ]
+                )
+            )
+    """
+
+    component_type: Literal["RollingWindowInput"] = "RollingWindowInput"
+    input_type: InputType = "array"
+
+    # Configuration for the rolling window
+    operations: list[RollingOperation] = Field(default_factory=list)
+    """List of rolling window operations to apply."""
+
+    group_by_columns: list[str] = Field(default_factory=list)
+    """Columns to group by before applying the rolling window (for rolling by group)."""
+
+    order_by_column: str | None = None
+    """Column to order by before applying the rolling window."""
+
+    # Available functions for the UI dropdown
+    available_functions: list[RollingFunction] = Field(
+        default=["sum", "mean", "min", "max", "count", "std", "var", "median", "first", "last"]
+    )
+    """Functions available for selection in the UI."""
+
+    # Type filtering for column selection
+    data_type_filter_input: TypeSpec = Field(default="Numeric", alias="data_types", repr=False, exclude=True)
+    """Filter columns by data type. Defaults to Numeric types."""
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Initialize value from operations if not set
+        if self.value is None:
+            self.value = {
+                "operations": [op.model_dump() for op in self.operations],
+                "group_by_columns": self.group_by_columns,
+                "order_by_column": self.order_by_column,
+            }
+
+    def set_value(self, value: Any):
+        """
+        Sets the value from frontend, reconstructing RollingOperation objects.
+        """
+        self.value = value
+        if isinstance(value, dict):
+            if "operations" in value:
+                self.operations = [RollingOperation(**op) for op in value["operations"]]
+            if "group_by_columns" in value:
+                self.group_by_columns = value["group_by_columns"]
+            if "order_by_column" in value:
+                self.order_by_column = value["order_by_column"]
+        return self
+
+    @computed_field
+    @property
+    def data_types_filter(self) -> Literal["ALL"] | list[DataType]:
+        """
+        A computed field that normalizes the `data_type_filter_input` into a
+        standardized format for the frontend.
+        """
+        return normalize_input_to_data_types(self.data_type_filter_input)
+
+    def model_dump(self, **kwargs) -> dict:
+        """
+        Serializes the component for the frontend.
+        """
+        data = super().model_dump(**kwargs)
+        # Ensure operations are serialized properly
+        data["operations"] = [op.model_dump() for op in self.operations]
+        data["available_functions"] = self.available_functions
+        if "data_types_filter" in data and data["data_types_filter"] != "ALL":
+            data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
+        else:
+            data["data_types"] = "ALL"
+        return data

@@ -60,6 +60,31 @@ export interface SecretSelectorComponent extends BaseComponent {
   name_prefix?: string;
 }
 
+// Rolling window operation value structure
+export interface RollingOperationValue {
+  column: string;
+  function: string;
+  window_size: number;
+  output_name: string;
+  min_periods: number | null;
+}
+
+// Rolling window input value structure
+export interface RollingWindowValue {
+  operations: RollingOperationValue[];
+  group_by_columns: string[];
+  order_by_column: string | null;
+}
+
+export interface RollingWindowInputComponent extends BaseComponent {
+  component_type: "RollingWindowInput";
+  operations: RollingOperationValue[];
+  group_by_columns: string[];
+  order_by_column: string | null;
+  available_functions: string[];
+  data_types: string[] | "ALL";
+}
+
 // --- Section Component Type ---
 
 export interface SectionComponent {
@@ -82,7 +107,8 @@ export type UIComponent =
   | SliderInputComponent
   | SingleSelectComponent
   | ColumnSelectorComponent
-  | SecretSelectorComponent;
+  | SecretSelectorComponent
+  | RollingWindowInputComponent;
 
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";

@@ -79,6 +79,13 @@
               :schema="component"
             />
 
+            <RollingWindowInput
+              v-else-if="component.component_type === 'RollingWindowInput'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+              :incoming-columns="columnTypes"
+            />
+
             <div v-else class="text-red-500 text-xs">
               Unknown component type: {{ (component as any).component_type }}
             </div>
@@ -106,6 +113,7 @@ import SliderInput from "./components/SliderInput.vue";
 import SingleSelect from "./components/SingleSelect.vue";
 import ColumnSelector from "./components/ColumnSelector.vue";
 import SecretSelector from "./components/SecretSelector.vue";
+import RollingWindowInput from "./components/RollingWindowInput.vue";
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
