@@ -126,6 +126,55 @@ def _is_select_query(normalized_query: str) -> bool:
     return False
 
 
+def _validate_identifier(identifier: str, identifier_type: str = "identifier") -> None:
+    """
+    Validate that a SQL identifier (table name, schema name, etc.) is safe.
+
+    This prevents SQL injection through malicious identifier names.
+    Allows alphanumeric characters, underscores, and dots (for multi-part identifiers).
+
+    Args:
+        identifier: The identifier to validate
+        identifier_type: Type of identifier (for error messages)
+
+    Raises:
+        UnsafeSQLError: If the identifier contains unsafe characters
+    """
+    if not identifier or not identifier.strip():
+        raise UnsafeSQLError(f"{identifier_type} cannot be empty")
+
+    # Allow alphanumeric, underscore, and dot (for schema.table notation)
+    # This is a conservative whitelist approach
+    if not re.match(r"^[a-zA-Z0-9_\.]+$", identifier):
+        raise UnsafeSQLError(
+            f"Invalid {identifier_type}: '{identifier}'. "
+            f"Only alphanumeric characters, underscores, and dots are allowed."
+        )
+
+
+def _quote_identifier(identifier: str) -> str:
+    """
+    Quote a SQL identifier to prevent SQL injection.
+
+    Uses double quotes which is standard SQL. Individual database dialects
+    may have different quoting styles, but SQLAlchemy normalizes this.
+
+    Args:
+        identifier: The identifier to quote (e.g., table name, schema name)
+
+    Returns:
+        Quoted identifier safe for SQL queries
+    """
+    # First validate the identifier
+    _validate_identifier(identifier)
+
+    # Split on dot for schema.table notation
+    parts = identifier.split(".")
+    # Quote each part separately and rejoin
+    quoted_parts = [f'"{part}"' for part in parts]
+    return ".".join(quoted_parts)
+
+
 def get_query_columns(engine: Engine, query_text: str):
     """
     Get column names from a query and assume string type for all columns
@@ -136,7 +185,13 @@ def get_query_columns(engine: Engine, query_text: str):
 
     Returns:
         Dictionary mapping column names to string type
+
+    Raises:
+        UnsafeSQLError: If the query contains unsafe operations
     """
+    # Validate the query for safety before execution
+    validate_sql_query(query_text)
+
     with engine.connect() as connection:
         # Create a text object from the query
         query = text(query_text)
@@ -215,11 +270,19 @@ class BaseSqlSource:
             self.table_name = table_name
             self.schema_name = schema_name
 
-            # Generate the basic query
+            # Validate table and schema names to prevent SQL injection
+            _validate_identifier(table_name, "table name")
             if schema_name is not None and schema_name != "":
-                self.query = f"SELECT * FROM {schema_name}.{table_name}"
+                _validate_identifier(schema_name, "schema name")
+
+            # Generate the basic query with properly quoted identifiers
+            if schema_name is not None and schema_name != "":
+                quoted_schema = _quote_identifier(schema_name)
+                quoted_table = _quote_identifier(table_name)
+                self.query = f"SELECT * FROM {quoted_schema}.{quoted_table}"
             else:
-                self.query = f"SELECT * FROM {table_name}"
+                quoted_table = _quote_identifier(table_name)
+                self.query = f"SELECT * FROM {quoted_table}"
 
         # Set schema if provided
         if fields:
