@@ -54,6 +54,7 @@ Draw lines between nodes to define data flow. Data moves from top to bottom, lef
 ### More Resources
 - [Building Flows](building-flows.md) - Detailed workflow guide
 - [Node Reference](nodes/index.md) - Complete documentation of all nodes
+- [Keyboard Shortcuts](keyboard-shortcuts.md) - Speed up your workflow with shortcuts
 
 ### Tutorials
 - [Connect to Databases](tutorials/database-connectivity.md) - PostgreSQL, MySQL, and more
@@ -67,6 +68,7 @@ Draw lines between nodes to define data flow. Data moves from top to bottom, lef
 3. **Preview often** - Check data at each transformation
 4. **Save regularly** - Flows are saved as `.flowfile` files
 5. **Try both modes** - Development for testing, Performance for production
+6. **Learn shortcuts** - Use [keyboard shortcuts](keyboard-shortcuts.md) to speed up your workflow
 
 ## Visual vs Code
 
