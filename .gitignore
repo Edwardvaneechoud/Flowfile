@@ -58,5 +58,5 @@ local_data
 /flowfile_core/tests/support_files/flows/second_flow.flowfile
 /flowfile_core/tests/support_files/flows/tmp/
 
-# Docker user data directory (bind mount)
+# Docker
 flowfile_data/

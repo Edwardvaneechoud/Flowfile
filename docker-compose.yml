@@ -22,24 +22,17 @@ services:
     ports:
       - "63578:63578"
     environment:
-      # FLOWFILE_MODE: "electron" (desktop), "package" (Python package), "docker" (container)
       - FLOWFILE_MODE=docker
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
-      # JWT secret key for token signing - CHANGE THIS IN PRODUCTION
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
       - WORKER_HOST=flowfile-worker
-      # Internal storage for container communication (logs, cache, temp)
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
-      # User data directory for file explorer and user files
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
-      # User data - bind mount to host for easy file sharing
-      # Users can place files in ./flowfile_data/uploads/ and access outputs in ./flowfile_data/outputs/
       - ./flowfile_data:/app/user_data
-      # Internal storage - named volume for container communication (logs, cache, temp)
       - flowfile-internal-storage:/app/internal_storage
       - ./saved_flows:/app/flowfile_core/saved_flows
     networks:
@@ -57,16 +50,12 @@ services:
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
-      # Same internal storage as core for communication
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
-      # Access to user data for processing
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
-      # User data - bind mount to host for easy file sharing
       - ./flowfile_data:/app/user_data
-      # Internal storage volume - shared with core
       - flowfile-internal-storage:/app/internal_storage
     networks:
       - flowfile-network
@@ -78,12 +67,8 @@ networks:
     driver: bridge
 
 volumes:
-  # Internal container communication (logs, cache, temp files)
-  # This volume is ephemeral and can be recreated
   flowfile-internal-storage:
     driver: local
-  # Note: User data is now a bind mount to ./flowfile_data/ (not a named volume)
-  # This allows users to easily share files between host and containers
 
 secrets:
   flowfile_master_key:

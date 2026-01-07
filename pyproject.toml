@@ -77,7 +77,6 @@ flowfile-migrate = "tools.migrate.__main__:main"
 optional = true
 
 [tool.poetry.group.build.dependencies]
-# Desktop application packaging (not needed for Docker or Python package)
 pyinstaller = "^6.11.0"
 
 [tool.poetry.group.dev.dependencies]
