@@ -251,6 +251,66 @@
           </div>
         </template>
 
+        <!-- ColumnActionInput Properties -->
+        <template v-if="component.component_type === 'ColumnActionInput'">
+          <div class="property-group">
+            <div class="property-group-title">Column Action Options</div>
+            <div class="property-row">
+              <label class="property-label">Actions (comma-separated) <span class="required">*</span></label>
+              <input
+                :value="component.actions_string"
+                type="text"
+                class="property-input"
+                placeholder="sum, mean, min, max"
+                @input="updateField('actions_string', ($event.target as HTMLInputElement).value)"
+              />
+              <span class="field-hint">Actions available in dropdown (e.g., sum, mean, min, max)</span>
+            </div>
+            <div class="property-row">
+              <label class="property-label">Output Name Template</label>
+              <input
+                :value="component.output_name_template"
+                type="text"
+                class="property-input"
+                placeholder="{column}_{action}"
+                @input="updateField('output_name_template', ($event.target as HTMLInputElement).value)"
+              />
+              <span class="field-hint">Use {column} and {action} placeholders</span>
+            </div>
+            <div class="property-row">
+              <label class="property-label">Data Types Filter</label>
+              <select
+                :value="component.data_types"
+                class="property-input"
+                @change="updateField('data_types', ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="ALL">All Types</option>
+                <option value="Numeric">Numeric</option>
+                <option value="String">String</option>
+                <option value="Date">Date/Time</option>
+              </select>
+            </div>
+            <div class="property-row checkbox-row">
+              <label class="property-label">Show Group By</label>
+              <input
+                :checked="component.show_group_by"
+                type="checkbox"
+                class="property-checkbox"
+                @change="updateField('show_group_by', ($event.target as HTMLInputElement).checked)"
+              />
+            </div>
+            <div class="property-row checkbox-row">
+              <label class="property-label">Show Order By</label>
+              <input
+                :checked="component.show_order_by"
+                type="checkbox"
+                class="property-checkbox"
+                @change="updateField('show_order_by', ($event.target as HTMLInputElement).checked)"
+              />
+            </div>
+          </div>
+        </template>
+
         <!-- SecretSelector Properties -->
         <template v-if="component.component_type === 'SecretSelector'">
           <div class="property-group">
@@ -340,6 +400,8 @@ function getTypeForComponent(componentType: string, multiple?: boolean): string 
       return "list[str]";
     case "ColumnSelector":
       return multiple ? "list[str]" : "str";
+    case "ColumnActionInput":
+      return "dict";
     case "SecretSelector":
       return "SecretStr";
     default:
