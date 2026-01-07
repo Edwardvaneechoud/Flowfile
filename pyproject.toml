@@ -20,7 +20,6 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-pyinstaller = "^6.11.0"
 python = ">=3.10,<3.14"
 fastapi = "~0.115.2"
 uvicorn = "~0.32.0"
@@ -74,6 +73,13 @@ flowfile = "flowfile.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
 flowfile-migrate = "tools.migrate.__main__:main"
+
+[tool.poetry.group.build]
+optional = true
+
+[tool.poetry.group.build.dependencies]
+# Desktop application packaging (not needed for Docker or Python package)
+pyinstaller = "^6.11.0"
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
