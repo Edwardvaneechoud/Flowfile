@@ -61,6 +61,8 @@ Access Flowfile at: **http://localhost:8080**
 
 When accessing Flowfile in Docker mode, users are presented with a login page.
 
+![Login Page](__placeholder__login_page.png)
+
 **Default admin credentials** (change in production!):
 
 - **Username**: `admin` (or value of `FLOWFILE_ADMIN_USER`)
@@ -78,6 +80,8 @@ All passwords must meet these requirements:
 
 In Docker mode, a logout button appears in the sidebar. Click it to end your session and return to the login page.
 
+![Sidebar with Logout Button](__placeholder__sidebar_logout.png)
+
 ---
 
 ## User Management
@@ -88,6 +92,8 @@ Administrators can manage users through the built-in admin panel.
 
 1. Log in as an admin user
 2. Click the **User Management** button in the sidebar (only visible to admins)
+
+![User Management Panel](__placeholder__user_management.png)
 
 ### User Roles
 
