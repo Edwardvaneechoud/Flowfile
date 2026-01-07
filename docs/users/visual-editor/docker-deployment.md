@@ -57,25 +57,13 @@ Access Flowfile at: **http://localhost:8080**
 
 ## Accessing Your Data Files
 
-When running Flowfile in Docker, the containers can only access files through mounted volumes. The default `docker-compose.yml` includes these mounts:
+When running Flowfile in Docker, the containers can only access files through mounted volumes. By default, the `docker-compose.yml` uses Docker-managed named volumes which are not directly accessible from your host filesystem.
 
-| Mount | Type | Path in Container | Host Access |
-|-------|------|-------------------|-------------|
-| `flowfile-user-data` | Named volume | `/app/user_data/` | Docker-managed (not directly on host) |
-| `./saved_flows` | Bind mount | `/app/flowfile_core/saved_flows/` | `./saved_flows/` in project directory |
+To work with your local data files (CSV, Excel, Parquet, etc.), you need to add a bind mount to the `docker-compose.yml`.
 
-### Using the Default Mounts
+### Adding a Data Directory
 
-The easiest way to access your data files is to place them in the `./saved_flows/` directory in your project folder. These files will be accessible at `/app/flowfile_core/saved_flows/` inside Flowfile.
-
-```bash
-# Copy your data files to the mounted directory
-cp my_data.csv ./saved_flows/
-```
-
-### Adding a Custom Data Directory
-
-For a dedicated data folder, add a bind mount to **both** the `flowfile-core` and `flowfile-worker` services in `docker-compose.yml`:
+Add a bind mount to **both** the `flowfile-core` and `flowfile-worker` services in `docker-compose.yml`:
 
 ```yaml
 flowfile-core:
@@ -105,10 +93,11 @@ docker-compose down && docker-compose up -d
 
 ### Using Your Data in Flowfile
 
-1. In Flowfile, add a **Read Data** node
-2. Click **Browse** to open the file explorer
-3. Navigate to your mounted path (e.g., `/app/data/` or `/app/flowfile_core/saved_flows/`)
-4. Select your file
+1. Place your data files in the `./data/` directory on your host
+2. In Flowfile, add a **Read Data** node
+3. Click **Browse** to open the file explorer
+4. Navigate to `/app/data/`
+5. Select your file
 
 ---
 
