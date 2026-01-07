@@ -38,7 +38,10 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
-      - flowfile-user-data:/app/user_data
+      # User data - bind mount to host for easy file sharing
+      # Users can place files in ./flowfile_data/uploads/ and access outputs in ./flowfile_data/outputs/
+      - ./flowfile_data:/app/user_data
+      # Internal storage - named volume for container communication (logs, cache, temp)
       - flowfile-internal-storage:/app/internal_storage
       - ./saved_flows:/app/flowfile_core/saved_flows
     networks:
@@ -62,8 +65,8 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
     volumes:
-      # User data volume - for accessing user files
-      - flowfile-user-data:/app/user_data
+      # User data - bind mount to host for easy file sharing
+      - ./flowfile_data:/app/user_data
       # Internal storage volume - shared with core
       - flowfile-internal-storage:/app/internal_storage
     networks:
@@ -80,11 +83,8 @@ volumes:
   # This volume is ephemeral and can be recreated
   flowfile-internal-storage:
     driver: local
-
-  # User-accessible data (flows, uploads, outputs)
-  # This volume should be persistent and backed up
-  flowfile-user-data:
-    driver: local
+  # Note: User data is now a bind mount to ./flowfile_data/ (not a named volume)
+  # This allows users to easily share files between host and containers
 
 secrets:
   flowfile_master_key:
