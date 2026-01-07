@@ -83,10 +83,25 @@ poetry run pre-commit run --all-files
 Our GitHub Actions workflows automatically run:
 
 - **Linting** (`lint.yml`) - Runs ruff check and format validation on all PRs
+- **Security Scanning** (`codeql.yaml`) - Runs CodeQL security analysis for Python and JavaScript/TypeScript
+  - Detects security vulnerabilities (SQL injection, XSS, etc.)
+  - Runs on all PRs, pushes to main, and weekly scans
+  - Results available in GitHub Security tab
 - **Tests** (`test-docker-auth.yml`, `e2e-tests.yml`) - Runs test suites
 - **Documentation** (`documentation.yml`) - Builds and deploys docs
 
 All checks must pass before a PR can be merged.
+
+### Security
+
+We take security seriously:
+
+- **CodeQL scanning** runs automatically on all PRs and commits to main
+- **Weekly security scans** detect new vulnerabilities
+- **SQL injection protection** - All SQL queries are validated and sanitized
+- **Dependency scanning** - GitHub Dependabot alerts for vulnerable dependencies
+
+If you discover a security vulnerability, please report it responsibly by opening a security advisory on GitHub rather than creating a public issue.
 
 ## Running Tests
 
