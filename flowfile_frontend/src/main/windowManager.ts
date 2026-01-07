@@ -1,4 +1,3 @@
-// windowManager.ts
 import { BrowserWindow, screen } from "electron";
 import { join } from "path";
 import { loadWindow } from "./windowLoader";
@@ -10,10 +9,8 @@ let loadingWindow: BrowserWindow | null = null;
 export function createLoadingWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-
-  // Calculate window size based on screen size
-  const windowWidth = Math.min(700, screenWidth * 0.5); // Max 700px or 50% of screen width
-  const windowHeight = Math.min(400, screenHeight * 0.4); // Max 400px or 40% of screen height
+  const windowWidth = Math.min(700, screenWidth * 0.5);
+  const windowHeight = Math.min(400, screenHeight * 0.4);
 
   const preloadPath = join(__dirname, "preload.js");
   const loadingHtmlPath = join(__dirname, "loading.html");
@@ -25,8 +22,9 @@ export function createLoadingWindow() {
     y: (screenHeight - windowHeight) / 2,
     webPreferences: {
       preload: preloadPath,
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
     },
     frame: false,
     transparent: true,
@@ -68,12 +66,9 @@ export function createWindow() {
     backgroundColor: "#ffffff",
   });
 
-  // Window events
   mainWindow.once("ready-to-show", () => {
     console.log("Window ready to show");
     mainWindow?.show();
-
-    // Close loading window after main window is shown
     if (loadingWindow) {
       loadingWindow.close();
     }
@@ -84,36 +79,56 @@ export function createWindow() {
     mainWindow = null;
   });
 
-  // Load the content
   loadWindow(mainWindow);
 }
 
-export function openAuthWindow() {
+export function openAuthWindow(authUrl: string): Promise<string | null> {
   console.log("Opening authentication window");
 
-  authWindow = new BrowserWindow({
-    width: 600,
-    height: 600,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: false,
-    },
-    parent: mainWindow || undefined,
-    modal: true,
-    show: false,
-  });
+  return new Promise((resolve) => {
+    authWindow = new BrowserWindow({
+      width: 600,
+      height: 700,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+      parent: mainWindow || undefined,
+      modal: true,
+      show: false,
+    });
 
-  authWindow.loadURL("https://accounts.google.com/o/oauth2/auth");
+    authWindow.webContents.on("will-redirect", (_event, url) => {
+      if (url.includes("code=")) {
+        const urlParams = new URL(url).searchParams;
+        const code = urlParams.get("code");
+        resolve(code);
+        authWindow?.close();
+      }
+    });
 
-  authWindow.once("ready-to-show", () => {
-    console.log("Auth window ready to show");
-    authWindow?.show();
-  });
+    authWindow.webContents.on("will-navigate", (_event, url) => {
+      if (url.includes("code=")) {
+        const urlParams = new URL(url).searchParams;
+        const code = urlParams.get("code");
+        resolve(code);
+        authWindow?.close();
+      }
+    });
 
-  authWindow.on("closed", () => {
-    console.log("Auth window closed");
-    authWindow = null;
+    authWindow.loadURL(authUrl);
+
+    authWindow.once("ready-to-show", () => {
+      console.log("Auth window ready to show");
+      authWindow?.show();
+    });
+
+    authWindow.on("closed", () => {
+      console.log("Auth window closed");
+      authWindow = null;
+      resolve(null); // User closed window without completing auth
+    });
   });
 }
 
