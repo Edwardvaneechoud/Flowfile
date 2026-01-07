@@ -1,9 +1,12 @@
-FROM python:3.12-slim
+# =============================================================================
+# Stage 1: Builder - Install dependencies with build tools
+# =============================================================================
+FROM python:3.12-slim AS builder
 
-# Set working directory
-WORKDIR /app
+WORKDIR /build
 
-RUN apt-get update && apt-get install -y \
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
     curl \
@@ -15,34 +18,58 @@ RUN apt-get update && apt-get install -y \
 # Add cargo and poetry to PATH
 ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
 
-# Configure Poetry: Don't create a virtual environment (we're already in a container)
+# Configure Poetry
 ENV POETRY_NO_INTERACTION=1 \
     POETRY_VIRTUALENVS_CREATE=false \
     POETRY_CACHE_DIR=/tmp/poetry_cache
 
-# Copy poetry files from the root directory (build context)
-COPY pyproject.toml poetry.lock* /app/
-
-# Install dependencies
+# Copy poetry files and install dependencies
+COPY pyproject.toml poetry.lock* ./
 RUN poetry install --only=main --no-root && rm -rf $POETRY_CACHE_DIR
 
-# Copy the shared package
-COPY shared /app/shared
+# =============================================================================
+# Stage 2: Runtime - Minimal image with only runtime dependencies
+# =============================================================================
+FROM python:3.12-slim AS runtime
 
-COPY tools /app/tools
+# Create non-root user for security
+RUN groupadd --gid 1000 flowfile \
+    && useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home flowfile
 
-# Copy the flowfile_core package contents into the container
-COPY flowfile_core/flowfile_core /app/flowfile_core
-
-# Expose the port the app runs on
-EXPOSE 63578
-
-# Set Python path to recognize the packages
-ENV PYTHONPATH=/app
-ENV FLOWFILE_MODE=docker
-
-# Change working directory to where the module is located
 WORKDIR /app
 
-# Command to run the application
+# Install only runtime dependencies (if any needed)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY --chown=flowfile:flowfile shared /app/shared
+COPY --chown=flowfile:flowfile tools /app/tools
+COPY --chown=flowfile:flowfile flowfile_core/flowfile_core /app/flowfile_core
+
+# Create directories for volumes
+RUN mkdir -p /app/user_data /app/internal_storage /app/flowfile_core/saved_flows \
+    && chown -R flowfile:flowfile /app
+
+# Set environment
+ENV PYTHONPATH=/app \
+    FLOWFILE_MODE=docker \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 63578
+
+# Health check - verify server is responding
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:63578/docs || exit 1
+
+# Switch to non-root user
+USER flowfile
+
 CMD ["python", "-m", "flowfile_core.main"]

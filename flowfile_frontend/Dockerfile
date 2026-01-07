@@ -1,31 +1,53 @@
-# Use Node.js LTS as base image
-FROM node:20-slim
+# =============================================================================
+# Stage 1: Builder - Build the frontend application
+# =============================================================================
+FROM node:20-slim AS builder
 
-# Set working directory
-WORKDIR /app
+WORKDIR /build
 
-RUN apt-get update && apt-get install -y \
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    curl \
-    wget \
-    gnupg \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy package files first for better layer caching
 COPY flowfile_frontend/package*.json ./
 
-RUN npm install -g npm@latest
+# Install dependencies
+RUN npm ci --no-audit --no-fund
 
-RUN npm install --platform=linux --arch=arm64 --no-optional
-
+# Copy source and build
 COPY flowfile_frontend/ .
-
 RUN npm run build:web
 
-RUN npm install -g serve
+# =============================================================================
+# Stage 2: Runtime - Serve with nginx for production
+# =============================================================================
+FROM nginx:alpine AS runtime
 
-# Expose the port the app runs on
+# Copy built files to nginx
+COPY --from=builder /build/build/renderer /usr/share/nginx/html
+
+# Copy custom nginx config for SPA routing
+RUN echo 'server { \
+    listen 8080; \
+    root /usr/share/nginx/html; \
+    index index.html; \
+    location / { \
+        try_files $uri $uri/ /index.html; \
+    } \
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ { \
+        expires 1y; \
+        add_header Cache-Control "public, immutable"; \
+    } \
+    gzip on; \
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript; \
+}' > /etc/nginx/conf.d/default.conf
+
 EXPOSE 8080
 
-# Command to serve the built application
-CMD ["serve", "-s", "build/renderer", "-l", "8080"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
