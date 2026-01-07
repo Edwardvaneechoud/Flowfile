@@ -48,6 +48,10 @@ jobs:
           poetry config virtualenvs.create true
           poetry config virtualenvs.in-project true
 
+      # Verify lock file is up to date
+      - name: Check poetry.lock is up to date
+        run: poetry check --lock
+
       # Cache Poetry dependencies
       - name: Cache Poetry dependencies
         uses: actions/cache@v4

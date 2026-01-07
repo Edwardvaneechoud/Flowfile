@@ -4,41 +4,89 @@ build/
 **/build/
 **/dist/
 
-# Node modules
+# Node.js
 node_modules/
 **/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.yarn/
 
-# Development files
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+**/*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+
+# Virtual environments
+.venv/
+**/.venv/
+venv/
+**/venv/
+ENV/
+env/
+
+# Development & IDE
 .git/
 .gitignore
 .env
 .env.*
-**/.DS_Store
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+**/.DS_Store
 
 # Testing
 coverage/
 **/__tests__/
 **/tests/
 .nyc_output
+test-results/
+playwright-report/
 
-# IDE specific files
-.idea/
-.vscode/
-*.swp
-*.swo
-.DS_Store
+# Documentation
+docs/
+site/
+*.md
+!README.md
 
-# TypeScript cache
-*.tsbuildinfo
-
-# Temporary files
+# Temporary & cache files
 .tmp/
 .temp/
+.cache/
+**/.cache/
+*.tsbuildinfo
+.eslintcache
 
 # Docker
 .dockerignore
-Dockerfile
+
+# Project-specific
+flowfile_data/
+saved_flows/
+local_data/
+custom_nodes/
+services_dist/
+shared_data/
+flowfile.db
+**/flowfile.db
+*.flowfile

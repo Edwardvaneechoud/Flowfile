@@ -20,7 +20,6 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-pyinstaller = "^6.11.0"
 python = ">=3.10,<3.14"
 fastapi = "~0.115.2"
 uvicorn = "~0.32.0"
@@ -43,7 +42,6 @@ polars-distance = "~0.4.3"
 polars-expr-transformer = ">=0.4.9.0"
 polars-grouper = "~0.3.0"
 polars-ds = ">=0.6.0"
-pytest = "^8.3.4"
 aiofiles = "^24.1.0"
 python-jose = "^3.4.0"
 bcrypt = "^4.3.0"
@@ -74,6 +72,12 @@ flowfile = "flowfile.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
 flowfile-migrate = "tools.migrate.__main__:main"
+
+[tool.poetry.group.build]
+optional = true
+
+[tool.poetry.group.build.dependencies]
+pyinstaller = "^6.11.0"
 
 [tool.poetry.group.dev.dependencies]
 mkdocs = "^1.6.1"
