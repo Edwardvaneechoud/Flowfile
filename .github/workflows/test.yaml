@@ -6,9 +6,74 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      run_all_tests:
+        description: 'Run all tests regardless of changes'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
+  # Detect which parts of the codebase have changed
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_core: ${{ steps.filter.outputs.backend_core }}
+      backend_worker: ${{ steps.filter.outputs.backend_worker }}
+      backend_frame: ${{ steps.filter.outputs.backend_frame }}
+      backend_flowfile: ${{ steps.filter.outputs.backend_flowfile }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      docs: ${{ steps.filter.outputs.docs }}
+      shared: ${{ steps.filter.outputs.shared }}
+      ci: ${{ steps.filter.outputs.ci }}
+      any_backend: ${{ steps.filter.outputs.any_backend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect file changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend_core:
+              - 'flowfile_core/**'
+            backend_worker:
+              - 'flowfile_worker/**'
+            backend_frame:
+              - 'flowfile_frame/**'
+            backend_flowfile:
+              - 'flowfile/**'
+              - '!flowfile/tests/**'
+            frontend:
+              - 'flowfile_frontend/**'
+            docs:
+              - 'docs/**'
+              - 'mkdocs.yml'
+            shared:
+              - 'shared/**'
+              - 'test_utils/**'
+              - 'pyproject.toml'
+              - 'poetry.lock'
+            ci:
+              - '.github/workflows/**'
+              - 'Makefile'
+            any_backend:
+              - 'flowfile_core/**'
+              - 'flowfile_worker/**'
+              - 'flowfile_frame/**'
+              - 'flowfile/**'
+              - 'shared/**'
+              - 'test_utils/**'
+              - 'pyproject.toml'
+
+  # Backend tests - runs when Python code changes
   backend-tests:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.ci == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -52,7 +117,7 @@ jobs:
           cd flowfile_frontend
           npm install
           npm run build:web
-          
+
           # Create the static directory if it doesn't exist
           mkdir -p ../flowfile/flowfile/web/static
 
@@ -65,13 +130,29 @@ jobs:
       - name: Start Mock S3 bucket with Sample Data
         run: poetry run start_minio
 
+      # Run tests conditionally based on what changed
       - name: Run pytest for flowfile_frame
+        if: |
+          needs.detect-changes.outputs.backend_frame == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_frame/tests --disable-warnings
 
       - name: Run pytest for flowfile_core
+        if: |
+          needs.detect-changes.outputs.backend_core == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_core/tests --disable-warnings
 
       - name: Run pytest for flowfile_worker
+        if: |
+          needs.detect-changes.outputs.backend_worker == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_worker/tests --disable-warnings
 
       - name: Stop Mock Database
@@ -81,10 +162,22 @@ jobs:
         run: poetry run stop_minio
 
       - name: Run pytest for flowfile
+        if: |
+          needs.detect-changes.outputs.backend_flowfile == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
 
+  # Windows backend tests
   backend-tests-windows:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.ci == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,7 +205,7 @@ jobs:
           cd flowfile_frontend
           npm install
           npm run build:web
-          
+
           # Create the static directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path ../flowfile/flowfile/web/static | Out-Null
 
@@ -128,14 +221,29 @@ jobs:
         run: poetry run start_minio
 
       - name: Run pytest for flowfile_frame
+        if: |
+          needs.detect-changes.outputs.backend_frame == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_frame/tests --disable-warnings
 
       - name: Run pytest for flowfile_core
+        if: |
+          needs.detect-changes.outputs.backend_core == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_core/tests --disable-warnings
 
       - name: Run pytest for flowfile_worker
+        if: |
+          needs.detect-changes.outputs.backend_worker == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_worker/tests --disable-warnings
 
@@ -148,12 +256,21 @@ jobs:
         run: poetry run stop_minio
 
       - name: Run pytest for flowfile
+        if: |
+          needs.detect-changes.outputs.backend_flowfile == 'true' ||
+          needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.ci == 'true' ||
+          github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
 
-
-
+  # Frontend web build test - runs when frontend changes
   test-web:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.frontend == 'true' ||
+      needs.detect-changes.outputs.ci == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -186,11 +303,20 @@ jobs:
             exit 1
           fi
 
+  # Electron tests macOS - runs when frontend or backend changes
   electron-tests-macos:
+    needs: [detect-changes, backend-tests, test-web]
+    if: |
+      always() &&
+      (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped') &&
+      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
+      (
+        needs.detect-changes.outputs.frontend == 'true' ||
+        needs.detect-changes.outputs.any_backend == 'true' ||
+        needs.detect-changes.outputs.ci == 'true' ||
+        github.event.inputs.run_all_tests == 'true'
+      )
     runs-on: macos-latest
-    needs: # Ensure these needs are still appropriate or adjust as necessary
-      - backend-tests
-      - test-web
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -233,12 +359,21 @@ jobs:
         run: |
           npm run test
 
+  # Electron tests Windows - runs when frontend or backend changes
   electron-tests-windows:
+    needs: [detect-changes, backend-tests, test-web, backend-tests-windows]
+    if: |
+      always() &&
+      (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped') &&
+      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
+      (needs.backend-tests-windows.result == 'success' || needs.backend-tests-windows.result == 'skipped') &&
+      (
+        needs.detect-changes.outputs.frontend == 'true' ||
+        needs.detect-changes.outputs.any_backend == 'true' ||
+        needs.detect-changes.outputs.ci == 'true' ||
+        github.event.inputs.run_all_tests == 'true'
+      )
     runs-on: windows-latest
-    needs: # Ensure these needs are still appropriate or adjust as necessary
-      - backend-tests # Assuming backend-tests is what you meant, not backend-tests (which doesn't exist)
-      - test-web
-      - backend-tests-windows
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -284,3 +419,69 @@ jobs:
         working-directory: flowfile_frontend
         run: |
           npm run test
+
+  # Documentation build test - runs when docs change
+  docs-test:
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.docs == 'true' ||
+      github.event.inputs.run_all_tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install --with dev --no-interaction --no-ansi
+
+      - name: Build documentation
+        run: |
+          poetry run mkdocs build --strict
+
+  # Summary job - always runs to provide status
+  test-summary:
+    needs: [detect-changes, backend-tests, backend-tests-windows, test-web, electron-tests-macos, electron-tests-windows, docs-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test results
+        run: |
+          echo "=== Test Execution Summary ==="
+          echo ""
+          echo "Changes detected:"
+          echo "  - Backend Core: ${{ needs.detect-changes.outputs.backend_core }}"
+          echo "  - Backend Worker: ${{ needs.detect-changes.outputs.backend_worker }}"
+          echo "  - Backend Frame: ${{ needs.detect-changes.outputs.backend_frame }}"
+          echo "  - Backend Flowfile: ${{ needs.detect-changes.outputs.backend_flowfile }}"
+          echo "  - Frontend: ${{ needs.detect-changes.outputs.frontend }}"
+          echo "  - Docs: ${{ needs.detect-changes.outputs.docs }}"
+          echo "  - Shared/Dependencies: ${{ needs.detect-changes.outputs.shared }}"
+          echo "  - CI/Workflows: ${{ needs.detect-changes.outputs.ci }}"
+          echo ""
+          echo "Job results:"
+          echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
+          echo "  - Backend Tests (Windows): ${{ needs.backend-tests-windows.result }}"
+          echo "  - Web Tests: ${{ needs.test-web.result }}"
+          echo "  - Electron Tests (macOS): ${{ needs.electron-tests-macos.result }}"
+          echo "  - Electron Tests (Windows): ${{ needs.electron-tests-windows.result }}"
+          echo "  - Docs Test: ${{ needs.docs-test.result }}"
+
+          # Fail if any non-skipped job failed
+          if [[ "${{ needs.backend-tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.backend-tests-windows.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-web.result }}" == "failure" ]] || \
+             [[ "${{ needs.electron-tests-macos.result }}" == "failure" ]] || \
+             [[ "${{ needs.electron-tests-windows.result }}" == "failure" ]] || \
+             [[ "${{ needs.docs-test.result }}" == "failure" ]]; then
+            echo ""
+            echo "ERROR: One or more tests failed!"
+            exit 1
+          fi
+
+          echo ""
+          echo "All executed tests passed!"
