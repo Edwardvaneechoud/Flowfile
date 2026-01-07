@@ -16,7 +16,7 @@
         :key="sectionKey"
         class="listbox-wrapper"
       >
-        <div class="listbox-subtitle">
+        <div class="section-title">
           {{ section.title || sectionKey.toString().replace(/_/g, " ") }}
         </div>
         <p v-if="section.description" class="section-description">{{ section.description }}</p>
@@ -254,5 +254,16 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+}
+
+.section-title {
+  font-size: var(--font-size-lg, 15px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary);
+  padding: var(--spacing-3, 12px) var(--spacing-4, 16px);
+  margin-bottom: var(--spacing-3, 12px);
+  background-color: var(--color-background-tertiary, #f1f3f5);
+  border-radius: var(--border-radius-md, 6px);
+  border-left: 3px solid var(--color-accent, #0891b2);
 }
 </style>

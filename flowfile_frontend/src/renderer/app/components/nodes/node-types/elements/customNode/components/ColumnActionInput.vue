@@ -122,14 +122,14 @@
                 @change="emitUpdate"
               />
             </td>
-            <td>
+            <td class="action-cell">
               <el-button
                 type="danger"
-                size="small"
-                :icon="Delete"
                 circle
                 @click="removeRow(index)"
-              />
+              >
+                <el-icon><Delete /></el-icon>
+              </el-button>
             </td>
           </tr>
         </tbody>
@@ -144,6 +144,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, PropType } from "vue";
+import { ElIcon } from "element-plus";
 import { Delete } from "@element-plus/icons-vue";
 import type { ColumnActionInputComponent, ColumnActionRow } from "../interface";
 import type { FileColumn } from "../../../../baseNode/nodeInterfaces";
@@ -440,6 +441,35 @@ onUnmounted(() => {
 
 .styled-table tbody tr:hover {
   background-color: var(--table-row-hover);
+}
+
+.styled-table th:nth-child(1),
+.styled-table td:nth-child(1) {
+  width: 25%;
+}
+
+.styled-table th:nth-child(2),
+.styled-table td:nth-child(2) {
+  width: 25%;
+}
+
+.styled-table th:nth-child(3),
+.styled-table td:nth-child(3) {
+  width: 40%;
+}
+
+.styled-table th:nth-child(4),
+.styled-table td:nth-child(4) {
+  width: 10%;
+  text-align: center;
+}
+
+.action-cell {
+  text-align: center;
+}
+
+.action-cell .el-button {
+  padding: var(--spacing-1);
 }
 
 .empty-state {
