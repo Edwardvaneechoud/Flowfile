@@ -44,7 +44,6 @@ export async function ensureServicesStopped(): Promise<void> {
 function findProjectRoot(startPath: string): string {
   let currentPath = startPath;
   while (currentPath !== dirname(currentPath)) {
-    // Stop at root directory
     if (existsSync(join(currentPath, "package.json"))) {
       return currentPath;
     }
@@ -88,22 +87,18 @@ export function getResourceServicePath(resourceName: string): string {
   return "";
 }
 
-// Update the getProcessEnv function
 function getProcessEnv(): NodeJS.ProcessEnv {
   const isWindows = platform() === "win32";
   const homeDir = app.getPath("home");
   const tempDir = app.getPath("temp");
-
-  // Create standardized Flowfile storage directory
   const flowfileStorageDir = join(homeDir, ".flowfile");
 
-  // Ensure the base directory and subdirectories exist
   const requiredDirs = [
     flowfileStorageDir,
     join(flowfileStorageDir, "cache"),
     join(flowfileStorageDir, "temp"),
-    join(flowfileStorageDir, "logs"), // Flowfile application logs
-    join(flowfileStorageDir, "system_logs"), // System/Electron logs
+    join(flowfileStorageDir, "logs"),
+    join(flowfileStorageDir, "system_logs"),
     join(flowfileStorageDir, "flows"),
     join(flowfileStorageDir, "database"),
   ];
@@ -123,7 +118,6 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     HOME: homeDir,
     DOCKER_CONFIG: join(homeDir, ".docker"),
     TMPDIR: tempDir,
-    // Set the standardized storage directory
     FLOWFILE_STORAGE_DIR: flowfileStorageDir,
   };
 
@@ -140,8 +134,6 @@ function getProcessEnv(): NodeJS.ProcessEnv {
     DOCKER_HOST: "unix:///var/run/docker.sock",
   };
 }
-
-// Remove the old flowfileDir and cacheDirRoot logic since it's now centralized
 
 function withProductionError<T>(
   fn: (...args: any[]) => Promise<T | null>,
@@ -162,9 +154,7 @@ export function startProcess(
   port: number,
   onData?: (data: string) => void,
 ): Promise<ChildProcess | null> {
-  // Changed return type to allow null
   return new Promise((resolve) => {
-    // Changed to only resolve, since we'll handle errors
     if (!path) {
       console.log(`No path provided for ${name}, skipping process start`);
       resolve(null);
@@ -211,11 +201,9 @@ export function startProcess(
 
         if (attempt > maxAttempts || elapsed > SERVICE_START_TIMEOUT) {
           console.error(`${name} failed to become responsive after ${elapsed}ms (${attempt} attempts)`);
-          // Kill the process since it's not responding
           try {
             childProcess.kill("SIGTERM");
           } catch (e) {
-            // Process may have already exited
           }
           resolve(null);
           return;

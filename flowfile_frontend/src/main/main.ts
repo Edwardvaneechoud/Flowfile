@@ -1,4 +1,3 @@
-// main.ts
 import { app, BrowserWindow, Menu, MenuItemConstructorOptions, shell } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
@@ -26,19 +25,8 @@ async function checkDocker(): Promise<{
   const isMac = currentPlatform === "darwin";
 
   return new Promise((resolve) => {
-    // On Windows and Linux, docker command should be in PATH
-    // On Mac, try Docker.app first, then fall back to PATH
-    const getDockerCommand = (): string => {
-      if (!isMac) {
-        return "docker info";
-      }
-      // macOS: Try Docker Desktop path first
-      return "docker info";
-    };
+    const checkCommand = "docker info";
 
-    const checkCommand = getDockerCommand();
-
-    // Windows and Linux: Just check if docker is available
     if (isWindows || !isMac) {
       exec(checkCommand, (error) => {
         resolve({
@@ -49,10 +37,8 @@ async function checkDocker(): Promise<{
       return;
     }
 
-    // Mac-specific checks: First verify Docker Desktop is running
     exec('pgrep -x "Docker"', (error, stdout) => {
       if (!stdout) {
-        // Docker Desktop not running, but docker CLI might still work (e.g., colima, rancher)
         exec(checkCommand, (error) => {
           resolve({
             isAvailable: !error,
@@ -62,7 +48,6 @@ async function checkDocker(): Promise<{
         return;
       }
 
-      // Docker Desktop is running, check if it's responsive
       exec(checkCommand, (error) => {
         resolve({
           isAvailable: !error,
@@ -74,7 +59,6 @@ async function checkDocker(): Promise<{
 }
 
 function setupCustomMenu(mainWindow: BrowserWindow): void {
-  // Create refresh handler function
   const refreshHandler = async (): Promise<void> => {
     try {
       await mainWindow.webContents.session.clearCache();
@@ -84,7 +68,6 @@ function setupCustomMenu(mainWindow: BrowserWindow): void {
     }
   };
 
-  // Create the menu template with standard items
   const template: MenuItemConstructorOptions[] = [
     {
       label: "File",
@@ -150,7 +133,6 @@ function setupCustomMenu(mainWindow: BrowserWindow): void {
     },
   ];
 
-  // Add macOS-specific menu items
   if (process.platform === "darwin") {
     template.unshift({
       label: app.name,
@@ -177,7 +159,6 @@ app.whenReady().then(async () => {
   console.log("Logging to:", logFile);
   console.log("Running the app in:", process.env.NODE_ENV);
 
-  // Setup all IPC handlers first (before any windows are created)
   setupIpcHandlers();
   setupAppIpcHandlers(() => app.quit());
   setupAppEventListeners();
@@ -189,11 +170,8 @@ app.whenReady().then(async () => {
     console.log("Docker status:", dockerStatusResult);
 
     updateDockerStatus(dockerStatusResult);
-
-    // Update loading window with Docker status
     loadingWin?.webContents.send("update-docker-status", dockerStatusResult);
 
-    // Start services and update status
     try {
       const startingStatus = { status: "starting", error: null };
       updateServicesStatus(startingStatus);
@@ -221,22 +199,17 @@ app.whenReady().then(async () => {
       throw error;
     }
 
-    // Create main window only after services are ready
     createWindow();
     modifySessionHeaders();
     setupProcessMonitoring();
 
     const mainWindow = getMainWindow();
     if (mainWindow) {
-      // Setup window-specific IPC handlers
       setupWindowIpcHandlers(mainWindow);
-
       mainWindow.webContents.once("did-finish-load", () => {
         console.log("Electron app startup successful, sending signal...");
         mainWindow.webContents.send("startup-success");
       });
-
-      // Setup menu with custom refresh handler
       setupCustomMenu(mainWindow);
     }
   } catch (error) {

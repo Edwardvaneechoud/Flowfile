@@ -1,8 +1,6 @@
-// ipcHandlers.ts
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, app } from "electron";
 import { loadWindow } from "./windowLoader";
 
-// State management for IPC responses
 interface AppState {
   dockerStatus: { isAvailable: boolean; error: string | null };
   servicesStatus: { status: string; error: string | null };
@@ -26,13 +24,12 @@ export function updateServicesStatus(status: { status: string; error: string | n
 }
 
 export function setupIpcHandlers(): void {
-  // Query handlers - respond to renderer requests
   ipcMain.handle("get-docker-status", () => appState.dockerStatus);
   ipcMain.handle("get-services-status", () => appState.servicesStatus);
+  ipcMain.handle("get-app-version", () => app.getVersion());
 }
 
 export function setupWindowIpcHandlers(mainWindow: BrowserWindow): void {
-  // Window-specific handlers
   ipcMain.on("app-refresh", async () => {
     try {
       await mainWindow.webContents.session.clearCache();
@@ -44,7 +41,6 @@ export function setupWindowIpcHandlers(mainWindow: BrowserWindow): void {
 }
 
 export function setupAppIpcHandlers(quitCallback: () => void): void {
-  // App-level handlers
   ipcMain.on("quit-app", () => {
     console.log("Received quit-app command, quitting...");
     quitCallback();
