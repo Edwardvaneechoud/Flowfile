@@ -3,7 +3,7 @@ import { join, dirname } from "path";
 import { ChildProcess, spawn } from "child_process";
 import axios from "axios";
 import { platform } from "os";
-import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT, WORKER_PORT, CORE_PORT } from "./constants";
+import { SHUTDOWN_TIMEOUT, FORCE_KILL_TIMEOUT, WORKER_PORT, CORE_PORT, SERVICE_START_TIMEOUT, HEALTH_CHECK_TIMEOUT } from "./constants";
 import { existsSync, mkdirSync } from "fs";
 
 export const shutdownState = { isShuttingDown: false };
@@ -203,16 +203,33 @@ export function startProcess(
         resolve(null);
       });
 
-      const checkService = async () => {
+      const startTime = Date.now();
+      const maxAttempts = Math.floor(SERVICE_START_TIMEOUT / HEALTH_CHECK_TIMEOUT);
+
+      const checkService = async (attempt: number = 1) => {
+        const elapsed = Date.now() - startTime;
+
+        if (attempt > maxAttempts || elapsed > SERVICE_START_TIMEOUT) {
+          console.error(`${name} failed to become responsive after ${elapsed}ms (${attempt} attempts)`);
+          // Kill the process since it's not responding
+          try {
+            childProcess.kill("SIGTERM");
+          } catch (e) {
+            // Process may have already exited
+          }
+          resolve(null);
+          return;
+        }
+
         try {
-          await axios.get(`http://127.0.0.1:${port}/docs`);
-          console.log(`${name} is responsive on port ${port}`);
+          await axios.get(`http://127.0.0.1:${port}/docs`, { timeout: HEALTH_CHECK_TIMEOUT });
+          console.log(`${name} is responsive on port ${port} after ${elapsed}ms`);
           resolve(childProcess);
         } catch (error) {
-          setTimeout(checkService, 1000);
+          setTimeout(() => checkService(attempt + 1), HEALTH_CHECK_TIMEOUT);
         }
       };
-      setTimeout(checkService, 1000);
+      setTimeout(() => checkService(1), HEALTH_CHECK_TIMEOUT);
     } catch (error) {
       console.log(`Error starting ${name}:`, error);
       resolve(null);

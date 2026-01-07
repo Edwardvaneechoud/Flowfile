@@ -139,24 +139,23 @@
         </div>
     </div>
     <script>
-        const { ipcRenderer } = require('electron');
-
-        ipcRenderer.on('update-docker-status', (event, { isAvailable, error }) => {
+        // Use the secure preload API instead of require('electron')
+        window.electronAPI.onDockerStatusUpdate(({ isAvailable, error }) => {
             const statusEl = document.getElementById('docker-status');
             const textEl = document.getElementById('docker-text');
-            
+
             statusEl.className = 'status-icon ' + (isAvailable ? 'success' : 'error');
-            textEl.textContent = isAvailable ? 
-                'Docker is available' : 
+            textEl.textContent = isAvailable ?
+                'Docker is available' :
                 `Docker unavailable: ${error}`;
         });
 
-        ipcRenderer.on('update-services-status', (event, { status, error }) => {
+        window.electronAPI.onServicesStatusUpdate(({ status, error }) => {
             const statusEl = document.getElementById('services-status');
             const textEl = document.getElementById('services-text');
-            
+
             statusEl.className = 'status-icon ' + (status === 'ready' ? 'success' : error ? 'error' : 'pending');
-            textEl.textContent = error || 
+            textEl.textContent = error ||
                 (status === 'ready' ? 'Services ready' : 'Starting services...');
         });
     </script>

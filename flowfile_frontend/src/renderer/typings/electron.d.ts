@@ -1,14 +1,39 @@
 /**
+ * Type definitions for the Electron preload API
  * Should match main/preload.ts for typescript support in renderer
  */
+
+export interface DockerStatus {
+  isAvailable: boolean;
+  error: string | null;
+}
+
+export interface ServicesStatus {
+  status: "not_started" | "starting" | "ready" | "error";
+  error: string | null;
+}
+
 export default interface ElectronAPI {
-  getServicesStatus: () => Promise<{ status: string; error: string | null }>;
-  getDockerStatus: () => Promise<{ isAvailable: boolean; error: string | null }>;
-  onStartupSuccess: (callback: () => void) => () => void;
-  quitApp: () => void;
+  /** Send a message to the main process */
   sendMessage: (message: string) => void;
-  onDockerStatusUpdate: (callback: (status: any) => void) => () => void;
-  onServicesStatusUpdate: (callback: (status: any) => void) => () => void;
+
+  /** Get the current Docker availability status */
+  getDockerStatus: () => Promise<DockerStatus>;
+
+  /** Get the current services status */
+  getServicesStatus: () => Promise<ServicesStatus>;
+
+  /** Register a callback for startup success event. Returns cleanup function. */
+  onStartupSuccess: (callback: () => void) => () => void;
+
+  /** Register a callback for Docker status updates. Returns cleanup function. */
+  onDockerStatusUpdate: (callback: (status: DockerStatus) => void) => () => void;
+
+  /** Register a callback for services status updates. Returns cleanup function. */
+  onServicesStatusUpdate: (callback: (status: ServicesStatus) => void) => () => void;
+
+  /** Request the app to quit gracefully */
+  quitApp: () => void;
 }
 
 declare global {

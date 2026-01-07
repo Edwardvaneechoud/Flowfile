@@ -1,5 +1,5 @@
 // main.ts
-import { app, ipcMain, BrowserWindow, Menu, MenuItemConstructorOptions, shell } from "electron";
+import { app, BrowserWindow, Menu, MenuItemConstructorOptions, shell } from "electron";
 import { exec } from "child_process";
 import { setupLogging } from "./logger";
 import { startServices, cleanupProcesses, setupProcessMonitoring } from "./services";
@@ -8,43 +8,61 @@ import { modifySessionHeaders } from "./session";
 import { setupAppEventListeners } from "./appEvents";
 import { loadWindow } from "./windowLoader";
 import { platform } from "os";
-
-// Global variables to store status for IPC access
-let globalDockerStatus = { isAvailable: false, error: null as string | null };
-let globalServicesStatus = { status: "not_started", error: null as string | null };
+import {
+  setupIpcHandlers,
+  setupWindowIpcHandlers,
+  setupAppIpcHandlers,
+  updateDockerStatus,
+  updateServicesStatus,
+  getAppState,
+} from "./ipcHandlers";
 
 async function checkDocker(): Promise<{
   isAvailable: boolean;
   error: string | null;
 }> {
-  const isWindows = platform() === "win32";
+  const currentPlatform = platform();
+  const isWindows = currentPlatform === "win32";
+  const isMac = currentPlatform === "darwin";
 
   return new Promise((resolve) => {
-    const checkCommand = isWindows
-      ? "docker info"
-      : `${"/Applications/Docker.app/Contents/Resources/bin/docker"} info`;
+    // On Windows and Linux, docker command should be in PATH
+    // On Mac, try Docker.app first, then fall back to PATH
+    const getDockerCommand = (): string => {
+      if (!isMac) {
+        return "docker info";
+      }
+      // macOS: Try Docker Desktop path first
+      return "docker info";
+    };
 
-    // Windows doesn't need process check
-    if (isWindows) {
+    const checkCommand = getDockerCommand();
+
+    // Windows and Linux: Just check if docker is available
+    if (isWindows || !isMac) {
       exec(checkCommand, (error) => {
         resolve({
           isAvailable: !error,
-          error: error ? "Docker service is currently unreachable" : null,
+          error: error ? "Docker is not available. Some features may have limited functionality." : null,
         });
       });
       return;
     }
 
-    // Mac-specific checks
-    exec('ps aux | grep -v grep | grep "Docker.app"', (error, stdout) => {
+    // Mac-specific checks: First verify Docker Desktop is running
+    exec('pgrep -x "Docker"', (error, stdout) => {
       if (!stdout) {
-        resolve({
-          isAvailable: false,
-          error: "Docker is not available. Some features may have limited functionality.",
+        // Docker Desktop not running, but docker CLI might still work (e.g., colima, rancher)
+        exec(checkCommand, (error) => {
+          resolve({
+            isAvailable: !error,
+            error: error ? "Docker is not available. Some features may have limited functionality." : null,
+          });
         });
         return;
       }
 
+      // Docker Desktop is running, check if it's responsive
       exec(checkCommand, (error) => {
         resolve({
           isAvailable: !error,
@@ -110,9 +128,22 @@ function setupCustomMenu(mainWindow: BrowserWindow): void {
       role: "help",
       submenu: [
         {
-          label: "Learn More",
+          label: "Documentation",
           click: async () => {
-            await shell.openExternal("https://electronjs.org");
+            await shell.openExternal("https://github.com/Edwardvaneechoud/Flowfile#readme");
+          },
+        },
+        {
+          label: "Report an Issue",
+          click: async () => {
+            await shell.openExternal("https://github.com/Edwardvaneechoud/Flowfile/issues");
+          },
+        },
+        { type: "separator" },
+        {
+          label: "View on GitHub",
+          click: async () => {
+            await shell.openExternal("https://github.com/Edwardvaneechoud/Flowfile");
           },
         },
       ],
@@ -146,10 +177,9 @@ app.whenReady().then(async () => {
   console.log("Logging to:", logFile);
   console.log("Running the app in:", process.env.NODE_ENV);
 
-  // Setup IPC handlers for testing
-  ipcMain.handle("get-docker-status", () => globalDockerStatus);
-  ipcMain.handle("get-services-status", () => globalServicesStatus);
-
+  // Setup all IPC handlers first (before any windows are created)
+  setupIpcHandlers();
+  setupAppIpcHandlers(() => app.quit());
   setupAppEventListeners();
 
   try {
@@ -158,7 +188,7 @@ app.whenReady().then(async () => {
     const dockerStatusResult = await checkDocker();
     console.log("Docker status:", dockerStatusResult);
 
-    globalDockerStatus = dockerStatusResult;
+    updateDockerStatus(dockerStatusResult);
 
     // Update loading window with Docker status
     loadingWin?.webContents.send("update-docker-status", dockerStatusResult);
@@ -166,14 +196,14 @@ app.whenReady().then(async () => {
     // Start services and update status
     try {
       const startingStatus = { status: "starting", error: null };
-      globalServicesStatus = startingStatus;
+      updateServicesStatus(startingStatus);
 
       loadingWin?.webContents.send("update-services-status", startingStatus);
 
       await startServices();
 
       const readyStatus = { status: "ready", error: null };
-      globalServicesStatus = readyStatus;
+      updateServicesStatus(readyStatus);
 
       loadingWin?.webContents.send("update-services-status", readyStatus);
 
@@ -185,7 +215,7 @@ app.whenReady().then(async () => {
         error: errorMessage,
       };
 
-      globalServicesStatus = errorStatus;
+      updateServicesStatus(errorStatus);
       loadingWin?.webContents.send("update-services-status", errorStatus);
 
       throw error;
@@ -198,6 +228,9 @@ app.whenReady().then(async () => {
 
     const mainWindow = getMainWindow();
     if (mainWindow) {
+      // Setup window-specific IPC handlers
+      setupWindowIpcHandlers(mainWindow);
+
       mainWindow.webContents.once("did-finish-load", () => {
         console.log("Electron app startup successful, sending signal...");
         mainWindow.webContents.send("startup-success");
@@ -205,27 +238,12 @@ app.whenReady().then(async () => {
 
       // Setup menu with custom refresh handler
       setupCustomMenu(mainWindow);
-
-      // Also handle the refresh event via IPC for custom implementations
-      ipcMain.on("app-refresh", async () => {
-        try {
-          await mainWindow.webContents.session.clearCache();
-          loadWindow(mainWindow);
-        } catch (error) {
-          console.error("Failed to clear cache:", error);
-        }
-      });
     }
   } catch (error) {
     console.error("Fatal error starting services:", error);
     await cleanupProcesses();
     app.quit();
   }
-
-  ipcMain.on("quit-app", () => {
-    console.log("Received quit-app command, quitting...");
-    app.quit();
-  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

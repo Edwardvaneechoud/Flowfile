@@ -25,8 +25,9 @@ export function createLoadingWindow() {
     y: (screenHeight - windowHeight) / 2,
     webPreferences: {
       preload: preloadPath,
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
     },
     frame: false,
     transparent: true,
@@ -88,32 +89,56 @@ export function createWindow() {
   loadWindow(mainWindow);
 }
 
-export function openAuthWindow() {
+export function openAuthWindow(authUrl: string): Promise<string | null> {
   console.log("Opening authentication window");
 
-  authWindow = new BrowserWindow({
-    width: 600,
-    height: 600,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: false,
-    },
-    parent: mainWindow || undefined,
-    modal: true,
-    show: false,
-  });
+  return new Promise((resolve) => {
+    authWindow = new BrowserWindow({
+      width: 600,
+      height: 700,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+      parent: mainWindow || undefined,
+      modal: true,
+      show: false,
+    });
 
-  authWindow.loadURL("https://accounts.google.com/o/oauth2/auth");
+    // Handle OAuth redirect to capture the authorization code
+    authWindow.webContents.on("will-redirect", (_event, url) => {
+      // Check if this is our redirect URI with the auth code
+      if (url.includes("code=")) {
+        const urlParams = new URL(url).searchParams;
+        const code = urlParams.get("code");
+        resolve(code);
+        authWindow?.close();
+      }
+    });
 
-  authWindow.once("ready-to-show", () => {
-    console.log("Auth window ready to show");
-    authWindow?.show();
-  });
+    // Also check navigation for redirect URIs that don't trigger will-redirect
+    authWindow.webContents.on("will-navigate", (_event, url) => {
+      if (url.includes("code=")) {
+        const urlParams = new URL(url).searchParams;
+        const code = urlParams.get("code");
+        resolve(code);
+        authWindow?.close();
+      }
+    });
 
-  authWindow.on("closed", () => {
-    console.log("Auth window closed");
-    authWindow = null;
+    authWindow.loadURL(authUrl);
+
+    authWindow.once("ready-to-show", () => {
+      console.log("Auth window ready to show");
+      authWindow?.show();
+    });
+
+    authWindow.on("closed", () => {
+      console.log("Auth window closed");
+      authWindow = null;
+      resolve(null); // User closed window without completing auth
+    });
   });
 }
 
