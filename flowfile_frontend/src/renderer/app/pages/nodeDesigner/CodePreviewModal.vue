@@ -41,8 +41,8 @@ function copyCode() {
 
 <style scoped>
 .code-preview {
-  background: #282c34;
-  border-radius: 4px;
+  background: var(--color-code-bg);
+  border-radius: var(--border-radius-sm);
   overflow-x: auto;
 }
 
@@ -52,9 +52,9 @@ function copyCode() {
 }
 
 .code-preview code {
-  font-family: "Fira Code", "Monaco", monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
-  color: #abb2bf;
+  color: var(--color-code-text);
   white-space: pre;
 }
 </style>

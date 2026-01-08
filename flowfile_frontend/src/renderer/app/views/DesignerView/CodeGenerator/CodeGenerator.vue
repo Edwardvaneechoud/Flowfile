@@ -154,22 +154,22 @@ const exportCode = () => {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #007acc;
-  color: white;
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--border-radius-md);
   cursor: pointer;
-  font-size: 14px;
-  transition: background 0.2s;
+  font-size: var(--font-size-base);
+  transition: background var(--transition-fast);
 }
 
 .export-button:hover,
 .refresh-button:hover:not(:disabled) {
-  background: #005a9e;
+  background: var(--color-accent-hover);
 }
 
 .refresh-button:disabled {
-  background: #6c757d;
+  background: var(--color-gray-500);
   cursor: not-allowed;
 }
 
@@ -177,7 +177,7 @@ const exportCode = () => {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid #ffffff;
+  border: 2px solid var(--color-text-inverse);
   border-radius: 50%;
   border-top-color: transparent;
   animation: spin 0.8s linear infinite;

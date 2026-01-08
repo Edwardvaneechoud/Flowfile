@@ -51,7 +51,7 @@ const openFlowfile = () => {
   bottom: 20px; /* Distance from bottom */
   right: 20px; /* Distance from right */
   z-index: 1000; /* Make sure it’s above the iframe */
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
   transition:
     background-color 0.3s ease,
     transform 0.2s ease,
@@ -70,7 +70,7 @@ const openFlowfile = () => {
 
 .flowfile-button:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.5);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-primary);
 }
 
 /* Adjust icon size */

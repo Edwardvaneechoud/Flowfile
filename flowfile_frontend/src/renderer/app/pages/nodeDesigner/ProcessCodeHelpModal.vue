@@ -158,39 +158,39 @@ const emit = defineEmits<{
   background: var(--bg-secondary, #f8f9fa);
   padding: 0.125rem 0.375rem;
   border-radius: 3px;
-  font-family: "Fira Code", "Monaco", monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
 }
 
 .help-code {
   display: block;
-  background: #282c34;
+  background: var(--color-code-bg);
   padding: 0.75rem 1rem;
   border-radius: 6px;
-  font-family: "Fira Code", "Monaco", monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
   overflow-x: auto;
   margin: 0.5rem 0;
 }
 
 .help-code code {
-  color: #abb2bf;
+  color: var(--color-code-text);
   white-space: pre;
 }
 
 .help-code-small {
   display: block;
-  background: #282c34;
+  background: var(--color-code-bg);
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
-  font-family: "Fira Code", "Monaco", monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.75rem;
   overflow-x: auto;
   margin: 0;
 }
 
 .help-code-small code {
-  color: #abb2bf;
+  color: var(--color-code-text);
   white-space: pre;
 }
 
@@ -212,10 +212,10 @@ const emit = defineEmits<{
 }
 
 .help-note code {
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--color-white-alpha-40);
   padding: 0.125rem 0.375rem;
   border-radius: 3px;
-  font-family: "Fira Code", "Monaco", monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.8125rem;
 }
 
@@ -259,16 +259,16 @@ const emit = defineEmits<{
   font-family: inherit;
   font-size: 0.75rem;
   font-weight: 500;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-xs);
 }
 
 /* Dark mode adjustments */
 [data-theme="dark"] .help-note {
-  background: rgba(8, 145, 178, 0.1);
+  background: var(--color-focus-ring-accent);
 }
 
 [data-theme="dark"] .help-note code {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--color-black-alpha-20);
 }
 
 [data-theme="dark"] .help-list code {

@@ -132,7 +132,7 @@
             type="warning"
             :disabled="loading"
             size="small"
-            style="background-color: rgb(92, 92, 92); color: white"
+            class="browser-action-btn"
             @click="confirmOverwrite"
           >
             <span class="material-icons">save</span>
@@ -143,7 +143,7 @@
             type="primary"
             :disabled="loading"
             size="small"
-            style="background-color: rgb(92, 92, 92); color: white"
+            class="browser-action-btn"
             @click="showCreateDialog = true"
           >
             <span class="material-icons">add</span>
@@ -157,7 +157,8 @@
           type="primary"
           :disabled="loading"
           size="small"
-          style="background-color: rgb(92, 92, 92); color: white; margin-right: auto"
+          class="browser-action-btn"
+          style="margin-right: auto"
           @click="handleSelectDirectory"
         >
           <span class="material-icons">folder</span>
@@ -169,7 +170,7 @@
           type="primary"
           :disabled="loading"
           size="small"
-          style="background-color: rgb(92, 92, 92); color: white"
+          class="browser-action-btn"
           @click="handleOpenFile"
         >
           <span class="material-icons">open_in_new</span>
@@ -627,7 +628,12 @@ onMounted(async () => {
 .browser-toolbar {
   padding: 16px;
   background-color: var(--color-background-primary);
-  border-bottom: 1px solid #e9ecef;
+  border-bottom: 1px solid var(--color-border-primary);
+}
+
+.browser-action-btn {
+  background-color: var(--color-file-browser-bg);
+  color: var(--color-text-inverse);
 }
 
 .path-navigation {
@@ -642,28 +648,28 @@ onMounted(async () => {
   align-items: center;
   gap: 4px;
   padding: 8px 16px;
-  border: 1px solid #dee2e6;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   background-color: var(--color-background-primary);
-  color: #495057;
+  color: var(--color-text-secondary);
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .nav-button:hover:not(:disabled) {
-  background-color: #f8f9fa;
-  border-color: #ced4da;
+  background-color: var(--color-background-secondary);
+  border-color: var(--color-border-secondary);
 }
 
 .current-path {
   flex: 1;
   padding: 8px 12px;
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
+  background-color: var(--color-background-secondary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
-  font-family: monospace;
-  color: #495057;
+  font-family: var(--font-family-mono);
+  color: var(--color-text-secondary);
 }
 
 .search-container {
@@ -684,7 +690,7 @@ onMounted(async () => {
 }
 
 .file-item {
-  border: 1px solid #e9ecef;
+  border: 1px solid var(--color-border-primary);
   border-radius: 8px;
   overflow: hidden;
   transition: all 0.2s ease;
@@ -692,14 +698,14 @@ onMounted(async () => {
 
 .file-item:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .file-item.selected {
-  border-color: #2563eb;
+  border-color: var(--color-info);
   border-width: 2px;
-  background-color: #dbeafe;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2), 0 4px 8px rgba(0, 0, 0, 0.1);
+  background-color: var(--color-background-selected);
+  box-shadow: var(--shadow-md);
   position: relative;
 }
 
@@ -709,9 +715,9 @@ onMounted(async () => {
   position: absolute;
   top: 6px;
   right: 6px;
-  color: #2563eb;
+  color: var(--color-info);
   font-size: 18px;
-  background: white;
+  background: var(--color-background-primary);
   border-radius: 50%;
 }
 
@@ -733,7 +739,7 @@ onMounted(async () => {
 .file-icon {
   width: 24px;
   height: 24px;
-  color: #6b7280;
+  color: var(--color-text-tertiary);
 }
 
 .file-details {
@@ -846,7 +852,7 @@ onMounted(async () => {
   height: 70vh; /* Set to 70% of viewport height */
   background-color: var(--color-background-primary);
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
 }
 
 .browser-content {
@@ -910,7 +916,7 @@ onMounted(async () => {
 
 .form-hint {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-tertiary);
   margin-top: 8px;
   display: flex;
   align-items: center;

@@ -35,11 +35,11 @@ defineProps({
   height: 16px;
   line-height: 16px;
   text-align: center;
-  background-color: #d9534f; /* Bootstrap danger color */
-  color: white;
+  background-color: var(--color-danger);
+  color: var(--color-text-inverse);
   font-weight: bold;
   font-size: 1.2em;
-  border-radius: 50%; /* Makes it round */
+  border-radius: 50%;
   margin-left: 8px;
   cursor: default;
   user-select: none;
@@ -50,20 +50,20 @@ defineProps({
 }
 
 .unavailable-icon:hover {
-  background-color: #c9302c; /* Darker red on hover */
-  transform: scale(1.1); /* Slightly enlarges the icon */
+  background-color: var(--color-danger-dark);
+  transform: scale(1.1);
 }
 
 .tooltip-text {
   visibility: hidden;
   background-color: var(--color-text-primary);
-  color: #fff;
+  color: var(--color-text-inverse);
   text-align: center;
   border-radius: 4px;
   padding: 5px;
   position: absolute;
   z-index: 1;
-  bottom: 125%; /* Position the tooltip above the icon */
+  bottom: 125%;
   left: 50%;
   transform: translateX(-50%);
   white-space: nowrap;

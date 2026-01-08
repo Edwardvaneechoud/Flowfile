@@ -69,42 +69,43 @@ defineExpose({
   font-size: 13px;
   font-weight: 500 !important;
   letter-spacing: 0.01em;
-  box-shadow: 0 1px 2px rgba(1, 5, 13, 0.08);
+  box-shadow: var(--shadow-xs);
   flex-shrink: 0;
 }
 
 /* Run button - normal state */
 .button-group .el-button:first-child:not([disabled]) {
-  background-color: rgb(2, 27, 45) !important;
-  border: 1px solid rgb(17, 64, 97) !important;
-  color: white !important;
+  background-color: var(--primary-blue) !important;
+  border: 1px solid var(--primary-blue-light) !important;
+  color: var(--color-text-inverse) !important;
 }
 
 /* Run button - hover state */
 .button-group .el-button:first-child:not([disabled]):hover {
-  background-color: rgba(65, 55, 200, 0.95) !important;
-  border-color: rgba(65, 55, 200, 1) !important;
+  background-color: var(--color-button-primary) !important;
+  border-color: var(--color-button-primary) !important;
 }
 
 /* Run button - disabled state */
 .button-group .el-button:first-child[disabled] {
-  background-color: rgba(16, 24, 40, 0.3) !important;
-  border: 1px solid rgba(16, 24, 40, 0.2) !important;
-  color: rgba(255, 255, 255, 0.8) !important;
+  background-color: var(--color-gray-400) !important;
+  border: 1px solid var(--color-gray-400) !important;
+  color: var(--color-text-inverse) !important;
   cursor: not-allowed;
+  opacity: 0.7;
 }
 
 /* Cancel button */
 .button-group .el-button:nth-child(2) {
-  background-color: rgba(220, 53, 69, 0.9) !important;
-  border: 1px solid rgba(220, 53, 69, 0.95) !important;
-  color: white !important;
+  background-color: var(--color-danger) !important;
+  border: 1px solid var(--color-danger) !important;
+  color: var(--color-text-inverse) !important;
 }
 
 /* Cancel button - hover state */
 .button-group .el-button:nth-child(2):hover {
-  background-color: rgba(200, 35, 51, 0.95) !important;
-  border-color: rgba(200, 35, 51, 1) !important;
+  background-color: var(--color-danger-hover) !important;
+  border-color: var(--color-danger-hover) !important;
 }
 
 /* Active state for both buttons */
