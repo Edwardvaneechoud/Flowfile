@@ -1,13 +1,19 @@
-// src/renderer/app/router/index.ts
 import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
+import setupService from "../services/setup.service";
 import { useAuthStore } from "../stores/auth-store";
 
 const routes: Array<RouteRecordRaw> = [
   {
     path: "/",
     redirect: "/main",
+  },
+  {
+    path: "/setup",
+    name: "setup",
+    component: () => import("../views/SetupView/SetupView.vue"),
+    meta: { requiresAuth: false, isSetupPage: true },
   },
   {
     path: "/login",
@@ -79,40 +85,63 @@ const router = createRouter({
   routes,
 });
 
-// Navigation guard for authentication
+let setupChecked = false;
+let setupRequired = false;
+
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
   const hideInElectron = to.matched.some((record) => record.meta.hideInElectron);
+  const isSetupPage = to.matched.some((record) => record.meta.isSetupPage);
 
-  // Initialize auth store if authenticated but user info not loaded (e.g., page refresh)
+  if (!authService.isInElectronMode()) {
+    if (!setupChecked || isSetupPage) {
+      try {
+        const status = await setupService.getSetupStatus(isSetupPage);
+        setupRequired = status.setup_required;
+        setupChecked = status.mode !== "unknown";
+      } catch {
+        setupRequired = true;
+        setupChecked = false;
+      }
+    }
+
+    if (setupRequired && !isSetupPage) {
+      next({ name: "setup" });
+      return;
+    }
+
+    if (!setupRequired && isSetupPage) {
+      next({ name: "login" });
+      return;
+    }
+  } else {
+    if (isSetupPage) {
+      next({ name: "designer" });
+      return;
+    }
+  }
+
   if (authService.isAuthenticated() && !authStore.user) {
     await authStore.initialize();
   }
 
-  // Block routes that are hidden in Electron mode (e.g., admin/user management)
   if (hideInElectron && authService.isInElectronMode()) {
     next({ name: "designer" });
     return;
   }
 
-  // Check if route requires auth
   if (requiresAuth) {
-    // In Electron mode, always allow (auto-auth)
     if (authService.isInElectronMode()) {
       next();
       return;
     }
-
-    // In Docker/web mode, check for valid token
     if (authService.isAuthenticated()) {
       next();
     } else {
       next({ name: "login" });
     }
   } else {
-    // Route doesn't require auth (like login page)
-    // If already authenticated and going to login, redirect to main
     if (to.name === "login" && authService.isAuthenticated()) {
       next({ name: "designer" });
     } else {

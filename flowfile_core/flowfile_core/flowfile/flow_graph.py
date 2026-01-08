@@ -1644,6 +1644,7 @@ class FlowGraph:
                     write_settings=node_cloud_storage_writer.cloud_storage_settings,
                     connection=full_cloud_storage_connection,
                     lf=df.data_frame,
+                    user_id=node_cloud_storage_writer.user_id,
                     flowfile_node_id=node_cloud_storage_writer.node_id,
                     flowfile_flow_id=self.flow_id,
                 )
