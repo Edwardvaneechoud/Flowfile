@@ -213,4 +213,24 @@ const exportCode = () => {
     transform: rotate(360deg);
   }
 }
+
+/* Ensure CodeMirror allows text selection */
+:deep(.cm-editor) {
+  user-select: text;
+  cursor: text;
+}
+
+:deep(.cm-content) {
+  user-select: text;
+  cursor: text;
+}
+
+:deep(.cm-line) {
+  user-select: text;
+  cursor: text;
+}
+
+:deep(.cm-scroller) {
+  user-select: text;
+}
 </style>
