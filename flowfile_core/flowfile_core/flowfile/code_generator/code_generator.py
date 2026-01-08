@@ -1160,11 +1160,14 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"# Read from database using connection: {connection_name}")
 
         if db_settings.query_mode == "query" and db_settings.query:
-            # Query mode
-            query = db_settings.query.replace('"', '\\"').replace("\n", "\\n")
+            # Query mode - use triple quotes to preserve query formatting
             self._add_code(f'{var_name} = ff.read_database(')
             self._add_code(f'    "{connection_name}",')
-            self._add_code(f'    query="{query}",')
+            self._add_code(f'    query="""')
+            # Add each line of the query with proper indentation
+            for line in db_settings.query.split("\n"):
+                self._add_code(f"        {line}")
+            self._add_code('    """,')
             self._add_code(")")
         else:
             # Table mode
