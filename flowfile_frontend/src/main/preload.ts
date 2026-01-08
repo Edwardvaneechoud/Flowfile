@@ -1,11 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-console.log("Preload script loaded");
-
 contextBridge.exposeInMainWorld("electronAPI", {
   sendMessage: (message: string) => ipcRenderer.send("message", message),
   getDockerStatus: () => ipcRenderer.invoke("get-docker-status"),
   getServicesStatus: () => ipcRenderer.invoke("get-services-status"),
+  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   onStartupSuccess: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("startup-success", listener);
