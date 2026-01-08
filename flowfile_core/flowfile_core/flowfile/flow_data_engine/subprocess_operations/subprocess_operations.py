@@ -358,7 +358,17 @@ class BaseFetcher:
         with self._condition:
             try:
                 if status.result_type == "polars":
-                    self._result = get_df_result(status.results)
+                    # Instead of deserializing the LazyFrame from the worker (which contains
+                    # a scan_ipc reference that can cause SIGSEGV when deserialized across
+                    # Docker containers), we create a fresh scan_ipc using the file path.
+                    # The file_ref contains the path to the IPC file on the shared volume.
+                    if status.file_ref and status.file_ref.endswith('.arrow'):
+                        logger.info(f"Creating fresh scan_ipc from file: {status.file_ref}")
+                        self._result = pl.scan_ipc(status.file_ref)
+                    else:
+                        # Fall back to deserialization if no file_ref or not an arrow file
+                        logger.info("Falling back to LazyFrame deserialization")
+                        self._result = get_df_result(status.results)
                 else:
                     self._result = status.results
             except Exception as e:
