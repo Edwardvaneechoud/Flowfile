@@ -93,11 +93,13 @@ nav:
         - Output Nodes: users/visual-editor/nodes/output.md
       - Tutorials:
         - Overview: users/visual-editor/tutorials/index.md
-        - Docker Deployment: users/visual-editor/tutorials/docker-deployment.md
+        - Host in Private Cloud: users/visual-editor/tutorials/private-cloud-hosting.md
         - Connect to PostgreSQL: users/visual-editor/tutorials/database-connectivity.md
         - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
         - Export to Python: users/visual-editor/tutorials/code-generator.md
       - Node Designer: users/visual-editor/node-designer.md
+      - Docker Reference: users/visual-editor/tutorials/docker-deployment.md
+      - Secrets: users/visual-editor/secrets.md
       - Settings: users/visual-editor/settings.md
 
     - Python API:
