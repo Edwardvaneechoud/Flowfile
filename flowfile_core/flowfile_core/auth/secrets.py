@@ -147,41 +147,25 @@ def get_docker_secret_key() -> str | None:
     Raises:
         RuntimeError: If the secret file exists but cannot be read, or key is invalid.
     """
-    # First, check for environment variable (allows runtime configuration)
     env_key = os.environ.get("FLOWFILE_MASTER_KEY")
-    logger.info(f"FLOWFILE_MASTER_KEY env var present: {bool(env_key)}, length: {len(env_key) if env_key else 0}")
     if env_key:
-        # Strip whitespace and quotes that might be included
         env_key = env_key.strip().strip('"').strip("'")
-        logger.info(f"After stripping, key length: {len(env_key)}")
-        # Validate it's a proper Fernet key
         try:
             Fernet(env_key.encode())
-            logger.info("FLOWFILE_MASTER_KEY validated successfully as Fernet key")
             return env_key
-        except Exception as e:
-            logger.error(f"FLOWFILE_MASTER_KEY environment variable is not a valid Fernet key: {e}")
+        except Exception:
             raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key")
 
-    # Then, check for Docker secret file
     secret_path = "/run/secrets/flowfile_master_key"
     if os.path.isfile(secret_path):
         try:
             with open(secret_path) as f:
                 key = f.read().strip()
-                # Validate the key
                 Fernet(key.encode())
-                logger.info("Master key loaded successfully from Docker secret file")
                 return key
-        except Exception as e:
-            logger.error(f"Failed to read or validate master key from Docker secret: {e}")
+        except Exception:
             raise RuntimeError("Failed to read master key from Docker secret")
-    elif os.path.isdir(secret_path):
-        # Docker creates a directory if the source file doesn't exist
-        logger.warning(f"{secret_path} is a directory (master_key.txt file probably doesn't exist)")
 
-    # No key configured
-    logger.warning("No master key configured (neither env var nor Docker secret file)")
     return None
 
 
@@ -192,19 +176,11 @@ def is_master_key_configured() -> bool:
     Returns:
         bool: True if master key is configured and valid, False otherwise.
     """
-    mode = os.environ.get("FLOWFILE_MODE")
-    logger.info(f"is_master_key_configured called, FLOWFILE_MODE={mode}")
     try:
-        if mode == "docker":
-            result = get_docker_secret_key() is not None
-            logger.info(f"Docker mode, master key configured: {result}")
-            return result
-        else:
-            # In non-Docker mode, we auto-generate if missing
-            logger.info("Non-docker mode, returning True (auto-generate)")
-            return True
-    except RuntimeError as e:
-        logger.error(f"Error checking master key: {e}")
+        if os.environ.get("FLOWFILE_MODE") == "docker":
+            return get_docker_secret_key() is not None
+        return True
+    except RuntimeError:
         return False
 
 

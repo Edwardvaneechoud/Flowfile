@@ -1,4 +1,3 @@
-// src/app/services/setup.service.ts
 import axios from "axios";
 
 export interface SetupStatus {
@@ -20,11 +19,9 @@ class SetupService {
     if (!forceRefresh && this.cachedStatus) {
       return this.cachedStatus;
     }
-
     if (this.statusPromise) {
       return this.statusPromise;
     }
-
     this.statusPromise = this.fetchStatus();
     try {
       this.cachedStatus = await this.statusPromise;
@@ -35,9 +32,8 @@ class SetupService {
   }
 
   private async fetchStatus(): Promise<SetupStatus> {
-    // Retry logic for when backend is starting up
     const maxRetries = 5;
-    const retryDelay = 1000; // 1 second
+    const retryDelay = 1000;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -46,19 +42,13 @@ class SetupService {
           timeout: 5000,
         });
         return response.data;
-      } catch (error) {
-        console.warn(`Setup status check attempt ${attempt}/${maxRetries} failed:`, error);
-
+      } catch {
         if (attempt < maxRetries) {
-          // Wait before retrying
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
       }
     }
 
-    // After all retries failed, assume setup IS required (safe default)
-    // This prevents bypassing the setup screen when backend is slow
-    console.error("Failed to reach backend after retries, defaulting to setup required");
     return {
       setup_required: true,
       master_key_configured: false,
@@ -73,14 +63,9 @@ class SetupService {
     return response.data;
   }
 
-  isSetupRequired(): boolean {
-    return this.cachedStatus?.setup_required ?? false;
-  }
-
   clearCache(): void {
     this.cachedStatus = null;
   }
 }
 
-export const setupService = new SetupService();
-export default setupService;
+export default new SetupService();

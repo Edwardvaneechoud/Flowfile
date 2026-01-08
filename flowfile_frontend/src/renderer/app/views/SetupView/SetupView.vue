@@ -313,33 +313,6 @@ const copyEnvVar = () => {
   color: var(--color-text-primary);
 }
 
-.instruction-tabs {
-  display: flex;
-  gap: var(--spacing-2);
-  margin-bottom: var(--spacing-3);
-}
-
-.tab-button {
-  padding: var(--spacing-2) var(--spacing-3);
-  font-size: var(--font-size-sm);
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--border-radius-md);
-  background-color: var(--color-background-primary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.tab-button:hover {
-  border-color: var(--color-accent);
-}
-
-.tab-button.active {
-  background-color: var(--color-accent);
-  border-color: var(--color-accent);
-  color: white;
-}
-
 .instruction-content p {
   margin: 0 0 var(--spacing-2) 0;
   font-size: var(--font-size-sm);
@@ -351,6 +324,11 @@ const copyEnvVar = () => {
   padding: var(--spacing-0-5) var(--spacing-1);
   border-radius: var(--border-radius-sm);
   font-size: var(--font-size-xs);
+}
+
+.instruction-content .hint {
+  margin-top: var(--spacing-3);
+  color: var(--color-text-muted);
 }
 
 .code-block {
