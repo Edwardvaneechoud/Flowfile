@@ -5,14 +5,9 @@ Hands-on guides for building real-world data pipelines with the visual editor.
 ## Available Tutorials
 
 ### [Docker Deployment](docker-deployment.md)
-Deploy Flowfile using Docker Compose for team and production environments with multi-user authentication, secrets management, and centralized storage.
+Deploy Flowfile with Docker Compose for multi-user environments.
 
-**You'll learn:**
-
-- Setting up Docker deployment
-- Configuring authentication and users
-- Managing encrypted secrets
-- Production hardening and troubleshooting
+**Covers:** Environment setup, volumes, HTTPS configuration, resource limits, health checks.
 
 ---
 
