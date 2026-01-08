@@ -67,9 +67,9 @@
             </div>
 
             <div v-if="activeTab === 'env'" class="instruction-content">
-              <p>Add this line to your <code>.env</code> file or docker-compose.yml:</p>
+              <p>Add this line to your <code>.env</code> file in your project root:</p>
               <div class="code-block">
-                <code>FLOWFILE_MASTER_KEY={{ generatedKey.key }}</code>
+                <code>FLOWFILE_MASTER_KEY="{{ generatedKey.key }}"</code>
                 <button class="copy-button small" @click="copyEnvVar">
                   <i :class="copiedEnv ? 'fa-solid fa-check' : 'fa-solid fa-copy'"></i>
                 </button>
@@ -158,7 +158,7 @@ const copyKey = () => {
 
 const copyEnvVar = () => {
   if (generatedKey.value) {
-    copyToClipboard(`FLOWFILE_MASTER_KEY=${generatedKey.value.key}`, copiedEnv);
+    copyToClipboard(`FLOWFILE_MASTER_KEY="${generatedKey.value.key}"`, copiedEnv);
   }
 };
 

@@ -104,11 +104,12 @@ router.beforeEach(async (to, _from, next) => {
       try {
         const status = await setupService.getSetupStatus(isSetupPage);
         setupRequired = status.setup_required;
-        setupChecked = true;
+        // Only cache if we got a reliable response (not "unknown" mode from failed retries)
+        setupChecked = status.mode !== "unknown";
       } catch {
-        // If we can't reach backend, assume setup is done
-        setupRequired = false;
-        setupChecked = true;
+        // If service throws, don't cache - will retry next navigation
+        setupRequired = true; // Safe default
+        setupChecked = false;
       }
     }
 

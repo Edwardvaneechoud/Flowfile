@@ -35,21 +35,35 @@ class SetupService {
   }
 
   private async fetchStatus(): Promise<SetupStatus> {
-    try {
-      const response = await axios.get<SetupStatus>("/health/status", {
-        headers: { "X-Skip-Auth-Header": "true" },
-      });
-      return response.data;
-    } catch (error) {
-      console.error("Failed to fetch setup status:", error);
-      // If we can't reach the backend, assume setup is not required
-      // (the backend might just be starting up)
-      return {
-        setup_required: false,
-        master_key_configured: true,
-        mode: "unknown",
-      };
+    // Retry logic for when backend is starting up
+    const maxRetries = 5;
+    const retryDelay = 1000; // 1 second
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await axios.get<SetupStatus>("/health/status", {
+          headers: { "X-Skip-Auth-Header": "true" },
+          timeout: 5000,
+        });
+        return response.data;
+      } catch (error) {
+        console.warn(`Setup status check attempt ${attempt}/${maxRetries} failed:`, error);
+
+        if (attempt < maxRetries) {
+          // Wait before retrying
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        }
+      }
     }
+
+    // After all retries failed, assume setup IS required (safe default)
+    // This prevents bypassing the setup screen when backend is slow
+    console.error("Failed to reach backend after retries, defaulting to setup required");
+    return {
+      setup_required: true,
+      master_key_configured: false,
+      mode: "unknown",
+    };
   }
 
   async generateKey(): Promise<GeneratedKey> {
