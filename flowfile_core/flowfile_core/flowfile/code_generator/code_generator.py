@@ -1132,26 +1132,94 @@ class FlowGraphToPolarsConverter:
     def _handle_database_reader(
         self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle database_reader nodes - these are not supported for code generation."""
-        self.unsupported_nodes.append((
-            settings.node_id,
-            "database_reader",
-            "Database Reader nodes require dynamic database connections which cannot be included in generated code"
-        ))
-        self._add_comment(f"# Node {settings.node_id}: Database Reader - Not supported for code export")
-        self._add_comment("# (Database connections require runtime configuration and cannot be safely exported)")
+        """Handle database_reader nodes by generating code to read from database using a named connection."""
+        db_settings = settings.database_settings
+
+        # Only reference mode is supported for code generation
+        if db_settings.connection_mode != "reference":
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_reader",
+                "Database Reader nodes with inline connections cannot be exported. "
+                "Please use a named connection (reference mode) instead."
+            ))
+            self._add_comment(f"# Node {settings.node_id}: Database Reader - Inline connections not supported")
+            return
+
+        if not db_settings.database_connection_name:
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_reader",
+                "Database Reader node is missing a connection name"
+            ))
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        connection_name = db_settings.database_connection_name
+        self._add_code(f"# Read from database using connection: {connection_name}")
+
+        if db_settings.query_mode == "query" and db_settings.query:
+            # Query mode
+            query = db_settings.query.replace('"', '\\"').replace("\n", "\\n")
+            self._add_code(f'{var_name} = ff.read_database(')
+            self._add_code(f'    "{connection_name}",')
+            self._add_code(f'    query="{query}",')
+            self._add_code(")")
+        else:
+            # Table mode
+            self._add_code(f'{var_name} = ff.read_database(')
+            self._add_code(f'    "{connection_name}",')
+            if db_settings.table_name:
+                self._add_code(f'    table_name="{db_settings.table_name}",')
+            if db_settings.schema_name:
+                self._add_code(f'    schema_name="{db_settings.schema_name}",')
+            self._add_code(")")
+
+        self._add_code("")
 
     def _handle_database_writer(
         self, settings: input_schema.NodeDatabaseWriter, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle database_writer nodes - these are not supported for code generation."""
-        self.unsupported_nodes.append((
-            settings.node_id,
-            "database_writer",
-            "Database Writer nodes require dynamic database connections which cannot be included in generated code"
-        ))
-        self._add_comment(f"# Node {settings.node_id}: Database Writer - Not supported for code export")
-        self._add_comment("# (Database connections require runtime configuration and cannot be safely exported)")
+        """Handle database_writer nodes by generating code to write to database using a named connection."""
+        db_settings = settings.database_write_settings
+
+        # Only reference mode is supported for code generation
+        if db_settings.connection_mode != "reference":
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_writer",
+                "Database Writer nodes with inline connections cannot be exported. "
+                "Please use a named connection (reference mode) instead."
+            ))
+            self._add_comment(f"# Node {settings.node_id}: Database Writer - Inline connections not supported")
+            return
+
+        if not db_settings.database_connection_name:
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_writer",
+                "Database Writer node is missing a connection name"
+            ))
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        connection_name = db_settings.database_connection_name
+        input_df = input_vars.get("main", "df")
+
+        self._add_code(f"# Write to database using connection: {connection_name}")
+        self._add_code(f"ff.write_database(")
+        self._add_code(f"    {input_df}.collect(),")
+        self._add_code(f'    "{connection_name}",')
+        self._add_code(f'    "{db_settings.table_name}",')
+        if db_settings.schema_name:
+            self._add_code(f'    schema_name="{db_settings.schema_name}",')
+        if db_settings.if_exists:
+            self._add_code(f'    if_exists="{db_settings.if_exists}",')
+        self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}  # Pass through the input DataFrame")
+        self._add_code("")
 
     def _handle_external_source(
         self, settings: input_schema.NodeExternalSource, var_name: str, input_vars: dict[str, str]
