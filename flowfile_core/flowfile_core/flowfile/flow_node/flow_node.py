@@ -846,25 +846,44 @@ class FlowNode:
         Raises:
             Exception: If the node_logger is not provided or if execution fails.
         """
+        logger.info(f"execute_remote: START node_id={self.node_id}, node_type={self.node_type}, performance_mode={performance_mode}")
         if node_logger is None:
             raise Exception("Node logger is not defined")
         if self.node_settings.cache_results and results_exists(self.hash):
             try:
+                logger.info(f"execute_remote: Trying to read from cache, hash={self.hash}")
                 self.results.resulting_data = get_external_df_result(self.hash)
                 self._cache_progress = None
+                logger.info("execute_remote: Successfully read from cache")
                 return
             except Exception:
                 node_logger.warning("Failed to read the cache, rerunning the code")
         if self.node_type == "output":
+            logger.info("execute_remote: Output node, getting resulting data directly")
             self.results.resulting_data = self.get_resulting_data()
             self.node_stats.has_run_with_current_setup = True
             return
+
+        logger.info("execute_remote: Calling get_resulting_data() to build LazyFrame")
         try:
-            self.get_resulting_data()
+            result_data = self.get_resulting_data()
+            logger.info(f"execute_remote: get_resulting_data() returned type={type(result_data)}")
+            if result_data:
+                logger.info(f"execute_remote: result_data.data_frame type={type(result_data.data_frame)}")
+                try:
+                    logger.info(f"execute_remote: LazyFrame schema={result_data.data_frame.collect_schema()}")
+                    logger.info(f"execute_remote: LazyFrame explain:\n{result_data.data_frame.explain()}")
+                except Exception as ex:
+                    logger.warning(f"execute_remote: Could not get LazyFrame info: {ex}")
         except Exception as e:
+            logger.error(f"execute_remote: FAILED to get_resulting_data(): {e}")
             self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
             raise e
+
         if not performance_mode:
+            logger.info(f"execute_remote: Creating ExternalDfFetcher with hash={self.hash}")
+            logger.info(f"execute_remote: LazyFrame to send: {type(self.get_resulting_data().data_frame)}")
+
             external_df_fetcher = ExternalDfFetcher(
                 lf=self.get_resulting_data().data_frame,
                 file_ref=self.hash,
@@ -872,9 +891,15 @@ class FlowNode:
                 flow_id=node_logger.flow_id,
                 node_id=self.node_id,
             )
+            logger.info(f"execute_remote: ExternalDfFetcher created, status={external_df_fetcher.status}")
             self._fetch_cached_df = external_df_fetcher
+
             try:
+                logger.info("execute_remote: Waiting for external_df_fetcher.get_result()")
                 lf = external_df_fetcher.get_result()
+                logger.info(f"execute_remote: Got result, type={type(lf)}")
+
+                logger.info("execute_remote: Creating FlowDataEngine with result")
                 self.results.resulting_data = FlowDataEngine(
                     lf,
                     number_of_records=ExternalDfFetcher(
@@ -884,11 +909,16 @@ class FlowNode:
                         node_id=self.node_id,
                     ).result,
                 )
+                logger.info("execute_remote: FlowDataEngine created successfully")
+
                 if not performance_mode:
+                    logger.info("execute_remote: Storing example data generator")
                     self.store_example_data_generator(external_df_fetcher)
                     self.node_stats.has_run_with_current_setup = True
+                    logger.info("execute_remote: SUCCESS")
 
             except Exception as e:
+                logger.error(f"execute_remote: EXCEPTION during external fetch: {e}")
                 node_logger.error("Error with external process")
                 if external_df_fetcher.error_code == -1:
                     try:

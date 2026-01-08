@@ -30,7 +30,28 @@ from flowfile_core.utils.arrow_reader import read
 def trigger_df_operation(
     flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = "store"
 ) -> Status:
-    encoded_operation = encodebytes(lf.serialize()).decode()
+    logger.info(f"trigger_df_operation: Starting for flow_id={flow_id}, node_id={node_id}, operation_type={operation_type}")
+    logger.info(f"trigger_df_operation: file_ref={file_ref}")
+    logger.info(f"trigger_df_operation: LazyFrame type={type(lf)}")
+
+    try:
+        # Log the query plan
+        logger.info(f"trigger_df_operation: LazyFrame schema={lf.collect_schema()}")
+        logger.info(f"trigger_df_operation: LazyFrame explain:\n{lf.explain()}")
+    except Exception as e:
+        logger.warning(f"trigger_df_operation: Could not get LazyFrame info: {e}")
+
+    logger.info("trigger_df_operation: Serializing LazyFrame...")
+    try:
+        serialized = lf.serialize()
+        logger.info(f"trigger_df_operation: Serialized size={len(serialized)} bytes")
+    except Exception as e:
+        logger.error(f"trigger_df_operation: FAILED to serialize LazyFrame: {e}")
+        raise
+
+    encoded_operation = encodebytes(serialized).decode()
+    logger.info(f"trigger_df_operation: Encoded size={len(encoded_operation)} chars")
+
     _json = {
         "task_id": file_ref,
         "operation": encoded_operation,
@@ -38,9 +59,16 @@ def trigger_df_operation(
         "flowfile_flow_id": flow_id,
         "flowfile_node_id": node_id,
     }
+
+    logger.info(f"trigger_df_operation: Sending POST to {WORKER_URL}/submit_query/")
     v = requests.post(url=f"{WORKER_URL}/submit_query/", json=_json)
+    logger.info(f"trigger_df_operation: Response status={v.status_code}")
+
     if not v.ok:
+        logger.error(f"trigger_df_operation: Request failed: {v.text}")
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
+
+    logger.info(f"trigger_df_operation: Success, response={v.json()}")
     return Status(**v.json())
 
 
