@@ -1,6 +1,5 @@
 services:
   flowfile-frontend:
-    platform: linux/amd64
     build:
       context: .
       dockerfile: flowfile_frontend/Dockerfile
@@ -15,7 +14,6 @@ services:
       - flowfile-worker
 
   flowfile-core:
-    platform: linux/amd64
     build:
       context: .
       dockerfile: flowfile_core/Dockerfile
@@ -41,7 +39,6 @@ services:
       - flowfile_master_key
 
   flowfile-worker:
-    platform: linux/amd64
     build:
       context: .
       dockerfile: flowfile_worker/Dockerfile
