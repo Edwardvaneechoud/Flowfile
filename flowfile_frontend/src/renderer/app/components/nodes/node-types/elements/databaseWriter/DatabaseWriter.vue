@@ -242,6 +242,8 @@ defineExpose({
   border-radius: 4px;
   font-size: 0.875rem;
   box-sizing: border-box;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .form-group {
