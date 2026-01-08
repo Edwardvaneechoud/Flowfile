@@ -9,21 +9,21 @@
         <svg viewBox="0 0 100 100" class="flow-animation" :class="{ 'is-flowing': isRunning }">
           <defs>
             <linearGradient id="lineGradient1" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#818cf8" />
-              <stop offset="50%" stop-color="#a78bfa" />
-              <stop offset="100%" stop-color="#818cf8" />
+              <stop offset="0%" class="gradient-stop-1a" />
+              <stop offset="50%" class="gradient-stop-1b" />
+              <stop offset="100%" class="gradient-stop-1a" />
             </linearGradient>
 
             <linearGradient id="lineGradient2" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#6366f1" />
-              <stop offset="50%" stop-color="#8b5cf6" />
-              <stop offset="100%" stop-color="#6366f1" />
+              <stop offset="0%" class="gradient-stop-2a" />
+              <stop offset="50%" class="gradient-stop-2b" />
+              <stop offset="100%" class="gradient-stop-2a" />
             </linearGradient>
 
             <linearGradient id="lineGradient3" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#4f46e5" />
-              <stop offset="50%" stop-color="#7c3aed" />
-              <stop offset="100%" stop-color="#4f46e5" />
+              <stop offset="0%" class="gradient-stop-3a" />
+              <stop offset="50%" class="gradient-stop-3b" />
+              <stop offset="100%" class="gradient-stop-3a" />
             </linearGradient>
           </defs>
 
@@ -120,10 +120,32 @@ const toggleResults = () => {
 </script>
 
 <style scoped>
+/* Light mode (default) */
 .status-wrapper {
+  --flow-bg-start: #f8fafc;
+  --flow-bg-end: #e2e8f0;
+  --flow-shadow-color: rgba(99, 102, 241, 0.12);
+  --flow-shadow-hover: rgba(99, 102, 241, 0.2);
+  --flow-inset-light: rgba(255, 255, 255, 0.8);
+  --button-color: #6366f1;
+  --button-color-hover: #4f46e5;
+  --particle-color: rgba(99, 102, 241, 0.9);
+
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* Dark mode overrides */
+:root[data-theme="dark"] .status-wrapper {
+  --flow-bg-start: #1e1b4b;
+  --flow-bg-end: #312e81;
+  --flow-shadow-color: rgba(99, 102, 241, 0.15);
+  --flow-shadow-hover: rgba(99, 102, 241, 0.25);
+  --flow-inset-light: rgba(255, 255, 255, 0.08);
+  --button-color: #a5b4fc;
+  --button-color-hover: #c7d2fe;
+  --particle-color: rgba(255, 255, 255, 0.8);
 }
 
 .flow-card {
@@ -133,24 +155,24 @@ const toggleResults = () => {
   border-radius: 12px;
   cursor: help;
   overflow: hidden;
-  background: linear-gradient(145deg, #1e1b4b 0%, #312e81 100%);
+  background: linear-gradient(145deg, var(--flow-bg-start) 0%, var(--flow-bg-end) 100%);
   box-shadow:
-    0 4px 12px rgba(99, 102, 241, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 4px 12px var(--flow-shadow-color),
+    inset 0 1px 0 var(--flow-inset-light);
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .flow-card:hover {
   transform: translateY(-2px);
   box-shadow:
-    0 8px 20px rgba(99, 102, 241, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    0 8px 20px var(--flow-shadow-hover),
+    inset 0 1px 0 var(--flow-inset-light);
 }
 
 .flow-card.is-running {
   box-shadow:
-    0 6px 24px rgba(99, 102, 241, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    0 6px 24px var(--flow-shadow-hover),
+    inset 0 1px 0 var(--flow-inset-light);
 }
 
 .flow-animation {
@@ -161,6 +183,22 @@ const toggleResults = () => {
 .flow-bg {
   fill: transparent;
 }
+
+/* SVG gradient stops - Light mode */
+.gradient-stop-1a { stop-color: #818cf8; }
+.gradient-stop-1b { stop-color: #a78bfa; }
+.gradient-stop-2a { stop-color: #6366f1; }
+.gradient-stop-2b { stop-color: #8b5cf6; }
+.gradient-stop-3a { stop-color: #4f46e5; }
+.gradient-stop-3b { stop-color: #7c3aed; }
+
+/* SVG gradient stops - Dark mode (same colors work well) */
+:root[data-theme="dark"] .gradient-stop-1a { stop-color: #818cf8; }
+:root[data-theme="dark"] .gradient-stop-1b { stop-color: #a78bfa; }
+:root[data-theme="dark"] .gradient-stop-2a { stop-color: #6366f1; }
+:root[data-theme="dark"] .gradient-stop-2b { stop-color: #8b5cf6; }
+:root[data-theme="dark"] .gradient-stop-3a { stop-color: #4f46e5; }
+:root[data-theme="dark"] .gradient-stop-3b { stop-color: #7c3aed; }
 
 /* Line styles */
 .flow-line {
@@ -205,7 +243,7 @@ const toggleResults = () => {
 
 /* Particles */
 .particle {
-  fill: rgba(255, 255, 255, 0.8);
+  fill: var(--particle-color);
   opacity: 0;
 }
 
@@ -234,22 +272,21 @@ const toggleResults = () => {
   height: 36px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(145deg, #1e1b4b 0%, #312e81 100%);
-  color: #a5b4fc;
+  background: linear-gradient(145deg, var(--flow-bg-start) 0%, var(--flow-bg-end) 100%);
+  color: var(--button-color);
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow:
-    0 4px 12px rgba(99, 102, 241, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 4px 12px var(--flow-shadow-color),
+    inset 0 1px 0 var(--flow-inset-light);
 }
 
 .control-button:hover {
-  background: linear-gradient(145deg, #312e81 0%, #4c1d95 100%);
-  color: white;
+  color: var(--button-color-hover);
   transform: translateY(-2px);
   box-shadow:
-    0 8px 20px rgba(99, 102, 241, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    0 8px 20px var(--flow-shadow-hover),
+    inset 0 1px 0 var(--flow-inset-light);
 }
 
 .control-button.is-active {
