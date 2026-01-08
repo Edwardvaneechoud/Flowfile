@@ -8,38 +8,40 @@
       <div class="flow-card" :class="{ 'is-running': isRunning }">
         <svg viewBox="0 0 100 100" class="flow-animation" :class="{ 'is-flowing': isRunning }">
           <defs>
-            <!-- Soft gradient for waves -->
-            <linearGradient id="waveGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <linearGradient id="lineGradient1" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stop-color="#818cf8" />
               <stop offset="50%" stop-color="#a78bfa" />
               <stop offset="100%" stop-color="#818cf8" />
             </linearGradient>
 
-            <linearGradient id="waveGradient2" x1="0%" y1="0%" x2="100%" y2="0%">
+            <linearGradient id="lineGradient2" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stop-color="#6366f1" />
               <stop offset="50%" stop-color="#8b5cf6" />
               <stop offset="100%" stop-color="#6366f1" />
             </linearGradient>
 
-            <linearGradient id="waveGradient3" x1="0%" y1="0%" x2="100%" y2="0%">
+            <linearGradient id="lineGradient3" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stop-color="#4f46e5" />
               <stop offset="50%" stop-color="#7c3aed" />
               <stop offset="100%" stop-color="#4f46e5" />
             </linearGradient>
           </defs>
 
-          <!-- Gentle wave layers -->
-          <g class="waves">
-            <path class="wave wave-3" d="M0 70 Q25 60, 50 70 T100 70 L100 100 L0 100 Z" />
-            <path class="wave wave-2" d="M0 60 Q25 50, 50 60 T100 60 L100 100 L0 100 Z" />
-            <path class="wave wave-1" d="M0 52 Q25 42, 50 52 T100 52 L100 100 L0 100 Z" />
+          <!-- Background -->
+          <rect width="100" height="100" class="flow-bg" />
+
+          <!-- Flowing lines -->
+          <g class="flow-lines">
+            <path class="flow-line line-1" d="M-20 30 Q5 20, 30 30 T80 30 T130 30" />
+            <path class="flow-line line-2" d="M-20 50 Q5 40, 30 50 T80 50 T130 50" />
+            <path class="flow-line line-3" d="M-20 70 Q5 60, 30 70 T80 70 T130 70" />
           </g>
 
-          <!-- Friendly floating dots -->
-          <g class="dots">
-            <circle class="dot dot-1" cx="25" cy="35" r="4" />
-            <circle class="dot dot-2" cx="50" cy="28" r="3" />
-            <circle class="dot dot-3" cx="75" cy="38" r="3.5" />
+          <!-- Particles -->
+          <g class="particles">
+            <circle class="particle p1" cx="20" cy="50" r="3.5" />
+            <circle class="particle p2" cx="50" cy="50" r="3.5" />
+            <circle class="particle p3" cx="80" cy="50" r="3.5" />
           </g>
         </svg>
       </div>
@@ -85,7 +87,6 @@ const formattedTime = computed(() => {
 
 const tooltipContent = computed(() => {
   let content = `Last updated: ${formattedTime.value}<br>`;
-  // Get current run result for this flow if available
   const currentRunResult = nodeStore.getRunResult(nodeStore.flow_id);
 
   if (isRunning.value) {
@@ -93,14 +94,13 @@ const tooltipContent = computed(() => {
   } else {
     content += "Flow is waiting to start.";
 
-    // Check if there are any run results for this flow
     if (currentRunResult) {
       const thisNodeResult = currentRunResult.node_step_result.find(
         (result) => result.node_id === nodeStore.node_id,
       );
 
       if (thisNodeResult?.error) {
-        content = `Last Error: ${thisNodeResult.error}<br>`; // existing error handling
+        content = `Last Error: ${thisNodeResult.error}<br>`;
       }
     }
   }
@@ -158,71 +158,71 @@ const toggleResults = () => {
   height: 100%;
 }
 
-/* Wave styles - filled shapes */
-.wave {
-  transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+.flow-bg {
+  fill: transparent;
 }
 
-.wave-1 {
-  fill: url(#waveGradient);
-  opacity: 0.95;
-  animation: gentleBob1 5s ease-in-out infinite;
+/* Line styles */
+.flow-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 6;
 }
 
-.wave-2 {
-  fill: url(#waveGradient2);
+.line-1 {
+  stroke: url(#lineGradient1);
+  opacity: 0.9;
+  animation: smoothFlow 8s ease-in-out infinite;
+}
+
+.line-2 {
+  stroke: url(#lineGradient2);
   opacity: 0.7;
-  animation: gentleBob2 6s ease-in-out infinite;
+  animation: smoothFlow 8s ease-in-out infinite -2.6s;
 }
 
-.wave-3 {
-  fill: url(#waveGradient3);
-  opacity: 0.45;
-  animation: gentleBob3 7s ease-in-out infinite;
+.line-3 {
+  stroke: url(#lineGradient3);
+  opacity: 0.5;
+  animation: smoothFlow 8s ease-in-out infinite -5.3s;
 }
 
-/* When flowing - slightly faster, more lively */
-.is-flowing .wave-1 {
-  animation: flowBob1 2.5s ease-in-out infinite;
+/* When processing - continuous flowing */
+.is-flowing .line-1 {
+  animation: continuousFlow 3s linear infinite;
+  opacity: 0.95;
 }
 
-.is-flowing .wave-2 {
-  animation: flowBob2 3s ease-in-out infinite;
+.is-flowing .line-2 {
+  animation: continuousFlow 3s linear infinite -1s;
+  opacity: 0.75;
 }
 
-.is-flowing .wave-3 {
-  animation: flowBob3 3.5s ease-in-out infinite;
+.is-flowing .line-3 {
+  animation: continuousFlow 3s linear infinite -2s;
+  opacity: 0.55;
 }
 
-/* Dots - friendly floating circles */
-.dot {
-  fill: rgba(255, 255, 255, 0.85);
-  transition: all 0.4s ease;
+/* Particles */
+.particle {
+  fill: rgba(255, 255, 255, 0.8);
+  opacity: 0;
 }
 
-.dot-1 {
-  animation: floatDot1 6s ease-in-out infinite;
+.is-flowing .particle {
+  opacity: 1;
 }
 
-.dot-2 {
-  animation: floatDot2 7s ease-in-out infinite;
+.is-flowing .p1 {
+  animation: particleMove 3s linear infinite;
 }
 
-.dot-3 {
-  animation: floatDot3 5.5s ease-in-out infinite;
+.is-flowing .p2 {
+  animation: particleMove 3s linear infinite -1s;
 }
 
-/* When flowing - dots become more active */
-.is-flowing .dot-1 {
-  animation: activeDot1 2s ease-in-out infinite;
-}
-
-.is-flowing .dot-2 {
-  animation: activeDot2 2.2s ease-in-out infinite;
-}
-
-.is-flowing .dot-3 {
-  animation: activeDot3 1.8s ease-in-out infinite;
+.is-flowing .p3 {
+  animation: particleMove 3s linear infinite -2s;
 }
 
 /* Control Button */
@@ -260,136 +260,47 @@ const toggleResults = () => {
     inset 0 1px 0 rgba(255, 255, 255, 0.15);
 }
 
-/* Animations - Gentle idle breathing */
-@keyframes gentleBob1 {
+/* Smooth idle animation - gentle wave motion */
+@keyframes smoothFlow {
   0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(4px);
-  }
-}
-
-@keyframes gentleBob2 {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(5px);
-  }
-}
-
-@keyframes gentleBob3 {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(6px);
-  }
-}
-
-/* Animations - Active flowing */
-@keyframes flowBob1 {
-  0%, 100% {
-    transform: translateY(0);
+    transform: translateX(0) translateY(0);
   }
   25% {
-    transform: translateY(6px);
+    transform: translateX(3px) translateY(2px);
+  }
+  50% {
+    transform: translateX(0) translateY(4px);
   }
   75% {
-    transform: translateY(-2px);
+    transform: translateX(-3px) translateY(2px);
   }
 }
 
-@keyframes flowBob2 {
-  0%, 100% {
-    transform: translateY(0);
+/* Continuous flow when processing */
+@keyframes continuousFlow {
+  0% {
+    transform: translateX(0);
   }
-  30% {
-    transform: translateY(8px);
-  }
-  70% {
-    transform: translateY(-3px);
+  100% {
+    transform: translateX(-50px);
   }
 }
 
-@keyframes flowBob3 {
-  0%, 100% {
-    transform: translateY(0);
+/* Particle movement along the flow */
+@keyframes particleMove {
+  0% {
+    transform: translateX(-30px);
+    opacity: 0;
   }
-  35% {
-    transform: translateY(10px);
-  }
-  65% {
-    transform: translateY(-4px);
-  }
-}
-
-/* Dot floating animations - idle */
-@keyframes floatDot1 {
-  0%, 100% {
-    transform: translate(0, 0);
-    opacity: 0.85;
-  }
-  50% {
-    transform: translate(2px, 3px);
-    opacity: 0.7;
-  }
-}
-
-@keyframes floatDot2 {
-  0%, 100% {
-    transform: translate(0, 0);
-    opacity: 0.75;
-  }
-  50% {
-    transform: translate(-2px, 4px);
-    opacity: 0.6;
-  }
-}
-
-@keyframes floatDot3 {
-  0%, 100% {
-    transform: translate(0, 0);
-    opacity: 0.8;
-  }
-  50% {
-    transform: translate(3px, 2px);
-    opacity: 0.65;
-  }
-}
-
-/* Dot animations - active */
-@keyframes activeDot1 {
-  0%, 100% {
-    transform: translate(0, 0) scale(1);
-    opacity: 0.9;
-  }
-  50% {
-    transform: translate(3px, -4px) scale(1.15);
+  10% {
     opacity: 1;
   }
-}
-
-@keyframes activeDot2 {
-  0%, 100% {
-    transform: translate(0, 0) scale(1);
-    opacity: 0.85;
-  }
-  50% {
-    transform: translate(-2px, -5px) scale(1.2);
+  90% {
     opacity: 1;
   }
-}
-
-@keyframes activeDot3 {
-  0%, 100% {
-    transform: translate(0, 0) scale(1);
-    opacity: 0.88;
-  }
-  50% {
-    transform: translate(2px, -3px) scale(1.1);
-    opacity: 1;
+  100% {
+    transform: translateX(70px);
+    opacity: 0;
   }
 }
 </style>
