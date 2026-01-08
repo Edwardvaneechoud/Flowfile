@@ -868,7 +868,9 @@ class FlowNode:
         try:
             result_data = self.get_resulting_data()
             logger.info(f"execute_remote: get_resulting_data() returned type={type(result_data)}")
-            if result_data:
+            # Use 'is not None' instead of truthiness check to avoid triggering __len__()
+            # which calls .collect() on the LazyFrame and can cause SIGSEGV
+            if result_data is not None:
                 logger.info(f"execute_remote: result_data.data_frame type={type(result_data.data_frame)}")
                 try:
                     logger.info(f"execute_remote: LazyFrame schema={result_data.data_frame.collect_schema()}")
