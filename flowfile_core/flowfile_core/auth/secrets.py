@@ -149,13 +149,18 @@ def get_docker_secret_key() -> str | None:
     """
     # First, check for environment variable (allows runtime configuration)
     env_key = os.environ.get("FLOWFILE_MASTER_KEY")
+    logger.info(f"FLOWFILE_MASTER_KEY env var present: {bool(env_key)}, length: {len(env_key) if env_key else 0}")
     if env_key:
+        # Strip whitespace and quotes that might be included
+        env_key = env_key.strip().strip('"').strip("'")
+        logger.info(f"After stripping, key length: {len(env_key)}")
         # Validate it's a proper Fernet key
         try:
             Fernet(env_key.encode())
+            logger.info("FLOWFILE_MASTER_KEY validated successfully as Fernet key")
             return env_key
-        except Exception:
-            logger.error("FLOWFILE_MASTER_KEY environment variable is not a valid Fernet key")
+        except Exception as e:
+            logger.error(f"FLOWFILE_MASTER_KEY environment variable is not a valid Fernet key: {e}")
             raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key")
 
     # Then, check for Docker secret file
@@ -172,6 +177,7 @@ def get_docker_secret_key() -> str | None:
             raise RuntimeError("Failed to read master key from Docker secret")
 
     # No key configured
+    logger.warning("No master key configured (neither env var nor Docker secret)")
     return None
 
 
@@ -182,13 +188,19 @@ def is_master_key_configured() -> bool:
     Returns:
         bool: True if master key is configured and valid, False otherwise.
     """
+    mode = os.environ.get("FLOWFILE_MODE")
+    logger.info(f"is_master_key_configured called, FLOWFILE_MODE={mode}")
     try:
-        if os.environ.get("FLOWFILE_MODE") == "docker":
-            return get_docker_secret_key() is not None
+        if mode == "docker":
+            result = get_docker_secret_key() is not None
+            logger.info(f"Docker mode, master key configured: {result}")
+            return result
         else:
             # In non-Docker mode, we auto-generate if missing
+            logger.info("Non-docker mode, returning True (auto-generate)")
             return True
-    except RuntimeError:
+    except RuntimeError as e:
+        logger.error(f"Error checking master key: {e}")
         return False
 
 

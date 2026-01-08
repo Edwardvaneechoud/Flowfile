@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import APIRouter
@@ -5,6 +6,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from flowfile_core.auth.secrets import generate_master_key, is_master_key_configured
+
+logger = logging.getLogger(__name__)
 
 # Router setup
 router = APIRouter()
@@ -40,7 +43,9 @@ async def get_setup_status():
     including master key configuration status.
     """
     mode = os.environ.get("FLOWFILE_MODE", "electron")
+    logger.info(f"/health/status called, mode={mode}")
     master_key_ok = is_master_key_configured()
+    logger.info(f"/health/status: master_key_ok={master_key_ok}, setup_required={not master_key_ok}")
 
     return SetupStatus(
         setup_required=not master_key_ok,
