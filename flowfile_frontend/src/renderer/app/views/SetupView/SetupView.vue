@@ -113,6 +113,7 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import setupService, { type GeneratedKey } from "../../services/setup.service";
+import { resetSetupState } from "../../router";
 
 const router = useRouter();
 
@@ -170,6 +171,10 @@ const copyFileCmd = () => {
 
 const checkStatus = async () => {
   try {
+    // Clear all caches before checking
+    setupService.clearCache();
+    resetSetupState();
+
     const status = await setupService.getSetupStatus(true);
     if (!status.setup_required) {
       router.push({ name: "login" });

@@ -90,6 +90,12 @@ const router = createRouter({
 let setupChecked = false;
 let setupRequired = false;
 
+// Export function to reset setup state (called when setup completes)
+export function resetSetupState() {
+  setupChecked = false;
+  setupRequired = false;
+}
+
 // Navigation guard for authentication and setup
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();

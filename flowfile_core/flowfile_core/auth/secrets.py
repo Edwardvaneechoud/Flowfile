@@ -165,19 +165,23 @@ def get_docker_secret_key() -> str | None:
 
     # Then, check for Docker secret file
     secret_path = "/run/secrets/flowfile_master_key"
-    if os.path.exists(secret_path):
+    if os.path.isfile(secret_path):
         try:
             with open(secret_path) as f:
                 key = f.read().strip()
                 # Validate the key
                 Fernet(key.encode())
+                logger.info("Master key loaded successfully from Docker secret file")
                 return key
         except Exception as e:
             logger.error(f"Failed to read or validate master key from Docker secret: {e}")
             raise RuntimeError("Failed to read master key from Docker secret")
+    elif os.path.isdir(secret_path):
+        # Docker creates a directory if the source file doesn't exist
+        logger.warning(f"{secret_path} is a directory (master_key.txt file probably doesn't exist)")
 
     # No key configured
-    logger.warning("No master key configured (neither env var nor Docker secret)")
+    logger.warning("No master key configured (neither env var nor Docker secret file)")
     return None
 
 
