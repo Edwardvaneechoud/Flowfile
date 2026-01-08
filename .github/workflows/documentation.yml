@@ -1,29 +1,71 @@
 name: Documentation
+
 on:
   push:
     branches:
       - main
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'flowfile_frame/**/*.py'  # API docs may reference this
+      - '.github/workflows/documentation.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'flowfile_frame/**/*.py'
+      - '.github/workflows/documentation.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
+
 jobs:
-  deploy:
+  # Build and test documentation (runs on PRs and pushes)
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: 3.x
 
-      # Install Poetry and then use it to install your dependencies
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
         run: |
           pip install poetry
-          # Installs packages from the [dev] group, like mkdocs and mkdocstrings
           poetry install --with dev --no-interaction --no-ansi
 
-      # Run the mkdocs command using Poetry's environment
+      - name: Build documentation
+        run: |
+          poetry run mkdocs build
+
+      - name: Upload documentation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: site/
+          retention-days: 7
+
+  # Deploy documentation (only runs on push to main, not PRs)
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install --with dev --no-interaction --no-ansi
+
       - name: Deploy documentation
         run: |
           poetry run mkdocs gh-deploy --force
