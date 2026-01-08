@@ -1120,14 +1120,13 @@ class FlowGraphToPolarsConverter:
     def _handle_explore_data(
         self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
     ) -> None:
-        """Handle explore_data nodes - these are not supported for code generation."""
-        self.unsupported_nodes.append((
-            settings.node_id,
-            "explore_data",
-            "Explore Data nodes are interactive visualization tools and cannot be exported to standalone code"
-        ))
-        self._add_comment(f"# Node {settings.node_id}: Explore Data - Not supported for code export")
-        self._add_comment("# (Interactive data exploration cannot be converted to standalone Python code)")
+        """Handle explore_data nodes - these are skipped as they are interactive visualization only."""
+        # explore_data is just for visualization in the UI, it doesn't transform data
+        # So we skip it in code generation but don't fail - just add a comment
+        input_df = input_vars.get("main", "df")
+        self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
+        self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
+        self._add_code("")
 
     def _handle_database_reader(
         self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]

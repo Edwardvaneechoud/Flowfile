@@ -6,7 +6,7 @@ import pytest
 from pl_fuzzy_frame_match.models import FuzzyMapping
 from polars.testing import assert_frame_equal
 
-from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
+from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars, UnsupportedNodeError
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.schemas import cloud_storage_schemas as cloud_ss
@@ -2672,6 +2672,217 @@ def test_fuzzy_match_single_multiple_columns_file(fuzzy_join_left_data):
     result = get_result_from_generated_code(code)
     expected_df = flow.get_node(2).get_resulting_data().data_frame
     assert_frame_equal(result, expected_df, check_dtype=False, check_row_order=False)
+
+
+def test_explore_data_node_skipped():
+    """Test that explore_data nodes are skipped with a comment but code still generates."""
+    flow = create_basic_flow()
+
+    # Add manual input
+    manual_input = input_schema.NodeManualInput(
+        flow_id=1,
+        node_id=1,
+        raw_data_format=input_schema.RawData(
+            columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+            data=[[1, 2, 3]]
+        )
+    )
+    flow.add_manual_input(manual_input)
+
+    # Add explore_data node
+    flow.add_node_promise(input_schema.NodePromise(node_id=2, flow_id=1, node_type="explore_data"))
+    add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+    flow.add_explore_data(input_schema.NodeExploreData(flow_id=1, node_id=2, depending_on_id=1))
+
+    # Should generate code successfully
+    code = export_flow_to_polars(flow)
+    assert "# Node 2: Explore Data (skipped - interactive visualization only)" in code
+    assert "df_2 = df_1  # Pass through unchanged" in code
+    verify_if_execute(code)
+
+
+def test_database_reader_reference_mode_code_generation():
+    """Test database reader code generation with reference mode.
+
+    This test directly tests the code generator handler without going through
+    the full flow.add_database_reader() which tries to resolve connections.
+    """
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    # Create a minimal database reader settings for code generation test
+    db_settings = input_schema.DatabaseSettings(
+        connection_mode="reference",
+        database_connection_name="test_connection",
+        query_mode="table",
+        table_name="users",
+        schema_name="public",
+    )
+    db_reader = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=db_settings,
+    )
+
+    # Test the handler directly
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_database_reader(db_reader, "df_1", {})
+
+    # Check generated code
+    code_output = "\n".join(converter.code_lines)
+    assert 'ff.read_database(' in code_output
+    assert '"test_connection"' in code_output
+    assert 'table_name="users"' in code_output
+    assert 'schema_name="public"' in code_output
+    assert "import flowfile as ff" in converter.imports
+
+
+def test_database_reader_query_mode_code_generation():
+    """Test database reader code generation with query mode."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    db_settings = input_schema.DatabaseSettings(
+        connection_mode="reference",
+        database_connection_name="test_connection",
+        query_mode="query",
+        query="SELECT id, name\nFROM users\nWHERE active = true",
+    )
+    db_reader = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=db_settings,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_database_reader(db_reader, "df_1", {})
+
+    code_output = "\n".join(converter.code_lines)
+    assert 'ff.read_database(' in code_output
+    assert 'query="""' in code_output
+    assert "SELECT id, name" in code_output
+    assert "FROM users" in code_output
+
+
+def test_database_reader_inline_mode_adds_to_unsupported():
+    """Test that database reader with inline mode is added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    db_settings = input_schema.DatabaseSettings(
+        connection_mode="inline",
+        database_connection=input_schema.DatabaseConnection(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            database="test",
+            username="user",
+        ),
+        query_mode="table",
+        table_name="users",
+    )
+    db_reader = input_schema.NodeDatabaseReader(
+        flow_id=1,
+        node_id=1,
+        database_settings=db_settings,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_database_reader(db_reader, "df_1", {})
+
+    # Should have added to unsupported nodes
+    assert len(converter.unsupported_nodes) == 1
+    assert "inline" in converter.unsupported_nodes[0][2].lower()
+
+
+def test_database_writer_reference_mode_code_generation():
+    """Test database writer code generation with reference mode."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    db_write_settings = input_schema.DatabaseWriteSettings(
+        connection_mode="reference",
+        database_connection_name="test_connection",
+        table_name="output_table",
+        schema_name="public",
+        if_exists="replace",
+    )
+    db_writer = input_schema.NodeDatabaseWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        database_write_settings=db_write_settings,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_database_writer(db_writer, "df_2", {"main": "df_1"})
+
+    code_output = "\n".join(converter.code_lines)
+    assert "ff.write_database(" in code_output
+    assert '"test_connection"' in code_output
+    assert '"output_table"' in code_output
+    assert 'schema_name="public"' in code_output
+    assert 'if_exists="replace"' in code_output
+    assert "import flowfile as ff" in converter.imports
+
+
+def test_database_writer_inline_mode_adds_to_unsupported():
+    """Test that database writer with inline mode is added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    db_write_settings = input_schema.DatabaseWriteSettings(
+        connection_mode="inline",
+        database_connection=input_schema.DatabaseConnection(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            database="test",
+            username="user",
+        ),
+        table_name="output_table",
+    )
+    db_writer = input_schema.NodeDatabaseWriter(
+        flow_id=1,
+        node_id=2,
+        depending_on_id=1,
+        database_write_settings=db_write_settings,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_database_writer(db_writer, "df_2", {"main": "df_1"})
+
+    # Should have added to unsupported nodes
+    assert len(converter.unsupported_nodes) == 1
+    assert "inline" in converter.unsupported_nodes[0][2].lower()
+
+
+def test_external_source_adds_to_unsupported():
+    """Test that external_source nodes are added to unsupported nodes."""
+    from flowfile_core.flowfile.code_generator.code_generator import FlowGraphToPolarsConverter
+
+    flow = create_basic_flow()
+
+    # Create external source settings with required fields
+    sample_users_settings = input_schema.SampleUsers(SAMPLE_USERS=True, size=10)
+    external_source = input_schema.NodeExternalSource(
+        flow_id=1,
+        node_id=1,
+        identifier="test_source",
+        source_settings=sample_users_settings,
+    )
+
+    converter = FlowGraphToPolarsConverter(flow)
+    converter._handle_external_source(external_source, "df_1", {})
+
+    # Should have added to unsupported nodes
+    assert len(converter.unsupported_nodes) == 1
+    assert "external_source" in converter.unsupported_nodes[0][1].lower()
 
 
 if __name__ == "__main__":
