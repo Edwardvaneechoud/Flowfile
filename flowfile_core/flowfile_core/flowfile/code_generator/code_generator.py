@@ -1,13 +1,27 @@
+import inspect
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
 from flowfile_core.configs import logger
+from flowfile_core.configs.node_store import CUSTOM_NODE_STORE
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn, convert_pl_type_to_string
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.flow_node import FlowNode
 from flowfile_core.flowfile.util.execution_orderer import determine_execution_order
 from flowfile_core.schemas import input_schema, transform_schema
+
+
+class UnsupportedNodeError(Exception):
+    """Raised when code generation encounters a node type that cannot be converted to standalone code."""
+
+    def __init__(self, node_type: str, node_id: int, reason: str):
+        self.node_type = node_type
+        self.node_id = node_id
+        self.reason = reason
+        super().__init__(
+            f"Cannot generate code for node '{node_type}' (node_id={node_id}): {reason}"
+        )
 
 
 class FlowGraphToPolarsConverter:
@@ -24,6 +38,8 @@ class FlowGraphToPolarsConverter:
     code_lines: list[str]
     output_nodes: list[tuple[int, str]] = []
     last_node_var: str | None = None
+    unsupported_nodes: list[tuple[int, str, str]]  # List of (node_id, node_type, reason)
+    custom_node_classes: dict[str, str]  # Maps custom node class name to source code
 
     def __init__(self, flow_graph: FlowGraph):
         self.flow_graph = flow_graph
@@ -32,6 +48,8 @@ class FlowGraphToPolarsConverter:
         self.code_lines: list[str] = []
         self.output_nodes = []
         self.last_node_var = None
+        self.unsupported_nodes = []
+        self.custom_node_classes = {}
 
     def convert(self) -> str:
         """
@@ -39,6 +57,10 @@ class FlowGraphToPolarsConverter:
 
         Returns:
             str: Complete Python code that can be executed standalone
+
+        Raises:
+            UnsupportedNodeError: If the graph contains nodes that cannot be converted
+                to standalone code (e.g., database nodes, explore_data, external_source).
         """
         # Get execution order
         execution_order = determine_execution_order(
@@ -49,6 +71,20 @@ class FlowGraphToPolarsConverter:
         # Generate code for each node in order
         for node in execution_order:
             self._generate_node_code(node)
+
+        # Check for unsupported nodes and raise an error with all of them listed
+        if self.unsupported_nodes:
+            error_messages = []
+            for node_id, node_type, reason in self.unsupported_nodes:
+                error_messages.append(f"  - Node {node_id} ({node_type}): {reason}")
+            raise UnsupportedNodeError(
+                node_type=self.unsupported_nodes[0][1],
+                node_id=self.unsupported_nodes[0][0],
+                reason=(
+                    f"The flow contains {len(self.unsupported_nodes)} node(s) that cannot be converted to code:\n"
+                    + "\n".join(error_messages)
+                ),
+            )
 
         # Combine everything
         return self._build_final_code()
@@ -73,13 +109,25 @@ class FlowGraphToPolarsConverter:
             self.last_node_var = var_name
         # Get input variable names
         input_vars = self._get_input_vars(node)
+
+        # Check if this is a user-defined node
+        if isinstance(settings, input_schema.UserDefinedNode) or getattr(settings, "is_user_defined", False):
+            self._handle_user_defined(node, var_name, input_vars)
+            return
+
         # Route to appropriate handler based on node type
         handler = getattr(self, f"_handle_{node_type}", None)
         if handler:
             handler(settings, var_name, input_vars)
         else:
-            self._add_comment(f"# TODO: Implement handler for node type: {node_type}")
-            raise Exception(f"No handler implemented for node type: {node_type}")
+            # Unknown node type - add to unsupported list
+            self.unsupported_nodes.append((
+                node.node_id,
+                node_type,
+                f"No code generator implemented for node type '{node_type}'"
+            ))
+            self._add_comment(f"# WARNING: Cannot generate code for node type '{node_type}' (node_id={node.node_id})")
+            self._add_comment(f"# This node type is not supported for code export")
 
     def _get_input_vars(self, node: FlowNode) -> dict[str, str]:
         """Get input variable names for a node."""
@@ -1067,6 +1115,194 @@ class FlowGraphToPolarsConverter:
         self._add_code(f"{var_name} = _polars_code_{var_name.replace('df_', '')}({args})")
         self._add_code("")
 
+    # Handlers for unsupported node types - these add nodes to the unsupported list
+
+    def _handle_explore_data(
+        self, settings: input_schema.NodeExploreData, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle explore_data nodes - these are skipped as they are interactive visualization only."""
+        # explore_data is just for visualization in the UI, it doesn't transform data
+        # So we skip it in code generation but don't fail - just add a comment
+        input_df = input_vars.get("main", "df")
+        self._add_comment(f"# Node {settings.node_id}: Explore Data (skipped - interactive visualization only)")
+        self._add_code(f"{var_name} = {input_df}  # Pass through unchanged")
+        self._add_code("")
+
+    def _handle_database_reader(
+        self, settings: input_schema.NodeDatabaseReader, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle database_reader nodes by generating code to read from database using a named connection."""
+        db_settings = settings.database_settings
+
+        # Only reference mode is supported for code generation
+        if db_settings.connection_mode != "reference":
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_reader",
+                "Database Reader nodes with inline connections cannot be exported. "
+                "Please use a named connection (reference mode) instead."
+            ))
+            self._add_comment(f"# Node {settings.node_id}: Database Reader - Inline connections not supported")
+            return
+
+        if not db_settings.database_connection_name:
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_reader",
+                "Database Reader node is missing a connection name"
+            ))
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        connection_name = db_settings.database_connection_name
+        self._add_code(f"# Read from database using connection: {connection_name}")
+
+        if db_settings.query_mode == "query" and db_settings.query:
+            # Query mode - use triple quotes to preserve query formatting
+            self._add_code(f'{var_name} = ff.read_database(')
+            self._add_code(f'    "{connection_name}",')
+            self._add_code(f'    query="""')
+            # Add each line of the query with proper indentation
+            for line in db_settings.query.split("\n"):
+                self._add_code(f"        {line}")
+            self._add_code('    """,')
+            self._add_code(")")
+        else:
+            # Table mode
+            self._add_code(f'{var_name} = ff.read_database(')
+            self._add_code(f'    "{connection_name}",')
+            if db_settings.table_name:
+                self._add_code(f'    table_name="{db_settings.table_name}",')
+            if db_settings.schema_name:
+                self._add_code(f'    schema_name="{db_settings.schema_name}",')
+            self._add_code(")")
+
+        self._add_code("")
+
+    def _handle_database_writer(
+        self, settings: input_schema.NodeDatabaseWriter, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle database_writer nodes by generating code to write to database using a named connection."""
+        db_settings = settings.database_write_settings
+
+        # Only reference mode is supported for code generation
+        if db_settings.connection_mode != "reference":
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_writer",
+                "Database Writer nodes with inline connections cannot be exported. "
+                "Please use a named connection (reference mode) instead."
+            ))
+            self._add_comment(f"# Node {settings.node_id}: Database Writer - Inline connections not supported")
+            return
+
+        if not db_settings.database_connection_name:
+            self.unsupported_nodes.append((
+                settings.node_id,
+                "database_writer",
+                "Database Writer node is missing a connection name"
+            ))
+            return
+
+        self.imports.add("import flowfile as ff")
+
+        connection_name = db_settings.database_connection_name
+        input_df = input_vars.get("main", "df")
+
+        self._add_code(f"# Write to database using connection: {connection_name}")
+        self._add_code(f"ff.write_database(")
+        self._add_code(f"    {input_df}.collect(),")
+        self._add_code(f'    "{connection_name}",')
+        self._add_code(f'    "{db_settings.table_name}",')
+        if db_settings.schema_name:
+            self._add_code(f'    schema_name="{db_settings.schema_name}",')
+        if db_settings.if_exists:
+            self._add_code(f'    if_exists="{db_settings.if_exists}",')
+        self._add_code(")")
+        self._add_code(f"{var_name} = {input_df}  # Pass through the input DataFrame")
+        self._add_code("")
+
+    def _handle_external_source(
+        self, settings: input_schema.NodeExternalSource, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle external_source nodes - these are not supported for code generation."""
+        self.unsupported_nodes.append((
+            settings.node_id,
+            "external_source",
+            "External Source nodes use dynamic data sources that cannot be included in generated code"
+        ))
+        self._add_comment(f"# Node {settings.node_id}: External Source - Not supported for code export")
+        self._add_comment("# (External data sources require runtime configuration)")
+
+    def _handle_user_defined(
+        self, node: FlowNode, var_name: str, input_vars: dict[str, str]
+    ) -> None:
+        """Handle user-defined custom nodes by including their class definition and calling process()."""
+        node_type = node.node_type
+        settings = node.setting_input
+
+        # Get the custom node class from the registry
+        custom_node_class = CUSTOM_NODE_STORE.get(node_type)
+        if custom_node_class is None:
+            self.unsupported_nodes.append((
+                node.node_id,
+                node_type,
+                f"User-defined node type '{node_type}' not found in the custom node registry"
+            ))
+            self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
+            return
+
+        # Get the source code of the custom node class
+        try:
+            source_code = inspect.getsource(custom_node_class)
+        except (OSError, TypeError) as e:
+            self.unsupported_nodes.append((
+                node.node_id,
+                node_type,
+                f"Could not retrieve source code for user-defined node: {e}"
+            ))
+            self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable")
+            return
+
+        # Store the class source if we haven't already
+        class_name = custom_node_class.__name__
+        if class_name not in self.custom_node_classes:
+            self.custom_node_classes[class_name] = source_code
+            # Add necessary imports for the custom node
+            self.imports.add("from pydantic import BaseModel")
+            self.imports.add("from typing import Any")
+
+        # Get settings values to initialize the node
+        settings_dict = getattr(settings, "settings", {}) or {}
+
+        # Generate the code to instantiate and run the custom node
+        self._add_code(f"# User-defined node: {custom_node_class.model_fields.get('node_name', type('', (), {'default': node_type})).default}")
+        self._add_code(f"_custom_node_{node.node_id} = {class_name}()")
+
+        # If there are settings, apply them
+        if settings_dict:
+            self._add_code(f"_custom_node_{node.node_id}_settings = {repr(settings_dict)}")
+            self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
+            self._add_code(f"    _custom_node_{node.node_id}.settings_schema.populate_values(_custom_node_{node.node_id}_settings)")
+
+        # Prepare input arguments
+        if len(input_vars) == 0:
+            input_args = ""
+        elif len(input_vars) == 1:
+            input_df = list(input_vars.values())[0]
+            input_args = f"{input_df}.collect()"
+        else:
+            arg_list = []
+            for key in sorted(input_vars.keys()):
+                if key.startswith("main"):
+                    arg_list.append(f"{input_vars[key]}.collect()")
+            input_args = ", ".join(arg_list)
+
+        # Call the process method
+        self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args}).lazy()")
+        self._add_code("")
+
     # Helper methods
 
     def _add_code(self, line: str) -> None:
@@ -1285,6 +1521,18 @@ class FlowGraphToPolarsConverter:
         lines.extend(sorted(self.imports))
         lines.append("")
         lines.append("")
+
+        # Add custom node class definitions if any
+        if self.custom_node_classes:
+            lines.append("# Custom Node Class Definitions")
+            lines.append("# These classes are user-defined nodes that were included in the flow")
+            lines.append("")
+            for class_name, source_code in self.custom_node_classes.items():
+                # Add the source code for each custom node class
+                for source_line in source_code.split("\n"):
+                    lines.append(source_line)
+                lines.append("")
+            lines.append("")
 
         # Add main function
         lines.append("def run_etl_pipeline():")
