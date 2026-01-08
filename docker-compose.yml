@@ -24,6 +24,8 @@ services:
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
+      # Master key for encrypting secrets - if not set, setup screen will prompt to configure
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -35,8 +37,6 @@ services:
       - ./saved_flows:/app/flowfile_core/saved_flows
     networks:
       - flowfile-network
-    secrets:
-      - flowfile_master_key
 
   flowfile-worker:
     build:
@@ -47,6 +47,8 @@ services:
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
+      # Master key for encrypting secrets - must match flowfile-core
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - PYTHONDONTWRITEBYTECODE=1
@@ -56,8 +58,6 @@ services:
       - flowfile-internal-storage:/app/internal_storage
     networks:
       - flowfile-network
-    secrets:
-      - flowfile_master_key
 
 networks:
   flowfile-network:
@@ -66,7 +66,3 @@ networks:
 volumes:
   flowfile-internal-storage:
     driver: local
-
-secrets:
-  flowfile_master_key:
-    file: ./master_key.txt

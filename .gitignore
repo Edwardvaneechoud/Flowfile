@@ -60,3 +60,9 @@ local_data
 
 # Docker
 flowfile_data/
+
+# Secrets and keys - NEVER commit these
+master_key.txt
+*.key
+*.pem
+!requirements*.txt
