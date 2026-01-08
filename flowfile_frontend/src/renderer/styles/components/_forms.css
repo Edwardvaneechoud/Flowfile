@@ -54,7 +54,7 @@
 
 .form-input:focus {
   border-color: var(--input-border-focus);
-  box-shadow: 0 0 0 3px rgba(44, 116, 179, 0.1);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
 
 .form-input:disabled {
@@ -139,7 +139,7 @@
 }
 
 .form-input.is-error:focus {
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+  box-shadow: 0 0 0 3px var(--color-focus-ring-error);
 }
 
 .form-error {

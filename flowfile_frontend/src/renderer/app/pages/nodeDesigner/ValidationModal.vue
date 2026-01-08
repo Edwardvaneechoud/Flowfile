@@ -41,12 +41,12 @@ const emit = defineEmits<{
 
 <style scoped>
 .modal-header-error {
-  background: #fef2f2;
-  border-bottom-color: #fecaca;
+  background: var(--color-danger-light);
+  border-bottom-color: var(--color-danger);
 }
 
 .modal-header-error .modal-title {
-  color: #dc2626;
+  color: var(--color-danger-hover);
 }
 
 .modal-header-error .modal-title i {
@@ -78,7 +78,7 @@ const emit = defineEmits<{
 }
 
 .validation-error-item i {
-  color: #dc2626;
+  color: var(--color-danger-hover);
   margin-top: 0.125rem;
 }
 </style>

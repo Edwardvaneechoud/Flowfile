@@ -126,8 +126,8 @@ onErrorCaptured((error) => {
 <style scoped>
 .error-node {
   padding: 8px;
-  background: #ffcccc;
-  border-radius: 4px;
+  background: var(--color-node-error-bg);
+  border-radius: var(--border-radius-sm);
   font-size: 12px;
 }
 </style>

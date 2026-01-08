@@ -507,11 +507,11 @@ button {
 }
 
 .cm-editor .cm-selectionBackground {
-  background-color: rgba(8, 145, 178, 0.15) !important;
+  background-color: var(--color-focus-ring-accent) !important;
 }
 
 .cm-editor.cm-focused .cm-selectionBackground {
-  background-color: rgba(8, 145, 178, 0.25) !important;
+  background-color: var(--color-focus-ring-accent-strong) !important;
 }
 
 /* Placeholder styling */
@@ -547,7 +547,7 @@ button {
 .cm-tooltip-autocomplete > ul > li[aria-selected],
 .cm-tooltip-autocomplete > ul > li[aria-selected="true"] {
   background-color: var(--color-accent) !important;
-  color: white !important;
+  color: var(--color-text-inverse) !important;
 }
 
 /* Completion label and detail */
