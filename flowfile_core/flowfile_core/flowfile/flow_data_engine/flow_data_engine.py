@@ -1003,6 +1003,15 @@ class FlowDataEngine:
         group_by_columns = [n_c.new_name for n_c in group_columns]
         logger.info(f"do_group_by: Group by columns: {group_by_columns}")
 
+        # Handle case where there are no aggregations - just get unique combinations of group columns
+        if len(aggregations) == 0:
+            logger.info("do_group_by: No aggregation columns, returning unique group combinations")
+            result_df = df.select(group_by_columns).unique()
+            return FlowDataEngine(
+                result_df,
+                calculate_schema_stats=calculate_schema_stats,
+            )
+
         logger.info("do_group_by: Building group_by expression")
         grouped_df = df.group_by(*group_by_columns)
         logger.info("do_group_by: group_by expression built, now building agg expression")
