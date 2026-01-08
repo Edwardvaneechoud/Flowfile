@@ -980,71 +980,31 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with the grouped and aggregated data.
         """
-        logger.info("do_group_by: Starting group_by operation")
-        logger.info(f"do_group_by: Input dataframe type: {type(self.data_frame)}")
-        logger.info(f"do_group_by: agg_cols count: {len(group_by_input.agg_cols)}")
-
         aggregations = [c for c in group_by_input.agg_cols if c.agg != "groupby"]
         group_columns = [c for c in group_by_input.agg_cols if c.agg == "groupby"]
 
-        logger.info(f"do_group_by: aggregations count: {len(aggregations)}, group_columns count: {len(group_columns)}")
-
         if len(group_columns) == 0:
-            logger.info("do_group_by: No group columns, performing simple aggregation")
             return FlowDataEngine(
                 self.data_frame.select(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations),
                 calculate_schema_stats=calculate_schema_stats,
             )
 
-        logger.info(f"do_group_by: Renaming columns for group: {[c.old_name for c in group_columns]}")
-
-        # Workaround for Polars SIGSEGV bug in Docker on macOS: Collect the data
-        # and work with eager DataFrames to avoid crashes with lazy operations.
-        # The crash seems to occur even after collect().lazy(), so we use eager mode.
-        logger.info("do_group_by: Collecting DataFrame to avoid SIGSEGV bug...")
-        collected_df = self.data_frame.collect()
-        logger.info(f"do_group_by: Collected DataFrame shape: {collected_df.shape}")
-
-        rename_dict = {c.old_name: c.new_name for c in group_columns}
-        logger.info(f"do_group_by: Rename dict: {rename_dict}")
-        logger.info(f"do_group_by: DataFrame columns: {collected_df.columns}")
-
-        # Check if any renames are actually needed (old_name != new_name)
-        actual_renames = {k: v for k, v in rename_dict.items() if k != v}
-        logger.info(f"do_group_by: Actual renames needed: {actual_renames}")
-
-        if actual_renames:
-            logger.info("do_group_by: About to call .rename() on DataFrame...")
-            collected_df = collected_df.rename(actual_renames)
-            logger.info("do_group_by: Rename completed")
-        else:
-            logger.info("do_group_by: No renames needed (all old_name == new_name)")
-
+        df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
         group_by_columns = [n_c.new_name for n_c in group_columns]
-        logger.info(f"do_group_by: Group by columns: {group_by_columns}")
 
         # Handle case where there are no aggregations - just get unique combinations of group columns
         if len(aggregations) == 0:
-            logger.info("do_group_by: No aggregation columns, returning unique group combinations")
-            result_df = collected_df.select(group_by_columns).unique()
-            logger.info("do_group_by: Unique operation completed, converting to lazy")
             return FlowDataEngine(
-                result_df.lazy(),
+                df.select(group_by_columns).unique(),
                 calculate_schema_stats=calculate_schema_stats,
             )
 
-        logger.info("do_group_by: Building group_by expression")
-        grouped_df = collected_df.group_by(*group_by_columns)
-        logger.info("do_group_by: group_by expression built, now building agg expression")
-
+        grouped_df = df.group_by(*group_by_columns)
         agg_exprs = [ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations]
-        logger.info(f"do_group_by: Built {len(agg_exprs)} aggregation expressions")
-
         result_df = grouped_df.agg(agg_exprs)
-        logger.info("do_group_by: Aggregation completed, converting to lazy and creating FlowDataEngine")
 
         return FlowDataEngine(
-            result_df.lazy(),
+            result_df,
             calculate_schema_stats=calculate_schema_stats,
         )
 

@@ -30,28 +30,7 @@ from flowfile_core.utils.arrow_reader import read
 def trigger_df_operation(
     flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = "store"
 ) -> Status:
-    logger.info(f"trigger_df_operation: Starting for flow_id={flow_id}, node_id={node_id}, operation_type={operation_type}")
-    logger.info(f"trigger_df_operation: file_ref={file_ref}")
-    logger.info(f"trigger_df_operation: LazyFrame type={type(lf)}")
-
-    try:
-        # Log the query plan
-        logger.info(f"trigger_df_operation: LazyFrame schema={lf.collect_schema()}")
-        logger.info(f"trigger_df_operation: LazyFrame explain:\n{lf.explain()}")
-    except Exception as e:
-        logger.warning(f"trigger_df_operation: Could not get LazyFrame info: {e}")
-
-    logger.info("trigger_df_operation: Serializing LazyFrame...")
-    try:
-        serialized = lf.serialize()
-        logger.info(f"trigger_df_operation: Serialized size={len(serialized)} bytes")
-    except Exception as e:
-        logger.error(f"trigger_df_operation: FAILED to serialize LazyFrame: {e}")
-        raise
-
-    encoded_operation = encodebytes(serialized).decode()
-    logger.info(f"trigger_df_operation: Encoded size={len(encoded_operation)} chars")
-
+    encoded_operation = encodebytes(lf.serialize()).decode()
     _json = {
         "task_id": file_ref,
         "operation": encoded_operation,
@@ -59,16 +38,9 @@ def trigger_df_operation(
         "flowfile_flow_id": flow_id,
         "flowfile_node_id": node_id,
     }
-
-    logger.info(f"trigger_df_operation: Sending POST to {WORKER_URL}/submit_query/")
     v = requests.post(url=f"{WORKER_URL}/submit_query/", json=_json)
-    logger.info(f"trigger_df_operation: Response status={v.status_code}")
-
     if not v.ok:
-        logger.error(f"trigger_df_operation: Request failed: {v.text}")
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
-
-    logger.info(f"trigger_df_operation: Success, response={v.json()}")
     return Status(**v.json())
 
 
@@ -358,22 +330,7 @@ class BaseFetcher:
         with self._condition:
             try:
                 if status.result_type == "polars":
-                    # Instead of deserializing the LazyFrame from the worker (which contains
-                    # a scan_ipc reference that can cause SIGSEGV when deserialized across
-                    # Docker containers), we create a fresh scan_ipc using the file path.
-                    # The file_ref contains the path to the IPC file on the shared volume.
-                    if status.file_ref and status.file_ref.endswith('.arrow'):
-                        logger.info(f"Creating fresh scan_ipc from file: {status.file_ref}")
-                        # Workaround for Polars SIGSEGV bug: collect immediately and make lazy
-                        # again to avoid crashes when doing lazy operations on scan_ipc in Docker
-                        lf = pl.scan_ipc(status.file_ref)
-                        logger.info("Collecting IPC data to avoid SIGSEGV bug...")
-                        self._result = lf.collect().lazy()
-                        logger.info("Collected and converted back to lazy successfully")
-                    else:
-                        # Fall back to deserialization if no file_ref or not an arrow file
-                        logger.info("Falling back to LazyFrame deserialization")
-                        self._result = get_df_result(status.results)
+                    self._result = get_df_result(status.results)
                 else:
                     self._result = status.results
             except Exception as e:
