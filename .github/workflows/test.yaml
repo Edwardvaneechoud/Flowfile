@@ -360,12 +360,11 @@ jobs:
 
   # Electron tests Windows - runs when frontend or backend changes or test workflow changes
   electron-tests-windows:
-    needs: [detect-changes, backend-tests, test-web, backend-tests-windows]
+    needs: [detect-changes, backend-tests-windows, test-web]
     if: |
       always() &&
-      (needs.backend-tests.result == 'success' || needs.backend-tests.result == 'skipped') &&
-      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
       (needs.backend-tests-windows.result == 'success' || needs.backend-tests-windows.result == 'skipped') &&
+      (needs.test-web.result == 'success' || needs.test-web.result == 'skipped') &&
       (
         needs.detect-changes.outputs.frontend == 'true' ||
         needs.detect-changes.outputs.any_backend == 'true' ||
