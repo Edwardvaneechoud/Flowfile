@@ -26,6 +26,8 @@ services:
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
       - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-flowfile-dev-secret-change-in-production}
+      # Master key can be set via env var OR Docker secret (see secrets section)
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - WORKER_HOST=flowfile-worker
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
@@ -50,6 +52,8 @@ services:
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
+      # Master key can be set via env var OR Docker secret (see secrets section)
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
       - FLOWFILE_STORAGE_DIR=/app/internal_storage
       - FLOWFILE_USER_DATA_DIR=/app/user_data
       - PYTHONDONTWRITEBYTECODE=1

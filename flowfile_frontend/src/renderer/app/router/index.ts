@@ -2,12 +2,19 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 import AppLayout from "../layouts/AppLayout.vue";
 import authService from "../services/auth.service";
+import setupService from "../services/setup.service";
 import { useAuthStore } from "../stores/auth-store";
 
 const routes: Array<RouteRecordRaw> = [
   {
     path: "/",
     redirect: "/main",
+  },
+  {
+    path: "/setup",
+    name: "setup",
+    component: () => import("../views/SetupView/SetupView.vue"),
+    meta: { requiresAuth: false, isSetupPage: true },
   },
   {
     path: "/login",
@@ -79,11 +86,50 @@ const router = createRouter({
   routes,
 });
 
-// Navigation guard for authentication
+// Track if we've checked setup status
+let setupChecked = false;
+let setupRequired = false;
+
+// Navigation guard for authentication and setup
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore();
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth !== false);
   const hideInElectron = to.matched.some((record) => record.meta.hideInElectron);
+  const isSetupPage = to.matched.some((record) => record.meta.isSetupPage);
+
+  // In Electron mode, skip setup check entirely (auto-generates key)
+  if (!authService.isInElectronMode()) {
+    // Check setup status once per session (or if going to setup page)
+    if (!setupChecked || isSetupPage) {
+      try {
+        const status = await setupService.getSetupStatus(isSetupPage);
+        setupRequired = status.setup_required;
+        setupChecked = true;
+      } catch {
+        // If we can't reach backend, assume setup is done
+        setupRequired = false;
+        setupChecked = true;
+      }
+    }
+
+    // If setup is required and not on setup page, redirect to setup
+    if (setupRequired && !isSetupPage) {
+      next({ name: "setup" });
+      return;
+    }
+
+    // If setup is complete but on setup page, redirect to login
+    if (!setupRequired && isSetupPage) {
+      next({ name: "login" });
+      return;
+    }
+  } else {
+    // In Electron mode, don't allow access to setup page
+    if (isSetupPage) {
+      next({ name: "designer" });
+      return;
+    }
+  }
 
   // Initialize auth store if authenticated but user info not loaded (e.g., page refresh)
   if (authService.isAuthenticated() && !authStore.user) {

@@ -9,17 +9,37 @@ This guide covers deploying Flowfile using Docker Compose for production and dev
 
 ## Quick Start
 
-### Step 1: Generate the Master Key
+### Option A: Interactive Setup (Recommended for First-Time Users)
+
+The easiest way to get started:
+
+1. **Start the services without a master key:**
+   ```bash
+   docker-compose up -d
+   ```
+
+2. **Open Flowfile in your browser:** http://localhost:8080
+
+3. **Follow the Setup Wizard:**
+   - You'll see a setup screen prompting you to generate a master key
+   - Click "Generate Master Key"
+   - Copy the generated key
+   - Add it to your `.env` file as `FLOWFILE_MASTER_KEY=<your-key>`
+   - Restart the containers: `docker-compose restart`
+
+4. **Log in** with the default credentials (or your configured ones)
+
+### Option B: Pre-configured Setup
+
+For automated deployments or if you prefer to configure everything upfront:
+
+#### Step 1: Generate the Master Key
 
 The master key encrypts all user secrets stored in the database. Generate it once and protect it carefully:
 
 ```bash
 # Using the Makefile (recommended)
 make generate_key
-
-# Or manually with OpenSSL
-openssl rand -base64 32 > master_key.txt
-chmod 600 master_key.txt
 
 # Or manually with Python
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > master_key.txt
@@ -31,7 +51,7 @@ chmod 600 master_key.txt
 - Back up this file securely - losing it means losing access to all encrypted secrets
 - Use different keys for development and production environments
 
-### Step 2: Configure Environment Variables
+#### Step 2: Configure Environment Variables
 
 Copy the example environment file and customize it:
 
@@ -42,6 +62,10 @@ cp .env.example .env
 Edit `.env` with your settings:
 
 ```bash
+# Master key for encrypting secrets (required)
+# Can also use master_key.txt file as Docker secret instead
+FLOWFILE_MASTER_KEY=<your-generated-key>
+
 # Admin credentials for the default user
 FLOWFILE_ADMIN_USER=admin
 FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
@@ -51,13 +75,24 @@ FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
 JWT_SECRET_KEY=your-secure-jwt-secret-key-at-least-32-chars
 ```
 
-### Step 3: Start the Services
+#### Step 3: Start the Services
 
 ```bash
 docker-compose up -d
 ```
 
 Access Flowfile at: http://localhost:8080
+
+## Master Key Configuration Options
+
+You have two ways to provide the master key:
+
+| Method | How to Use | Best For |
+|--------|-----------|----------|
+| **Environment Variable** | Set `FLOWFILE_MASTER_KEY` in `.env` | Simple deployments, Kubernetes |
+| **Docker Secret File** | Create `master_key.txt` in project root | Enhanced security, Docker Swarm |
+
+If both are configured, the environment variable takes precedence.
 
 ## Understanding the Security Architecture
 
