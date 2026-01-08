@@ -1,5 +1,5 @@
 <template>
-  <div class="code-container">
+  <div class="code-container" @mousedown.stop>
     <div class="code-header">
       <h4>Generated code</h4>
       <div class="header-actions">
@@ -153,6 +153,9 @@ const exportCode = () => {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-user-drag: none;
 }
 
 .code-header {
@@ -216,21 +219,29 @@ const exportCode = () => {
 
 /* Ensure CodeMirror allows text selection */
 :deep(.cm-editor) {
-  user-select: text;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -webkit-user-drag: none;
   cursor: text;
 }
 
 :deep(.cm-content) {
-  user-select: text;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -webkit-user-drag: none;
   cursor: text;
 }
 
 :deep(.cm-line) {
-  user-select: text;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -webkit-user-drag: none;
   cursor: text;
 }
 
 :deep(.cm-scroller) {
-  user-select: text;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -webkit-user-drag: none;
 }
 </style>

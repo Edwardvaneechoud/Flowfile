@@ -985,8 +985,10 @@ onBeforeUnmount(() => {
   padding: 10px;
   max-height: calc(100% - 50px);
   box-sizing: border-box;
-  cursor: default;
+  cursor: text;
   user-select: text;
+  -webkit-user-select: text;
+  -webkit-user-drag: none;
 }
 .draggable-line {
   position: absolute;
