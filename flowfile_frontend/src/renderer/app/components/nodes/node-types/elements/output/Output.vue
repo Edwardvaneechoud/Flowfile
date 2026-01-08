@@ -88,6 +88,7 @@
         :allowed-file-types="['csv', 'xlsx', 'parquet']"
         :allow-directory-selection="true"
         mode="create"
+        :is-visible="showFileSelectionModal"
         @directory-selected="handleDirectorySelected"
         @overwrite-file="handleFileSelected"
         @create-file="handleFileSelected"

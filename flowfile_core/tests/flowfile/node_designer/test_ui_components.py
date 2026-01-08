@@ -5,7 +5,11 @@ import pytest
 
 # Note: For these imports to work, your project's source directory
 # (e.g., the directory containing `flowfile_core`) should be in your PYTHONPATH.
-from flowfile_core.flowfile.node_designer.ui_components import ColumnSelector
+from flowfile_core.flowfile.node_designer.ui_components import (
+    ActionOption,
+    ColumnActionInput,
+    ColumnSelector,
+)
 from flowfile_core.types import DataType, TypeGroup, Types
 
 # Helper lists for expected sorted outputs from TypeGroups
@@ -117,6 +121,196 @@ def test_model_dump_when_filter_is_specific():
     assert "data_types" in dumped_data
     assert dumped_data["data_types"] == expected_values
     assert dumped_data["component_type"] == "ColumnSelector"
+
+
+# =============================================================================
+# ActionOption Tests
+# =============================================================================
+
+
+def test_action_option_creation():
+    """Tests that ActionOption can be created with value and label."""
+    opt = ActionOption("sum", "Sum")
+    assert opt.value == "sum"
+    assert opt.label == "Sum"
+
+
+def test_action_option_is_tuple():
+    """Tests that ActionOption is a NamedTuple and can be unpacked."""
+    opt = ActionOption("mean", "Average")
+    value, label = opt
+    assert value == "mean"
+    assert label == "Average"
+
+
+def test_action_option_indexing():
+    """Tests that ActionOption supports indexing like a tuple."""
+    opt = ActionOption("max", "Maximum")
+    assert opt[0] == "max"
+    assert opt[1] == "Maximum"
+
+
+# =============================================================================
+# ColumnActionInput Tests
+# =============================================================================
+
+
+def test_column_action_input_default_initialization():
+    """Tests default initialization of ColumnActionInput."""
+    comp = ColumnActionInput(label="Test")
+    assert comp.component_type == "ColumnActionInput"
+    assert comp.actions == []
+    assert comp.output_name_template == "{column}_{action}"
+    assert comp.show_group_by is False
+    assert comp.show_order_by is False
+    assert comp.data_types_filter == "ALL"
+
+
+def test_column_action_input_with_string_actions():
+    """Tests ColumnActionInput with string actions."""
+    comp = ColumnActionInput(
+        label="Aggregations",
+        actions=["sum", "mean", "max"],
+    )
+    assert comp.actions == ["sum", "mean", "max"]
+
+
+def test_column_action_input_with_action_options():
+    """Tests ColumnActionInput with ActionOption tuples."""
+    comp = ColumnActionInput(
+        label="Aggregations",
+        actions=[
+            ActionOption("sum", "Sum"),
+            ActionOption("avg", "Average"),
+        ],
+    )
+    assert len(comp.actions) == 2
+    assert comp.actions[0].value == "sum"
+    assert comp.actions[0].label == "Sum"
+
+
+def test_column_action_input_with_mixed_actions():
+    """Tests ColumnActionInput with mixed string and ActionOption actions."""
+    comp = ColumnActionInput(
+        label="Operations",
+        actions=[
+            "sum",
+            ActionOption("avg", "Average"),
+            "max",
+        ],
+    )
+    assert len(comp.actions) == 3
+    assert comp.actions[0] == "sum"
+    assert comp.actions[1].value == "avg"
+    assert comp.actions[2] == "max"
+
+
+def test_column_action_input_with_options():
+    """Tests ColumnActionInput with all options configured."""
+    comp = ColumnActionInput(
+        label="Rolling Window",
+        actions=["sum", "mean"],
+        output_name_template="{column}_rolling_{action}",
+        show_group_by=True,
+        show_order_by=True,
+        data_types="Numeric",
+    )
+    assert comp.output_name_template == "{column}_rolling_{action}"
+    assert comp.show_group_by is True
+    assert comp.show_order_by is True
+    # data_types_filter should normalize "Numeric" to list of numeric types
+    assert comp.data_types_filter != "ALL"
+
+
+def test_column_action_input_default_value():
+    """Tests that ColumnActionInput initializes with correct default value structure."""
+    comp = ColumnActionInput(label="Test")
+    assert comp.value == {
+        "rows": [],
+        "group_by_columns": [],
+        "order_by_column": None,
+    }
+
+
+def test_column_action_input_set_value():
+    """Tests setting value from frontend data."""
+    comp = ColumnActionInput(label="Test", actions=["sum", "mean"])
+
+    frontend_value = {
+        "rows": [
+            {"column": "sales", "action": "sum", "output_name": "sales_sum"},
+            {"column": "price", "action": "mean", "output_name": "price_mean"},
+        ],
+        "group_by_columns": ["category"],
+        "order_by_column": "date",
+    }
+
+    comp.set_value(frontend_value)
+    assert comp.value == frontend_value
+
+
+def test_column_action_input_model_dump_string_actions():
+    """Tests model_dump serializes string actions correctly."""
+    comp = ColumnActionInput(
+        label="Test",
+        actions=["sum", "mean", "max"],
+    )
+
+    dumped = comp.model_dump()
+    assert dumped["component_type"] == "ColumnActionInput"
+    assert dumped["actions"] == [
+        {"value": "sum", "label": "sum"},
+        {"value": "mean", "label": "mean"},
+        {"value": "max", "label": "max"},
+    ]
+
+
+def test_column_action_input_model_dump_action_options():
+    """Tests model_dump serializes ActionOption correctly."""
+    comp = ColumnActionInput(
+        label="Test",
+        actions=[
+            ActionOption("sum", "Sum Total"),
+            ActionOption("avg", "Average"),
+        ],
+    )
+
+    dumped = comp.model_dump()
+    assert dumped["actions"] == [
+        {"value": "sum", "label": "Sum Total"},
+        {"value": "avg", "label": "Average"},
+    ]
+
+
+def test_column_action_input_model_dump_with_data_types():
+    """Tests model_dump includes data_types when not ALL."""
+    comp = ColumnActionInput(
+        label="Test",
+        actions=["sum"],
+        data_types="Numeric",
+    )
+
+    dumped = comp.model_dump()
+    assert "data_types" in dumped
+    assert isinstance(dumped["data_types"], list)
+    # Should contain numeric type strings
+    assert "Int64" in dumped["data_types"] or "Float64" in dumped["data_types"]
+
+
+def test_column_action_input_model_dump_all_options():
+    """Tests model_dump includes all configured options."""
+    comp = ColumnActionInput(
+        label="Full Config",
+        actions=["sum"],
+        output_name_template="{column}_custom_{action}",
+        show_group_by=True,
+        show_order_by=True,
+    )
+
+    dumped = comp.model_dump()
+    assert dumped["output_name_template"] == "{column}_custom_{action}"
+    assert dumped["show_group_by"] is True
+    assert dumped["show_order_by"] is True
 
 
 if __name__ == "__main__":
