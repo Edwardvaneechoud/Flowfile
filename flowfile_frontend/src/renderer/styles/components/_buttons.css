@@ -79,8 +79,8 @@
 }
 
 .btn-danger-filled:hover:not(:disabled) {
-  background-color: #dc2626;
-  border-color: #dc2626;
+  background-color: var(--color-danger-hover);
+  border-color: var(--color-danger-hover);
   box-shadow: var(--shadow-sm);
 }
 
@@ -91,8 +91,8 @@
 }
 
 .btn-success:hover:not(:disabled) {
-  background-color: #059669;
-  border-color: #059669;
+  background-color: var(--color-success-hover);
+  border-color: var(--color-success-hover);
   box-shadow: var(--shadow-sm);
 }
 

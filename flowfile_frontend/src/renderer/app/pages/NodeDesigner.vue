@@ -506,18 +506,18 @@ function handleInsertVariable(code: string) {
   align-items: center;
   gap: 0.375rem;
   padding: 0.5rem 1rem;
-  background: #4a6cf7;
-  color: white;
+  background: var(--color-button-primary);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--border-radius-sm);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--transition-fast);
 }
 
 .add-section-btn:hover {
-  background: #3d5bd9;
+  background: var(--color-button-primary-hover);
 }
 
 .add-section-btn i {

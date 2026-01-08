@@ -182,7 +182,7 @@ const emit = defineEmits<{
 
 .node-card:hover {
   border-color: var(--primary-color);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
   transform: translateY(-2px);
 }
 
@@ -215,7 +215,7 @@ const emit = defineEmits<{
   text-transform: uppercase;
   padding: 0.125rem 0.5rem;
   background: var(--primary-color);
-  color: white;
+  color: var(--color-text-inverse);
   border-radius: 3px;
   margin-bottom: 0.5rem;
 }
@@ -236,7 +236,7 @@ const emit = defineEmits<{
 .node-file {
   font-size: 0.75rem;
   color: var(--text-secondary);
-  font-family: "Fira Code", "Monaco", monospace;
+  font-family: var(--font-family-mono);
 }
 
 .node-code-view {
@@ -246,12 +246,12 @@ const emit = defineEmits<{
 }
 
 .modal-header-error {
-  background: #fef2f2;
-  border-bottom-color: #fecaca;
+  background: var(--color-danger-light);
+  border-bottom-color: var(--color-danger);
 }
 
 .modal-header-error .modal-title {
-  color: #dc2626;
+  color: var(--color-danger-hover);
 }
 
 .modal-header-error .modal-title i {
@@ -259,17 +259,17 @@ const emit = defineEmits<{
 }
 
 .delete-warning {
-  color: #dc2626;
+  color: var(--color-danger-hover);
   font-size: 0.875rem;
   margin-top: 0.5rem;
 }
 
 .btn-danger {
-  background: #dc2626;
-  color: white;
+  background: var(--color-danger-hover);
+  color: var(--color-text-inverse);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: #b91c1c;
+  background: var(--color-danger-dark);
 }
 </style>

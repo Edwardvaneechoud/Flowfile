@@ -80,8 +80,8 @@ const formatTimestamp = (timestamp: number) => {
 };
 
 const calculateColor = (success: boolean | undefined) => {
-  if (success === null) return "#0909ca";
-  return success ? "green" : "red";
+  if (success === null) return "var(--color-info)";
+  return success ? "var(--color-success)" : "var(--color-danger)";
 };
 const formatRunTime = (runTime: number, startTimestamp: number, isRunning: boolean) => {
   if (isRunning && startTimestamp > 0) {
@@ -160,10 +160,10 @@ const navigateToNode = (nodeId: string) => {
   margin: 5px 0;
 }
 .success {
-  color: green;
+  color: var(--color-success);
 }
 .failure {
-  color: red;
+  color: var(--color-danger);
 }
 .running {
   animation: pulse 1.5s infinite;

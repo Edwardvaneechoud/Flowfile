@@ -73,12 +73,70 @@
   /* Status colors */
   --color-success: #10b981;
   --color-success-light: #d1fae5;
+  --color-success-hover: #059669;
   --color-danger: #ef4444;
   --color-danger-light: #fee2e2;
+  --color-danger-hover: #dc2626;
+  --color-danger-dark: #b91c1c;
   --color-warning: #f59e0b;
   --color-warning-light: #fef3c7;
+  --color-warning-hover: #d97706;
+  --color-warning-dark: #92400e;
+  --color-warning-darker: #78350f;
   --color-info: #3b82f6;
   --color-info-light: #dbeafe;
+  --color-info-hover: #2563eb;
+
+  /* Button primary colors (interactive elements) */
+  --color-button-primary: #4a6cf7;
+  --color-button-primary-hover: #3d5bd9;
+  --color-button-secondary: #3498db;
+  --color-button-secondary-hover: #2980b9;
+  --color-button-secondary-light: #93c5fd;
+
+  /* Code editor colors */
+  --color-code-bg: #282c34;
+  --color-code-text: #abb2bf;
+  --color-code-keyword: #f08d49;
+  --color-code-string: #8ec07c;
+  --color-code-function: #b8bb26;
+
+  /* Overlay/Modal colors */
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-overlay-dark: rgba(0, 0, 0, 0.7);
+
+  /* Brand provider colors */
+  --color-brand-aws: #ff9900;
+  --color-brand-microsoft: #0078d4;
+
+  /* Gradient decorative colors */
+  --color-gradient-purple-start: #667eea;
+  --color-gradient-purple-end: #764ba2;
+  --color-gradient-canvas-1: #6f3381;
+  --color-gradient-canvas-2: #81c7d4;
+  --color-gradient-canvas-3: #fedfe1;
+  --color-gradient-canvas-4: #fffffb;
+
+  /* Focus ring colors */
+  --color-focus-ring: rgba(44, 116, 179, 0.1);
+  --color-focus-ring-error: rgba(239, 68, 68, 0.1);
+  --color-focus-ring-primary: rgba(0, 123, 255, 0.5);
+  --color-focus-ring-accent: rgba(8, 145, 178, 0.15);
+  --color-focus-ring-accent-strong: rgba(8, 145, 178, 0.25);
+  --color-focus-ring-button: rgba(74, 108, 247, 0.1);
+  --color-focus-ring-secondary: rgba(52, 152, 219, 0.3);
+  --color-focus-ring-purple: rgba(102, 126, 234, 0.4);
+  --color-focus-ring-purple-light: rgba(102, 126, 234, 0.1);
+
+  /* Utility transparent colors */
+  --color-white-alpha-20: rgba(255, 255, 255, 0.2);
+  --color-white-alpha-40: rgba(255, 255, 255, 0.4);
+  --color-black-alpha-10: rgba(0, 0, 0, 0.1);
+  --color-black-alpha-20: rgba(0, 0, 0, 0.2);
+
+  /* Node/Component specific */
+  --color-node-error-bg: #ffcccc;
+  --color-file-browser-bg: rgb(92, 92, 92);
 
   /* Gray scale */
   --color-gray-50: #f9fafb;

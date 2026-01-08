@@ -263,7 +263,7 @@ onMounted(() => {
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   z-index: 1000;
   max-height: 300px;
   overflow-y: auto;
@@ -335,7 +335,7 @@ onMounted(() => {
 
 .icon-option.selected {
   border-color: var(--primary-color, #4a6cf7);
-  background: rgba(74, 108, 247, 0.1);
+  background: var(--color-focus-ring-button);
 }
 
 .icon-img {
@@ -363,8 +363,8 @@ onMounted(() => {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--danger-color, #ef4444);
-  color: white;
+  background: var(--color-danger);
+  color: var(--color-text-inverse);
   font-size: 0.625rem;
   cursor: pointer;
   opacity: 0;
@@ -379,7 +379,7 @@ onMounted(() => {
 }
 
 .delete-icon-btn:hover {
-  background: var(--danger-color-hover, #dc2626);
+  background: var(--color-danger-hover);
 }
 
 .backdrop {

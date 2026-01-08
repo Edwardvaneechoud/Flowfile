@@ -258,15 +258,15 @@ defineExpose({ insertTextAtCursor });
 
 /* Custom syntax highlighting - these are specific to this editor */
 .cm-function {
-  color: #f08d49;
+  color: var(--color-code-keyword);
   font-weight: bold;
 }
 
 .cm-column {
-  color: #8ec07c;
+  color: var(--color-code-string);
 }
 
 .cm-string {
-  color: #b8bb26;
+  color: var(--color-code-function);
 }
 </style>
