@@ -980,19 +980,41 @@ class FlowDataEngine:
         Returns:
             A new `FlowDataEngine` instance with the grouped and aggregated data.
         """
+        logger.info("do_group_by: Starting group_by operation")
+        logger.info(f"do_group_by: Input dataframe type: {type(self.data_frame)}")
+        logger.info(f"do_group_by: agg_cols count: {len(group_by_input.agg_cols)}")
+
         aggregations = [c for c in group_by_input.agg_cols if c.agg != "groupby"]
         group_columns = [c for c in group_by_input.agg_cols if c.agg == "groupby"]
 
+        logger.info(f"do_group_by: aggregations count: {len(aggregations)}, group_columns count: {len(group_columns)}")
+
         if len(group_columns) == 0:
+            logger.info("do_group_by: No group columns, performing simple aggregation")
             return FlowDataEngine(
                 self.data_frame.select(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations),
                 calculate_schema_stats=calculate_schema_stats,
             )
 
+        logger.info(f"do_group_by: Renaming columns for group: {[c.old_name for c in group_columns]}")
         df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
+        logger.info("do_group_by: Rename completed")
+
         group_by_columns = [n_c.new_name for n_c in group_columns]
+        logger.info(f"do_group_by: Group by columns: {group_by_columns}")
+
+        logger.info("do_group_by: Building group_by expression")
+        grouped_df = df.group_by(*group_by_columns)
+        logger.info("do_group_by: group_by expression built, now building agg expression")
+
+        agg_exprs = [ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations]
+        logger.info(f"do_group_by: Built {len(agg_exprs)} aggregation expressions")
+
+        result_df = grouped_df.agg(agg_exprs)
+        logger.info("do_group_by: Aggregation expression built, creating FlowDataEngine")
+
         return FlowDataEngine(
-            df.group_by(*group_by_columns).agg(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations),
+            result_df,
             calculate_schema_stats=calculate_schema_stats,
         )
 

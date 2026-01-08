@@ -600,7 +600,16 @@ class FlowNode:
                             self.node_settings.streamable = False
                         else:
                             try:
-                                fl = self._function(*[v.get_resulting_data() for v in self.all_inputs])
+                                self.print("Collecting input data from all inputs")
+                                input_data = []
+                                for i, v in enumerate(self.all_inputs):
+                                    self.print(f"Getting resulting data from input {i} (node {v.node_id})")
+                                    input_result = v.get_resulting_data()
+                                    self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}")
+                                    input_data.append(input_result)
+                                self.print(f"All {len(input_data)} inputs collected, calling node function")
+                                fl = self._function(*input_data)
+                                self.print(f"Node function returned, result type: {type(fl)}")
                             except Exception as e:
                                 raise e
                         fl.set_streamable(self.node_settings.streamable)
