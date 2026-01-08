@@ -37,8 +37,6 @@ services:
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
       - ./saved_flows:/app/flowfile_core/saved_flows
-      # Mount master key file if it exists (alternative to env var)
-      - ./master_key.txt:/run/secrets/flowfile_master_key:ro
     networks:
       - flowfile-network
 
@@ -61,8 +59,6 @@ services:
     volumes:
       - ./flowfile_data:/app/user_data
       - flowfile-internal-storage:/app/internal_storage
-      # Mount master key file if it exists (alternative to env var)
-      - ./master_key.txt:/run/secrets/flowfile_master_key:ro
     networks:
       - flowfile-network
 

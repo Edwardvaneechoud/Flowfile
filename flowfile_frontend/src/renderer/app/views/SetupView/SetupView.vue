@@ -51,39 +51,15 @@
 
           <div class="instructions-box">
             <h4>Configuration Instructions:</h4>
-            <div class="instruction-tabs">
-              <button
-                :class="['tab-button', { active: activeTab === 'env' }]"
-                @click="activeTab = 'env'"
-              >
-                Environment Variable
-              </button>
-              <button
-                :class="['tab-button', { active: activeTab === 'file' }]"
-                @click="activeTab = 'file'"
-              >
-                Docker Secret File
-              </button>
-            </div>
-
-            <div v-if="activeTab === 'env'" class="instruction-content">
-              <p>Add this line to your <code>.env</code> file in your project root:</p>
+            <div class="instruction-content">
+              <p>Add this line to a <code>.env</code> file in your project root:</p>
               <div class="code-block">
                 <code>FLOWFILE_MASTER_KEY="{{ generatedKey.key }}"</code>
                 <button class="copy-button small" @click="copyEnvVar">
                   <i :class="copiedEnv ? 'fa-solid fa-check' : 'fa-solid fa-copy'"></i>
                 </button>
               </div>
-            </div>
-
-            <div v-else class="instruction-content">
-              <p>Save the key to <code>master_key.txt</code> in your project root:</p>
-              <div class="code-block">
-                <code>echo '{{ generatedKey.key }}' > master_key.txt</code>
-                <button class="copy-button small" @click="copyFileCmd">
-                  <i :class="copiedCmd ? 'fa-solid fa-check' : 'fa-solid fa-copy'"></i>
-                </button>
-              </div>
+              <p class="hint">Then restart: <code>docker-compose down && docker-compose up</code></p>
             </div>
           </div>
 
@@ -120,10 +96,8 @@ const router = useRouter();
 const isGenerating = ref(false);
 const error = ref("");
 const generatedKey = ref<GeneratedKey | null>(null);
-const activeTab = ref<"env" | "file">("env");
 const copied = ref(false);
 const copiedEnv = ref(false);
-const copiedCmd = ref(false);
 
 const handleGenerateKey = async () => {
   isGenerating.value = true;
@@ -160,12 +134,6 @@ const copyKey = () => {
 const copyEnvVar = () => {
   if (generatedKey.value) {
     copyToClipboard(`FLOWFILE_MASTER_KEY="${generatedKey.value.key}"`, copiedEnv);
-  }
-};
-
-const copyFileCmd = () => {
-  if (generatedKey.value) {
-    copyToClipboard(`echo '${generatedKey.value.key}' > master_key.txt`, copiedCmd);
   }
 };
 
