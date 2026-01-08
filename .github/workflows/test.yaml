@@ -342,7 +342,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          poetry install --with dev
+          poetry install --with dev,build
 
       - name: Build Python services
         run: |
@@ -400,7 +400,7 @@ jobs:
       - name: Install Python dependencies
         shell: pwsh
         run: |
-          poetry install
+          poetry install --with build
 
       - name: Build Python services
         shell: pwsh

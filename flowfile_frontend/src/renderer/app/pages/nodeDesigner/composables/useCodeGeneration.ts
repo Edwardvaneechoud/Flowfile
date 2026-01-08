@@ -100,6 +100,23 @@ export function useCodeGeneration() {
           if (comp.required) sectionsCode += `        required=True,\n`;
           if (comp.description) sectionsCode += `        description="${comp.description}",\n`;
           if (comp.name_prefix) sectionsCode += `        name_prefix="${comp.name_prefix}",\n`;
+        } else if (comp.component_type === "ColumnActionInput") {
+          // Parse actions string into a list
+          if (comp.actions_string) {
+            const actions = comp.actions_string
+              .split(",")
+              .map((a) => `"${a.trim()}"`)
+              .join(", ");
+            sectionsCode += `        actions=[${actions}],\n`;
+          }
+          if (comp.output_name_template) {
+            sectionsCode += `        output_name_template="${comp.output_name_template}",\n`;
+          }
+          if (comp.show_group_by) sectionsCode += `        show_group_by=True,\n`;
+          if (comp.show_order_by) sectionsCode += `        show_order_by=True,\n`;
+          if (comp.data_types && comp.data_types !== "ALL") {
+            sectionsCode += `        data_types="${comp.data_types}",\n`;
+          }
         }
 
         sectionsCode += `    ),\n`;
