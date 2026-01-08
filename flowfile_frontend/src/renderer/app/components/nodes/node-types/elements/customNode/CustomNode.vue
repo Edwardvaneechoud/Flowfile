@@ -16,7 +16,7 @@
         :key="sectionKey"
         class="listbox-wrapper"
       >
-        <div class="listbox-subtitle">
+        <div class="section-title">
           {{ section.title || sectionKey.toString().replace(/_/g, " ") }}
         </div>
         <p v-if="section.description" class="section-description">{{ section.description }}</p>
@@ -79,6 +79,13 @@
               :schema="component"
             />
 
+            <ColumnActionInput
+              v-else-if="component.component_type === 'ColumnActionInput'"
+              v-model="formData[sectionKey][componentKey]"
+              :schema="component"
+              :incoming-columns="columnTypes"
+            />
+
             <div v-else class="text-red-500 text-xs">
               Unknown component type: {{ (component as any).component_type }}
             </div>
@@ -106,6 +113,7 @@ import SliderInput from "./components/SliderInput.vue";
 import SingleSelect from "./components/SingleSelect.vue";
 import ColumnSelector from "./components/ColumnSelector.vue";
 import SecretSelector from "./components/SecretSelector.vue";
+import ColumnActionInput from "./components/ColumnActionInput.vue";
 
 // Component State
 const schema = ref<CustomNodeSchema | null>(null);
@@ -246,5 +254,16 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
+}
+
+.section-title {
+  font-size: var(--font-size-lg, 15px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary);
+  padding: var(--spacing-3, 12px) var(--spacing-4, 16px);
+  margin-bottom: var(--spacing-3, 12px);
+  background-color: var(--color-background-tertiary, #f1f3f5);
+  border-radius: var(--border-radius-md, 6px);
+  border-left: 3px solid var(--color-accent, #0891b2);
 }
 </style>

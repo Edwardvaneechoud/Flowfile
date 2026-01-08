@@ -19,6 +19,11 @@ export interface DesignerComponent {
   options_source?: string;
   options_string?: string;
   name_prefix?: string; // For SecretSelector: filter secrets by name prefix
+  // ColumnActionInput properties
+  actions_string?: string; // Comma-separated list of actions (e.g., "sum,mean,max")
+  output_name_template?: string; // Template for output names (e.g., "{column}_{action}")
+  show_group_by?: boolean; // Show group by selector
+  show_order_by?: boolean; // Show order by selector
 }
 
 /** A section containing multiple components */

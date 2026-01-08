@@ -521,7 +521,6 @@ onMounted(async () => {
   border-radius: 4px;
   padding: 1px;
   background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
   display: flex;
   flex-direction: column;
   align-items: center;

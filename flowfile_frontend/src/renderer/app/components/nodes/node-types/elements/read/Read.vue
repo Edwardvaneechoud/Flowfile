@@ -237,7 +237,7 @@ defineExpose({
 }
 
 .context-menu button:hover {
-  background-color: #f0f0f0;
+  background-color: var(--color-background-secondary);
 }
 
 .file-upload-wrapper {
@@ -248,7 +248,7 @@ defineExpose({
 .file-upload-label {
   display: flex;
   align-items: center;
-  background-color: #f5f5f5;
+  background-color: var(--color-background-secondary);
   border: 1px solid #ddd;
   border-radius: 4px;
   padding: 10px 15px;
@@ -260,7 +260,7 @@ defineExpose({
 }
 
 .file-upload-label:hover {
-  background-color: #e4e4e4;
+  background-color: var(--color-background-primary);
 }
 
 .file-icon {
