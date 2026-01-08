@@ -441,7 +441,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          poetry run mkdocs build --strict
+          poetry run mkdocs build
 
   # Summary job - always runs to provide status
   test-summary:

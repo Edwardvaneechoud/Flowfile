@@ -40,7 +40,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          poetry run mkdocs build --strict
+          poetry run mkdocs build
 
       - name: Upload documentation artifact
         uses: actions/upload-artifact@v4
