@@ -998,42 +998,25 @@ class FlowDataEngine:
 
         logger.info(f"do_group_by: Renaming columns for group: {[c.old_name for c in group_columns]}")
 
-        # Workaround for Polars SIGSEGV bug: If the LazyFrame scans an IPC file,
-        # collect it first and then make it lazy again before doing operations.
-        # This avoids crashes that occur when doing lazy operations on scan_ipc LazyFrames
-        # in certain environments (particularly Docker with shared volumes).
-        df = self.data_frame
-        try:
-            explain_str = df.explain()
-            if "SCAN IPC" in explain_str or "Ipc SCAN" in explain_str:
-                logger.info("do_group_by: Detected IPC scan, collecting to avoid SIGSEGV bug...")
-                df = df.collect().lazy()
-                logger.info("do_group_by: Collected and made lazy again")
-        except Exception as ex:
-            logger.warning(f"do_group_by: Could not check/collect IPC scan: {ex}")
+        # Workaround for Polars SIGSEGV bug in Docker on macOS: Collect the data
+        # and work with eager DataFrames to avoid crashes with lazy operations.
+        # The crash seems to occur even after collect().lazy(), so we use eager mode.
+        logger.info("do_group_by: Collecting DataFrame to avoid SIGSEGV bug...")
+        collected_df = self.data_frame.collect()
+        logger.info(f"do_group_by: Collected DataFrame shape: {collected_df.shape}")
 
         rename_dict = {c.old_name: c.new_name for c in group_columns}
         logger.info(f"do_group_by: Rename dict: {rename_dict}")
-
-        try:
-            cols = df.collect_schema().names()
-            logger.info(f"do_group_by: DataFrame columns: {cols}")
-        except Exception as ex:
-            logger.error(f"do_group_by: CRASH on collect_schema: {ex}")
-            raise
+        logger.info(f"do_group_by: DataFrame columns: {collected_df.columns}")
 
         # Check if any renames are actually needed (old_name != new_name)
         actual_renames = {k: v for k, v in rename_dict.items() if k != v}
         logger.info(f"do_group_by: Actual renames needed: {actual_renames}")
 
         if actual_renames:
-            logger.info("do_group_by: About to call .rename() on LazyFrame...")
-            try:
-                df = df.rename(actual_renames)
-                logger.info("do_group_by: Rename completed")
-            except Exception as ex:
-                logger.error(f"do_group_by: CRASH on rename: {ex}")
-                raise
+            logger.info("do_group_by: About to call .rename() on DataFrame...")
+            collected_df = collected_df.rename(actual_renames)
+            logger.info("do_group_by: Rename completed")
         else:
             logger.info("do_group_by: No renames needed (all old_name == new_name)")
 
@@ -1043,24 +1026,25 @@ class FlowDataEngine:
         # Handle case where there are no aggregations - just get unique combinations of group columns
         if len(aggregations) == 0:
             logger.info("do_group_by: No aggregation columns, returning unique group combinations")
-            result_df = df.select(group_by_columns).unique()
+            result_df = collected_df.select(group_by_columns).unique()
+            logger.info("do_group_by: Unique operation completed, converting to lazy")
             return FlowDataEngine(
-                result_df,
+                result_df.lazy(),
                 calculate_schema_stats=calculate_schema_stats,
             )
 
         logger.info("do_group_by: Building group_by expression")
-        grouped_df = df.group_by(*group_by_columns)
+        grouped_df = collected_df.group_by(*group_by_columns)
         logger.info("do_group_by: group_by expression built, now building agg expression")
 
         agg_exprs = [ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations]
         logger.info(f"do_group_by: Built {len(agg_exprs)} aggregation expressions")
 
         result_df = grouped_df.agg(agg_exprs)
-        logger.info("do_group_by: Aggregation expression built, creating FlowDataEngine")
+        logger.info("do_group_by: Aggregation completed, converting to lazy and creating FlowDataEngine")
 
         return FlowDataEngine(
-            result_df,
+            result_df.lazy(),
             calculate_schema_stats=calculate_schema_stats,
         )
 
