@@ -35,6 +35,7 @@
       <file-browser
         :allowed-file-types="['csv', 'txt', 'parquet', 'xlsx']"
         mode="open"
+        :is-visible="modalVisibleForOpen"
         @file-selected="handleFileChange"
       />
     </el-dialog>

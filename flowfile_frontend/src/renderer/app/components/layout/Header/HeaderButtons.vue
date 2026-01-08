@@ -36,6 +36,7 @@
     <file-browser
       :allowed-file-types="FLOWFILE_EXTENSIONS"
       mode="open"
+      :is-visible="modalVisibleForOpen"
       @file-selected="openFlowAction"
     />
   </el-dialog>
@@ -46,6 +47,7 @@
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       :initial-file-path="savePath"
+      :is-visible="modalVisibleForSave"
       @create-file="saveFlowAction"
       @overwrite-file="saveFlowAction"
     />
@@ -55,6 +57,7 @@
     <file-browser
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
+      :is-visible="modalVisibleForCreate"
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
     />

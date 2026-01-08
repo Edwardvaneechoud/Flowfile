@@ -15,6 +15,9 @@
             <span class="material-icons">arrow_upward</span>
             <span>Up</span>
           </button>
+          <button class="nav-button refresh-button" :disabled="loading" @click="loadCurrentDirectory" title="Refresh">
+            <span class="material-icons" :class="{ 'spin': loading }">refresh</span>
+          </button>
           <div class="current-path">
             {{ currentPath }}
           </div>
@@ -51,17 +54,24 @@
         </div>
       </div>
       <!-- Main Content Area -->
-      <div class="browser-main">
+      <div class="browser-main" @click="handleBackgroundClick">
         <!-- Loading State -->
         <div v-if="loading" class="loading-state"></div>
 
         <!-- Error State -->
         <div v-else-if="error" class="error-state">
-          {{ error }}
+          <div class="error-content">
+            <span class="material-icons error-icon">error_outline</span>
+            <span class="error-message">{{ error }}</span>
+            <el-button type="primary" size="small" @click.stop="loadCurrentDirectory">
+              <span class="material-icons">refresh</span>
+              Retry
+            </el-button>
+          </div>
         </div>
 
         <!-- File Grid -->
-        <div v-else class="grid-container" @click="handleBackgroundClick">
+        <div v-else class="grid-container">
           <div
             v-for="file in filteredFiles"
             :key="file.path"
@@ -70,7 +80,7 @@
               selected: selectedFile?.path === file.path,
               'is-directory': file.is_directory,
             }"
-            @click="handleSingleClick(file)"
+            @click.stop="handleSingleClick(file)"
             @dblclick="handleDoubleClick(file)"
           >
             <div class="file-item-content">
@@ -106,6 +116,12 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Empty state hint when no file is selected -->
+        <div v-if="!loading && !error && filteredFiles.length === 0" class="empty-state">
+          <span class="material-icons">folder_open</span>
+          <span>No files found</span>
         </div>
       </div>
       <!-- Bottom Action Bar -->
@@ -197,7 +213,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onActivated, watch } from "vue";
 import { FileInfo } from "./types";
 import { useFileBrowserStore } from "../../../stores/fileBrowserStore";
 
@@ -233,6 +249,8 @@ interface Props {
   initialFilePath?: string;
   allowDirectorySelection?: boolean;
   showWarningOnOverwrite?: boolean;
+  /** External visibility control - when true, triggers auto-refresh */
+  isVisible?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -242,6 +260,7 @@ const props = withDefaults(defineProps<Props>(), {
   initialFilePath: "",
   allowDirectorySelection: false,
   showWarningOnOverwrite: true,
+  isVisible: true,
 });
 
 const handleInitialFileSelection = async () => {
@@ -327,12 +346,10 @@ const formatDate = (dateString: string | Date): string => {
     hour12: false,
   })}`;
 };
-const handleBackgroundClick = (event: MouseEvent) => {
-  // Only deselect if clicking directly on the grid container
-  if ((event.target as HTMLElement).classList.contains("grid-container")) {
-    selectedFile.value = null;
-    emit("update:modelValue", null);
-  }
+const handleBackgroundClick = () => {
+  // Deselect file when clicking on empty area (file item clicks are stopped with @click.stop)
+  selectedFile.value = null;
+  emit("update:modelValue", null);
 };
 
 const handleOpenFile = () => {
@@ -558,6 +575,22 @@ watch(
   },
 );
 
+// Watch for visibility changes to auto-refresh
+watch(
+  () => props.isVisible,
+  async (newVisible, oldVisible) => {
+    // Refresh when becoming visible (transitioning from false to true)
+    if (newVisible && !oldVisible) {
+      await loadCurrentDirectory();
+    }
+  },
+);
+
+// For keep-alive components, refresh when re-activated
+onActivated(async () => {
+  await loadCurrentDirectory();
+});
+
 // Initialize
 onMounted(async () => {
   if (props.initialFilePath) {
@@ -663,8 +696,23 @@ onMounted(async () => {
 }
 
 .file-item.selected {
-  border-color: #3b82f6;
-  background-color: #eff6ff;
+  border-color: #2563eb;
+  border-width: 2px;
+  background-color: #dbeafe;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2), 0 4px 8px rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+.file-item.selected::after {
+  content: "check_circle";
+  font-family: "Material Icons";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: #2563eb;
+  font-size: 18px;
+  background: white;
+  border-radius: 50%;
 }
 
 .file-item-content {
@@ -724,7 +772,8 @@ onMounted(async () => {
 }
 
 .loading-state,
-.error-state {
+.error-state,
+.empty-state {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -734,6 +783,57 @@ onMounted(async () => {
 
 .error-state {
   color: var(--color-danger);
+}
+
+.error-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 48px;
+  color: var(--color-danger, #ef4444);
+}
+
+.error-message {
+  max-width: 300px;
+}
+
+.empty-state {
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text-secondary);
+}
+
+.empty-state .material-icons {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+/* Refresh button styling */
+.refresh-button {
+  padding: 8px;
+  min-width: auto;
+}
+
+.refresh-button .material-icons {
+  transition: transform 0.3s ease;
+}
+
+.refresh-button .material-icons.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .hidden-file {
