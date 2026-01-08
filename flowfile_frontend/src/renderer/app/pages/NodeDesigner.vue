@@ -319,6 +319,12 @@ function handleDrop(event: DragEvent, sectionIndex: number) {
     newComponent.required = false;
     newComponent.multiple = false;
     newComponent.data_types = "ALL";
+  } else if (componentType === "ColumnActionInput") {
+    newComponent.actions_string = "sum, mean, min, max";
+    newComponent.output_name_template = "{column}_{action}";
+    newComponent.show_group_by = false;
+    newComponent.show_order_by = false;
+    newComponent.data_types = "ALL";
   } else if (componentType === "SliderInput") {
     newComponent.min_value = 0;
     newComponent.max_value = 100;

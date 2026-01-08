@@ -290,7 +290,7 @@ onMounted(() => {
 }
 
 .node-button {
-  background-color: var(--color-background-primary);
+  background-color: #dedede;
   border-radius: 10px;
   border-width: 0px;
 }

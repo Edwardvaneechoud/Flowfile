@@ -15,7 +15,9 @@ from .custom_node import CustomNodeBase, NodeSettings
 
 # Import all UI components so they can be used directly
 from .ui_components import (
+    ActionOption,
     AvailableSecrets,
+    ColumnActionInput,
     ColumnSelector,
     IncomingColumns,
     MultiSelect,
@@ -42,6 +44,8 @@ __all__ = [
     "MultiSelect",
     "NodeSettings",
     "ColumnSelector",
+    "ColumnActionInput",
+    "ActionOption",
     "IncomingColumns",
     "AvailableSecrets",
     "SecretSelector",

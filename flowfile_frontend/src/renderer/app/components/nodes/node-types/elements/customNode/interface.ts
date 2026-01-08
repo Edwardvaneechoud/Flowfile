@@ -60,6 +60,35 @@ export interface SecretSelectorComponent extends BaseComponent {
   name_prefix?: string;
 }
 
+// Generic column action row structure
+export interface ColumnActionRow {
+  column: string;
+  action: string;
+  output_name: string;
+}
+
+// Action option structure from backend
+export interface ActionOption {
+  value: string;
+  label: string;
+}
+
+// Generic column action input value structure
+export interface ColumnActionValue {
+  rows: ColumnActionRow[];
+  group_by_columns: string[];
+  order_by_column: string | null;
+}
+
+export interface ColumnActionInputComponent extends BaseComponent {
+  component_type: "ColumnActionInput";
+  actions: ActionOption[];
+  output_name_template: string;
+  show_group_by: boolean;
+  show_order_by: boolean;
+  data_types: string[] | "ALL";
+}
+
 // --- Section Component Type ---
 
 export interface SectionComponent {
@@ -82,7 +111,8 @@ export type UIComponent =
   | SliderInputComponent
   | SingleSelectComponent
   | ColumnSelectorComponent
-  | SecretSelectorComponent;
+  | SecretSelectorComponent
+  | ColumnActionInputComponent;
 
 export type NodeTypeLiteral = "process" | "input" | "output";
 export type TransformTypeLiteral = "wide" | "long" | "explode";

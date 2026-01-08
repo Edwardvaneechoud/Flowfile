@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, Field, SecretStr, computed_field
 
@@ -9,6 +9,29 @@ from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encr
 from flowfile_core.types import DataType, TypeSpec
 
 InputType = Literal["text", "number", "secret", "array", "date", "boolean"]
+
+
+class ActionOption(NamedTuple):
+    """
+    A named tuple representing an action option with a value and display label.
+
+    Use this to define actions with custom labels in ColumnActionInput:
+        actions=[
+            ActionOption("sum", "Sum"),
+            ActionOption("avg", "Average"),
+            "count"  # plain strings also work
+        ]
+    """
+
+    value: str
+    """The internal value used in the data."""
+
+    label: str
+    """The display label shown in the UI."""
+
+
+# Type alias for action specifications - accepts strings or ActionOption tuples
+ActionSpec = str | ActionOption
 
 
 def normalize_input_to_data_types(v: Any) -> Literal["ALL"] | list[DataType]:
@@ -375,4 +398,124 @@ class SecretSelector(FlowfileInComponent):
         data["options"] = {"__type__": "AvailableSecrets"}
         if self.name_prefix:
             data["name_prefix"] = self.name_prefix
+        return data
+
+
+class ColumnActionInput(FlowfileInComponent):
+    """
+    A generic UI component for configuring column-based transformations.
+
+    This component allows users to select columns, choose an action/transformation,
+    and optionally rename the output. It can be configured for many use cases:
+    rolling windows, aggregations, string transformations, type conversions, etc.
+
+    The component displays:
+    - A list of available columns (filterable by data type)
+    - A table of configured operations with: Column, Action, Output Name
+    - Optional group by and order by selectors
+
+    Example - Rolling Window:
+        ColumnActionInput(
+            label="Rolling Calculations",
+            actions=["sum", "mean", "min", "max"],
+            output_name_template="{column}_rolling_{action}",
+            show_group_by=True,
+            show_order_by=True,
+            data_types="Numeric"
+        )
+
+    Example - String Transformations:
+        ColumnActionInput(
+            label="String Operations",
+            actions=["upper", "lower", "trim", "reverse"],
+            output_name_template="{column}_{action}",
+            data_types="String"
+        )
+
+    Example - Aggregations with ActionOption:
+        ColumnActionInput(
+            label="Aggregations",
+            actions=[
+                ActionOption("sum", "Sum"),
+                ActionOption("count", "Count"),
+                ActionOption("mean", "Average"),
+                "min",  # plain strings also work
+            ],
+            output_name_template="{column}_{action}",
+            show_group_by=True
+        )
+    """
+
+    component_type: Literal["ColumnActionInput"] = "ColumnActionInput"
+    input_type: InputType = "array"
+
+    # Configurable actions - list of action names or ActionOption tuples
+    actions: list[ActionSpec] = Field(default_factory=list)
+    """Actions available for selection. Can be strings or ActionOption(value, label) tuples."""
+
+    # Template for auto-generating output names
+    # Supports placeholders: {column}, {action}
+    output_name_template: str = "{column}_{action}"
+    """Template for generating default output names. Use {column} and {action} placeholders."""
+
+    # Optional grouping/ordering support
+    show_group_by: bool = False
+    """Whether to show the group by column selector."""
+
+    show_order_by: bool = False
+    """Whether to show the order by column selector."""
+
+    # Type filtering for column selection
+    data_type_filter_input: TypeSpec = Field(default="ALL", alias="data_types", repr=False, exclude=True)
+    """Filter columns by data type. Defaults to ALL."""
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Initialize value if not set
+        if self.value is None:
+            self.value = {
+                "rows": [],
+                "group_by_columns": [],
+                "order_by_column": None,
+            }
+
+    def set_value(self, value: Any):
+        """
+        Sets the value from frontend.
+        """
+        self.value = value
+        return self
+
+    @computed_field
+    @property
+    def data_types_filter(self) -> Literal["ALL"] | list[DataType]:
+        """
+        A computed field that normalizes the `data_type_filter_input` into a
+        standardized format for the frontend.
+        """
+        return normalize_input_to_data_types(self.data_type_filter_input)
+
+    def model_dump(self, **kwargs) -> dict:
+        """
+        Serializes the component for the frontend.
+        """
+        data = super().model_dump(**kwargs)
+        # Normalize actions to list of {value, label} objects for frontend
+        normalized_actions = []
+        for action in self.actions:
+            if isinstance(action, tuple):
+                normalized_actions.append({"value": action[0], "label": action[1]})
+            else:
+                normalized_actions.append({"value": action, "label": action})
+        data["actions"] = normalized_actions
+        data["output_name_template"] = self.output_name_template
+        data["show_group_by"] = self.show_group_by
+        data["show_order_by"] = self.show_order_by
+        if "data_types_filter" in data and data["data_types_filter"] != "ALL":
+            data["data_types"] = sorted([dt.value for dt in data["data_types_filter"]])
+        else:
+            data["data_types"] = "ALL"
         return data
