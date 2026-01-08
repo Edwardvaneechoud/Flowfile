@@ -20,6 +20,20 @@
           <span v-if="loading" class="spinner"></span>
           {{ loading ? "Loading..." : "Refresh" }}
         </button>
+        <button class="copy-button" @click="copyCode">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+          Copy Code
+        </button>
         <button class="export-button" @click="exportCode">
           <svg
             width="16"
@@ -112,6 +126,11 @@ const refreshCode = () => {
   }
 };
 
+const copyCode = () => {
+  navigator.clipboard.writeText(code.value);
+  alert("Code copied to clipboard!");
+};
+
 const exportCode = () => {
   const blob = new Blob([code.value], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
@@ -149,7 +168,8 @@ const exportCode = () => {
 }
 
 .export-button,
-.refresh-button {
+.refresh-button,
+.copy-button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -164,7 +184,8 @@ const exportCode = () => {
 }
 
 .export-button:hover,
-.refresh-button:hover:not(:disabled) {
+.refresh-button:hover:not(:disabled),
+.copy-button:hover {
   background: #005a9e;
 }
 
