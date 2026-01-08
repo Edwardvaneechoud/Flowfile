@@ -1012,9 +1012,30 @@ class FlowDataEngine:
         except Exception as ex:
             logger.warning(f"do_group_by: Could not check/collect IPC scan: {ex}")
 
-        logger.info("do_group_by: About to call .rename() on LazyFrame...")
-        df = df.rename({c.old_name: c.new_name for c in group_columns})
-        logger.info("do_group_by: Rename completed")
+        rename_dict = {c.old_name: c.new_name for c in group_columns}
+        logger.info(f"do_group_by: Rename dict: {rename_dict}")
+
+        try:
+            cols = df.collect_schema().names()
+            logger.info(f"do_group_by: DataFrame columns: {cols}")
+        except Exception as ex:
+            logger.error(f"do_group_by: CRASH on collect_schema: {ex}")
+            raise
+
+        # Check if any renames are actually needed (old_name != new_name)
+        actual_renames = {k: v for k, v in rename_dict.items() if k != v}
+        logger.info(f"do_group_by: Actual renames needed: {actual_renames}")
+
+        if actual_renames:
+            logger.info("do_group_by: About to call .rename() on LazyFrame...")
+            try:
+                df = df.rename(actual_renames)
+                logger.info("do_group_by: Rename completed")
+            except Exception as ex:
+                logger.error(f"do_group_by: CRASH on rename: {ex}")
+                raise
+        else:
+            logger.info("do_group_by: No renames needed (all old_name == new_name)")
 
         group_by_columns = [n_c.new_name for n_c in group_columns]
         logger.info(f"do_group_by: Group by columns: {group_by_columns}")
