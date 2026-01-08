@@ -364,7 +364,12 @@ class BaseFetcher:
                     # The file_ref contains the path to the IPC file on the shared volume.
                     if status.file_ref and status.file_ref.endswith('.arrow'):
                         logger.info(f"Creating fresh scan_ipc from file: {status.file_ref}")
-                        self._result = pl.scan_ipc(status.file_ref)
+                        # Workaround for Polars SIGSEGV bug: collect immediately and make lazy
+                        # again to avoid crashes when doing lazy operations on scan_ipc in Docker
+                        lf = pl.scan_ipc(status.file_ref)
+                        logger.info("Collecting IPC data to avoid SIGSEGV bug...")
+                        self._result = lf.collect().lazy()
+                        logger.info("Collected and converted back to lazy successfully")
                     else:
                         # Fall back to deserialization if no file_ref or not an arrow file
                         logger.info("Falling back to LazyFrame deserialization")
