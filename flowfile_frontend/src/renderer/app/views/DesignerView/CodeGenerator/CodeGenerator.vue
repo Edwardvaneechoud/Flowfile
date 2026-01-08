@@ -51,7 +51,7 @@
         </button>
       </div>
     </div>
-    <codemirror v-model="code" :extensions="extensions" :disabled="true" />
+    <codemirror v-model="code" :extensions="extensions" />
   </div>
 </template>
 
@@ -62,6 +62,7 @@ import { Codemirror } from "vue-codemirror";
 import { python } from "@codemirror/lang-python";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
 import { useNodeStore } from "../../../stores/column-store";
 
 const code = ref("");
@@ -72,10 +73,13 @@ const lastLoadedFlowId = ref<number | null>(null);
 const extensions = [
   python(),
   oneDark,
+  EditorState.readOnly.of(true),
+  EditorView.editable.of(false),
   EditorView.theme({
     "&": { fontSize: "11px" },
-    ".cm-content": { padding: "20px" },
+    ".cm-content": { padding: "20px", cursor: "text" },
     ".cm-focused": { outline: "none" },
+    ".cm-line": { cursor: "text" },
   }),
 ];
 

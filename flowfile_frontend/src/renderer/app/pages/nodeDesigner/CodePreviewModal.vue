@@ -44,11 +44,15 @@ function copyCode() {
   background: #282c34;
   border-radius: 4px;
   overflow-x: auto;
+  user-select: text;
+  cursor: text;
 }
 
 .code-preview pre {
   margin: 0;
   padding: 1rem;
+  user-select: text;
+  cursor: text;
 }
 
 .code-preview code {
@@ -56,5 +60,7 @@ function copyCode() {
   font-size: 0.8125rem;
   color: #abb2bf;
   white-space: pre;
+  user-select: text;
+  cursor: text;
 }
 </style>
