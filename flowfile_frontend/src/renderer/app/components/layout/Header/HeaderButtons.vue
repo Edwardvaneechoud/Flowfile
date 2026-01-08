@@ -1,6 +1,6 @@
 <template>
   <div class="action-buttons">
-    <button class="action-btn" @click="openSaveModal">
+    <button v-if="hasActiveFlow" class="action-btn" @click="openSaveModal">
       <span class="material-icons btn-icon">save</span>
       <span class="btn-text">Save</span>
     </button>
@@ -16,12 +16,13 @@
       <span class="material-icons btn-icon">flash_on</span>
       <span class="btn-text">Quick Create</span>
     </button>
-    <button class="action-btn" @click="openSettingsModal">
+    <button v-if="hasActiveFlow" class="action-btn" @click="openSettingsModal">
       <span class="material-icons btn-icon">settings</span>
       <span class="btn-text">Settings</span>
     </button>
-    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
+    <run-button v-if="hasActiveFlow" ref="runButton" :flow-id="nodeStore.flow_id" />
     <button
+      v-if="hasActiveFlow"
       class="action-btn"
       :class="{ active: nodeStore.showCodeGenerator }"
       title="Generate Python Code (Ctrl+G)"
@@ -130,7 +131,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, watch, computed } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlow } from "./utils";
@@ -152,6 +153,8 @@ import {
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+
+const hasActiveFlow = computed(() => nodeStore.flow_id > 0);
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);

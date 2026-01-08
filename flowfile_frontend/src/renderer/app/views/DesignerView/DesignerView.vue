@@ -13,7 +13,7 @@
           @close-tab="handleCloseFlow"
         />
       </div>
-      <div class="right-section">
+      <div v-if="flowsActive.length > 0" class="right-section">
         <Status />
       </div>
     </div>
