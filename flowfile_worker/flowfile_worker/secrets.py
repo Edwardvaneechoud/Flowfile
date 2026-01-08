@@ -2,18 +2,27 @@
 Simplified secure storage module for FlowFile worker to read credentials and secrets.
 """
 
+import base64
 import json
 import logging
 import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import SecretStr
 
 from flowfile_worker.configs import TEST_MODE
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Version identifier for key derivation scheme (must match flowfile_core)
+KEY_DERIVATION_VERSION = b"flowfile-secrets-v1"
+
+# Encrypted secret format: $ffsec$1${user_id}${fernet_token}
+SECRET_FORMAT_PREFIX = "$ffsec$1$"
 
 
 class SecureStorage:
@@ -143,9 +152,41 @@ def get_master_key() -> str:
     return key
 
 
-def decrypt_secret(encrypted_value) -> SecretStr:
+def derive_user_key(user_id: int) -> bytes:
     """
-    Decrypt an encrypted value using the master key.
+    Derive a user-specific encryption key from the master key using HKDF.
+
+    This provides cryptographic isolation between users - each user's secrets
+    are encrypted with a unique key derived from the master key.
+
+    Args:
+        user_id: The unique identifier for the user
+
+    Returns:
+        bytes: A 32-byte URL-safe base64-encoded key suitable for Fernet
+    """
+    master_key = get_master_key().encode()
+
+    # Use HKDF to derive a user-specific key
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,  # Fernet requires 32 bytes
+        salt=KEY_DERIVATION_VERSION,  # Static salt is fine for key derivation
+        info=f"user-{user_id}".encode(),  # User-specific context
+    )
+
+    # Derive raw key material and encode for Fernet
+    derived_key = hkdf.derive(master_key)
+    return base64.urlsafe_b64encode(derived_key)
+
+
+def decrypt_secret(encrypted_value: str) -> SecretStr:
+    """
+    Decrypt an encrypted value.
+
+    Supports both new format (with embedded user_id) and legacy format.
+    - New format: $ffsec$1${user_id}${fernet_token} - user_id extracted automatically
+    - Legacy format: raw Fernet token - uses master key directly
 
     Args:
         encrypted_value: The encrypted value as a string
@@ -153,21 +194,48 @@ def decrypt_secret(encrypted_value) -> SecretStr:
     Returns:
         SecretStr: The decrypted value as a SecretStr
     """
+    # Check for new versioned format with embedded user_id
+    if encrypted_value.startswith(SECRET_FORMAT_PREFIX):
+        # Parse: $ffsec$1${user_id}${fernet_token}
+        remainder = encrypted_value[len(SECRET_FORMAT_PREFIX):]
+        parts = remainder.split("$", 1)
+        if len(parts) != 2:
+            raise ValueError("Invalid encrypted secret format")
+
+        embedded_user_id = int(parts[0])
+        fernet_token = parts[1]
+
+        key = derive_user_key(embedded_user_id)
+        f = Fernet(key)
+        return SecretStr(f.decrypt(fernet_token.encode()).decode())
+
+    # Legacy format - use master key directly
     key = get_master_key().encode()
     f = Fernet(key)
     return SecretStr(f.decrypt(encrypted_value.encode()).decode())
 
 
-def encrypt_secret(secret_value):
+def encrypt_secret(secret_value: str, user_id: int | None = None) -> str:
     """
-    Encrypt a secret value using the master key.
+    Encrypt a secret value.
+
+    If user_id is provided, uses per-user key derivation with embedded user_id format.
+    Otherwise, uses legacy master key encryption (for backward compatibility in tests).
 
     Args:
         secret_value: The secret value to encrypt
+        user_id: Optional user ID for per-user key derivation
 
     Returns:
         str: The encrypted value as a string
     """
+    if user_id is not None:
+        key = derive_user_key(user_id)
+        f = Fernet(key)
+        fernet_token = f.encrypt(secret_value.encode()).decode()
+        return f"{SECRET_FORMAT_PREFIX}{user_id}${fernet_token}"
+
+    # Legacy format for backward compatibility
     key = get_master_key().encode()
     f = Fernet(key)
     return f.encrypt(secret_value.encode()).decode()
