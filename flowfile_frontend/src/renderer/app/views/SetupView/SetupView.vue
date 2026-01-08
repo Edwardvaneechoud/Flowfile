@@ -66,15 +66,9 @@
           <div class="warning-box">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <div>
-              <strong>Important:</strong> After configuring the key, restart the Flowfile containers
-              for the changes to take effect.
+              <strong>Important:</strong> Back up this key securely. If lost, all stored secrets become unrecoverable.
             </div>
           </div>
-
-          <button class="btn btn-secondary refresh-button" @click="checkStatus">
-            <i class="fa-solid fa-rotate"></i>
-            <span>Check Configuration & Refresh</span>
-          </button>
         </div>
       </div>
 
@@ -87,11 +81,7 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRouter } from "vue-router";
 import setupService, { type GeneratedKey } from "../../services/setup.service";
-import { resetSetupState } from "../../router";
-
-const router = useRouter();
 
 const isGenerating = ref(false);
 const error = ref("");
@@ -134,23 +124,6 @@ const copyKey = () => {
 const copyEnvVar = () => {
   if (generatedKey.value) {
     copyToClipboard(`FLOWFILE_MASTER_KEY="${generatedKey.value.key}"`, copiedEnv);
-  }
-};
-
-const checkStatus = async () => {
-  try {
-    // Clear all caches before checking
-    setupService.clearCache();
-    resetSetupState();
-
-    const status = await setupService.getSetupStatus(true);
-    if (!status.setup_required) {
-      router.push({ name: "login" });
-    } else {
-      error.value = "Master key is not yet configured. Please restart the containers after adding the key.";
-    }
-  } catch (err) {
-    error.value = "Failed to check status. Please ensure the backend is running.";
   }
 };
 </script>
@@ -413,15 +386,6 @@ const checkStatus = async () => {
 .warning-box i {
   flex-shrink: 0;
   color: var(--color-warning);
-}
-
-.refresh-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-2);
-  width: 100%;
-  padding: var(--spacing-3);
 }
 
 .setup-footer {
