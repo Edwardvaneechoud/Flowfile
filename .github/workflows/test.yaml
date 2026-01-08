@@ -29,6 +29,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       shared: ${{ steps.filter.outputs.shared }}
       any_backend: ${{ steps.filter.outputs.any_backend }}
+      test_workflow: ${{ steps.filter.outputs.test_workflow }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,12 +64,15 @@ jobs:
               - 'shared/**'
               - 'test_utils/**'
               - 'pyproject.toml'
+            test_workflow:
+              - '.github/workflows/test.yaml'
 
-  # Backend tests - runs when Python code changes
+  # Backend tests - runs when Python code changes or test workflow changes
   backend-tests:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
@@ -131,6 +135,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_frame == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_frame/tests --disable-warnings
 
@@ -138,6 +143,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_core == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_core/tests --disable-warnings
 
@@ -145,6 +151,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_worker == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         run: poetry run pytest flowfile_worker/tests --disable-warnings
 
@@ -158,6 +165,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_flowfile == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
@@ -167,6 +175,7 @@ jobs:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.any_backend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: windows-latest
     steps:
@@ -214,6 +223,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_frame == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_frame/tests --disable-warnings
@@ -222,6 +232,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_core == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_core/tests --disable-warnings
@@ -230,6 +241,7 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_worker == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile_worker/tests --disable-warnings
@@ -246,15 +258,17 @@ jobs:
         if: |
           needs.detect-changes.outputs.backend_flowfile == 'true' ||
           needs.detect-changes.outputs.shared == 'true' ||
+          needs.detect-changes.outputs.test_workflow == 'true' ||
           github.event.inputs.run_all_tests == 'true'
         shell: pwsh
         run: poetry run pytest flowfile/tests --disable-warnings
 
-  # Frontend web build test - runs when frontend changes
+  # Frontend web build test - runs when frontend changes or test workflow changes
   test-web:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.frontend == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: ubuntu-latest
     defaults:
@@ -288,7 +302,7 @@ jobs:
             exit 1
           fi
 
-  # Electron tests macOS - runs when frontend or backend changes
+  # Electron tests macOS - runs when frontend or backend changes or test workflow changes
   electron-tests-macos:
     needs: [detect-changes, backend-tests, test-web]
     if: |
@@ -298,6 +312,7 @@ jobs:
       (
         needs.detect-changes.outputs.frontend == 'true' ||
         needs.detect-changes.outputs.any_backend == 'true' ||
+        needs.detect-changes.outputs.test_workflow == 'true' ||
         github.event.inputs.run_all_tests == 'true'
       )
     runs-on: macos-latest
@@ -343,7 +358,7 @@ jobs:
         run: |
           npm run test
 
-  # Electron tests Windows - runs when frontend or backend changes
+  # Electron tests Windows - runs when frontend or backend changes or test workflow changes
   electron-tests-windows:
     needs: [detect-changes, backend-tests, test-web, backend-tests-windows]
     if: |
@@ -354,6 +369,7 @@ jobs:
       (
         needs.detect-changes.outputs.frontend == 'true' ||
         needs.detect-changes.outputs.any_backend == 'true' ||
+        needs.detect-changes.outputs.test_workflow == 'true' ||
         github.event.inputs.run_all_tests == 'true'
       )
     runs-on: windows-latest
@@ -403,11 +419,12 @@ jobs:
         run: |
           npm run test
 
-  # Documentation build test - runs when docs change
+  # Documentation build test - runs when docs change or test workflow changes
   docs-test:
     needs: detect-changes
     if: |
       needs.detect-changes.outputs.docs == 'true' ||
+      needs.detect-changes.outputs.test_workflow == 'true' ||
       github.event.inputs.run_all_tests == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -444,6 +461,7 @@ jobs:
           echo "  - Frontend: ${{ needs.detect-changes.outputs.frontend }}"
           echo "  - Docs: ${{ needs.detect-changes.outputs.docs }}"
           echo "  - Shared/Dependencies: ${{ needs.detect-changes.outputs.shared }}"
+          echo "  - Test Workflow: ${{ needs.detect-changes.outputs.test_workflow }}"
           echo ""
           echo "Job results:"
           echo "  - Backend Tests: ${{ needs.backend-tests.result }}"
