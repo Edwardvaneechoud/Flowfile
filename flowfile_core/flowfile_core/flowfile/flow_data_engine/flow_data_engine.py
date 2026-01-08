@@ -997,6 +997,30 @@ class FlowDataEngine:
             )
 
         logger.info(f"do_group_by: Renaming columns for group: {[c.old_name for c in group_columns]}")
+
+        # Debug: Check the LazyFrame query plan before rename
+        try:
+            logger.info(f"do_group_by: LazyFrame explain before rename:\n{self.data_frame.explain()}")
+            logger.info(f"do_group_by: LazyFrame schema before rename: {self.data_frame.collect_schema()}")
+        except Exception as ex:
+            logger.error(f"do_group_by: Could not get LazyFrame info before rename: {ex}")
+
+        # Try to verify IPC file if present in query plan
+        try:
+            explain_str = self.data_frame.explain()
+            if "SCAN IPC" in explain_str or "scan_ipc" in explain_str.lower():
+                import re
+                import os
+                # Try to extract file path from explain
+                logger.info("do_group_by: LazyFrame appears to scan IPC file(s)")
+                # Check if we can access the IPC file - try a simple schema fetch
+                logger.info("do_group_by: Attempting to collect schema to verify IPC access...")
+                schema = self.data_frame.collect_schema()
+                logger.info(f"do_group_by: Schema collected successfully: {schema}")
+        except Exception as ex:
+            logger.error(f"do_group_by: Error checking IPC file: {ex}")
+
+        logger.info("do_group_by: About to call .rename() on LazyFrame...")
         df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
         logger.info("do_group_by: Rename completed")
 
