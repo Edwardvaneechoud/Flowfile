@@ -150,7 +150,7 @@ onMounted(() => {
 
 <style scoped>
 .connection-settings-container {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-primary);
   border-radius: 6px;
   margin-bottom: 1rem;
   overflow: hidden;
@@ -161,27 +161,27 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  background-color: #f8fafc;
+  background-color: var(--color-background-secondary);
   cursor: pointer;
   user-select: none;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--color-border-primary);
 }
 
 .connection-header:hover {
-  background-color: #edf2f7;
+  background-color: var(--color-background-tertiary);
 }
 
 .connection-title {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 .toggle-button {
   background: none;
   border: none;
-  color: #718096;
+  color: var(--color-text-tertiary);
   font-size: 0.9rem;
   cursor: pointer;
   padding: 0;
@@ -209,10 +209,12 @@ onMounted(() => {
 .form-control {
   width: 100%;
   padding: 0.5rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-size: 0.875rem;
   box-sizing: border-box;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 .form-group {
   margin-bottom: 0.75rem;
@@ -224,7 +226,7 @@ label {
   margin-bottom: 0.25rem;
   font-size: 0.875rem;
   font-weight: 500;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 select.form-control {

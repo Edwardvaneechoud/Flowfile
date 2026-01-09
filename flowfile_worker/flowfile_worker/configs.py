@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import multiprocessing
 import os
 import platform
 
@@ -15,8 +16,9 @@ logger.setLevel(logging.INFO)
 # Constants for worker and core configuration
 DEFAULT_SERVICE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
 DEFAULT_SERVICE_PORT = 63579
-DEFAULT_CORE_HOST = "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1"
-DEFAULT_CORE_PORT = 63578
+# Check environment variable for core host (used in Docker mode)
+DEFAULT_CORE_HOST = os.environ.get("CORE_HOST", "0.0.0.0" if platform.system() != "Windows" else "127.0.0.1")
+DEFAULT_CORE_PORT = int(os.environ.get("CORE_PORT", 63578))
 TEST_MODE = True if "TEST_MODE" in os.environ else False
 
 
@@ -69,19 +71,33 @@ def get_core_url(host, port):
     return f"http://{host}:{port}"
 
 
-# Parse arguments - defaults are already set in the argument parser
-args = parse_args()
+def _is_main_process():
+    """Check if we're running in the main process (not a spawned child)"""
+    return multiprocessing.current_process().name == "MainProcess"
 
-# These variables will already use defaults from argparse if not provided
-SERVICE_HOST = args.host
-SERVICE_PORT = args.port
-CORE_HOST = args.core_host
-CORE_PORT = args.core_port
 
-# Generate the core URI
+# Only parse args and log in the main process
+# Spawned child processes will use environment variables or defaults
+if _is_main_process():
+    # Parse arguments - defaults are already set in the argument parser
+    args = parse_args()
+
+    # These variables will already use defaults from argparse if not provided
+    SERVICE_HOST = args.host
+    SERVICE_PORT = args.port
+    CORE_HOST = args.core_host
+    CORE_PORT = args.core_port
+
+    logger.info(f"ConnectorX version: {__version__}")
+    # Log configuration
+    logger.info(f"Worker configured at {SERVICE_HOST}:{SERVICE_PORT}")
+    logger.info(f"Core service configured at {get_core_url(CORE_HOST, CORE_PORT)}")
+else:
+    # In spawned processes, use defaults from environment variables
+    SERVICE_HOST = DEFAULT_SERVICE_HOST
+    SERVICE_PORT = DEFAULT_SERVICE_PORT
+    CORE_HOST = DEFAULT_CORE_HOST
+    CORE_PORT = DEFAULT_CORE_PORT
+
+# Generate the core URI (used by both main and spawned processes)
 FLOWFILE_CORE_URI = get_core_url(CORE_HOST, CORE_PORT)
-
-logger.info(f"ConnectorX version: {__version__}")
-# Log configuration
-logger.info(f"Worker configured at {SERVICE_HOST}:{SERVICE_PORT}")
-logger.info(f"Core service configured at {FLOWFILE_CORE_URI}")
