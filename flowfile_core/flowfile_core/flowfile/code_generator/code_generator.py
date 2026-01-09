@@ -1517,35 +1517,43 @@ class FlowGraphToPolarsConverter:
             self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Not found in registry")
             return
 
-        # Get the source code of the custom node class
-        try:
-            source_code = inspect.getsource(custom_node_class)
-        except (OSError, TypeError) as e:
-            self.unsupported_nodes.append((
-                node.node_id,
-                node_type,
-                f"Could not retrieve source code for user-defined node: {e}"
-            ))
-            self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable")
-            return
-
-        # Store the class source if we haven't already
+        # Store the entire source file if we haven't already
         class_name = custom_node_class.__name__
         if class_name not in self.custom_node_classes:
-            self.custom_node_classes[class_name] = source_code
-            # Add necessary imports for the custom node base classes and UI components
-            self.imports.add("from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase, NodeSettings, Section")
-            self.imports.add("from flowfile_core.flowfile.node_designer.ui_components import FlowfileInComponent, ColumnSelector, NumericInput, TextInput, DropdownSelector, TextArea, Toggle, IncomingColumns")
-            self.imports.add("from pydantic import BaseModel")
-            self.imports.add("from typing import Any")
+            # Read the entire source file - it contains everything we need
+            file_source = self._read_custom_node_source_file(custom_node_class)
+            if file_source:
+                # Remove import lines from the file since we handle imports separately
+                lines = file_source.split('\n')
+                non_import_lines = []
+                for line in lines:
+                    stripped = line.strip()
+                    # Skip import statements and empty lines at the start
+                    if stripped.startswith('import ') or stripped.startswith('from '):
+                        continue
+                    # Skip comments at the very start (like "# Auto-generated custom node")
+                    if stripped.startswith('#') and not non_import_lines:
+                        continue
+                    non_import_lines.append(line)
+                # Remove leading empty lines
+                while non_import_lines and not non_import_lines[0].strip():
+                    non_import_lines.pop(0)
+                self.custom_node_classes[class_name] = '\n'.join(non_import_lines)
+            else:
+                # Fallback to just the class source
+                try:
+                    self.custom_node_classes[class_name] = inspect.getsource(custom_node_class)
+                except (OSError, TypeError) as e:
+                    self.unsupported_nodes.append((
+                        node.node_id,
+                        node_type,
+                        f"Could not retrieve source code for user-defined node: {e}"
+                    ))
+                    self._add_comment(f"# Node {node.node_id}: User-defined node '{node_type}' - Source code unavailable")
+                    return
 
-            # Try to extract the settings schema class source code
-            settings_schema_source = self._extract_settings_schema_class(custom_node_class)
-            if settings_schema_source:
-                # Store the settings schema class (use a special prefix to ensure it comes before the node class)
-                settings_class = type(getattr(custom_node_class, 'settings_schema', None))
-                if settings_class and settings_class.__name__ != 'NodeSettings':
-                    self.custom_node_classes[f"__{settings_class.__name__}"] = settings_schema_source
+            # Add necessary imports
+            self.imports.add("from flowfile_core.flowfile.node_designer import CustomNodeBase, Section, NodeSettings, SingleSelect, MultiSelect, IncomingColumns, ColumnSelector, NumericInput, TextInput, DropdownSelector, TextArea, Toggle")
 
         # Get settings values to initialize the node
         settings_dict = getattr(settings, "settings", {}) or {}
@@ -1810,15 +1818,7 @@ class FlowGraphToPolarsConverter:
             lines.append("# Custom Node Class Definitions")
             lines.append("# These classes are user-defined nodes that were included in the flow")
             lines.append("")
-            # Sort classes so settings schema classes (prefixed with "__") come first
-            sorted_classes = sorted(
-                self.custom_node_classes.items(),
-                key=lambda x: (0 if x[0].startswith("__") else 1, x[0])
-            )
-            for class_name, source_code in sorted_classes:
-                # Remove the "__" prefix from settings schema class names in the output
-                # (the prefix was just for sorting purposes)
-                # Add the source code for each custom node class
+            for class_name, source_code in self.custom_node_classes.items():
                 for source_line in source_code.split("\n"):
                     lines.append(source_line)
                 lines.append("")
