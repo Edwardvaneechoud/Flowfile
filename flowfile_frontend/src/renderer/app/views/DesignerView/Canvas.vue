@@ -374,16 +374,25 @@ const handleKeyDown = (event: KeyboardEvent) => {
   // Normalize key to lowercase to handle Caps Lock being on
   const key = event.key.toLowerCase();
 
-  // Skip if typing in an input field
+  // Skip if typing in an input field or code editor
   const target = event.target as HTMLElement;
   const isInputElement =
     target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+  // Check if inside a CodeMirror editor
+  const isInCodeMirror = target.closest(".cm-editor") !== null;
 
   // Check if text is selected - if so, let browser handle copy/paste natively
   const selection = window.getSelection();
   const hasTextSelected = selection && selection.toString().trim().length > 0;
 
-  if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
+  if (eventKeyClicked && key === "a" && !isInputElement && !isInCodeMirror) {
+    // Select all nodes on canvas (prevent browser from selecting all page text)
+    event.preventDefault();
+    const allNodes = instance.getNodes.value;
+    allNodes.forEach((node) => {
+      node.selected = true;
+    });
+  } else if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
     // Copy selected nodes only if no text is selected
     copySelectedNodes();
     event.preventDefault();
