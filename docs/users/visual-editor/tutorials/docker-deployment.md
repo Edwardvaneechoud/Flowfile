@@ -15,7 +15,10 @@ docker compose up -d
 
 Access at `http://localhost:8080`. The setup wizard will guide you through master key configuration.
 
-For a complete deployment guide, see [Host in Private Cloud](private-cloud-hosting.md).
+<!-- IMAGE: setup_wizard.png - Screenshot of the setup wizard showing "Generate Master Key" button -->
+![Setup Wizard](../../../assets/images/guides/docker-deployment/setup_wizard.png)
+
+For a complete deployment guide, see the [Developer Docker Guide](../../../for-developers/docker-deployment.md).
 
 ## Docker Images
 

@@ -24,6 +24,9 @@ The master key encrypts all secrets. Without it, secrets cannot be decrypted.
 
 On first start without a master key, Flowfile shows a setup screen. Click **Generate Master Key**, copy it, and add to your `.env` file.
 
+<!-- IMAGE: setup_wizard_key.png - Setup wizard with generated key displayed -->
+![Setup Wizard](../../assets/images/guides/docker-deployment/setup_wizard.png)
+
 **Manually:**
 
 ```bash
@@ -46,6 +49,9 @@ openssl rand -base64 32
 3. Enter name (e.g., `prod_database_password`)
 4. Enter value
 5. Save
+
+<!-- IMAGE: secrets_panel.png - Secrets management panel showing list of secrets -->
+![Secrets Panel](../../assets/images/guides/secrets/secrets_panel.png)
 
 ## Using Secrets
 

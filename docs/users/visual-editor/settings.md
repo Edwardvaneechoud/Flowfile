@@ -20,6 +20,9 @@ Your preference persists across sessions.
 
 Manage team access through the Admin panel. Click your username → **Admin**.
 
+<!-- IMAGE: user_management.png - Admin panel showing user list -->
+![User Management](../assets/images/guides/settings/user_management.png)
+
 ### Creating Users
 
 1. Click **Add User**

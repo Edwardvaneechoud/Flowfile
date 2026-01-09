@@ -1,13 +1,4 @@
-# Required images for Docker Deployment Guide
+# Required Images for Docker Deployment Guide
 #
-# The following images are needed for the docker-deployment.md tutorial:
-#
-# - main_image.png         # Hero image for the guide header
-# - architecture.png       # Three-service architecture diagram (frontend, core, worker)
-# - login_screen.png       # Docker mode login page screenshot
-# - user_management.png    # Admin panel user list screenshot
-# - secrets_management.png # Secrets interface screenshot
-# - production_architecture.png  # Architecture with reverse proxy (nginx/traefik)
-#
-# Recommended dimensions: 1200x800 pixels
-# Format: PNG with transparency where appropriate
+# setup_wizard.png - Setup wizard screen with "Generate Master Key" button
+#                    Shows first-time Docker setup experience
