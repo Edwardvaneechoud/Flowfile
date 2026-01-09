@@ -1,83 +1,96 @@
 # Host Flowfile in Your Private Cloud
 
-A step-by-step tutorial for deploying Flowfile on your own infrastructure.
+Deploy Flowfile on your own infrastructure using pre-built Docker images.
 
-## What You'll Build
+## What You'll Have
 
-By the end of this tutorial, you'll have:
-
-- Flowfile running on your server with HTTPS
-- Multi-user authentication enabled
-- Encrypted secrets storage configured
-- Health monitoring in place
+- Flowfile running with HTTPS
+- Multi-user authentication
+- Encrypted secrets storage
 
 ## Prerequisites
 
-- A Linux server (Ubuntu 20.04+ recommended)
+- Linux server (Ubuntu 20.04+ recommended)
 - Docker and Docker Compose installed
-- A domain name pointing to your server
-- SSL certificate (or use Let's Encrypt)
+- Domain name with SSL certificate
 
-## Step 1: Prepare Your Server
-
-SSH into your server and install Docker:
+## Step 1: Install Docker
 
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Docker
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
-
-# Install Docker Compose
-sudo apt install docker-compose-plugin -y
-
-# Verify installation
-docker --version
-docker compose version
+# Log out and back in
 ```
 
-Log out and back in for group changes to take effect.
-
-## Step 2: Clone Flowfile
+## Step 2: Create Project Directory
 
 ```bash
-cd /opt
-sudo git clone https://github.com/edwardvaneechoud/Flowfile.git
-sudo chown -R $USER:$USER Flowfile
-cd Flowfile
+mkdir -p /opt/flowfile && cd /opt/flowfile
 ```
 
-## Step 3: Generate Security Keys
-
-Generate the master key for encrypting secrets:
+## Step 3: Create docker-compose.yml
 
 ```bash
-openssl rand -base64 32 > master_key.txt
-chmod 600 master_key.txt
-```
+cat > docker-compose.yml << 'EOF'
+services:
+  flowfile-frontend:
+    image: edwardvaneechoud/flowfile-frontend:latest
+    ports:
+      - "8080:8080"
+    networks:
+      - flowfile-network
+    depends_on:
+      - flowfile-core
+      - flowfile-worker
 
-Generate a JWT secret:
+  flowfile-core:
+    image: edwardvaneechoud/flowfile-core:latest
+    ports:
+      - "63578:63578"
+    environment:
+      - FLOWFILE_MODE=docker
+      - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
+      - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY}
+      - WORKER_HOST=flowfile-worker
+    volumes:
+      - ./flowfile_data:/app/user_data
+      - ./saved_flows:/app/flowfile_core/saved_flows
+      - flowfile-storage:/app/internal_storage
+    networks:
+      - flowfile-network
 
-```bash
-openssl rand -base64 32
-# Copy this output for the next step
+  flowfile-worker:
+    image: edwardvaneechoud/flowfile-worker:latest
+    ports:
+      - "63579:63579"
+    environment:
+      - FLOWFILE_MODE=docker
+      - CORE_HOST=flowfile-core
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY}
+    volumes:
+      - ./flowfile_data:/app/user_data
+      - flowfile-storage:/app/internal_storage
+    networks:
+      - flowfile-network
+
+networks:
+  flowfile-network:
+
+volumes:
+  flowfile-storage:
+EOF
 ```
 
 ## Step 4: Configure Environment
 
-Create your `.env` file:
-
 ```bash
 cat > .env << 'EOF'
-FLOWFILE_MODE=docker
 FLOWFILE_ADMIN_USER=admin
-FLOWFILE_ADMIN_PASSWORD=ChangeThisSecurePassword123!
-JWT_SECRET_KEY=paste-your-generated-jwt-secret-here
+FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
+JWT_SECRET_KEY=your-jwt-secret-at-least-32-characters-long
 EOF
-
-chmod 600 .env
 ```
 
 ## Step 5: Start Flowfile
@@ -86,23 +99,30 @@ chmod 600 .env
 docker compose up -d
 ```
 
-Verify all services are running:
+Open `http://your-server:8080`. On first visit, you'll see a setup screen to generate your master encryption key.
 
-```bash
-docker compose ps
-```
+## Step 6: Configure Master Key
 
-You should see three services running: `flowfile-frontend`, `flowfile-core`, `flowfile-worker`.
+1. Click **Generate Master Key** in the setup screen
+2. Copy the generated key
+3. Add to your `.env` file:
+   ```bash
+   echo "FLOWFILE_MASTER_KEY=your-generated-key" >> .env
+   ```
+4. Restart:
+   ```bash
+   docker compose restart
+   ```
 
-## Step 6: Configure HTTPS with Nginx
+## Step 7: Set Up HTTPS
 
-Install nginx:
+Install nginx and certbot:
 
 ```bash
 sudo apt install nginx certbot python3-certbot-nginx -y
 ```
 
-Create nginx configuration:
+Create nginx config:
 
 ```bash
 sudo tee /etc/nginx/sites-available/flowfile << 'EOF'
@@ -122,84 +142,28 @@ server {
     }
 }
 EOF
-```
 
-Enable the site and get SSL certificate:
-
-```bash
 sudo ln -s /etc/nginx/sites-available/flowfile /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-
-# Get SSL certificate
 sudo certbot --nginx -d your-domain.com
 ```
 
-## Step 7: Verify Installation
-
-1. Open `https://your-domain.com` in your browser
-2. Log in with your admin credentials
-3. Change your password when prompted
-4. Create a test flow to verify everything works
-
-## Step 8: Set Up Auto-Start
-
-Ensure Flowfile starts on boot:
+## Updating
 
 ```bash
-cd /opt/Flowfile
+docker compose pull
 docker compose up -d
 ```
 
-Docker containers with `restart: always` will auto-start. Add this to your compose file if not present.
-
-## Step 9: Backup Configuration
-
-Set up a backup script:
+## Backup
 
 ```bash
-cat > /opt/Flowfile/backup.sh << 'EOF'
-#!/bin/bash
-BACKUP_DIR="/opt/backups/flowfile/$(date +%Y%m%d)"
-mkdir -p $BACKUP_DIR
-cp -r /opt/Flowfile/saved_flows $BACKUP_DIR/
-cp -r /opt/Flowfile/flowfile_data $BACKUP_DIR/
-cp /opt/Flowfile/master_key.txt $BACKUP_DIR/
-echo "Backup completed: $BACKUP_DIR"
-EOF
-
-chmod +x /opt/Flowfile/backup.sh
-```
-
-Add to cron for daily backups:
-
-```bash
-echo "0 2 * * * /opt/Flowfile/backup.sh" | crontab -
+cp -r /opt/flowfile/saved_flows backup/
+cp -r /opt/flowfile/flowfile_data backup/
+cp /opt/flowfile/.env backup/
 ```
 
 ## Next Steps
 
-- [Add team members](../settings.md#user-management) via the admin panel
-- [Configure secrets](../secrets.md) for database connections
-- [Connect to databases](database-connectivity.md) in your flows
-
-## Troubleshooting
-
-**Can't access the site?**
-```bash
-# Check if services are running
-docker compose ps
-
-# Check logs
-docker compose logs --tail=50
-```
-
-**SSL certificate issues?**
-```bash
-sudo certbot renew --dry-run
-```
-
-**Need to restart?**
-```bash
-docker compose restart
-```
+- [Add team members](../settings.md#user-management)
+- [Configure secrets](../secrets.md)
+- [Connect to databases](database-connectivity.md)

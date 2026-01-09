@@ -4,52 +4,55 @@ Store sensitive credentials like database passwords and API keys securely.
 
 ## How It Works
 
-Secrets are encrypted using a master key before being stored. When a flow needs a credential, Flowfile decrypts it on-demand. The actual values are never exposed in flow definitions or logs.
+Secrets are encrypted using a master key before storage. When a flow needs a credential, Flowfile decrypts it on-demand. The actual values never appear in flow definitions or logs.
 
 ## Master Key
 
 The master key encrypts all secrets. Without it, secrets cannot be decrypted.
 
-### Location by Mode
+### Configuration by Mode
 
-| Mode | Master Key Location |
-|------|---------------------|
-| **Docker** | `/run/secrets/flowfile_master_key` (from `master_key.txt`) |
-| **Desktop (Electron)** | `~/.config/flowfile/.secret_key` (auto-generated) |
-| **Python API** | Uses desktop location or environment variable |
+| Mode | Configuration |
+|------|---------------|
+| **Docker** | `FLOWFILE_MASTER_KEY` env variable, or generate via setup wizard |
+| **Desktop** | Auto-generated at `~/.config/flowfile/.secret_key` |
+| **Python API** | Uses desktop location or `FLOWFILE_MASTER_KEY` env variable |
 
 ### Generating a Master Key
 
+**Via Setup Wizard (Docker):**
+
+On first start without a master key, Flowfile shows a setup screen. Click **Generate Master Key**, copy it, and add to your `.env` file.
+
+**Manually:**
+
 ```bash
-openssl rand -base64 32 > master_key.txt
+# Python
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Or openssl (for file-based approach)
+openssl rand -base64 32
 ```
 
-!!! danger "Keep your master key safe"
-    - Back it up securely (password manager, encrypted storage)
-    - Losing it = losing access to all encrypted secrets
+!!! danger "Protect your master key"
+    - Back it up securely
     - Never commit to version control
+    - Losing it = losing access to all encrypted secrets
 
 ## Creating Secrets
 
 1. Open **Settings** → **Secrets**
 2. Click **Add Secret**
-3. Enter a name (e.g., `prod_database_password`)
-4. Enter the value
+3. Enter name (e.g., `prod_database_password`)
+4. Enter value
 5. Save
 
-## Using Secrets in Flows
+## Using Secrets
 
-When configuring connections (database, cloud storage, API), select the secret by name instead of typing the credential directly.
+Reference secrets by name when configuring connections. The encrypted value is decrypted at runtime.
 
-Secrets are referenced by name in flow definitions:
-```json
-{
-  "password": {"secret": "prod_database_password"}
-}
-```
-
-## Encryption Details
+## Encryption
 
 - **Algorithm**: Fernet (AES-128-CBC + HMAC-SHA256)
-- **Isolation**: Each user's secrets are stored separately
-- **Storage**: Encrypted values in SQLite database
+- **Isolation**: Each user's secrets stored separately
+- **Storage**: Encrypted in SQLite database

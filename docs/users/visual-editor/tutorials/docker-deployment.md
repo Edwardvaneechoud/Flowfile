@@ -1,64 +1,121 @@
 # Docker Reference
 
-Configuration reference for running Flowfile with Docker Compose.
+Run Flowfile with Docker using pre-built images from Docker Hub.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/edwardvaneechoud/Flowfile.git
-cd Flowfile
-openssl rand -base64 32 > master_key.txt
+mkdir flowfile && cd flowfile
+
+# Create docker-compose.yml (see below)
+# Create .env file
+
 docker compose up -d
 ```
 
-Access at `http://localhost:8080`. Default login: `admin` / `changeme`.
+Access at `http://localhost:8080`. The setup wizard will guide you through master key configuration.
 
-For a complete deployment tutorial, see [Host Flowfile in Your Private Cloud](private-cloud-hosting.md).
+For a complete deployment guide, see [Host in Private Cloud](private-cloud-hosting.md).
 
-## Architecture
+## Docker Images
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| `flowfile-frontend` | 8080 | Web UI |
-| `flowfile-core` | 63578 | API, authentication |
-| `flowfile-worker` | 63579 | Data processing |
+| Image | Description |
+|-------|-------------|
+| `edwardvaneechoud/flowfile-frontend` | Web UI |
+| `edwardvaneechoud/flowfile-core` | API server |
+| `edwardvaneechoud/flowfile-worker` | Data processing |
+
+Tags: `latest`, `0.5.3`, or specific version
+
+## docker-compose.yml
+
+```yaml
+services:
+  flowfile-frontend:
+    image: edwardvaneechoud/flowfile-frontend:latest
+    ports:
+      - "8080:8080"
+    networks:
+      - flowfile-network
+    depends_on:
+      - flowfile-core
+      - flowfile-worker
+
+  flowfile-core:
+    image: edwardvaneechoud/flowfile-core:latest
+    ports:
+      - "63578:63578"
+    environment:
+      - FLOWFILE_MODE=docker
+      - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
+      - FLOWFILE_ADMIN_PASSWORD=${FLOWFILE_ADMIN_PASSWORD:-changeme}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
+      - WORKER_HOST=flowfile-worker
+    volumes:
+      - ./flowfile_data:/app/user_data
+      - ./saved_flows:/app/flowfile_core/saved_flows
+      - flowfile-storage:/app/internal_storage
+    networks:
+      - flowfile-network
+
+  flowfile-worker:
+    image: edwardvaneechoud/flowfile-worker:latest
+    ports:
+      - "63579:63579"
+    environment:
+      - FLOWFILE_MODE=docker
+      - CORE_HOST=flowfile-core
+      - FLOWFILE_MASTER_KEY=${FLOWFILE_MASTER_KEY:-}
+    volumes:
+      - ./flowfile_data:/app/user_data
+      - flowfile-storage:/app/internal_storage
+    networks:
+      - flowfile-network
+
+networks:
+  flowfile-network:
+
+volumes:
+  flowfile-storage:
+```
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `FLOWFILE_MODE` | Set to `docker` for multi-user auth | `docker` |
-| `FLOWFILE_ADMIN_USER` | Initial admin username | `admin` |
-| `FLOWFILE_ADMIN_PASSWORD` | Initial admin password | `changeme` |
-| `JWT_SECRET_KEY` | Token signing secret (min 32 chars) | - |
+| `FLOWFILE_ADMIN_USER` | Admin username | `admin` |
+| `FLOWFILE_ADMIN_PASSWORD` | Admin password | `changeme` |
+| `JWT_SECRET_KEY` | Token signing secret | Required |
+| `FLOWFILE_MASTER_KEY` | Encryption key for secrets | Via setup wizard |
 | `WORKER_HOST` | Worker hostname | `flowfile-worker` |
 | `CORE_HOST` | Core hostname | `flowfile-core` |
 
+## .env Example
+
+```bash
+FLOWFILE_ADMIN_USER=admin
+FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
+JWT_SECRET_KEY=generate-with-openssl-rand-hex-32
+FLOWFILE_MASTER_KEY=generated-from-setup-wizard
+```
+
 ## Volumes
 
-| Host Path | Container Path | Purpose |
-|-----------|----------------|---------|
-| `./flowfile_data` | `/app/user_data` | User data |
-| `./saved_flows` | `/app/flowfile_core/saved_flows` | Flow definitions |
-| `flowfile-internal-storage` | `/app/internal_storage` | Processing cache |
+| Path | Purpose |
+|------|---------|
+| `./flowfile_data` | User data |
+| `./saved_flows` | Flow definitions |
+| `flowfile-storage` | Internal storage |
 
-## Resource Limits
+## Commands
 
-```yaml
-services:
-  flowfile-core:
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-
-  flowfile-worker:
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
+```bash
+docker compose up -d      # Start
+docker compose down       # Stop
+docker compose pull       # Update images
+docker compose logs -f    # View logs
 ```
 
 ## Health Checks
@@ -68,40 +125,3 @@ services:
 | Core | `http://localhost:63578/health` |
 | Worker | `http://localhost:63579/health` |
 | Frontend | `http://localhost:8080` |
-
-```yaml
-services:
-  flowfile-core:
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:63578/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-```
-
-## Commands
-
-```bash
-# Start
-docker compose up -d
-
-# Stop
-docker compose down
-
-# View logs
-docker compose logs -f
-
-# Rebuild
-docker compose build --no-cache
-
-# Upgrade
-git pull && docker compose down && docker compose build && docker compose up -d
-```
-
-## Backup
-
-```bash
-cp -r saved_flows backup/
-cp -r flowfile_data backup/
-cp master_key.txt backup/
-```
