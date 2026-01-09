@@ -222,14 +222,20 @@ const initialSetup = async () => {
   }
 
   isLoading.value = true;
-  console.log("Starting initial setup");
+  console.log("[DesignerView] Starting initial setup, nodeStore.flow_id:", nodeStore.flow_id);
 
   try {
     const [nodes, flows] = await Promise.all([fetchNodes(), fetchActiveFlows()]);
 
+    console.log(
+      "[DesignerView] After fetch - nodeStore.flow_id:",
+      nodeStore.flow_id,
+      "flows count:",
+      flows.length,
+    );
     nodeOptions.value = nodes;
     if (flows.length > 0 && (!nodeStore.flow_id || nodeStore.flow_id <= 0)) {
-      console.log("Setting initial flow ID to:", flows[0].flow_id);
+      console.log("[DesignerView] No valid stored flow, setting to first:", flows[0].flow_id);
       nodeStore.setFlowId(flows[0].flow_id);
 
       // Load the flow data
@@ -240,7 +246,7 @@ const initialSetup = async () => {
         await headerButtons.value.loadFlowSettings();
       }
     } else if (nodeStore.flow_id && nodeStore.flow_id > 0) {
-      console.log("Using existing flow ID:", nodeStore.flow_id);
+      console.log("[DesignerView] Using existing stored flow ID:", nodeStore.flow_id);
       if (canvasFlow.value) {
         await canvasFlow.value.loadFlow();
       }

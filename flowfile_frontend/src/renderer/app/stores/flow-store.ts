@@ -8,6 +8,12 @@ export const useFlowStore = defineStore("flow", {
   state: () => {
     const savedFlowId = sessionStorage.getItem(FLOW_ID_STORAGE_KEY);
     const initialFlowId = savedFlowId ? parseInt(savedFlowId) : -1;
+    console.log(
+      "[FlowStore] Initializing - sessionStorage value:",
+      savedFlowId,
+      "parsed flowId:",
+      initialFlowId,
+    );
 
     return {
       flowId: initialFlowId as number,
@@ -21,6 +27,7 @@ export const useFlowStore = defineStore("flow", {
 
   actions: {
     setFlowId(flowId: number) {
+      console.log("[FlowStore] setFlowId called:", flowId, "previous:", this.flowId);
       this.flowId = flowId;
       try {
         sessionStorage.setItem(FLOW_ID_STORAGE_KEY, flowId.toString());

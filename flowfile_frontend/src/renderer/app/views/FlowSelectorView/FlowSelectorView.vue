@@ -86,22 +86,32 @@ const loadFlows = async () => {
     isLoading.value = true;
     const flowsData = await getAllFlows();
     flows.value = flowsData;
+    console.log(
+      "[FlowSelector] loadFlows - nodeStore.flow_id:",
+      nodeStore.flow_id,
+      "available flows:",
+      flowsData.map((f) => f.flow_id),
+    );
 
     // Check for stored flow ID in store
     if (nodeStore.flow_id && nodeStore.flow_id !== -1) {
       // Verify the flow still exists
       const flowExists = flowsData.some((flow) => flow.flow_id === nodeStore.flow_id);
+      console.log("[FlowSelector] Stored flow exists:", flowExists);
       if (flowExists) {
         selectedFlowId.value = nodeStore.flow_id;
+        console.log("[FlowSelector] Using stored flow ID:", nodeStore.flow_id);
       } else if (flowsData.length > 0) {
         // Fall back to first flow if stored ID doesn't exist
         selectedFlowId.value = flowsData[0].flow_id;
         nodeStore.setFlowId(flowsData[0].flow_id);
+        console.log("[FlowSelector] Stored flow not found, using first:", flowsData[0].flow_id);
       }
     } else if (flowsData.length > 0) {
       // If no selected flow, default to the first one
       selectedFlowId.value = flowsData[0].flow_id;
       nodeStore.setFlowId(flowsData[0].flow_id);
+      console.log("[FlowSelector] No stored flow, using first:", flowsData[0].flow_id);
     }
   } catch (error) {
     console.error("Failed to load flows for selector:", error);
