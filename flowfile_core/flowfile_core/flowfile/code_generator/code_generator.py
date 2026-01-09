@@ -1418,7 +1418,7 @@ class FlowGraphToPolarsConverter:
 
     def _extract_class_from_source(self, source_code: str, class_name: str) -> str | None:
         """
-        Extract a specific class definition from source code.
+        Extract a specific class definition from source code using AST.
 
         Args:
             source_code: The full source code to search in
@@ -1427,23 +1427,35 @@ class FlowGraphToPolarsConverter:
         Returns:
             The class definition source, or None if not found.
         """
-        import re
+        import ast
 
-        # Pattern to match class definition and capture its body
-        # This handles classes with various base classes and decorators
-        pattern = rf'^((?:@\w+.*\n)*class\s+{re.escape(class_name)}\s*\([^)]*\)\s*:.*?)(?=\n(?:@|\nclass\s|\Z))'
+        try:
+            tree = ast.parse(source_code)
+        except SyntaxError:
+            return None
 
-        match = re.search(pattern, source_code, re.MULTILINE | re.DOTALL)
-        if match:
-            return match.group(1).rstrip()
+        # Find all class definitions and their line numbers
+        class_locations = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                class_locations.append((node.name, node.lineno, node.end_lineno))
 
-        # Try simpler pattern without decorator handling
-        pattern = rf'^(class\s+{re.escape(class_name)}\s*\([^)]*\)\s*:.*?)(?=\nclass\s|\Z)'
-        match = re.search(pattern, source_code, re.MULTILINE | re.DOTALL)
-        if match:
-            return match.group(1).rstrip()
+        # Find the target class
+        target_class = None
+        for name, start_line, end_line in class_locations:
+            if name == class_name:
+                target_class = (start_line, end_line)
+                break
 
-        return None
+        if target_class is None:
+            return None
+
+        # Extract the lines for this class
+        lines = source_code.split('\n')
+        start_line, end_line = target_class
+        # AST line numbers are 1-indexed
+        class_lines = lines[start_line - 1:end_line]
+        return '\n'.join(class_lines)
 
     def _extract_settings_schema_class(self, custom_node_class: type) -> str | None:
         """
