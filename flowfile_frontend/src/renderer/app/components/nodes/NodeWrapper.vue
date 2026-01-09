@@ -298,6 +298,7 @@ const copyNode = () => {
     nodeTemplate: props.data.nodeTemplate,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
+  localStorage.removeItem("copiedMultiNodes");
   closeContextMenu();
 };
 
