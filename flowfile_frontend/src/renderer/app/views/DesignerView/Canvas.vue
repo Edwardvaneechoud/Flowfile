@@ -388,21 +388,10 @@ const handleKeyDown = (event: KeyboardEvent) => {
   const selection = window.getSelection();
   const hasTextSelected = selection && selection.toString().trim().length > 0;
 
-  if (eventKeyClicked && key === "a") {
-    console.log("Cmd+A pressed", {
-      isInputElement,
-      isInCodeMirror,
-      targetTag: target.tagName,
-      targetClass: target.className,
-      isContentEditable: target.isContentEditable,
-    });
-  }
-
   if (eventKeyClicked && key === "a" && !isInputElement && !isInCodeMirror) {
     // Select all nodes on canvas (prevent browser from selecting all page text)
     event.preventDefault();
     const allNodes = instance.getNodes.value;
-    console.log("Selecting all nodes:", allNodes.length);
     addSelectedNodes(allNodes);
   } else if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
     // Copy selected nodes only if no text is selected
