@@ -148,7 +148,7 @@ const openContextMenu = (columnName: string, event: MouseEvent) => {
   showContextMenu.value = true;
 };
 
-const handleContextMenuSelect = (action: "from" | "to") => {
+const handleContextMenuSelect = (action: string) => {
   const column = selectedColumns.value[0];
   if (action === "from" && graphSolverInput.value.col_from !== column) {
     removeColumnIfExists(column);
