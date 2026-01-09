@@ -477,6 +477,7 @@ const confirmOverwrite = () => {
         confirmButtonText: "OK",
         cancelButtonText: "Cancel",
         type: "warning",
+        customClass: "overwrite-confirm-dialog",
       },
     )
       .then(() => {
