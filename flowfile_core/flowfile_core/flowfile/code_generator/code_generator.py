@@ -1,4 +1,5 @@
 import inspect
+import typing
 import polars as pl
 from pl_fuzzy_frame_match.models import FuzzyMapping
 
@@ -1235,6 +1236,79 @@ class FlowGraphToPolarsConverter:
         self._add_comment(f"# Node {settings.node_id}: External Source - Not supported for code export")
         self._add_comment("# (External data sources require runtime configuration)")
 
+    def _check_process_method_signature(self, custom_node_class: type) -> tuple[bool, bool]:
+        """
+        Check the process method signature to determine if collect/lazy is needed.
+
+        Returns:
+            Tuple of (needs_collect, needs_lazy):
+            - needs_collect: True if inputs need to be collected to DataFrame before passing to process()
+            - needs_lazy: True if output needs to be converted to LazyFrame after process()
+        """
+        needs_collect = True  # Default: assume needs DataFrame input
+        needs_lazy = True  # Default: assume returns DataFrame
+
+        process_method = getattr(custom_node_class, 'process', None)
+        if process_method is None:
+            return needs_collect, needs_lazy
+
+        try:
+            # Try to get type hints from the process method
+            type_hints = typing.get_type_hints(process_method)
+
+            # Check return type
+            return_type = type_hints.get('return')
+            if return_type is not None:
+                return_type_str = str(return_type)
+                if 'LazyFrame' in return_type_str:
+                    needs_lazy = False
+
+            # Check input parameter types (look for *inputs parameter or first param after self)
+            sig = inspect.signature(process_method)
+            params = list(sig.parameters.values())
+            for param in params[1:]:  # Skip 'self'
+                if param.annotation != inspect.Parameter.empty:
+                    param_type_str = str(param.annotation)
+                    if 'LazyFrame' in param_type_str:
+                        needs_collect = False
+                        break
+                # Also check the type_hints dict for this param
+                if param.name in type_hints:
+                    hint_str = str(type_hints[param.name])
+                    if 'LazyFrame' in hint_str:
+                        needs_collect = False
+                        break
+        except Exception as e:
+            # If we can't determine types, use defaults (collect + lazy)
+            logger.debug(f"Could not determine process method signature: {e}")
+
+        return needs_collect, needs_lazy
+
+    def _extract_settings_schema_class(self, custom_node_class: type) -> str | None:
+        """
+        Try to extract the settings schema class source code for a custom node.
+
+        Returns:
+            Source code of the settings schema class, or None if not extractable.
+        """
+        # Get the settings_schema field from the custom node class
+        settings_schema = getattr(custom_node_class, 'settings_schema', None)
+        if settings_schema is None:
+            return None
+
+        # Get the class of the settings schema instance
+        settings_class = type(settings_schema)
+
+        # Skip if it's the base NodeSettings class
+        if settings_class.__name__ == 'NodeSettings':
+            return None
+
+        try:
+            return inspect.getsource(settings_class)
+        except (OSError, TypeError):
+            # Can't get source (built-in, dynamically created, etc.)
+            return None
+
     def _handle_user_defined(
         self, node: FlowNode, var_name: str, input_vars: dict[str, str]
     ) -> None:
@@ -1269,12 +1343,25 @@ class FlowGraphToPolarsConverter:
         class_name = custom_node_class.__name__
         if class_name not in self.custom_node_classes:
             self.custom_node_classes[class_name] = source_code
-            # Add necessary imports for the custom node
+            # Add necessary imports for the custom node base classes and UI components
+            self.imports.add("from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase, NodeSettings, Section")
+            self.imports.add("from flowfile_core.flowfile.node_designer.ui_components import FlowfileInComponent, ColumnSelector, NumericInput, TextInput, DropdownSelector, TextArea, Toggle, IncomingColumns")
             self.imports.add("from pydantic import BaseModel")
             self.imports.add("from typing import Any")
 
+            # Try to extract the settings schema class source code
+            settings_schema_source = self._extract_settings_schema_class(custom_node_class)
+            if settings_schema_source:
+                # Store the settings schema class (use a special prefix to ensure it comes before the node class)
+                settings_class = type(getattr(custom_node_class, 'settings_schema', None))
+                if settings_class and settings_class.__name__ != 'NodeSettings':
+                    self.custom_node_classes[f"__{settings_class.__name__}"] = settings_schema_source
+
         # Get settings values to initialize the node
         settings_dict = getattr(settings, "settings", {}) or {}
+
+        # Check process method signature to determine if collect/lazy is needed
+        needs_collect, needs_lazy = self._check_process_method_signature(custom_node_class)
 
         # Generate the code to instantiate and run the custom node
         self._add_code(f"# User-defined node: {custom_node_class.model_fields.get('node_name', type('', (), {'default': node_type})).default}")
@@ -1286,21 +1373,27 @@ class FlowGraphToPolarsConverter:
             self._add_code(f"if _custom_node_{node.node_id}.settings_schema:")
             self._add_code(f"    _custom_node_{node.node_id}.settings_schema.populate_values(_custom_node_{node.node_id}_settings)")
 
-        # Prepare input arguments
+        # Prepare input arguments based on whether we need to collect
         if len(input_vars) == 0:
             input_args = ""
         elif len(input_vars) == 1:
             input_df = list(input_vars.values())[0]
-            input_args = f"{input_df}.collect()"
+            input_args = f"{input_df}.collect()" if needs_collect else input_df
         else:
             arg_list = []
             for key in sorted(input_vars.keys()):
                 if key.startswith("main"):
-                    arg_list.append(f"{input_vars[key]}.collect()")
+                    if needs_collect:
+                        arg_list.append(f"{input_vars[key]}.collect()")
+                    else:
+                        arg_list.append(input_vars[key])
             input_args = ", ".join(arg_list)
 
-        # Call the process method
-        self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args}).lazy()")
+        # Call the process method, adding .lazy() only if needed
+        if needs_lazy:
+            self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args}).lazy()")
+        else:
+            self._add_code(f"{var_name} = _custom_node_{node.node_id}.process({input_args})")
         self._add_code("")
 
     # Helper methods
@@ -1527,7 +1620,14 @@ class FlowGraphToPolarsConverter:
             lines.append("# Custom Node Class Definitions")
             lines.append("# These classes are user-defined nodes that were included in the flow")
             lines.append("")
-            for class_name, source_code in self.custom_node_classes.items():
+            # Sort classes so settings schema classes (prefixed with "__") come first
+            sorted_classes = sorted(
+                self.custom_node_classes.items(),
+                key=lambda x: (0 if x[0].startswith("__") else 1, x[0])
+            )
+            for class_name, source_code in sorted_classes:
+                # Remove the "__" prefix from settings schema class names in the output
+                # (the prefix was just for sorting purposes)
                 # Add the source code for each custom node class
                 for source_line in source_code.split("\n"):
                     lines.append(source_line)
