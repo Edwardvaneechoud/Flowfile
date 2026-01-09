@@ -25,9 +25,17 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
 
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies - simplified to avoid ARM64 emulation hangs
+# Install dependencies and cleanup efficiently
 RUN poetry install --only=main --no-root && \
-    rm -rf $POETRY_CACHE_DIR /root/.cache /root/.cargo/registry /root/.cargo/git
+    # Clean up caches first
+    rm -rf $POETRY_CACHE_DIR /root/.cache /root/.cargo/registry /root/.cargo/git && \
+    # Remove test directories and pycache using shell globbing (faster than find -exec)
+    cd /usr/local/lib/python3.12/site-packages && \
+    rm -rf */tests */test */__pycache__ */*/__pycache__ */*/*/__pycache__ && \
+    # Remove .pyc files
+    find . -type f -name "*.pyc" -delete && \
+    # Strip .so files in batches (more efficient than -exec per file)
+    find . -type f -name "*.so" -print0 | xargs -0 -P$(nproc) strip --strip-debug 2>/dev/null || true
 
 # Runtime stage
 FROM python:3.12-slim
