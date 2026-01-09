@@ -1284,9 +1284,129 @@ class FlowGraphToPolarsConverter:
 
         return needs_collect, needs_lazy
 
+    def _generate_component_code(self, component: object) -> str:
+        """Generate Python code to recreate a UI component."""
+        component_type = type(component).__name__
+
+        # Get the component's attributes
+        if hasattr(component, 'model_dump'):
+            # Pydantic model
+            data = component.model_dump(exclude_none=True, exclude={'component_type', 'value'})
+        else:
+            return f"{component_type}()"
+
+        # Build the constructor arguments
+        args = []
+        for key, val in data.items():
+            if key in ('data_types_filter',):  # Skip computed fields
+                continue
+            if isinstance(val, str):
+                args.append(f'{key}="{val}"')
+            elif isinstance(val, bool):
+                args.append(f'{key}={val}')
+            elif isinstance(val, (int, float)):
+                args.append(f'{key}={val}')
+            elif isinstance(val, list):
+                args.append(f'{key}={repr(val)}')
+            elif val is None:
+                continue
+            else:
+                args.append(f'{key}={repr(val)}')
+
+        return f"{component_type}({', '.join(args)})"
+
+    def _generate_section_code(self, section: object, section_name: str) -> list[str]:
+        """Generate Python code to recreate a Section with its components."""
+        lines = []
+
+        # Get section attributes
+        title = getattr(section, 'title', None)
+        description = getattr(section, 'description', None)
+        hidden = getattr(section, 'hidden', False)
+
+        # Start section definition
+        section_args = []
+        if title:
+            section_args.append(f'title="{title}"')
+        if description:
+            section_args.append(f'description="{description}"')
+        if hidden:
+            section_args.append(f'hidden={hidden}')
+
+        # Get components from the section
+        components = {}
+        extra = getattr(section, '__pydantic_extra__', {}) or {}
+        for key, val in extra.items():
+            if hasattr(val, 'component_type'):
+                components[key] = val
+
+        # Also check model fields
+        if hasattr(section, 'model_fields'):
+            for field_name in section.model_fields:
+                if field_name not in ('title', 'description', 'hidden'):
+                    val = getattr(section, field_name, None)
+                    if val is not None and hasattr(val, 'component_type'):
+                        components[field_name] = val
+
+        # Add component arguments
+        for comp_name, comp in components.items():
+            comp_code = self._generate_component_code(comp)
+            section_args.append(f'{comp_name}={comp_code}')
+
+        lines.append(f'{section_name} = Section({", ".join(section_args)})')
+        return lines
+
+    def _generate_settings_schema_code(self, settings_schema: object, class_name: str) -> str | None:
+        """
+        Generate Python code to recreate a settings schema class from its runtime structure.
+
+        Returns:
+            Generated Python code for the settings class, or None if not possible.
+        """
+        if settings_schema is None:
+            return None
+
+        # Get the actual class name
+        actual_class_name = type(settings_schema).__name__
+        if actual_class_name == 'NodeSettings':
+            return None
+
+        lines = []
+        lines.append(f"class {class_name}(NodeSettings):")
+
+        # Get sections from extra fields and model fields
+        sections = {}
+
+        # Check __pydantic_extra__ for dynamically added sections
+        extra = getattr(settings_schema, '__pydantic_extra__', {}) or {}
+        for key, val in extra.items():
+            if hasattr(val, 'get_components'):  # It's a Section
+                sections[key] = val
+
+        # Also check model fields
+        if hasattr(settings_schema, 'model_fields'):
+            for field_name in settings_schema.model_fields:
+                val = getattr(settings_schema, field_name, None)
+                if val is not None and hasattr(val, 'get_components'):  # It's a Section
+                    sections[field_name] = val
+
+        if not sections:
+            lines.append("    pass")
+        else:
+            # Generate code for each section
+            for section_name, section in sections.items():
+                section_lines = self._generate_section_code(section, section_name)
+                for line in section_lines:
+                    lines.append(f"    {line}")
+
+        return "\n".join(lines)
+
     def _extract_settings_schema_class(self, custom_node_class: type) -> str | None:
         """
-        Try to extract the settings schema class source code for a custom node.
+        Try to extract or generate the settings schema class source code for a custom node.
+
+        First attempts to get the actual source code. If that fails (e.g., dynamically
+        created class), generates code from the runtime structure.
 
         Returns:
             Source code of the settings schema class, or None if not extractable.
@@ -1303,11 +1423,16 @@ class FlowGraphToPolarsConverter:
         if settings_class.__name__ == 'NodeSettings':
             return None
 
+        # First, try to get the actual source code
         try:
             return inspect.getsource(settings_class)
         except (OSError, TypeError):
             # Can't get source (built-in, dynamically created, etc.)
-            return None
+            # Fall back to generating code from the runtime structure
+            pass
+
+        # Generate code from the runtime structure
+        return self._generate_settings_schema_code(settings_schema, settings_class.__name__)
 
     def _handle_user_defined(
         self, node: FlowNode, var_name: str, input_vars: dict[str, str]
