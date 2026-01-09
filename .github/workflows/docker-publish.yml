@@ -25,6 +25,7 @@ jobs:
   build-and-push:
     name: Build and Push Docker Images
     runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hour timeout for ARM64 testing
 
     steps:
       - name: Checkout repository
@@ -37,8 +38,8 @@ jobs:
             echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT
             echo "Building for: amd64 and arm64 (release)"
           else
-            echo "platforms=linux/amd64" >> $GITHUB_OUTPUT
-            echo "Building for: amd64 only (testing)"
+            echo "platforms=linux/arm64" >> $GITHUB_OUTPUT
+            echo "Building for: arm64 only (testing ARM build)"
           fi
 
       - name: Set up Python 3.11
