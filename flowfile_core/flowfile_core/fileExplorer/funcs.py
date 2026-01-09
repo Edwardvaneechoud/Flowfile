@@ -406,14 +406,16 @@ def validate_file_path(user_path: str, allowed_base: Path) -> Optional[Path]:
 def validate_path_under_cwd(user_path: str) -> str:
     """Validate that a user-provided path resolves to within allowed directories.
 
+    In Electron mode (desktop app), users can access any file on their local system.
+    In Docker/package mode, paths are restricted to:
+    - Current working directory (for development/testing)
+    - Flowfile storage directory (~/.flowfile)
+    - User data directory (home directory in local mode, /data/user in Docker)
+
     Uses the exact pattern from CodeQL documentation for py/path-injection:
     - os.path.normpath for path normalization
     - os.path.join to combine base with user input
     - startswith check to ensure path stays within base
-
-    Allowed directories:
-    - Current working directory (for development/testing)
-    - Flowfile storage directory (~/.flowfile)
 
     Args:
         user_path: The user-provided path string
@@ -424,6 +426,19 @@ def validate_path_under_cwd(user_path: str) -> str:
     Raises:
         HTTPException: 403 if path escapes the allowed directories
     """
+    from flowfile_core.configs.settings import is_electron_mode
+
+    # In Electron mode, allow access to any local file path
+    # This is safe because Electron runs locally on the user's machine
+    if is_electron_mode():
+        # Normalize and resolve the path
+        normalized_path = os.path.normpath(os.path.expanduser(user_path))
+        # Block path traversal patterns even in Electron mode
+        if '..' in user_path:
+            raise HTTPException(403, 'Access denied: path traversal not allowed')
+        return normalized_path
+
+    # In Docker/package mode, enforce strict sandboxing
     # Try current working directory first
     base_path = os.path.normpath(os.getcwd())
     fullpath = os.path.normpath(os.path.join(base_path, user_path))
@@ -432,6 +447,13 @@ def validate_path_under_cwd(user_path: str) -> str:
 
     # Try flowfile storage directory (~/.flowfile)
     base_path = os.path.normpath(str(storage.base_directory))
+    fullpath = os.path.normpath(os.path.join(base_path, user_path))
+    if fullpath.startswith(base_path):
+        return fullpath
+
+    # Try user data directory (consistent with SecureFileExplorer sandbox)
+    # In local mode this is the home directory, in Docker it's /data/user
+    base_path = os.path.normpath(str(storage.user_data_directory))
     fullpath = os.path.normpath(os.path.join(base_path, user_path))
     if fullpath.startswith(base_path):
         return fullpath
