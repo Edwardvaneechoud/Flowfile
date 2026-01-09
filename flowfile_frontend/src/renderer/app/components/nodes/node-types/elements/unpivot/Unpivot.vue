@@ -180,7 +180,7 @@ const openContextMenu = (columnName: string, event: MouseEvent) => {
   showContextMenu.value = true;
 };
 
-const handleContextMenuSelect = (action: "index" | "value") => {
+const handleContextMenuSelect = (action: string) => {
   const column = selectedColumns.value[0];
   if (action === "index" && !unpivotInput.value.index_columns.includes(column)) {
     removeColumnIfExists(column);

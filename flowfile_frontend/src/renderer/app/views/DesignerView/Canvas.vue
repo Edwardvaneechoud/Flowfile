@@ -192,10 +192,11 @@ const setNodeTableView = (nodeId: number) => {
 
 const handleNodeChange = (nodeChangesEvent: any) => {
   const nodeChanges = nodeChangesEvent as NodeChange[];
-  const nodeChange = nodeChanges[0];
-  const nodeChangeId = Number(nodeChange.id);
-  if (nodeChange.type === "remove") {
-    deleteNode(nodeStore.flow_id, nodeChangeId);
+  for (const nodeChange of nodeChanges) {
+    if (nodeChange.type === "remove") {
+      const nodeChangeId = Number(nodeChange.id);
+      deleteNode(nodeStore.flow_id, nodeChangeId);
+    }
   }
 };
 

@@ -190,61 +190,13 @@ defineExpose({
 </script>
 
 <style scoped>
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary);
-  padding: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-  user-select: none;
-}
-
-.context-menu button {
-  display: block;
-  background: none;
-  border: none;
-  padding: 4px 8px;
-  text-align: left;
-  width: 100%;
-  cursor: pointer;
-  z-index: 100;
-}
-
-.context-menu button:hover {
-  background-color: #f0f0f0;
-}
+/* Context menu styles are now centralized in styles/components/_context-menu.css */
 
 .table-wrapper {
-  max-height: 300px; /* Adjust this value as needed */
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); /* subtle shadow for depth */
-  border-radius: 8px; /* rounded corners */
-  overflow: auto; /* ensures the rounded corners are applied to the child elements */
-  margin: 5px; /* adds a small margin around the table */
-}
-
-.context-menu {
-  position: fixed;
-  z-index: 1000;
-  border: 1px solid #ccc;
-  background-color: var(--color-background-primary);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
-}
-
-.context-menu ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.context-menu li {
-  padding: 8px 16px;
-  cursor: pointer;
-}
-
-.context-menu li:hover {
-  background-color: #f0f0f0;
+  max-height: 300px;
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--border-radius-lg);
+  overflow: auto;
+  margin: var(--spacing-1);
 }
 </style>

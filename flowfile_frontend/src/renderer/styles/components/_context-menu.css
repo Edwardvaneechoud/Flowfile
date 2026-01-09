@@ -1,0 +1,133 @@
+/* styles/components/_context-menu.css - Centralized Context Menu Styles */
+
+/* Base context menu container */
+.context-menu {
+  position: fixed;
+  min-width: 120px;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-index-canvas-context-menu, 100002);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Context menu with header variant */
+.context-menu-header {
+  padding: var(--spacing-2) var(--spacing-3);
+  font-weight: var(--font-weight-semibold);
+  background-color: var(--color-background-secondary);
+  border-bottom: 1px solid var(--color-border-primary);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+/* Container for menu items */
+.context-menu-items {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* List-based context menu (ul/li pattern) */
+.context-menu ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.context-menu li {
+  padding: var(--spacing-2) var(--spacing-4);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu li:hover:not(.disabled) {
+  background-color: var(--color-background-tertiary);
+}
+
+.context-menu li.disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* Button-based context menu (button pattern) */
+.context-menu button {
+  display: block;
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu button:hover {
+  background-color: var(--color-background-tertiary);
+}
+
+.context-menu button:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.context-menu button:disabled:hover {
+  background-color: transparent;
+}
+
+/* Individual menu item (div-based pattern) */
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-2) var(--spacing-3);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu-item:hover {
+  background-color: var(--color-background-tertiary);
+}
+
+.context-menu-item.disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.context-menu-item.disabled:hover {
+  background-color: transparent;
+}
+
+/* Icon support for menu items */
+.context-menu-icon {
+  margin-right: var(--spacing-2);
+  width: 20px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+/* Separator/divider between menu sections */
+.context-menu-divider {
+  height: 1px;
+  margin: var(--spacing-1) 0;
+  background-color: var(--color-border-primary);
+}
+
+/* Danger/destructive action styling */
+.context-menu-item.danger,
+.context-menu button.danger,
+.context-menu li.danger {
+  color: var(--color-danger);
+}
+
+.context-menu-item.danger:hover,
+.context-menu button.danger:hover,
+.context-menu li.danger:hover:not(.disabled) {
+  background-color: var(--color-danger-light);
+}
