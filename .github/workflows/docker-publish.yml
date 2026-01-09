@@ -22,25 +22,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push:
-    name: Build and Push Docker Images
+  prepare:
+    name: Extract Version
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hour timeout for ARM64 testing
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set platform based on event type
-        id: platforms
-        run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "platforms=linux/amd64,linux/arm64" >> $GITHUB_OUTPUT
-            echo "Building for: amd64 and arm64 (release)"
-          else
-            echo "platforms=linux/arm64" >> $GITHUB_OUTPUT
-            echo "Building for: arm64 only (testing ARM build)"
-          fi
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -59,8 +48,45 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version extracted: $VERSION"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+  build:
+    name: Build ${{ matrix.image }} for ${{ matrix.platform }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # AMD64 builds
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            image: flowfile-core
+            dockerfile: ./flowfile_core/Dockerfile
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            image: flowfile-frontend
+            dockerfile: ./flowfile_frontend/Dockerfile
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            image: flowfile-worker
+            dockerfile: ./flowfile_worker/Dockerfile
+          # ARM64 builds (native!)
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            image: flowfile-core
+            dockerfile: ./flowfile_core/Dockerfile
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            image: flowfile-frontend
+            dockerfile: ./flowfile_frontend/Dockerfile
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            image: flowfile-worker
+            dockerfile: ./flowfile_worker/Dockerfile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -71,90 +97,111 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata for flowfile-core
-        id: meta-core
+      - name: Extract metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/flowfile-core
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.version }}
             type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
             type=sha,prefix={{branch}}-
 
-      - name: Build and push flowfile-core
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./flowfile_core/Dockerfile
-          platforms: ${{ steps.platforms.outputs.platforms }}
-          push: true
-          tags: ${{ steps.meta-core.outputs.tags }}
-          labels: ${{ steps.meta-core.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
 
-      - name: Extract metadata for flowfile-frontend
-        id: meta-frontend
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests/${{ matrix.image }}
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${{ matrix.image }}/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/${{ matrix.image }}/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Create multi-arch manifest for ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    strategy:
+      matrix:
+        image: [flowfile-core, flowfile-frontend, flowfile-worker]
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests/${{ matrix.image }}
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/flowfile-frontend
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ needs.prepare.outputs.version }}
             type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
             type=sha,prefix={{branch}}-
 
-      - name: Build and push flowfile-frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./flowfile_frontend/Dockerfile
-          platforms: ${{ steps.platforms.outputs.platforms }}
-          push: true
-          tags: ${{ steps.meta-frontend.outputs.tags }}
-          labels: ${{ steps.meta-frontend.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: /tmp/digests/${{ matrix.image }}
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}@sha256:%s ' *)
 
-      - name: Extract metadata for flowfile-worker
-        id: meta-worker
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/flowfile-worker
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.version.outputs.version }}
-            type=raw,value=test,enable=${{ github.ref != 'refs/heads/main' }}
-            type=sha,prefix={{branch}}-
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}
 
-      - name: Build and push flowfile-worker
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./flowfile_worker/Dockerfile
-          platforms: ${{ steps.platforms.outputs.platforms }}
-          push: true
-          tags: ${{ steps.meta-worker.outputs.tags }}
-          labels: ${{ steps.meta-worker.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [prepare, merge]
+    if: always()
+    steps:
       - name: Create summary
         run: |
           echo "## Docker Images Published 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Version: **${{ steps.version.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
+          echo "Version: **${{ needs.prepare.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Images:" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-core:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-core:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-core:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-frontend:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-frontend:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-frontend:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-worker:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-worker:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ secrets.DOCKERHUB_USERNAME }}/flowfile-worker:latest\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Platforms:" >> $GITHUB_STEP_SUMMARY
-          echo "\`${{ steps.platforms.outputs.platforms }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- linux/amd64 (native)" >> $GITHUB_STEP_SUMMARY
+          echo "- linux/arm64 (native)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Built in parallel on native runners - no QEMU emulation! ⚡" >> $GITHUB_STEP_SUMMARY
