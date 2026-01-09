@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-      - claude/docker-hub-automation-iJY7D  # Testing branch - remove before merging
     paths:
       - 'flowfile_core/**'
       - 'flowfile_frontend/**'

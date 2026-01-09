@@ -25,17 +25,18 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
 
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies and cleanup efficiently
+# Install dependencies AND strip in the same layer (in builder)
 RUN poetry install --only=main --no-root && \
-    # Clean up caches first
-    rm -rf $POETRY_CACHE_DIR /root/.cache /root/.cargo/registry /root/.cargo/git && \
-    # Remove test directories and pycache using shell globbing (faster than find -exec)
-    cd /usr/local/lib/python3.12/site-packages && \
-    rm -rf */tests */test */__pycache__ */*/__pycache__ */*/*/__pycache__ && \
-    # Remove .pyc files
-    find . -type f -name "*.pyc" -delete && \
-    # Strip .so files in batches (more efficient than -exec per file)
-    find . -type f -name "*.so" -print0 | xargs -0 -P$(nproc) strip --strip-debug 2>/dev/null || true
+    rm -rf $POETRY_CACHE_DIR && \
+    # Strip debug symbols from compiled libraries
+    find /usr/local/lib/python3.12/site-packages -name "*.so" -exec strip --strip-debug {} \; 2>/dev/null || true && \
+    # Remove unnecessary files
+    find /usr/local/lib/python3.12/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.12/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.12/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete 2>/dev/null || true && \
+    # Remove pip cache and other unnecessary files
+    rm -rf /root/.cache /root/.cargo/registry /root/.cargo/git
 
 # Runtime stage
 FROM python:3.12-slim
@@ -47,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
+# Copy already-stripped site-packages from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
