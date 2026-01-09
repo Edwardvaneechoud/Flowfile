@@ -14,8 +14,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  select: [action: string];
-  close: [];
+  (e: "select", action: string): void;
+  (e: "close"): void;
 }>();
 
 const menuRef = ref<HTMLElement | null>(null);
