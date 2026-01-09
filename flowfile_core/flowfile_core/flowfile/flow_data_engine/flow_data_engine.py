@@ -991,8 +991,20 @@ class FlowDataEngine:
 
         df = self.data_frame.rename({c.old_name: c.new_name for c in group_columns})
         group_by_columns = [n_c.new_name for n_c in group_columns]
+
+        # Handle case where there are no aggregations - just get unique combinations of group columns
+        if len(aggregations) == 0:
+            return FlowDataEngine(
+                df.select(group_by_columns).unique(),
+                calculate_schema_stats=calculate_schema_stats,
+            )
+
+        grouped_df = df.group_by(*group_by_columns)
+        agg_exprs = [ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations]
+        result_df = grouped_df.agg(agg_exprs)
+
         return FlowDataEngine(
-            df.group_by(*group_by_columns).agg(ac.agg_func(ac.old_name).alias(ac.new_name) for ac in aggregations),
+            result_df,
             calculate_schema_stats=calculate_schema_stats,
         )
 
