@@ -126,7 +126,6 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 }
 
 const loadFlow = async () => {
-  console.log("[Canvas] loadFlow called with flow_id:", nodeStore.flow_id);
   const vueFlowInput = await getFlowData(nodeStore.flow_id);
   await nextTick();
   await importFlow(vueFlowInput);
