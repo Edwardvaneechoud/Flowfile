@@ -1867,6 +1867,7 @@ class FlowGraph:
 
         if schema_callback is not None:
             node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
         return self
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput) -> "FlowGraph":
