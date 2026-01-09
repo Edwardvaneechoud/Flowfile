@@ -63,7 +63,7 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForQuickCreate" title="Create New Flow" width="400px">
+  <el-dialog v-model="modalVisibleForQuickCreate" title="Create New Flow" width="400px" class="high-z-index-dialog">
     <div class="quick-create-modal">
       <div class="form-group">
         <label for="flow-name">Flow Name (optional):</label>
@@ -87,7 +87,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
+  <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%" class="high-z-index-dialog">
     <div v-if="flowSettings">
       <div class="settings-modal-content">
         <div class="form-group">

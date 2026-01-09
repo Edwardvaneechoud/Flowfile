@@ -318,12 +318,14 @@
   visibility: visible;
 }
 
-/* ========== Overwrite Confirmation Dialog ========== */
-/* Ensure the overwrite confirmation dialog appears above all other UI elements */
+/* ========== High Z-Index Dialogs ========== */
+/* Ensure dialogs appear above all other UI elements (draggable items, context menus, etc.) */
+.el-overlay:has(.high-z-index-dialog),
 .el-overlay:has(.overwrite-confirm-dialog) {
   z-index: 200000 !important;
 }
 
+.high-z-index-dialog,
 .overwrite-confirm-dialog {
   z-index: 200001 !important;
 }
