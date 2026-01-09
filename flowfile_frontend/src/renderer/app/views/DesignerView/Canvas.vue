@@ -106,6 +106,8 @@ const handleCanvasClick = (event: any | PointerEvent) => {
     x: event.x,
     y: event.y,
   };
+  // Clear any browser text selection when clicking on canvas
+  window.getSelection()?.removeAllRanges();
 };
 
 const handleNodeSettingsClose = (event: any | PointerEvent) => {
