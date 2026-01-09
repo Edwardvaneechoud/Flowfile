@@ -5,9 +5,43 @@ from enum import Enum
 from typing import Any, Literal, NamedTuple
 
 import polars as pl
-from pl_fuzzy_frame_match.models import FuzzyMapping
+from pl_fuzzy_frame_match.models import FuzzyMapping as BaseFuzzyMapping
 from polars import selectors
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class FuzzyMapping(BaseModel):
+    """Extended FuzzyMapping that wraps the library's FuzzyMapping and adds a valid field.
+
+    This allows tracking whether a fuzzy mapping is valid (both columns exist) while
+    maintaining compatibility with the pl_fuzzy_frame_match library.
+    """
+
+    left_col: str | None = None
+    right_col: str | None = None
+    threshold_score: int = 80
+    fuzzy_type: str = "levenshtein"
+    valid: bool = True
+
+    def to_base_fuzzy_mapping(self) -> BaseFuzzyMapping:
+        """Convert to the library's FuzzyMapping for actual fuzzy matching operations."""
+        return BaseFuzzyMapping(
+            left_col=self.left_col,
+            right_col=self.right_col,
+            threshold_score=self.threshold_score,
+            fuzzy_type=self.fuzzy_type,
+        )
+
+    @classmethod
+    def from_base_fuzzy_mapping(cls, base: BaseFuzzyMapping, valid: bool = True) -> "FuzzyMapping":
+        """Create from the library's FuzzyMapping."""
+        return cls(
+            left_col=base.left_col,
+            right_col=base.right_col,
+            threshold_score=base.threshold_score,
+            fuzzy_type=base.fuzzy_type,
+            valid=valid,
+        )
 
 from flowfile_core.schemas.yaml_types import (
     BasicFilterYaml,

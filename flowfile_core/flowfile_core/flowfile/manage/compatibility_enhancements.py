@@ -357,13 +357,34 @@ def ensure_compatibility_node_joins(node_settings: input_schema.NodeFuzzyMatch |
 
     from flowfile_core.schemas import transform_schema
 
+    # Determine if this is a fuzzy match node
+    is_fuzzy_match = node_settings.__class__.__name__ == "NodeFuzzyMatch"
+
     # Handle dataclass -> BaseModel migration for join_mapping
     if hasattr(join_input, "join_mapping") and join_input.join_mapping:
         new_mapping = []
         for jm in join_input.join_mapping:
             if _is_dataclass_instance(jm):
-                new_jm = _migrate_dataclass_to_basemodel(jm, transform_schema.JoinMap)
+                if is_fuzzy_match:
+                    # For fuzzy match, migrate to FuzzyMapping with valid field
+                    new_jm = _migrate_dataclass_to_basemodel(jm, transform_schema.FuzzyMapping)
+                else:
+                    # For regular join, migrate to JoinMap
+                    new_jm = _migrate_dataclass_to_basemodel(jm, transform_schema.JoinMap)
                 new_mapping.append(new_jm)
+            elif is_fuzzy_match and not isinstance(jm, transform_schema.FuzzyMapping):
+                # Convert library FuzzyMapping or other types to our FuzzyMapping with valid field
+                try:
+                    new_jm = transform_schema.FuzzyMapping(
+                        left_col=getattr(jm, "left_col", None),
+                        right_col=getattr(jm, "right_col", None),
+                        threshold_score=getattr(jm, "threshold_score", 80),
+                        fuzzy_type=getattr(jm, "fuzzy_type", "levenshtein"),
+                        valid=True,
+                    )
+                    new_mapping.append(new_jm)
+                except Exception:
+                    new_mapping.append(jm)
             else:
                 new_mapping.append(jm)
         join_input.join_mapping = new_mapping

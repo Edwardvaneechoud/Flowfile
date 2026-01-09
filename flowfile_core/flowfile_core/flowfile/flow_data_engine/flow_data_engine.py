@@ -1683,10 +1683,12 @@ class FlowDataEngine:
             left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
         )
 
+        # Convert our FuzzyMapping objects to the library's FuzzyMapping for worker compatibility
+        base_fuzzy_maps = [fm.to_base_fuzzy_mapping() for fm in fuzzy_match_input_manager.fuzzy_maps]
         return ExternalFuzzyMatchFetcher(
             left_df,
             right_df,
-            fuzzy_maps=fuzzy_match_input_manager.fuzzy_maps,
+            fuzzy_maps=base_fuzzy_maps,
             file_ref=file_ref + "_fm",
             wait_on_completion=False,
             flow_id=flow_id,
@@ -1708,10 +1710,12 @@ class FlowDataEngine:
         left_df, right_df = prepare_for_fuzzy_match(
             left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
         )
+        # Convert our FuzzyMapping objects to the library's FuzzyMapping for worker compatibility
+        base_fuzzy_maps = [fm.to_base_fuzzy_mapping() for fm in fuzzy_match_input_manager.fuzzy_maps]
         external_tracker = ExternalFuzzyMatchFetcher(
             left_df,
             right_df,
-            fuzzy_maps=fuzzy_match_input_manager.fuzzy_maps,
+            fuzzy_maps=base_fuzzy_maps,
             file_ref=file_ref + "_fm",
             wait_on_completion=False,
             flow_id=flow_id,
@@ -1729,7 +1733,8 @@ class FlowDataEngine:
         left_df, right_df = prepare_for_fuzzy_match(
             left=self, right=other, fuzzy_match_input_manager=fuzzy_match_input_manager
         )
-        fuzzy_mappings = [FuzzyMapping(**fm.__dict__) for fm in fuzzy_match_input_manager.fuzzy_maps]
+        # Convert our FuzzyMapping objects to the library's FuzzyMapping for execution
+        fuzzy_mappings = [fm.to_base_fuzzy_mapping() for fm in fuzzy_match_input_manager.fuzzy_maps]
         return FlowDataEngine(
             fuzzy_match_dfs(
                 left_df, right_df, fuzzy_maps=fuzzy_mappings, logger=node_logger.logger if node_logger else logger
