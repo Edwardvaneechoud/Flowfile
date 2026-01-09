@@ -386,6 +386,13 @@ const handleKeyDown = (event: KeyboardEvent) => {
   // Normalize key to lowercase to handle Caps Lock being on
   const key = event.key.toLowerCase();
   if ((event.metaKey || event.ctrlKey) && key === "c") {
+    // Check if text is selected - if so, let browser handle copy natively
+    const selection = window.getSelection();
+    const hasTextSelected = selection && selection.toString().trim().length > 0;
+    if (hasTextSelected) {
+      return; // Let browser handle text copying
+    }
+
     const isNodeSelected = nodeStore.node_id === props.data.id;
     const target = event.target as HTMLElement;
     const isTargetNodeButton = target.classList.contains("node-button");

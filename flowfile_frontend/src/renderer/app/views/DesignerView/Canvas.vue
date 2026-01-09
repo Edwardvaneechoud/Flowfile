@@ -379,12 +379,16 @@ const handleKeyDown = (event: KeyboardEvent) => {
   const isInputElement =
     target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
-  if (eventKeyClicked && key === "c" && !isInputElement) {
-    // Copy selected nodes
+  // Check if text is selected - if so, let browser handle copy/paste natively
+  const selection = window.getSelection();
+  const hasTextSelected = selection && selection.toString().trim().length > 0;
+
+  if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
+    // Copy selected nodes only if no text is selected
     copySelectedNodes();
     event.preventDefault();
-  } else if (eventKeyClicked && key === "v" && !isInputElement) {
-    // Paste nodes
+  } else if (eventKeyClicked && key === "v" && !isInputElement && !hasTextSelected) {
+    // Paste nodes only if no text is selected
     copyValue(clickedPosition.value.x, clickedPosition.value.y);
     event.preventDefault();
   } else if (eventKeyClicked && key === "n") {
