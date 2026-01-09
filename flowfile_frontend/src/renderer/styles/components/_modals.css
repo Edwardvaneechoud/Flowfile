@@ -317,3 +317,13 @@
   opacity: 1;
   visibility: visible;
 }
+
+/* ========== Overwrite Confirmation Dialog ========== */
+/* Ensure the overwrite confirmation dialog appears above all other UI elements */
+.el-overlay:has(.overwrite-confirm-dialog) {
+  z-index: 200000 !important;
+}
+
+.overwrite-confirm-dialog {
+  z-index: 200001 !important;
+}
