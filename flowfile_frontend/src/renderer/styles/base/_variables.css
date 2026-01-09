@@ -229,6 +229,9 @@
   --z-index-popover: 1075;
   --z-index-tooltip: 1100;
   --z-index-notification: 1200;
+  /* Canvas-specific z-index values - must be high to appear above canvas panels */
+  --z-index-canvas-dropdown: 100001;  /* Above DraggableItem panels (100000) */
+  --z-index-canvas-context-menu: 100002;  /* Above dropdowns */
 
   /* ========== Component-Specific Tokens ========== */
   /* Table */
