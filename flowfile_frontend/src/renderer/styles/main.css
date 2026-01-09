@@ -475,8 +475,11 @@ button {
 }
 
 /* ========== Element Plus Popper Z-Index Fix ========== */
-/* Fix for el-select dropdowns appearing behind canvas elements (DraggableItem panels, etc.)
-   Element Plus poppers are teleported to body and need high z-index to appear above canvas panels */
+/* Fix for el-select dropdowns appearing behind dialogs and canvas elements.
+   Element Plus poppers are teleported to body and need high z-index to appear above:
+   - Canvas panels (DraggableItem panels at z-index 100000)
+   - High z-index dialogs (at z-index 200001)
+   Set to 200010 to ensure dropdowns always appear above modal dialogs */
 .el-popper,
 .el-select-dropdown,
 .el-select__popper,
@@ -487,7 +490,7 @@ button {
 .el-picker__popper,
 .el-tooltip__popper,
 .el-popover.el-popper {
-  z-index: var(--z-index-canvas-dropdown, 100001) !important;
+  z-index: 200010 !important;
 }
 
 /* ========== CodeMirror Dark Mode Styling ========== */
