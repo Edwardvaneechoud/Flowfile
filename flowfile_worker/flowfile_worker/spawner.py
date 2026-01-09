@@ -1,5 +1,6 @@
 import gc
-from multiprocessing import Process, Queue
+from multiprocessing import Process
+from multiprocessing.queues import Queue
 from time import sleep
 
 from flowfile_worker import funcs, models, mp_context, status_dict, status_dict_lock
@@ -55,11 +56,14 @@ def handle_task(task_id: str, p: Process, progress: mp_context.Value, error_mess
         with status_dict_lock:
             status = status_dict[task_id]
             if status.status != "Cancelled":
-                if progress.value == 100:
+                # Read progress value with lock to ensure consistency
+                with progress.get_lock():
+                    final_progress = progress.value
+                if final_progress == 100:
                     status.status = "Completed"
                     if not q.empty():
                         status.results = q.get()
-                elif progress.value != -1:
+                elif final_progress != -1:
                     status_dict[task_id].status = "Unknown Error"
 
     finally:
@@ -103,7 +107,7 @@ def start_process(
     kwargs["polars_serializable_object"] = polars_serializable_object
     kwargs["progress"] = mp_context.Value("i", 0)
     kwargs["error_message"] = mp_context.Array("c", 1024)
-    kwargs["queue"] = Queue(maxsize=1)
+    kwargs["queue"] = mp_context.Queue(maxsize=1)
     kwargs["file_path"] = file_ref
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
@@ -145,7 +149,7 @@ def start_generic_process(
     kwargs["func"] = func_ref
     kwargs["progress"] = mp_context.Value("i", 0)
     kwargs["error_message"] = mp_context.Array("c", 1024)
-    kwargs["queue"] = Queue(maxsize=1)
+    kwargs["queue"] = mp_context.Queue(maxsize=1)
     kwargs["file_path"] = file_ref
     kwargs["flowfile_flow_id"] = flowfile_flow_id
     kwargs["flowfile_node_id"] = flowfile_node_id
@@ -187,7 +191,7 @@ def start_fuzzy_process(
     """
     progress = mp_context.Value("i", 0)
     error_message = mp_context.Array("c", 1024)
-    q = Queue(maxsize=1)
+    q = mp_context.Queue(maxsize=1)
 
     args: tuple[
         bytes,
