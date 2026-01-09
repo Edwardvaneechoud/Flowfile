@@ -429,6 +429,15 @@ const closeContextMenu = () => {
   nodeStore.setCodeGeneratorVisibility(false);
 };
 
+// Prevent text selection during shift+drag selection on canvas
+const handleSelectionStart = () => {
+  document.body.style.userSelect = "none";
+};
+
+const handleSelectionEnd = () => {
+  document.body.style.userSelect = "";
+};
+
 onMounted(async () => {
   availableHeight.value = window.innerHeight - 50;
   tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
@@ -467,6 +476,8 @@ defineExpose({
         @edges-change="handleEdgeChange"
         @pane-context-menu="handleContextMenu"
         @click="closeContextMenu"
+        @selection-start="handleSelectionStart"
+        @selection-end="handleSelectionEnd"
       >
         <MiniMap />
       </VueFlow>
