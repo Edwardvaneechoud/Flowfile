@@ -4,11 +4,6 @@ Hands-on guides for building data pipelines with Flowfile.
 
 ## Available Tutorials
 
-### [Host in Private Cloud](private-cloud-hosting.md)
-Deploy Flowfile on your own server with HTTPS, authentication, and automated backups.
-
----
-
 ### [Database Connectivity](database-connectivity.md)
 Connect to PostgreSQL databases, read data, apply transformations, and write results back.
 
