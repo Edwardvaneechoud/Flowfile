@@ -1401,12 +1401,58 @@ class FlowGraphToPolarsConverter:
 
         return "\n".join(lines)
 
+    def _read_custom_node_source_file(self, custom_node_class: type) -> str | None:
+        """
+        Read the entire source file where a custom node class is defined.
+        This includes all class definitions in that file (settings schemas, etc.).
+
+        Returns:
+            The complete source code from the file, or None if not readable.
+        """
+        try:
+            source_file = inspect.getfile(custom_node_class)
+            with open(source_file, 'r') as f:
+                return f.read()
+        except (OSError, TypeError):
+            return None
+
+    def _extract_class_from_source(self, source_code: str, class_name: str) -> str | None:
+        """
+        Extract a specific class definition from source code.
+
+        Args:
+            source_code: The full source code to search in
+            class_name: The name of the class to extract
+
+        Returns:
+            The class definition source, or None if not found.
+        """
+        import re
+
+        # Pattern to match class definition and capture its body
+        # This handles classes with various base classes and decorators
+        pattern = rf'^((?:@\w+.*\n)*class\s+{re.escape(class_name)}\s*\([^)]*\)\s*:.*?)(?=\n(?:@|\nclass\s|\Z))'
+
+        match = re.search(pattern, source_code, re.MULTILINE | re.DOTALL)
+        if match:
+            return match.group(1).rstrip()
+
+        # Try simpler pattern without decorator handling
+        pattern = rf'^(class\s+{re.escape(class_name)}\s*\([^)]*\)\s*:.*?)(?=\nclass\s|\Z)'
+        match = re.search(pattern, source_code, re.MULTILINE | re.DOTALL)
+        if match:
+            return match.group(1).rstrip()
+
+        return None
+
     def _extract_settings_schema_class(self, custom_node_class: type) -> str | None:
         """
         Try to extract or generate the settings schema class source code for a custom node.
 
-        First attempts to get the actual source code. If that fails (e.g., dynamically
-        created class), generates code from the runtime structure.
+        Attempts multiple strategies:
+        1. Read from the source file where the custom node is defined
+        2. Use inspect.getsource() directly on the settings class
+        3. Generate code from the runtime structure
 
         Returns:
             Source code of the settings schema class, or None if not extractable.
@@ -1423,16 +1469,23 @@ class FlowGraphToPolarsConverter:
         if settings_class.__name__ == 'NodeSettings':
             return None
 
-        # First, try to get the actual source code
+        settings_class_name = settings_class.__name__
+
+        # Strategy 1: Try to read from the same file as the custom node class
+        full_source = self._read_custom_node_source_file(custom_node_class)
+        if full_source:
+            extracted = self._extract_class_from_source(full_source, settings_class_name)
+            if extracted:
+                return extracted
+
+        # Strategy 2: Try to get the source code directly
         try:
             return inspect.getsource(settings_class)
         except (OSError, TypeError):
-            # Can't get source (built-in, dynamically created, etc.)
-            # Fall back to generating code from the runtime structure
             pass
 
-        # Generate code from the runtime structure
-        return self._generate_settings_schema_code(settings_schema, settings_class.__name__)
+        # Strategy 3: Generate code from the runtime structure
+        return self._generate_settings_schema_code(settings_schema, settings_class_name)
 
     def _handle_user_defined(
         self, node: FlowNode, var_name: str, input_vars: dict[str, str]
