@@ -367,7 +367,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 
 .outdated-data-banner p {
   margin: 0;
-  color: #78350f;
+  color: var(--color-warning-darker);
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -384,9 +384,9 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .refresh-link-button {
-  background: linear-gradient(135deg, var(--color-background-primary) 0%, #fef3c7 100%);
-  border: 1px solid #f59e0b;
-  color: #92400e;
+  background: linear-gradient(135deg, var(--color-background-primary) 0%, var(--color-warning-light) 100%);
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning-dark);
   border-radius: 6px;
   padding: 5px 14px;
   font-size: 13px;
@@ -411,13 +411,11 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .refresh-link-button:hover {
-  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-  color: white;
-  border-color: #d97706;
+  background: linear-gradient(135deg, var(--color-warning) 0%, var(--color-warning-hover) 100%);
+  color: var(--color-text-inverse);
+  border-color: var(--color-warning-hover);
   transform: translateY(-1px);
-  box-shadow:
-    0 4px 12px rgba(245, 158, 11, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .refresh-link-button:hover::before {
@@ -433,14 +431,14 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 
 .dismiss-button {
   background: var(--color-background-primary);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  border: 1px solid var(--color-warning);
   width: 24px;
   height: 24px;
   border-radius: 50%;
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  color: #92400e;
+  color: var(--color-warning-dark);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -453,10 +451,10 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 
 .dismiss-button:hover {
   background: var(--color-background-hover);
-  border-color: #f59e0b;
-  color: #78350f;
+  border-color: var(--color-warning);
+  color: var(--color-warning-darker);
   transform: rotate(90deg) scale(1.1);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .dismiss-button:active {
@@ -480,8 +478,8 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .fetch-data-button {
-  background-color: #3498db;
-  color: white;
+  background-color: var(--color-button-secondary);
+  color: var(--color-text-inverse);
   border: none;
   padding: 8px 20px;
   font-size: 14px;
@@ -492,9 +490,9 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .fetch-data-button:hover:not(:disabled) {
-  background-color: #2980b9;
+  background-color: var(--color-button-secondary-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .fetch-data-button:active:not(:disabled) {
@@ -502,7 +500,7 @@ defineExpose({ downloadData, removeData, rowData, dataLength, columnLength });
 }
 
 .fetch-data-button:disabled {
-  background-color: #93c5fd;
+  background-color: var(--color-button-secondary-light);
   cursor: not-allowed;
   opacity: 0.7;
 }

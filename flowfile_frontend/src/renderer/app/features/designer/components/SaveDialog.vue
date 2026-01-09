@@ -13,6 +13,7 @@
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       :initial-file-path="initialPath"
+      :is-visible="isVisible"
       @create-file="handleSaveFlow"
       @overwrite-file="handleSaveFlow"
     />

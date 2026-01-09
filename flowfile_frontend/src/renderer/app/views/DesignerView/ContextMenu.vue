@@ -114,7 +114,7 @@ onUnmounted(() => {
   background-color: var(--color-background-primary);
   border-radius: var(--border-radius-md);
   box-shadow: var(--shadow-lg);
-  z-index: 10000;
+  z-index: var(--z-index-canvas-context-menu, 100002);
   overflow: hidden;
   border: 1px solid var(--color-border-primary);
 }

@@ -591,7 +591,7 @@ body,
 }
 
 .animated-bg-gradient {
-  background: linear-gradient(122deg, #6f3381, #81c7d4, #fedfe1, #fffffb);
+  background: linear-gradient(122deg, var(--color-gradient-canvas-1), var(--color-gradient-canvas-2), var(--color-gradient-canvas-3), var(--color-gradient-canvas-4));
   background-size: 800% 800%;
   -webkit-animation: gradient 4s ease infinite;
   -moz-animation: gradient 4s ease infinite;

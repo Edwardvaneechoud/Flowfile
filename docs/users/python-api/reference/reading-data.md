@@ -125,6 +125,52 @@ df = ff.scan_delta(
 )
 ```
 
+## Database Reading
+
+Read data from SQL databases using stored connections.
+
+### Setup Connection
+
+```python
+import flowfile as ff
+
+ff.create_database_connection(
+    connection_name="my_db",
+    database_type="postgresql",
+    host="localhost",
+    port=5432,
+    database="mydb",
+    username="user",
+    password="pass"
+)
+```
+
+### Read a Table
+
+```python
+df = ff.read_database(
+    "my_db",
+    table_name="users",
+    schema_name="public"
+)
+```
+
+### Read with SQL Query
+
+```python
+df = ff.read_database(
+    "my_db",
+    query="SELECT id, name FROM users WHERE active = true"
+)
+```
+
+**Parameters:**
+
+- `connection_name`: Name of a stored database connection (required)
+- `table_name`: Table to read from
+- `schema_name`: Database schema (e.g., "public")
+- `query`: Custom SQL query (takes precedence over `table_name`)
+
 ## Connection Management
 
 Before reading from cloud storage, set up connections:

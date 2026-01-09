@@ -521,7 +521,6 @@ onMounted(async () => {
   border-radius: 4px;
   padding: 1px;
   background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-primary);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -618,7 +617,7 @@ onMounted(async () => {
 
 .context-menu {
   position: fixed;
-  z-index: 10000;
+  z-index: var(--z-index-canvas-context-menu, 100002);
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;

@@ -233,9 +233,9 @@ const isErrorLine = (line: string): boolean => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-  font-family: "Consolas", "Monaco", "Courier New", monospace;
+  background-color: var(--color-code-bg);
+  color: var(--color-code-text);
+  font-family: var(--font-family-mono);
   overflow-y: auto;
 }
 
@@ -244,8 +244,8 @@ const isErrorLine = (line: string): boolean => {
   justify-content: space-between;
   align-items: center;
   padding: 8px;
-  background-color: #252526;
-  border-bottom: 1px solid #333;
+  background-color: var(--color-gray-800);
+  border-bottom: 1px solid var(--color-border-primary);
   position: sticky;
   top: 0;
   z-index: 10; /* Ensures it stays above the logs */
@@ -262,15 +262,15 @@ const isErrorLine = (line: string): boolean => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: #666;
+  background-color: var(--color-gray-500);
 }
 
 .status-indicator.active {
-  background-color: #4caf50;
+  background-color: var(--color-success);
 }
 
 .status-indicator.error {
-  background-color: #f44336;
+  background-color: var(--color-danger);
 }
 
 .log-controls {
@@ -280,16 +280,16 @@ const isErrorLine = (line: string): boolean => {
 
 .error-banner {
   padding: 8px 12px;
-  background-color: rgba(244, 67, 54, 0.2);
-  color: #f44336;
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
   font-size: 0.9em;
-  border-bottom: 1px solid #f44336;
+  border-bottom: 1px solid var(--color-danger);
 }
 
 .empty-state {
   padding: 16px;
   text-align: center;
-  color: #777;
+  color: var(--color-text-muted);
   font-style: italic;
 }
 
@@ -313,21 +313,21 @@ const isErrorLine = (line: string): boolean => {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e1e1e;
+  background: var(--color-code-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #424242;
+  background: var(--color-gray-600);
   border-radius: 6px;
-  border: 3px solid #1e1e1e;
+  border: 3px solid var(--color-code-bg);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4f4f4f;
+  background: var(--color-gray-500);
 }
 
 .error-line {
-  background-color: rgba(255, 0, 0, 0.2); /* Light red background */
-  color: #ffcdd2; /* Light red text for better readability */
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
 }
 </style>

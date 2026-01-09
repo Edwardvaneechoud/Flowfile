@@ -27,7 +27,7 @@ except ModuleNotFoundError:
 
 @pytest.fixture
 def pw():
-    return encrypt_secret('testpass')
+    return encrypt_secret('testpass', user_id=1)
 
 
 def test_trigger_database_read_collector(pw):
