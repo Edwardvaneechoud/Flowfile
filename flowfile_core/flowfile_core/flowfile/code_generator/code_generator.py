@@ -1526,10 +1526,17 @@ class FlowGraphToPolarsConverter:
                 # Remove import lines from the file since we handle imports separately
                 lines = file_source.split('\n')
                 non_import_lines = []
+                in_multiline_import = False
                 for line in lines:
                     stripped = line.strip()
-                    # Skip import statements and empty lines at the start
+                    # Track multi-line imports (using parentheses)
                     if stripped.startswith('import ') or stripped.startswith('from '):
+                        if '(' in stripped and ')' not in stripped:
+                            in_multiline_import = True
+                        continue
+                    if in_multiline_import:
+                        if ')' in stripped:
+                            in_multiline_import = False
                         continue
                     # Skip comments at the very start (like "# Auto-generated custom node")
                     if stripped.startswith('#') and not non_import_lines:
