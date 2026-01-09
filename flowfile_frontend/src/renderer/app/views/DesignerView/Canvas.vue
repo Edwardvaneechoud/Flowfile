@@ -106,6 +106,11 @@ const handleCanvasClick = (event: any | PointerEvent) => {
     x: event.x,
     y: event.y,
   };
+  // Deselect all nodes when clicking on empty canvas
+  const allNodes = instance.getNodes.value;
+  allNodes.forEach((node) => {
+    node.selected = false;
+  });
 };
 
 const handleNodeSettingsClose = (event: any | PointerEvent) => {
