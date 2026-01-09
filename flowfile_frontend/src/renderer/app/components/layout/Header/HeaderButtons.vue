@@ -32,7 +32,7 @@
     </button>
   </div>
 
-  <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
+  <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%" class="high-z-index-dialog">
     <file-browser
       :allowed-file-types="FLOWFILE_EXTENSIONS"
       mode="open"
@@ -41,7 +41,7 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%">
+  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%" class="high-z-index-dialog">
     <file-browser
       ref="fileBrowserRef"
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
@@ -53,7 +53,7 @@
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%">
+  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%" class="high-z-index-dialog">
     <file-browser
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
