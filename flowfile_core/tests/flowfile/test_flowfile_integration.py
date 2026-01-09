@@ -79,7 +79,7 @@ def complex_elaborate_flow(tmp_path) -> FlowGraph:
     sales_data = (FlowDataEngine.create_random(100).drop_columns(["City"])
                   .apply_flowfile_formula("if random_int(1,4) == 1 then 'New York' "
                                           "elseif random_int(1,4) == 2 then 'Chicago' "
-                                          "else 'Los Angeles'", col_name="City").to_pylist())
+                                          "else 'Los Angeles' endif", col_name="City").to_pylist())
     graph.add_node_promise(input_schema.NodePromise(flow_id=1, node_id=2, node_type='manual_input'))
     graph.add_manual_input(input_schema.NodeManualInput(
         flow_id=1,
