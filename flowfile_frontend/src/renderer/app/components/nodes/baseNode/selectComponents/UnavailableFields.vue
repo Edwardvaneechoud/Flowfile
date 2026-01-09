@@ -74,6 +74,6 @@ defineProps({
 .icon-wrapper:hover .tooltip-text {
   visibility: visible;
   opacity: 1;
-  z-index: 10000;
+  z-index: var(--z-index-canvas-dropdown, 100001);
 }
 </style>
