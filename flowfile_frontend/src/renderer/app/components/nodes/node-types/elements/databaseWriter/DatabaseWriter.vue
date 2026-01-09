@@ -218,7 +218,7 @@ defineExpose({
   margin: 0 0 0.75rem 0;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 .form-row {
@@ -238,10 +238,12 @@ defineExpose({
 .form-control {
   width: 100%;
   padding: 0.5rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-size: 0.875rem;
   box-sizing: border-box;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .form-group {
@@ -254,7 +256,7 @@ label {
   margin-bottom: 0.25rem;
   font-size: 0.875rem;
   font-weight: 500;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 select.form-control {
@@ -270,9 +272,9 @@ select.form-control {
   display: inline-block;
   width: 20px;
   height: 20px;
-  border: 2px solid rgba(66, 153, 225, 0.3);
+  border: 2px solid var(--color-info-light);
   border-radius: 50%;
-  border-top-color: #4299e1;
+  border-top-color: var(--color-info);
   animation: spin 1s ease-in-out infinite;
   margin-right: 8px;
 }
@@ -285,12 +287,12 @@ select.form-control {
 
 .option-description {
   font-size: 0.875rem;
-  color: #718096;
+  color: var(--color-text-tertiary);
   margin: 0.5rem 0;
   padding: 0.75rem;
-  background-color: #f7fafc;
+  background-color: var(--color-gray-50);
   border-radius: 4px;
-  border-left: 3px solid #4299e1;
+  border-left: 3px solid var(--color-info);
 }
 
 .el-radio-group {
