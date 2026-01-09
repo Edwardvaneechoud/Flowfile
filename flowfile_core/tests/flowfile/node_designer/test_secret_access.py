@@ -578,7 +578,8 @@ class TestSecretManagerIntegration:
     def test_encrypt_decrypt_roundtrip(self):
         """Tests that encrypt/decrypt is a proper roundtrip."""
         original = "my-secret-password-!@#$%"
-        encrypted = encrypt_secret(original)
+        test_user_id = 1
+        encrypted = encrypt_secret(original, test_user_id)
         decrypted = decrypt_secret(encrypted)
 
         assert decrypted.get_secret_value() == original

@@ -1644,6 +1644,7 @@ class FlowGraph:
                     write_settings=node_cloud_storage_writer.cloud_storage_settings,
                     connection=full_cloud_storage_connection,
                     lf=df.data_frame,
+                    user_id=node_cloud_storage_writer.user_id,
                     flowfile_node_id=node_cloud_storage_writer.node_id,
                     flowfile_flow_id=self.flow_id,
                 )
@@ -1866,6 +1867,7 @@ class FlowGraph:
 
         if schema_callback is not None:
             node.schema_callback = schema_callback
+            node.user_provided_schema_callback = schema_callback
         return self
 
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput) -> "FlowGraph":

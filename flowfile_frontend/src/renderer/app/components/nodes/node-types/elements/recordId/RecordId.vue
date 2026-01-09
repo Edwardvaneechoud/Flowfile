@@ -171,7 +171,7 @@ const isColumnAssigned = (columnName: string): boolean => {
   return false;
 };
 
-const handleContextMenuSelect = (action: "add") => {
+const handleContextMenuSelect = (action: string) => {
   const nodeRecord = nodeRecordId.value;
 
   if (nodeRecord && action === "add") {

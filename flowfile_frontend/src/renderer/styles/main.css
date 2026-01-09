@@ -9,6 +9,7 @@
 @import './components/_cards.css';
 @import './components/_forms.css';
 @import './components/_modals.css';
+@import './components/_context-menu.css';
 @import './utils/_spacing.css';
 @import './utils/_layout.css';
 
@@ -474,6 +475,25 @@ button {
   color: var(--color-text-primary);
 }
 
+/* ========== Element Plus Popper Z-Index Fix ========== */
+/* Fix for el-select dropdowns appearing behind dialogs and canvas elements.
+   Element Plus poppers are teleported to body and need high z-index to appear above:
+   - Canvas panels (DraggableItem panels at z-index 100000)
+   - High z-index dialogs (at z-index 200001)
+   Set to 200010 to ensure dropdowns always appear above modal dialogs */
+.el-popper,
+.el-select-dropdown,
+.el-select__popper,
+.el-autocomplete-suggestion,
+.el-cascader__dropdown,
+.el-color-dropdown,
+.el-date-editor .el-picker-panel,
+.el-picker__popper,
+.el-tooltip__popper,
+.el-popover.el-popper {
+  z-index: 200010 !important;
+}
+
 /* ========== CodeMirror Dark Mode Styling ========== */
 /* These styles must be global because CodeMirror tooltips are rendered as portals */
 
@@ -507,11 +527,11 @@ button {
 }
 
 .cm-editor .cm-selectionBackground {
-  background-color: rgba(8, 145, 178, 0.15) !important;
+  background-color: var(--color-focus-ring-accent) !important;
 }
 
 .cm-editor.cm-focused .cm-selectionBackground {
-  background-color: rgba(8, 145, 178, 0.25) !important;
+  background-color: var(--color-focus-ring-accent-strong) !important;
 }
 
 /* Placeholder styling */
@@ -547,7 +567,7 @@ button {
 .cm-tooltip-autocomplete > ul > li[aria-selected],
 .cm-tooltip-autocomplete > ul > li[aria-selected="true"] {
   background-color: var(--color-accent) !important;
-  color: white !important;
+  color: var(--color-text-inverse) !important;
 }
 
 /* Completion label and detail */

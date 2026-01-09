@@ -190,10 +190,11 @@ const setNodeTableView = (nodeId: number) => {
 
 const handleNodeChange = (nodeChangesEvent: any) => {
   const nodeChanges = nodeChangesEvent as NodeChange[];
-  const nodeChange = nodeChanges[0];
-  const nodeChangeId = Number(nodeChange.id);
-  if (nodeChange.type === "remove") {
-    deleteNode(nodeStore.flow_id, nodeChangeId);
+  for (const nodeChange of nodeChanges) {
+    if (nodeChange.type === "remove") {
+      const nodeChangeId = Number(nodeChange.id);
+      deleteNode(nodeStore.flow_id, nodeChangeId);
+    }
   }
 };
 
@@ -379,12 +380,16 @@ const handleKeyDown = (event: KeyboardEvent) => {
   const isInputElement =
     target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
-  if (eventKeyClicked && key === "c" && !isInputElement) {
-    // Copy selected nodes
+  // Check if text is selected - if so, let browser handle copy/paste natively
+  const selection = window.getSelection();
+  const hasTextSelected = selection && selection.toString().trim().length > 0;
+
+  if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
+    // Copy selected nodes only if no text is selected
     copySelectedNodes();
     event.preventDefault();
-  } else if (eventKeyClicked && key === "v" && !isInputElement) {
-    // Paste nodes
+  } else if (eventKeyClicked && key === "v" && !isInputElement && !hasTextSelected) {
+    // Paste nodes only if no text is selected
     copyValue(clickedPosition.value.x, clickedPosition.value.y);
     event.preventDefault();
   } else if (eventKeyClicked && key === "n") {
@@ -591,7 +596,7 @@ body,
 }
 
 .animated-bg-gradient {
-  background: linear-gradient(122deg, #6f3381, #81c7d4, #fedfe1, #fffffb);
+  background: linear-gradient(122deg, var(--color-gradient-canvas-1), var(--color-gradient-canvas-2), var(--color-gradient-canvas-3), var(--color-gradient-canvas-4));
   background-size: 800% 800%;
   -webkit-animation: gradient 4s ease infinite;
   -moz-animation: gradient 4s ease infinite;

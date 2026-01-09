@@ -108,49 +108,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Context menu styles are now centralized in styles/components/_context-menu.css */
+/* Component-specific overrides only */
 .context-menu {
-  position: fixed;
   min-width: 200px;
-  background-color: var(--color-background-primary);
-  border-radius: var(--border-radius-md);
-  box-shadow: var(--shadow-lg);
-  z-index: 10000;
-  overflow: hidden;
-  border: 1px solid var(--color-border-primary);
-}
-
-.context-menu-header {
-  padding: var(--spacing-2) var(--spacing-3);
-  font-weight: var(--font-weight-semibold);
-  background-color: var(--color-background-secondary);
-  border-bottom: 1px solid var(--color-border-primary);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-}
-
-.context-menu-items {
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.context-menu-item {
-  display: flex;
-  align-items: center;
-  padding: var(--spacing-2) var(--spacing-3);
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-}
-
-.context-menu-item:hover {
-  background-color: var(--color-background-tertiary);
-}
-
-.context-menu-icon {
-  margin-right: var(--spacing-2);
-  width: 20px;
-  text-align: center;
-  color: var(--color-text-secondary);
 }
 </style>

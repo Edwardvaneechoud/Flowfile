@@ -32,35 +32,38 @@
     </button>
   </div>
 
-  <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%">
+  <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%" custom-class="high-z-index-dialog">
     <file-browser
       :allowed-file-types="FLOWFILE_EXTENSIONS"
       mode="open"
+      :is-visible="modalVisibleForOpen"
       @file-selected="openFlowAction"
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%">
+  <el-dialog v-model="modalVisibleForSave" title="Select save location" width="70%" custom-class="high-z-index-dialog">
     <file-browser
       ref="fileBrowserRef"
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
       :initial-file-path="savePath"
+      :is-visible="modalVisibleForSave"
       @create-file="saveFlowAction"
       @overwrite-file="saveFlowAction"
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%">
+  <el-dialog v-model="modalVisibleForCreate" title="Select save location" width="70%" custom-class="high-z-index-dialog">
     <file-browser
       :allowed-file-types="ALLOWED_SAVE_EXTENSIONS"
       mode="create"
+      :is-visible="modalVisibleForCreate"
       @create-file="handleCreateAction"
       @overwrite-file="handleCreateAction"
     />
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForQuickCreate" title="Create New Flow" width="400px">
+  <el-dialog v-model="modalVisibleForQuickCreate" title="Create New Flow" width="400px" custom-class="high-z-index-dialog">
     <div class="quick-create-modal">
       <div class="form-group">
         <label for="flow-name">Flow Name (optional):</label>
@@ -84,7 +87,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%">
+  <el-dialog v-model="modalVisibleForSettings" title="Execution Settings" width="30%" custom-class="high-z-index-dialog">
     <div v-if="flowSettings">
       <div class="settings-modal-content">
         <div class="form-group">

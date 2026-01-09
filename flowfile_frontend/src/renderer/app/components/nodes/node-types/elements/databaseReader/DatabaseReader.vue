@@ -299,13 +299,13 @@ defineExpose({
   margin: 0 0 0.75rem 0;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #4a5568;
+  color: var(--color-text-secondary);
 }
 
 .query-section {
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid #edf2f7;
+  border-top: 1px solid var(--color-border-light);
 }
 
 .form-row {
@@ -325,10 +325,12 @@ defineExpose({
 .form-control {
   width: 100%;
   padding: 0.5rem;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--color-border-primary);
   border-radius: 4px;
   font-size: 0.875rem;
   box-sizing: border-box;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .form-group {
@@ -341,15 +343,7 @@ label {
   margin-bottom: 0.25rem;
   font-size: 0.875rem;
   font-weight: 500;
-  color: #4a5568;
-}
-
-.form-control {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #e2e8f0;
-  border-radius: 4px;
-  font-size: 0.875rem;
+  color: var(--color-text-secondary);
 }
 
 select.form-control {
@@ -365,12 +359,12 @@ select.form-control {
 .validation-section {
   margin-top: 1.5rem;
   padding-top: 1rem;
-  border-top: 1px solid #edf2f7;
+  border-top: 1px solid var(--color-border-light);
 }
 
 .validate-button {
-  background-color: #4299e1;
-  color: white;
+  background-color: var(--color-info);
+  color: var(--color-text-inverse);
   border: none;
   border-radius: 4px;
   padding: 0.5rem 1rem;
@@ -381,11 +375,11 @@ select.form-control {
 }
 
 .validate-button:hover {
-  background-color: #3182ce;
+  background-color: var(--color-info-hover);
 }
 
 .validate-button:disabled {
-  background-color: #a0aec0;
+  background-color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
@@ -393,18 +387,18 @@ select.form-control {
   margin-top: 1rem;
   padding: 0.75rem;
   border-radius: 4px;
-  background-color: #fff5f5;
-  border: 1px solid #fed7d7;
+  background-color: var(--color-danger-light);
+  border: 1px solid var(--color-danger);
 }
 
 .error-title {
-  color: #e53e3e;
+  color: var(--color-danger);
   font-weight: 600;
   margin-bottom: 0.25rem;
 }
 
 .error-message {
-  color: #c53030;
+  color: var(--color-danger-hover);
   font-size: 0.875rem;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -414,12 +408,12 @@ select.form-control {
   margin-top: 1rem;
   padding: 0.75rem;
   border-radius: 4px;
-  background-color: #f0fff4;
-  border: 1px solid #c6f6d5;
+  background-color: var(--color-success-light);
+  border: 1px solid var(--color-success);
 }
 
 .success-message {
-  color: #38a169;
+  color: var(--color-success);
   font-size: 0.875rem;
 }
 

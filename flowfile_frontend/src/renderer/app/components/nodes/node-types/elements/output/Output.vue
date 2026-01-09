@@ -88,6 +88,7 @@
         :allowed-file-types="['csv', 'xlsx', 'parquet']"
         :allow-directory-selection="true"
         mode="create"
+        :is-visible="showFileSelectionModal"
         @directory-selected="handleDirectorySelected"
         @overwrite-file="handleFileSelected"
         @create-file="handleFileSelected"
@@ -291,7 +292,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   padding: 20px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--color-border-primary);
   border-radius: 8px;
   background-color: var(--color-background-primary);
   margin-top: 20px;
@@ -308,22 +309,22 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background-color: #3498db;
+  background-color: var(--color-button-secondary);
   border: 1px solid transparent;
   border-radius: 4px;
   padding: 10px 20px;
-  color: white;
+  color: var(--color-text-inverse);
   font-size: 16px;
   cursor: pointer;
   transition: all 0.3s ease;
 }
 
 .file-upload-label:hover {
-  background-color: #2980b9;
+  background-color: var(--color-button-secondary-hover);
 }
 
 .warning-message {
-  color: #e74c3c;
+  color: var(--color-danger);
   display: flex;
   align-items: center;
 }

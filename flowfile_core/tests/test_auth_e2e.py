@@ -50,6 +50,11 @@ def project_root() -> Path:
     return current_file.parent.parent.parent
 
 
+# Test master key (valid 32-byte base64-encoded key for testing only)
+# This is "12345678901234567890123456789012" base64-encoded
+TEST_MASTER_KEY = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
+
+
 @pytest.fixture(scope="module")
 def docker_image(docker_client, project_root):
     """Build the Docker image for testing."""
@@ -57,44 +62,29 @@ def docker_image(docker_client, project_root):
     print(f"Building Docker image from: {project_root}")
     print(f"{'='*60}")
 
-    # Ensure master_key.txt exists
-    master_key_path = project_root / "master_key.txt"
-    if not master_key_path.exists():
-        # Create a temporary master key for testing
-        master_key_path.write_text("test-master-key-for-e2e-testing-only-12345")
-        created_master_key = True
-    else:
-        created_master_key = False
+    # Build the image
+    image, build_logs = docker_client.images.build(
+        path=str(project_root),
+        dockerfile="flowfile_core/Dockerfile",
+        tag="flowfile-core:e2e-test",
+        rm=True,  # Remove intermediate containers
+        forcerm=True  # Always remove intermediate containers
+    )
 
-    try:
-        # Build the image
-        image, build_logs = docker_client.images.build(
-            path=str(project_root),
-            dockerfile="flowfile_core/Dockerfile",
-            tag="flowfile-core:e2e-test",
-            rm=True,  # Remove intermediate containers
-            forcerm=True  # Always remove intermediate containers
-        )
+    # Print build logs
+    for log in build_logs:
+        if 'stream' in log:
+            print(log['stream'].strip())
 
-        # Print build logs
-        for log in build_logs:
-            if 'stream' in log:
-                print(log['stream'].strip())
+    print(f"\n{'='*60}")
+    print(f"Docker image built successfully: {image.tags}")
+    print(f"{'='*60}\n")
 
-        print(f"\n{'='*60}")
-        print(f"Docker image built successfully: {image.tags}")
-        print(f"{'='*60}\n")
+    yield image
 
-        yield image
-
-        # Cleanup: Remove the test image
-        print(f"\nRemoving test image: {image.tags}")
-        docker_client.images.remove(image.id, force=True)
-
-    finally:
-        # Cleanup: Remove temporary master key if we created it
-        if created_master_key and master_key_path.exists():
-            master_key_path.unlink()
+    # Cleanup: Remove the test image
+    print(f"\nRemoving test image: {image.tags}")
+    docker_client.images.remove(image.id, force=True)
 
 
 def wait_for_service(
@@ -127,18 +117,11 @@ def running_container(docker_client, docker_image, project_root):
     print(f"Starting Docker container...")
     print(f"{'='*60}")
 
-    # Prepare volumes
-    volumes = {
-        str(project_root / "master_key.txt"): {
-            'bind': '/run/secrets/flowfile_master_key',
-            'mode': 'ro'
-        }
-    }
-
     # Environment variables for Docker mode with admin user
     environment = {
         'FLOWFILE_MODE': 'docker',
         'JWT_SECRET_KEY': 'e2e-test-secret-key-do-not-use-in-production',
+        'FLOWFILE_MASTER_KEY': TEST_MASTER_KEY,
         'FLOWFILE_ADMIN_USER': TEST_ADMIN_USERNAME,
         'FLOWFILE_ADMIN_PASSWORD': TEST_ADMIN_PASSWORD,
         'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
@@ -153,7 +136,6 @@ def running_container(docker_client, docker_image, project_root):
         detach=True,
         ports={f'{FLOWFILE_CORE_PORT}/tcp': FLOWFILE_CORE_PORT},
         environment=environment,
-        volumes=volumes,
         name=f"flowfile-e2e-test-{int(time.time())}",
         remove=True  # Auto-remove when stopped
     )
@@ -339,17 +321,11 @@ class TestDockerE2EWithoutAdminCredentials:
         print(f"Testing container without admin credentials...")
         print(f"{'='*60}")
 
-        volumes = {
-            str(project_root / "master_key.txt"): {
-                'bind': '/run/secrets/flowfile_master_key',
-                'mode': 'ro'
-            }
-        }
-
         # Environment without admin credentials
         environment = {
             'FLOWFILE_MODE': 'docker',
             'JWT_SECRET_KEY': 'e2e-test-secret-key-do-not-use-in-production',
+            'FLOWFILE_MASTER_KEY': TEST_MASTER_KEY,
             # Intentionally omitting FLOWFILE_ADMIN_USER and FLOWFILE_ADMIN_PASSWORD
             'FLOWFILE_STORAGE_DIR': '/app/internal_storage',
             'FLOWFILE_USER_DATA_DIR': '/app/user_data',
@@ -360,7 +336,6 @@ class TestDockerE2EWithoutAdminCredentials:
             detach=True,
             ports={f'{FLOWFILE_CORE_PORT}/tcp': 63590},  # Use unique port to avoid conflicts
             environment=environment,
-            volumes=volumes,
             name=f"flowfile-e2e-no-admin-{int(time.time())}",
             remove=True
         )

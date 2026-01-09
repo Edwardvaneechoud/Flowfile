@@ -14,14 +14,20 @@ AuthMethod = Literal[
 ]
 
 
-def encrypt_for_worker(secret_value: SecretStr | None) -> str | None:
+def encrypt_for_worker(secret_value: SecretStr | None, user_id: int) -> str | None:
     """
-    Encrypts a secret value for use in worker contexts.
-    This is a placeholder function that simulates encryption.
-    In practice, you would use a secure encryption method.
+    Encrypts a secret value for use in worker contexts using per-user key derivation.
+
+    Args:
+        secret_value: The secret value to encrypt
+        user_id: The user ID for key derivation
+
+    Returns:
+        Encrypted secret with embedded user_id, or None if secret_value is None
     """
     if secret_value is not None:
-        return encrypt_secret(secret_value.get_secret_value())
+        return encrypt_secret(secret_value.get_secret_value(), user_id)
+    return None
 
 
 class AuthSettingsInput(BaseModel):
@@ -80,25 +86,31 @@ class FullCloudStorageConnection(AuthSettingsInput):
     endpoint_url: str | None = None
     verify_ssl: bool = True
 
-    def get_worker_interface(self) -> "FullCloudStorageConnectionWorkerInterface":
+    def get_worker_interface(self, user_id: int) -> "FullCloudStorageConnectionWorkerInterface":
         """
-        Convert to a public interface model without secrets.
+        Convert to a worker interface model with encrypted secrets.
+
+        Args:
+            user_id: The user ID for per-user key derivation
+
+        Returns:
+            FullCloudStorageConnectionWorkerInterface with encrypted secrets
         """
         return FullCloudStorageConnectionWorkerInterface(
             storage_type=self.storage_type,
             auth_method=self.auth_method,
             connection_name=self.connection_name,
             aws_allow_unsafe_html=self.aws_allow_unsafe_html,
-            aws_secret_access_key=encrypt_for_worker(self.aws_secret_access_key),
+            aws_secret_access_key=encrypt_for_worker(self.aws_secret_access_key, user_id),
             aws_region=self.aws_region,
             aws_access_key_id=self.aws_access_key_id,
             aws_role_arn=self.aws_role_arn,
-            aws_session_token=encrypt_for_worker(self.aws_session_token),
+            aws_session_token=encrypt_for_worker(self.aws_session_token, user_id),
             azure_account_name=self.azure_account_name,
             azure_tenant_id=self.azure_tenant_id,
-            azure_account_key=encrypt_for_worker(self.azure_account_key),
+            azure_account_key=encrypt_for_worker(self.azure_account_key, user_id),
             azure_client_id=self.azure_client_id,
-            azure_client_secret=encrypt_for_worker(self.azure_client_secret),
+            azure_client_secret=encrypt_for_worker(self.azure_client_secret, user_id),
             endpoint_url=self.endpoint_url,
             verify_ssl=self.verify_ssl,
         )
@@ -202,18 +214,30 @@ def get_cloud_storage_write_settings_worker_interface(
     write_settings: CloudStorageWriteSettings,
     connection: FullCloudStorageConnection,
     lf: pl.LazyFrame,
+    user_id: int,
     flowfile_flow_id: int = 1,
     flowfile_node_id: int | str = -1,
 ) -> CloudStorageWriteSettingsWorkerInterface:
     """
-    Convert to a worker interface model with hashed secrets.
+    Convert to a worker interface model with encrypted secrets.
+
+    Args:
+        write_settings: Cloud storage write settings
+        connection: Full cloud storage connection with secrets
+        lf: LazyFrame to serialize
+        user_id: User ID for per-user key derivation
+        flowfile_flow_id: Flow ID for tracking
+        flowfile_node_id: Node ID for tracking
+
+    Returns:
+        CloudStorageWriteSettingsWorkerInterface ready for worker
     """
     operation = base64.b64encode(lf.serialize()).decode()
 
     return CloudStorageWriteSettingsWorkerInterface(
         operation=operation,
         write_settings=write_settings.get_write_setting_worker_interface(),
-        connection=connection.get_worker_interface(),
-        flowfile_flow_id=flowfile_flow_id,  # Default value, can be overridden
-        flowfile_node_id=flowfile_node_id,  # Default value, can be overridden
+        connection=connection.get_worker_interface(user_id),
+        flowfile_flow_id=flowfile_flow_id,
+        flowfile_node_id=flowfile_node_id,
     )

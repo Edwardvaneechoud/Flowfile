@@ -1,5 +1,8 @@
 name: Build and Release on macOS and Windows
 
+permissions:
+  contents: write
+
 on:
   push:
     tags:

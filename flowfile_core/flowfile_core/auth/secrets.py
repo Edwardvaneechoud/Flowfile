@@ -137,41 +137,84 @@ def delete_password(service_name, username):
     _storage.delete_password(service_name, username)
 
 
-def get_docker_secret_key():
+def get_docker_secret_key() -> str | None:
     """
-    Get the master key from Docker secret.
+    Get the master key from Docker secret or environment variable.
 
     Returns:
-        str: The master key if successfully read from Docker secret.
+        str: The master key if successfully read, None if not configured.
 
     Raises:
-        RuntimeError: If running in Docker but unable to access the secret.
+        RuntimeError: If the secret file exists but cannot be read, or key is invalid.
     """
+    env_key = os.environ.get("FLOWFILE_MASTER_KEY")
+    if env_key:
+        env_key = env_key.strip().strip('"').strip("'")
+        try:
+            Fernet(env_key.encode())
+            return env_key
+        except Exception:
+            raise RuntimeError("FLOWFILE_MASTER_KEY is not a valid Fernet key")
+
     secret_path = "/run/secrets/flowfile_master_key"
-    if os.path.exists(secret_path):
+    if os.path.isfile(secret_path):
         try:
             with open(secret_path) as f:
-                return f.read().strip()
-        except Exception as e:
-            logger.error(f"Failed to read master key from Docker secret: {e}")
+                key = f.read().strip()
+                Fernet(key.encode())
+                return key
+        except Exception:
             raise RuntimeError("Failed to read master key from Docker secret")
-    else:
-        logger.critical("Running in Docker but flowfile_master_key secret is not mounted!")
-        raise RuntimeError("Docker secret 'flowfile_master_key' is not mounted")
+
+    return None
+
+
+def is_master_key_configured() -> bool:
+    """
+    Check if the master key is properly configured.
+
+    Returns:
+        bool: True if master key is configured and valid, False otherwise.
+    """
+    try:
+        if os.environ.get("FLOWFILE_MODE") == "docker":
+            return get_docker_secret_key() is not None
+        return True
+    except RuntimeError:
+        return False
+
+
+def generate_master_key() -> str:
+    """
+    Generate a new Fernet master key.
+
+    Returns:
+        str: A new valid Fernet encryption key.
+    """
+    return Fernet.generate_key().decode()
 
 
 def get_master_key():
     """
     Get or generate the master encryption key.
 
-    If running in Docker, retrieves the key from Docker secrets.
+    If running in Docker, retrieves the key from Docker secrets or environment.
     Otherwise, retrieves or generates a key using the secure storage.
 
     Returns:
         str: The master encryption key
+
+    Raises:
+        RuntimeError: If in Docker mode and no key is configured.
     """
     if os.environ.get("FLOWFILE_MODE") == "docker":
-        return get_docker_secret_key()
+        key = get_docker_secret_key()
+        if key is None:
+            raise RuntimeError(
+                "Master key not configured. Set FLOWFILE_MASTER_KEY environment variable "
+                "or mount the flowfile_master_key Docker secret."
+            )
+        return key
 
     key = get_password("flowfile", "master_key")
     if not key:

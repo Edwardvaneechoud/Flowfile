@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Callable, Generator
 from time import sleep
 from typing import Any, Literal, Optional
@@ -128,6 +129,7 @@ class FlowNode:
         self._cache_progress = None
         self._schema_callback = None
         self._state_needs_reset = False
+        self._execution_lock = threading.RLock()  # Protects concurrent access to get_resulting_data
 
     @property
     def state_needs_reset(self) -> bool:
@@ -147,9 +149,10 @@ class FlowNode:
         """
         self._state_needs_reset = v
 
-    @staticmethod
-    def create_schema_callback_from_function(f: Callable) -> Callable[[], list[FlowfileColumn]]:
+    def create_schema_callback_from_function(self, f: Callable) -> Callable[[], list[FlowfileColumn]]:
         """Wraps a node's function to create a schema callback that extracts the schema.
+
+        Thread-safe: uses _execution_lock to prevent concurrent execution with get_resulting_data.
 
         Args:
             f: The node's core function that returns a FlowDataEngine instance.
@@ -161,7 +164,8 @@ class FlowNode:
         def schema_callback() -> list[FlowfileColumn]:
             try:
                 logger.info("Executing the schema callback function based on the node function")
-                return f().schema
+                with self._execution_lock:
+                    return f().schema
             except Exception as e:
                 logger.warning(f"Error with the schema callback: {e}")
                 return []
@@ -575,6 +579,7 @@ class FlowNode:
         """Executes the node's function to produce the actual output data.
 
         Handles both regular functions and external data sources.
+        Thread-safe: uses _execution_lock to prevent concurrent execution.
 
         Returns:
             A FlowDataEngine instance containing the result, or None on error.
@@ -583,30 +588,40 @@ class FlowNode:
             Exception: Propagates exceptions from the node's function execution.
         """
         if self.is_setup:
-            if self.results.resulting_data is None and self.results.errors is None:
-                self.print("getting resulting data")
-                try:
-                    if isinstance(self.function, FlowDataEngine):
-                        fl: FlowDataEngine = self.function
-                    elif self.node_type == "external_source":
-                        fl: FlowDataEngine = self.function()
-                        fl.collect_external()
-                        self.node_settings.streamable = False
-                    else:
-                        try:
-                            fl = self._function(*[v.get_resulting_data() for v in self.all_inputs])
-                        except Exception as e:
-                            raise e
-                    fl.set_streamable(self.node_settings.streamable)
-                    self.results.resulting_data = fl
-                    self.node_schema.result_schema = fl.schema
-                except Exception as e:
-                    self.results.resulting_data = FlowDataEngine()
-                    self.results.errors = str(e)
-                    self.node_stats.has_run_with_current_setup = False
-                    self.node_stats.has_completed_last_run = False
-                    raise e
-            return self.results.resulting_data
+            with self._execution_lock:
+                if self.results.resulting_data is None and self.results.errors is None:
+                    self.print("getting resulting data")
+                    try:
+                        if isinstance(self.function, FlowDataEngine):
+                            fl: FlowDataEngine = self.function
+                        elif self.node_type == "external_source":
+                            fl: FlowDataEngine = self.function()
+                            fl.collect_external()
+                            self.node_settings.streamable = False
+                        else:
+                            try:
+                                self.print("Collecting input data from all inputs")
+                                input_data = []
+                                for i, v in enumerate(self.all_inputs):
+                                    self.print(f"Getting resulting data from input {i} (node {v.node_id})")
+                                    input_result = v.get_resulting_data()
+                                    self.print(f"Input {i} data type: {type(input_result)}, dataframe type: {type(input_result.data_frame) if input_result else 'None'}")
+                                    input_data.append(input_result)
+                                self.print(f"All {len(input_data)} inputs collected, calling node function")
+                                fl = self._function(*input_data)
+                                self.print(f"Node function returned, result type: {type(fl)}")
+                            except Exception as e:
+                                raise e
+                        fl.set_streamable(self.node_settings.streamable)
+                        self.results.resulting_data = fl
+                        self.node_schema.result_schema = fl.schema
+                    except Exception as e:
+                        self.results.resulting_data = FlowDataEngine()
+                        self.results.errors = str(e)
+                        self.node_stats.has_run_with_current_setup = False
+                        self.node_stats.has_completed_last_run = False
+                        raise e
+                return self.results.resulting_data
 
     def _predicted_data_getter(self) -> FlowDataEngine | None:
         """Internal helper to get a predicted data result.
@@ -844,11 +859,18 @@ class FlowNode:
             self.results.resulting_data = self.get_resulting_data()
             self.node_stats.has_run_with_current_setup = True
             return
+
         try:
-            self.get_resulting_data()
+            result_data = self.get_resulting_data()
+            # Use 'is not None' instead of truthiness check to avoid triggering __len__()
+            # which calls .collect() on the LazyFrame and can cause issues
+            if result_data is None:
+                self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
+                raise Exception("get_resulting_data returned None")
         except Exception as e:
             self.results.errors = "Error with creating the lazy frame, most likely due to invalid graph"
             raise e
+
         if not performance_mode:
             external_df_fetcher = ExternalDfFetcher(
                 lf=self.get_resulting_data().data_frame,
@@ -858,6 +880,7 @@ class FlowNode:
                 node_id=self.node_id,
             )
             self._fetch_cached_df = external_df_fetcher
+
             try:
                 lf = external_df_fetcher.get_result()
                 self.results.resulting_data = FlowDataEngine(
@@ -869,6 +892,7 @@ class FlowNode:
                         node_id=self.node_id,
                     ).result,
                 )
+
                 if not performance_mode:
                     self.store_example_data_generator(external_df_fetcher)
                     self.node_stats.has_run_with_current_setup = True

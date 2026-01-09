@@ -400,10 +400,10 @@ onMounted(() => {
 }
 
 .fa-aws {
-  color: #ff9900;
+  color: var(--color-brand-aws);
 }
 
 .fa-microsoft {
-  color: #0078d4;
+  color: var(--color-brand-microsoft);
 }
 </style>

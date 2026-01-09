@@ -255,8 +255,8 @@ onBeforeUnmount(() => {
   height: 45px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+  background: linear-gradient(135deg, var(--color-gradient-purple-start) 0%, var(--color-gradient-purple-end) 100%);
+  box-shadow: var(--shadow-md);
   cursor: move;
   display: flex;
   align-items: center;
@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
 .trigger-btn:hover {
   width: 55px;
   height: 55px;
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+  box-shadow: var(--shadow-lg);
 }
 
 .trigger-btn.is-open {
@@ -284,7 +284,7 @@ onBeforeUnmount(() => {
   width: 0;
   height: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--color-white-alpha-20);
   transform: translate(-50%, -50%);
   transition:
     width 0.6s,
@@ -297,7 +297,7 @@ onBeforeUnmount(() => {
 }
 
 .layout-icon {
-  color: white;
+  color: var(--color-text-inverse);
   transition: transform 0.3s ease;
   pointer-events: none;
 }
@@ -393,7 +393,7 @@ onBeforeUnmount(() => {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(102, 126, 234, 0.1), transparent);
+  background: linear-gradient(90deg, transparent, var(--color-focus-ring-purple-light), transparent);
   transition: left 0.5s;
 }
 
@@ -409,13 +409,13 @@ onBeforeUnmount(() => {
 
 /* Accent button style for Reset Layout Graph */
 .control-btn.accent {
-  background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
-  border-color: #764ba2;
+  background: linear-gradient(135deg, var(--color-focus-ring-purple-light) 0%, var(--color-focus-ring-purple-light) 100%);
+  border-color: var(--color-gradient-purple-end);
 }
 
 .control-btn.accent:hover {
-  background: linear-gradient(135deg, #667eea25 0%, #764ba225 100%);
-  border-color: #667eea;
+  background: linear-gradient(135deg, var(--color-focus-ring-purple) 0%, var(--color-focus-ring-purple) 100%);
+  border-color: var(--color-gradient-purple-start);
 }
 
 .control-btn .icon {

@@ -128,7 +128,7 @@ const toggleResults = () => {
 
 .flow-card:hover {
   transform: translateY(-0.5px);
-  box-shadow: 0 4px 16px rgba(159, 129, 228, 0.25);
+  box-shadow: var(--shadow-lg);
 }
 
 .flow-animation {
@@ -194,23 +194,23 @@ const toggleResults = () => {
   height: 32px;
   border-radius: 50%;
   border: none;
-  background: #8c8caa;
-  color: #4834d4;
+  background: var(--color-gray-400);
+  color: var(--color-button-primary);
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(76, 0, 255, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .control-button:hover {
-  background: #4834d4;
-  color: white;
+  background: var(--color-button-primary);
+  color: var(--color-text-inverse);
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(76, 0, 255, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .control-button.is-active {
-  background: #4834d4;
-  color: white;
+  background: var(--color-button-primary);
+  color: var(--color-text-inverse);
 }
 
 /* Animations */
