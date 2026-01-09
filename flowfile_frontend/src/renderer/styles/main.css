@@ -474,6 +474,22 @@ button {
   color: var(--color-text-primary);
 }
 
+/* ========== Element Plus Popper Z-Index Fix ========== */
+/* Fix for el-select dropdowns appearing behind canvas elements (DraggableItem panels, etc.)
+   Element Plus poppers are teleported to body and need high z-index to appear above canvas panels */
+.el-popper,
+.el-select-dropdown,
+.el-select__popper,
+.el-autocomplete-suggestion,
+.el-cascader__dropdown,
+.el-color-dropdown,
+.el-date-editor .el-picker-panel,
+.el-picker__popper,
+.el-tooltip__popper,
+.el-popover.el-popper {
+  z-index: var(--z-index-canvas-dropdown, 100001) !important;
+}
+
 /* ========== CodeMirror Dark Mode Styling ========== */
 /* These styles must be global because CodeMirror tooltips are rendered as portals */
 

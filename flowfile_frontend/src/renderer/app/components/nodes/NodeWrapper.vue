@@ -298,6 +298,7 @@ const copyNode = () => {
     nodeTemplate: props.data.nodeTemplate,
   };
   localStorage.setItem("copiedNode", JSON.stringify(nodeCopyValue));
+  localStorage.removeItem("copiedMultiNodes");
   closeContextMenu();
 };
 
@@ -624,7 +625,7 @@ onMounted(async () => {
 
 .context-menu {
   position: fixed;
-  z-index: 10000;
+  z-index: var(--z-index-canvas-context-menu, 100002);
   background-color: var(--color-background-primary);
   border: 1px solid var(--color-border-primary);
   border-radius: 4px;

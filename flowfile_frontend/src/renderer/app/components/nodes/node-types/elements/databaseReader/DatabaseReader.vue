@@ -329,6 +329,8 @@ defineExpose({
   border-radius: 4px;
   font-size: 0.875rem;
   box-sizing: border-box;
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
 }
 
 .form-group {
@@ -342,14 +344,6 @@ label {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text-secondary);
-}
-
-.form-control {
-  width: 100%;
-  padding: 0.5rem;
-  border: 1px solid var(--color-border-primary);
-  border-radius: 4px;
-  font-size: 0.875rem;
 }
 
 select.form-control {
