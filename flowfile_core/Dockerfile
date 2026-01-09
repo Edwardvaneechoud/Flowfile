@@ -25,18 +25,9 @@ ENV CARGO_PROFILE_RELEASE_STRIP=symbols \
 
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies AND strip in the same layer (in builder)
+# Install dependencies - simplified to avoid ARM64 emulation hangs
 RUN poetry install --only=main --no-root && \
-    rm -rf $POETRY_CACHE_DIR && \
-    # Strip debug symbols from compiled libraries
-    find /usr/local/lib/python3.12/site-packages -name "*.so" -exec strip --strip-debug {} \; 2>/dev/null || true && \
-    # Remove unnecessary files
-    find /usr/local/lib/python3.12/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python3.12/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python3.12/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete 2>/dev/null || true && \
-    # Remove pip cache and other unnecessary files
-    rm -rf /root/.cache /root/.cargo/registry /root/.cargo/git
+    rm -rf $POETRY_CACHE_DIR /root/.cache /root/.cargo/registry /root/.cargo/git
 
 # Runtime stage
 FROM python:3.12-slim
@@ -48,7 +39,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Copy already-stripped site-packages from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
