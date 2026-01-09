@@ -19,6 +19,7 @@ services:
       dockerfile: flowfile_core/Dockerfile
     ports:
       - "63578:63578"
+    shm_size: '2gb'
     environment:
       - FLOWFILE_MODE=docker
       - FLOWFILE_ADMIN_USER=${FLOWFILE_ADMIN_USER:-admin}
@@ -44,6 +45,7 @@ services:
       dockerfile: flowfile_worker/Dockerfile
     ports:
       - "63579:63579"
+    shm_size: '2gb'
     environment:
       - FLOWFILE_MODE=docker
       - CORE_HOST=flowfile-core
