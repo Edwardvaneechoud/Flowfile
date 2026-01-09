@@ -39,7 +39,7 @@ const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const rawCustomNode = markRaw(CustomNode);
-const { updateEdge, addEdges, fitView, screenToFlowCoordinate } = useVueFlow();
+const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
 const nodeTypes: NodeTypesObject = {
   "custom-node": rawCustomNode as NodeComponent,
@@ -106,6 +106,8 @@ const handleCanvasClick = (event: any | PointerEvent) => {
     x: event.x,
     y: event.y,
   };
+  // Clear any browser text selection when clicking on canvas
+  window.getSelection()?.removeAllRanges();
 };
 
 const handleNodeSettingsClose = (event: any | PointerEvent) => {
@@ -375,16 +377,23 @@ const handleKeyDown = (event: KeyboardEvent) => {
   // Normalize key to lowercase to handle Caps Lock being on
   const key = event.key.toLowerCase();
 
-  // Skip if typing in an input field
+  // Skip if typing in an input field or code editor
   const target = event.target as HTMLElement;
   const isInputElement =
     target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+  // Check if inside a CodeMirror editor
+  const isInCodeMirror = target.closest(".cm-editor") !== null;
 
   // Check if text is selected - if so, let browser handle copy/paste natively
   const selection = window.getSelection();
   const hasTextSelected = selection && selection.toString().trim().length > 0;
 
-  if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
+  if (eventKeyClicked && key === "a" && !isInputElement && !isInCodeMirror) {
+    // Select all nodes on canvas (prevent browser from selecting all page text)
+    event.preventDefault();
+    const allNodes = instance.getNodes.value;
+    addSelectedNodes(allNodes);
+  } else if (eventKeyClicked && key === "c" && !isInputElement && !hasTextSelected) {
     // Copy selected nodes only if no text is selected
     copySelectedNodes();
     event.preventDefault();
@@ -430,6 +439,15 @@ const closeContextMenu = () => {
   nodeStore.setCodeGeneratorVisibility(false);
 };
 
+// Prevent text selection during shift+drag selection on canvas
+const handleSelectionStart = () => {
+  document.body.style.userSelect = "none";
+};
+
+const handleSelectionEnd = () => {
+  document.body.style.userSelect = "";
+};
+
 onMounted(async () => {
   availableHeight.value = window.innerHeight - 50;
   tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
@@ -468,6 +486,8 @@ defineExpose({
         @edges-change="handleEdgeChange"
         @pane-context-menu="handleContextMenu"
         @click="closeContextMenu"
+        @selection-start="handleSelectionStart"
+        @selection-end="handleSelectionEnd"
       >
         <MiniMap />
       </VueFlow>
