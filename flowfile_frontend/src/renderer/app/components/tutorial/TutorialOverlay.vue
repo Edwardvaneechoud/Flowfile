@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { useRoute } from "vue-router";
 import { useTutorialStore } from "../../stores/tutorial-store";
 import { useFlowStore } from "../../stores/column-store";
 import TutorialTooltip from "./TutorialTooltip.vue";
 
 const tutorialStore = useTutorialStore();
 const nodeStore = useFlowStore();
+const route = useRoute();
+
+// Only show overlay on designer page
+const isDesignerPage = computed(() => route.name === "designer");
 
 const targetRect = ref<DOMRect | null>(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
-const previousFlowId = ref<number | null>(null);
 const previousNodeCount = ref<number>(0);
 
 // Compute spotlight position and size
@@ -247,7 +251,7 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="tutorial-fade">
       <div
-        v-if="tutorialStore.isActive && !tutorialStore.tutorialPaused"
+        v-if="isDesignerPage && tutorialStore.isActive && !tutorialStore.tutorialPaused"
         class="tutorial-overlay"
       >
         <!-- Backdrop with spotlight cutout - show when there's a target to highlight -->

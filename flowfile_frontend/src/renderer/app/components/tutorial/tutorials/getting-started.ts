@@ -73,7 +73,7 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 0,
     },
 
-    // Step 4: Explore the node list
+    // Step 5: Explore the node list
     {
       id: "node-list",
       title: "Available Nodes",
@@ -262,7 +262,7 @@ export const gettingStartedTutorial: Tutorial = {
       },
     },
 
-    // Step 12: Write data (output operations)
+    // Step 13: Write data (output operations)
     {
       id: "output-overview",
       title: "Write Your Results",
@@ -337,7 +337,7 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 14: Run the flow
+    // Step 16: Run the flow
     {
       id: "run-flow",
       title: "Run Your Flow",
@@ -370,7 +370,6 @@ export const gettingStartedTutorial: Tutorial = {
           <li><strong>Manual Input</strong> - Your raw sales data</li>
           <li><strong>Group By</strong> - Total revenue per country</li>
           <li><strong>Write data</strong> - Final output to be saved</li>
-
         </ul>
         <p style="font-size: 12px; color: var(--color-text-secondary);"><strong>Tip:</strong> If you don't see any data, make sure you have set up the flow to run in Development mode.</p>
       `,

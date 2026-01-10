@@ -1,20 +1,36 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { useRoute } from "vue-router";
 import { useTutorialStore } from "../../stores/tutorial-store";
 import { useNodeStore } from "../../stores/column-store";
 import { gettingStartedTutorial } from "./tutorials";
 
+const DISMISSED_KEY = "flowfile-tutorial-dismissed";
+
 const tutorialStore = useTutorialStore();
 const nodeStore = useNodeStore();
+const route = useRoute();
 
-// Only show when no flow is open and tutorial is not active
+const isDismissed = ref(false);
+
+onMounted(() => {
+  isDismissed.value = localStorage.getItem(DISMISSED_KEY) === "true";
+});
+
+// Only show when on designer page, no flow is open, tutorial is not active, and not dismissed
 const showButton = computed(() => {
+  const isDesignerPage = route.name === "designer";
   const hasNoFlow = !nodeStore.flow_id || nodeStore.flow_id <= 0;
-  return hasNoFlow && !tutorialStore.isActive;
+  return isDesignerPage && hasNoFlow && !tutorialStore.isActive && !isDismissed.value;
 });
 
 function startTutorial() {
   tutorialStore.startTutorial(gettingStartedTutorial);
+}
+
+function dismissButton() {
+  isDismissed.value = true;
+  localStorage.setItem(DISMISSED_KEY, "true");
 }
 </script>
 
@@ -22,6 +38,9 @@ function startTutorial() {
   <Teleport to="body">
     <Transition name="float-in">
       <div v-if="showButton" class="tutorial-start-container">
+        <button class="tutorial-dismiss-btn" @click="dismissButton" title="Dismiss">
+          <span class="material-icons">close</span>
+        </button>
         <button class="tutorial-start-btn" @click="startTutorial">
           <span class="btn-icon material-icons">school</span>
           <div class="btn-content">
@@ -41,6 +60,34 @@ function startTutorial() {
   bottom: 24px;
   right: 24px;
   z-index: 1000;
+}
+
+.tutorial-dismiss-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: 50%;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  z-index: 1;
+}
+
+.tutorial-dismiss-btn:hover {
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+}
+
+.tutorial-dismiss-btn .material-icons {
+  font-size: 16px;
 }
 
 .tutorial-start-btn {
