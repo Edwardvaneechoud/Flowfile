@@ -250,8 +250,8 @@ onUnmounted(() => {
         v-if="tutorialStore.isActive && !tutorialStore.tutorialPaused"
         class="tutorial-overlay"
       >
-        <!-- Backdrop with spotlight cutout - pointer-events: none allows clicks through -->
-        <div class="tutorial-backdrop">
+        <!-- Backdrop with spotlight cutout - only show when there's a target to highlight -->
+        <div v-if="spotlightStyle" class="tutorial-backdrop">
           <!-- SVG mask for spotlight effect -->
           <svg class="tutorial-mask" width="100%" height="100%">
             <defs>
