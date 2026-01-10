@@ -7,7 +7,6 @@ const tutorialStore = useTutorialStore();
 
 const targetRect = ref<DOMRect | null>(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
-const overlayRef = ref<HTMLElement | null>(null);
 
 // Compute spotlight position and size
 const spotlightStyle = computed(() => {
@@ -132,53 +131,6 @@ function handleScroll() {
   updateTargetPosition();
 }
 
-// Handle click on overlay (to detect clicks on highlighted element)
-function handleOverlayClick(event: MouseEvent) {
-  if (!tutorialStore.currentStep?.target) return;
-
-  const targetElement = document.querySelector(tutorialStore.currentStep.target) as HTMLElement;
-  if (!targetElement) return;
-
-  const rect = targetElement.getBoundingClientRect();
-  const padding = tutorialStore.currentStep.highlightPadding ?? 8;
-
-  // Check if click is within the spotlight area
-  const isWithinSpotlight =
-    event.clientX >= rect.left - padding &&
-    event.clientX <= rect.right + padding &&
-    event.clientY >= rect.top - padding &&
-    event.clientY <= rect.bottom + padding;
-
-  if (isWithinSpotlight) {
-    // Let the click through to the actual element
-    const elementAtPoint = document.elementFromPoint(event.clientX, event.clientY);
-
-    // Temporarily hide overlay to get the actual element
-    if (overlayRef.value) {
-      overlayRef.value.style.pointerEvents = "none";
-      const actualElement = document.elementFromPoint(event.clientX, event.clientY);
-      overlayRef.value.style.pointerEvents = "";
-
-      if (actualElement) {
-        // Create and dispatch a click event
-        const clickEvent = new MouseEvent("click", {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: event.clientX,
-          clientY: event.clientY,
-        });
-        actualElement.dispatchEvent(clickEvent);
-
-        // If this step expects a click action, complete it
-        if (tutorialStore.currentStep?.action === "click") {
-          tutorialStore.onActionCompleted();
-        }
-      }
-    }
-  }
-}
-
 // Mutation observer to detect DOM changes
 let mutationObserver: MutationObserver | null = null;
 
@@ -216,11 +168,9 @@ onUnmounted(() => {
     <Transition name="tutorial-fade">
       <div
         v-if="tutorialStore.isActive && !tutorialStore.tutorialPaused"
-        ref="overlayRef"
         class="tutorial-overlay"
-        @click="handleOverlayClick"
       >
-        <!-- Backdrop with spotlight cutout -->
+        <!-- Backdrop with spotlight cutout - pointer-events: none allows clicks through -->
         <div class="tutorial-backdrop">
           <!-- SVG mask for spotlight effect -->
           <svg class="tutorial-mask" width="100%" height="100%">
@@ -242,12 +192,12 @@ onUnmounted(() => {
           </svg>
         </div>
 
-        <!-- Spotlight border/highlight -->
+        <!-- Spotlight border/highlight - visual only, no pointer events -->
         <div v-if="spotlightStyle" class="tutorial-spotlight" :style="spotlightStyle">
           <div class="spotlight-border"></div>
         </div>
 
-        <!-- Tooltip -->
+        <!-- Tooltip - this is the only element that captures pointer events -->
         <TutorialTooltip
           v-if="tutorialStore.currentStep"
           :step="tutorialStore.currentStep"
@@ -274,7 +224,8 @@ onUnmounted(() => {
   width: 100vw;
   height: 100vh;
   z-index: 10000;
-  pointer-events: auto;
+  /* Allow clicks to pass through to the page */
+  pointer-events: none;
 }
 
 .tutorial-backdrop {
@@ -307,11 +258,11 @@ onUnmounted(() => {
   left: -2px;
   right: -2px;
   bottom: -2px;
-  border: 2px solid var(--color-accent, #3b82f6);
+  border: 2px solid var(--color-accent);
   border-radius: inherit;
   box-shadow:
-    0 0 0 4px rgba(59, 130, 246, 0.3),
-    0 0 20px rgba(59, 130, 246, 0.4);
+    0 0 0 4px color-mix(in srgb, var(--color-accent) 30%, transparent),
+    0 0 20px color-mix(in srgb, var(--color-accent) 40%, transparent);
   animation: spotlight-pulse 2s ease-in-out infinite;
 }
 
@@ -319,13 +270,13 @@ onUnmounted(() => {
   0%,
   100% {
     box-shadow:
-      0 0 0 4px rgba(59, 130, 246, 0.3),
-      0 0 20px rgba(59, 130, 246, 0.4);
+      0 0 0 4px color-mix(in srgb, var(--color-accent) 30%, transparent),
+      0 0 20px color-mix(in srgb, var(--color-accent) 40%, transparent);
   }
   50% {
     box-shadow:
-      0 0 0 6px rgba(59, 130, 246, 0.4),
-      0 0 30px rgba(59, 130, 246, 0.5);
+      0 0 0 6px color-mix(in srgb, var(--color-accent) 40%, transparent),
+      0 0 30px color-mix(in srgb, var(--color-accent) 50%, transparent);
   }
 }
 

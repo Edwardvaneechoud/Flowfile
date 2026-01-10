@@ -29,22 +29,38 @@ export const gettingStartedTutorial: Tutorial = {
       showPrevButton: false,
     },
 
-    // Step 2: Create a new flow
+    // Step 2: Click Quick Create button
     {
-      id: "create-flow",
+      id: "click-quick-create",
       title: "Create a New Flow",
       content: `
         <p>First, let's create a new flow.</p>
-        <p>Click the <strong>Quick Create</strong> button to instantly create a new flow with an auto-generated name.</p>
+        <p>Click the <strong>Quick Create</strong> button to open the flow creation dialog.</p>
       `,
       target: "[data-tutorial='quick-create-btn']",
       position: "bottom",
-      action: "click",
+      action: "observe",
       showNextButton: true,
       highlightPadding: 4,
     },
 
-    // Step 3: Explore the canvas
+    // Step 3: Click Create Flow in modal
+    {
+      id: "confirm-create-flow",
+      title: "Confirm Flow Creation",
+      content: `
+        <p>A dialog appeared where you can optionally name your flow.</p>
+        <p>Click <strong>Create Flow</strong> to create the flow with an auto-generated name, or enter a custom name first.</p>
+      `,
+      target: "[data-tutorial='create-flow-confirm-btn']",
+      position: "top",
+      action: "observe",
+      waitForElement: "[data-tutorial='create-flow-confirm-btn']",
+      showNextButton: true,
+      highlightPadding: 4,
+    },
+
+    // Step 4: Explore the canvas
     {
       id: "explore-canvas",
       title: "Your Flow Canvas",

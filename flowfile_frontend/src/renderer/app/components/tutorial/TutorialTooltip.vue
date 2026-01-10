@@ -218,11 +218,9 @@ function handleNext() {
 @keyframes tooltip-appear {
   from {
     opacity: 0;
-    transform: translate(-50%, 0) scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0) scale(1);
   }
 }
 

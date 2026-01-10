@@ -32,6 +32,7 @@
       <span class="btn-text">Generate code</span>
     </button>
     <button
+      v-if="!hasActiveFlow || tutorialStore.isActive"
       class="action-btn tutorial-btn"
       :class="{ active: tutorialStore.isActive }"
       data-tutorial="tutorial-btn"
@@ -93,7 +94,7 @@
     <template #footer>
       <span class="dialog-footer">
         <el-button @click="modalVisibleForQuickCreate = false">Cancel</el-button>
-        <el-button type="primary" @click="handleQuickCreateAction">Create Flow</el-button>
+        <el-button type="primary" data-tutorial="create-flow-confirm-btn" @click="handleQuickCreateAction">Create Flow</el-button>
       </span>
     </template>
   </el-dialog>
@@ -144,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlow } from "./utils";
@@ -169,6 +170,9 @@ import {
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
 const tutorialStore = useTutorialStore();
+
+// Show tutorial button only when no flow is open
+const hasActiveFlow = computed(() => nodeStore.flow_id && nodeStore.flow_id > 0);
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -504,21 +508,32 @@ onMounted(async () => {
 }
 
 .tutorial-btn {
-  background: linear-gradient(135deg, var(--color-accent-subtle, rgba(59, 130, 246, 0.1)) 0%, var(--color-background-primary, #fff) 100%);
-  border-color: var(--color-accent, #3b82f6);
+  background-color: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.tutorial-btn .btn-icon {
+  color: var(--color-accent);
 }
 
 .tutorial-btn:hover {
-  background: linear-gradient(135deg, var(--color-accent, #3b82f6) 0%, var(--color-accent-hover, #2563eb) 100%);
-  color: white;
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent, #fff);
 }
 
 .tutorial-btn:hover .btn-icon {
-  color: white;
+  color: var(--color-text-on-accent, #fff);
 }
 
 .tutorial-btn.active {
-  background: var(--color-accent, #3b82f6);
-  color: white;
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent, #fff);
+}
+
+.tutorial-btn.active .btn-icon {
+  color: var(--color-text-on-accent, #fff);
 }
 </style>
