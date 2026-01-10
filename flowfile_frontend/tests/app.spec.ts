@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchElectronApp, closeElectronApp } from './helpers/electronTestHelper';
+import { launchElectronApp, closeElectronApp, getMainWindow } from './helpers/electronTestHelper';
 import { ElectronApplication } from 'playwright-core';
 
 let electronApp: ElectronApplication | undefined;
@@ -36,7 +36,9 @@ test.describe('Services Startup Tests', () => {
       throw new Error('Electron app failed to launch - cannot run navigation test');
     }
 
-    const mainWindow = await electronApp.firstWindow();
+    // Use getMainWindow to get the actual main window, not the loading window
+    // (firstWindow() returns the loading window which gets closed)
+    const mainWindow = await getMainWindow(electronApp);
     expect(mainWindow).toBeDefined();
 
     // Verify window is available - fail if not
