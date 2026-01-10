@@ -14,24 +14,30 @@ def run_flow(flow_path: str) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    # Disable worker communication for CLI execution
+    from flowfile_core.configs.settings import OFFLOAD_TO_WORKER
+
+    OFFLOAD_TO_WORKER.set(False)
+
+    from flowfile_core.configs import logger
     from flowfile_core.flowfile.manage.io_flowfile import open_flow
 
     path = Path(flow_path)
     if not path.exists():
-        print(f"Error: File not found: {flow_path}")
+        logger.error(f"File not found: {flow_path}")
         return 1
 
     if path.suffix.lower() not in (".yaml", ".yml", ".json"):
-        print(f"Error: Unsupported file format: {path.suffix}")
-        print("Supported formats: .yaml, .yml, .json")
+        logger.error(f"Unsupported file format: {path.suffix}")
+        logger.info("Supported formats: .yaml, .yml, .json")
         return 1
 
-    print(f"Loading flow from: {flow_path}")
+    logger.info(f"Loading flow from: {flow_path}")
 
     try:
         flow = open_flow(path)
     except Exception as e:
-        print(f"Error loading flow: {e}")
+        logger.error(f"Error loading flow: {e}")
         return 1
 
     # Force local execution for CLI - no worker service needed
@@ -42,37 +48,35 @@ def run_flow(flow_path: str) -> int:
     for node_id in explore_data_nodes:
         flow.delete_node(node_id)
     if explore_data_nodes:
-        print(f"Skipping {len(explore_data_nodes)} explore_data node(s) (UI-only)")
+        logger.info(f"Skipping {len(explore_data_nodes)} explore_data node(s) (UI-only)")
 
     flow_name = flow.flow_settings.name or f"Flow {flow.flow_id}"
-    print(f"Running flow: {flow_name} (id={flow.flow_id})")
-    print(f"Nodes: {len(flow.nodes)}")
-    print("-" * 40)
+    logger.info(f"Running flow: {flow_name} (id={flow.flow_id})")
+    logger.info(f"Nodes: {len(flow.nodes)}")
 
     try:
         result = flow.run_graph()
     except Exception as e:
-        print(f"Error running flow: {e}")
+        logger.error(f"Error running flow: {e}")
         return 1
 
     if result is None:
-        print("Error: Flow execution returned no result")
+        logger.error("Flow execution returned no result")
         return 1
 
     # Display results
-    print("-" * 40)
     if result.success:
         duration = ""
         if result.start_time and result.end_time:
             duration = f" in {(result.end_time - result.start_time).total_seconds():.2f}s"
-        print(f"Flow completed successfully{duration}")
-        print(f"Nodes completed: {result.nodes_completed}/{result.number_of_nodes}")
+        logger.info(f"Flow completed successfully{duration}")
+        logger.info(f"Nodes completed: {result.nodes_completed}/{result.number_of_nodes}")
     else:
-        print("Flow execution failed")
+        logger.error("Flow execution failed")
         for node_result in result.node_step_result:
             if not node_result.success and node_result.error:
                 node_name = node_result.node_name or f"Node {node_result.node_id}"
-                print(f"  - {node_name}: {node_result.error}")
+                logger.error(f"  - {node_name}: {node_result.error}")
         return 1
 
     return 0
