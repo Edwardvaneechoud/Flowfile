@@ -11,67 +11,96 @@
       </p>
     </div>
 
-    <div class="install-steps">
-      <div class="install-step">
-        <div class="step-number">1</div>
-        <div class="step-content">
-          <h3 class="step-title">Install from PyPI</h3>
-          <div class="code-block-wrapper">
-            <code class="install-code">pip install flowfile</code>
-            <button class="copy-btn" data-copy="pip install flowfile" aria-label="Copy command">
-              <svg class="copy-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    <div class="install-flow">
+      <!-- Connection Lines SVG -->
+      <svg class="flow-connections" viewBox="0 0 700 60" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#6366f1" stop-opacity="0.7" />
+            <stop offset="50%" stop-color="#f97316" stop-opacity="0.7" />
+            <stop offset="100%" stop-color="#22c55e" stop-opacity="0.7" />
+          </linearGradient>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" opacity="0.7" />
+          </marker>
+        </defs>
+        <path class="flow-line" d="M 95 30 L 270 30" marker-end="url(#arrowhead)" />
+        <path class="flow-line" d="M 430 30 L 605 30" marker-end="url(#arrowhead)" />
+      </svg>
+
+      <div class="flow-steps">
+        <!-- Step 1: Install -->
+        <div class="flow-step">
+          <div class="step-node" data-step="1">
+            <div class="node-icon install-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
-              <svg class="check-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </button>
+            </div>
+            <span class="step-label">Install</span>
+          </div>
+          <div class="step-content">
+            <div class="code-block-wrapper">
+              <code class="install-code">pip install flowfile</code>
+              <button class="copy-btn" data-copy="pip install flowfile" aria-label="Copy command">
+                <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <svg class="check-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="step-arrow">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <polyline points="19 12 12 19 5 12" />
-        </svg>
-      </div>
-
-      <div class="install-step">
-        <div class="step-number">2</div>
-        <div class="step-content">
-          <h3 class="step-title">Launch the Visual Editor</h3>
-          <div class="code-block-wrapper">
-            <code class="install-code">flowfile run ui</code>
-            <button class="copy-btn" data-copy="flowfile run ui" aria-label="Copy command">
-              <svg class="copy-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        <!-- Step 2: Launch -->
+        <div class="flow-step">
+          <div class="step-node" data-step="2">
+            <div class="node-icon launch-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polygon points="5 3 19 12 5 21 5 3" />
               </svg>
-              <svg class="check-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </button>
+            </div>
+            <span class="step-label">Launch</span>
+          </div>
+          <div class="step-content">
+            <div class="code-block-wrapper">
+              <code class="install-code">flowfile run ui</code>
+              <button class="copy-btn" data-copy="flowfile run ui" aria-label="Copy command">
+                <svg class="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <svg class="check-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="step-arrow">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <polyline points="19 12 12 19 5 12" />
-        </svg>
-      </div>
-
-      <div class="install-step final">
-        <div class="step-number success">✓</div>
-        <div class="step-content">
-          <h3 class="step-title">Start building pipelines</h3>
-          <p class="step-description">
-            The visual editor opens in your browser. Start dragging nodes to build
-            your first data pipeline!
-          </p>
+        <!-- Step 3: Build -->
+        <div class="flow-step">
+          <div class="step-node" data-step="3">
+            <div class="node-icon build-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+            </div>
+            <span class="step-label">Build</span>
+          </div>
+          <div class="step-content">
+            <p class="step-description">
+              Drag & drop nodes to create your data pipeline
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -100,54 +129,109 @@
     background: var(--color-bg-elevated);
   }
 
-  .install-steps {
-    max-width: 500px;
+  .install-flow {
+    position: relative;
+    max-width: 800px;
     margin: 0 auto 3rem;
   }
 
-  .install-step {
-    display: flex;
-    gap: 1.25rem;
-    align-items: flex-start;
+  .flow-connections {
+    position: absolute;
+    top: 28px;
+    left: 0;
+    width: 100%;
+    height: 60px;
+    pointer-events: none;
+    z-index: 0;
   }
 
-  .step-number {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
+  .flow-line {
+    stroke: url(#flowGradient);
+    stroke-width: 2;
+    fill: none;
+    stroke-dasharray: 8 4;
+    animation: flowDash 1s linear infinite;
+  }
+
+  @keyframes flowDash {
+    to {
+      stroke-dashoffset: -12;
+    }
+  }
+
+  .flow-steps {
+    display: flex;
+    justify-content: space-between;
+    position: relative;
+    z-index: 1;
+  }
+
+  .flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    max-width: 220px;
+  }
+
+  .step-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: default;
+  }
+
+  .node-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
     background: var(--color-bg-card);
     border: 2px solid var(--color-border);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 700;
-    font-size: 1rem;
-    color: var(--color-primary);
-    flex-shrink: 0;
+    transition: all 0.3s ease;
   }
 
-  .step-number.success {
-    background: #22c55e;
+  .node-icon svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .node-icon.install-icon {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.1);
+  }
+  .node-icon.install-icon svg {
+    stroke: #6366f1;
+  }
+
+  .node-icon.launch-icon {
+    border-color: #f97316;
+    background: rgba(249, 115, 22, 0.1);
+  }
+  .node-icon.launch-icon svg {
+    stroke: #f97316;
+  }
+
+  .node-icon.build-icon {
     border-color: #22c55e;
-    color: white;
+    background: rgba(34, 197, 94, 0.1);
+  }
+  .node-icon.build-icon svg {
+    stroke: #22c55e;
   }
 
-  .step-content {
-    flex: 1;
-    padding-bottom: 0.5rem;
-  }
-
-  .step-title {
-    font-size: 1.1rem;
+  .step-label {
+    margin-top: 8px;
+    font-size: 13px;
     font-weight: 600;
-    margin-bottom: 0.75rem;
     color: var(--color-text);
   }
 
-  .step-description {
-    color: var(--color-text-muted);
-    font-size: 0.95rem;
-    line-height: 1.6;
+  .step-content {
+    margin-top: 16px;
+    width: 100%;
   }
 
   .code-block-wrapper {
@@ -156,15 +240,16 @@
     background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: 8px;
-    padding: 0.75rem 1rem;
-    gap: 1rem;
+    padding: 0.625rem 0.875rem;
+    gap: 0.75rem;
   }
 
   .install-code {
     flex: 1;
     font-family: var(--font-mono);
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     color: var(--color-accent);
+    white-space: nowrap;
   }
 
   .copy-btn {
@@ -177,6 +262,7 @@
     align-items: center;
     justify-content: center;
     transition: color 0.2s ease;
+    flex-shrink: 0;
   }
 
   .copy-btn:hover {
@@ -187,15 +273,11 @@
     color: #22c55e;
   }
 
-  .step-arrow {
-    display: flex;
-    justify-content: center;
-    padding: 0.5rem 0 0.5rem 18px;
-    color: var(--color-border);
-  }
-
-  .install-step.final {
-    padding-top: 0.5rem;
+  .step-description {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    text-align: center;
   }
 
   .install-cta {
@@ -205,19 +287,32 @@
     flex-wrap: wrap;
   }
 
-  @media (max-width: 500px) {
-    .install-step {
+  @media (max-width: 700px) {
+    .flow-connections {
+      display: none;
+    }
+
+    .flow-steps {
       flex-direction: column;
       align-items: center;
-      text-align: center;
+      gap: 2rem;
     }
 
-    .step-arrow {
-      padding-left: 0;
+    .flow-step {
+      max-width: 280px;
+      position: relative;
     }
 
-    .step-content {
-      width: 100%;
+    .flow-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      bottom: -1.25rem;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 2px;
+      height: 16px;
+      background: linear-gradient(to bottom, #6366f1, #f97316);
+      opacity: 0.5;
     }
   }
 </style>
