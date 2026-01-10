@@ -94,17 +94,22 @@ router.beforeEach(async (to, _from, next) => {
   const hideInElectron = to.matched.some((record) => record.meta.hideInElectron);
   const isSetupPage = to.matched.some((record) => record.meta.isSetupPage);
 
-  if (!authService.isInElectronMode()) {
-    if (!setupChecked || isSetupPage) {
-      try {
-        const status = await setupService.getSetupStatus(isSetupPage);
-        setupRequired = status.setup_required;
-        setupChecked = status.mode !== "unknown";
-      } catch {
-        setupRequired = true;
-        setupChecked = false;
-      }
+  // First, check if we need to get mode from backend (for "flowfile run ui" case)
+  if (!setupChecked || isSetupPage) {
+    try {
+      const status = await setupService.getSetupStatus(isSetupPage);
+      // Update auth service with backend mode - this handles "flowfile run ui"
+      // where electronAPI doesn't exist but backend is in electron mode
+      authService.setModeFromBackend(status.mode);
+      setupRequired = status.setup_required;
+      setupChecked = status.mode !== "unknown";
+    } catch {
+      setupRequired = true;
+      setupChecked = false;
     }
+  }
+
+  if (!authService.isInElectronMode()) {
 
     if (setupRequired && !isSetupPage) {
       next({ name: "setup" });
