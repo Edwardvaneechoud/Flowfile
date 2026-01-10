@@ -328,6 +328,18 @@ sql_type_name_to_polars: dict[str, PolarsType] = {
     # --- Other ---
     "null": None,
     "sql_variant": pl.Object,
+
+    # --- DuckDB-specific types ---
+    "hugeint": pl.Int64,
+    "uhugeint": pl.UInt64,
+    "utinyint": pl.UInt8,
+    "usmallint": pl.UInt16,
+    "uinteger": pl.UInt32,
+    "ubigint": pl.UInt64,
+    "list": pl.List,
+    "struct": pl.Struct,
+    "map": pl.Object,
+    "union": pl.Object,
 }
 
 # String to string mapping
@@ -376,7 +388,7 @@ def construct_sql_uri(
     Constructs a SQL URI string from the provided parameters.
 
     Args:
-        database_type: Database type (postgresql, mysql, sqlite, etc.)
+        database_type: Database type (postgresql, mysql, sqlite, mssql, oracle, duckdb)
         host: Database host address
         port: Database port number
         username: Database username
@@ -395,13 +407,19 @@ def construct_sql_uri(
     if url:
         return url
 
-    # For SQLite, we handle differently since it uses a file path
-    if database_type.lower() == "sqlite":
-        # For SQLite, database is the path to the file
+    db_type = database_type.lower()
+
+    # SQLite - file-based database
+    if db_type == "sqlite":
         path = database or "./database.db"
         return f"sqlite:///{path}"
 
-    # Validate that minimum required fields are present for other databases
+    # DuckDB - file-based or in-memory database
+    if db_type == "duckdb":
+        path = database or ":memory:"
+        return f"duckdb:///{path}"
+
+    # Default handling for standard databases (postgresql, mysql, mssql, oracle)
     if not host:
         raise ValueError("Host is required to create a URI")
 

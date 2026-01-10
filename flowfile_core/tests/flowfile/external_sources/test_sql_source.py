@@ -1,5 +1,6 @@
 import polars as pl
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 
 from flowfile_core.database.connection import get_db_context
@@ -16,6 +17,10 @@ from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source impor
     get_query_columns,
     get_table_column_types,
     validate_sql_query,
+)
+from flowfile_core.flowfile.sources.external_sources.sql_source.utils import (
+    construct_sql_uri,
+    sql_type_name_to_polars,
 )
 from flowfile_core.schemas.input_schema import (
     DatabaseConnection,
@@ -585,3 +590,243 @@ class TestSQLQueryValidation:
         )
         assert sql_source.query_mode == "table"
         assert "SELECT * FROM users" in sql_source.query
+
+
+# ============================================================================
+# URI Construction Tests (no Docker required)
+# ============================================================================
+
+
+class TestURIConstruction:
+    """Tests for SQL URI construction - these don't require a database connection."""
+
+    def test_postgresql_uri(self):
+        """Test PostgreSQL URI construction."""
+        uri = construct_sql_uri(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            username="user",
+            password=SecretStr("pass"),
+            database="mydb"
+        )
+        assert uri == "postgresql://user:pass@localhost:5432/mydb"
+
+    def test_postgresql_uri_no_port(self):
+        """Test PostgreSQL URI without port."""
+        uri = construct_sql_uri(
+            database_type="postgresql",
+            host="localhost",
+            username="user",
+            password=SecretStr("pass"),
+            database="mydb"
+        )
+        assert uri == "postgresql://user:pass@localhost/mydb"
+
+    def test_postgresql_uri_special_chars_in_password(self):
+        """Test PostgreSQL URI with special characters in password."""
+        uri = construct_sql_uri(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            username="user",
+            password=SecretStr("p@ss!w0rd#$%"),
+            database="mydb"
+        )
+        assert "p%40ss%21w0rd%23%24%25" in uri
+
+    def test_mysql_uri(self):
+        """Test MySQL URI construction."""
+        uri = construct_sql_uri(
+            database_type="mysql",
+            host="localhost",
+            port=3306,
+            username="user",
+            password=SecretStr("pass"),
+            database="mydb"
+        )
+        assert uri == "mysql://user:pass@localhost:3306/mydb"
+
+    def test_sqlite_uri(self):
+        """Test SQLite URI construction."""
+        uri = construct_sql_uri(
+            database_type="sqlite",
+            database="/path/to/database.db"
+        )
+        assert uri == "sqlite:////path/to/database.db"
+
+    def test_sqlite_uri_default(self):
+        """Test SQLite URI with default database path."""
+        uri = construct_sql_uri(database_type="sqlite")
+        assert uri == "sqlite:///./database.db"
+
+    def test_duckdb_uri(self):
+        """Test DuckDB URI construction."""
+        uri = construct_sql_uri(
+            database_type="duckdb",
+            database="/path/to/database.duckdb"
+        )
+        assert uri == "duckdb:////path/to/database.duckdb"
+
+    def test_duckdb_uri_memory(self):
+        """Test DuckDB in-memory URI construction."""
+        uri = construct_sql_uri(database_type="duckdb")
+        assert uri == "duckdb:///:memory:"
+
+    def test_mssql_uri(self):
+        """Test MSSQL URI construction."""
+        uri = construct_sql_uri(
+            database_type="mssql",
+            host="localhost",
+            port=1433,
+            username="user",
+            password=SecretStr("pass"),
+            database="mydb"
+        )
+        assert uri == "mssql://user:pass@localhost:1433/mydb"
+
+    def test_oracle_uri(self):
+        """Test Oracle URI construction."""
+        uri = construct_sql_uri(
+            database_type="oracle",
+            host="localhost",
+            port=1521,
+            username="user",
+            password=SecretStr("pass"),
+            database="mydb"
+        )
+        assert uri == "oracle://user:pass@localhost:1521/mydb"
+
+    def test_url_override(self):
+        """Test that explicit URL overrides all other parameters."""
+        custom_url = "postgresql://custom:url@host:5432/db"
+        uri = construct_sql_uri(
+            database_type="mysql",
+            host="localhost",
+            username="ignored",
+            password=SecretStr("ignored"),
+            url=custom_url
+        )
+        assert uri == custom_url
+
+    def test_host_required_for_server_databases(self):
+        """Test that host is required for server-based databases."""
+        with pytest.raises(ValueError) as exc_info:
+            construct_sql_uri(
+                database_type="postgresql",
+                username="user",
+                password=SecretStr("pass"),
+                database="mydb"
+            )
+        assert "Host is required" in str(exc_info.value)
+
+    def test_uri_with_extra_params(self):
+        """Test URI construction with additional connection parameters."""
+        uri = construct_sql_uri(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            username="user",
+            password=SecretStr("pass"),
+            database="mydb",
+            sslmode="require",
+            connect_timeout="10"
+        )
+        assert "sslmode=require" in uri
+        assert "connect_timeout=10" in uri
+
+    def test_uri_without_password(self):
+        """Test URI construction without password."""
+        uri = construct_sql_uri(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            username="user",
+            database="mydb"
+        )
+        assert uri == "postgresql://user@localhost:5432/mydb"
+
+    def test_uri_without_username(self):
+        """Test URI construction without username."""
+        uri = construct_sql_uri(
+            database_type="postgresql",
+            host="localhost",
+            port=5432,
+            database="mydb"
+        )
+        assert uri == "postgresql://localhost:5432/mydb"
+
+
+# ============================================================================
+# Type Mapping Tests (no Docker required)
+# ============================================================================
+
+
+class TestTypeMappings:
+    """Tests for SQL to Polars type mappings - these don't require a database connection."""
+
+    def test_duckdb_hugeint_mapping(self):
+        """Test DuckDB HUGEINT type mapping."""
+        assert sql_type_name_to_polars.get("hugeint") == pl.Int64
+
+    def test_duckdb_unsigned_types(self):
+        """Test DuckDB unsigned integer type mappings."""
+        assert sql_type_name_to_polars.get("utinyint") == pl.UInt8
+        assert sql_type_name_to_polars.get("usmallint") == pl.UInt16
+        assert sql_type_name_to_polars.get("uinteger") == pl.UInt32
+        assert sql_type_name_to_polars.get("ubigint") == pl.UInt64
+
+    def test_duckdb_complex_types(self):
+        """Test DuckDB complex type mappings."""
+        assert sql_type_name_to_polars.get("list") == pl.List
+        assert sql_type_name_to_polars.get("struct") == pl.Struct
+        assert sql_type_name_to_polars.get("map") == pl.Object
+        assert sql_type_name_to_polars.get("union") == pl.Object
+
+    def test_common_type_mappings(self):
+        """Test common SQL type mappings."""
+        # Integers
+        assert sql_type_name_to_polars.get("int") == pl.Int32
+        assert sql_type_name_to_polars.get("integer") == pl.Int64
+        assert sql_type_name_to_polars.get("bigint") == pl.Int64
+        assert sql_type_name_to_polars.get("smallint") == pl.Int16
+        assert sql_type_name_to_polars.get("tinyint") == pl.Int8
+
+        # Floats
+        assert sql_type_name_to_polars.get("float") == pl.Float64
+        assert sql_type_name_to_polars.get("double") == pl.Float64
+        assert sql_type_name_to_polars.get("real") == pl.Float32
+
+        # Strings
+        assert sql_type_name_to_polars.get("varchar") == pl.Utf8
+        assert sql_type_name_to_polars.get("text") == pl.Utf8
+        assert sql_type_name_to_polars.get("char") == pl.Utf8
+
+        # Dates/Times
+        assert sql_type_name_to_polars.get("date") == pl.Date
+        assert sql_type_name_to_polars.get("datetime") == pl.Datetime
+        assert sql_type_name_to_polars.get("timestamp") == pl.Datetime
+        assert sql_type_name_to_polars.get("time") == pl.Time
+
+        # Boolean
+        assert sql_type_name_to_polars.get("boolean") == pl.Boolean
+        assert sql_type_name_to_polars.get("bool") == pl.Boolean
+
+    def test_mysql_specific_types(self):
+        """Test MySQL-specific type mappings."""
+        assert sql_type_name_to_polars.get("tinytext") == pl.Utf8
+        assert sql_type_name_to_polars.get("mediumtext") == pl.Utf8
+        assert sql_type_name_to_polars.get("longtext") == pl.Utf8
+        assert sql_type_name_to_polars.get("mediumint") == pl.Int32
+
+    def test_get_polars_type_with_string(self):
+        """Test get_polars_type function with string type names."""
+        assert get_polars_type("varchar") == pl.Utf8
+        assert get_polars_type("INTEGER") == pl.Int64  # Should be case-insensitive
+        assert get_polars_type("boolean") == pl.Boolean
+        assert get_polars_type("hugeint") == pl.Int64  # DuckDB type
+
+    def test_get_polars_type_unknown_defaults_to_string(self):
+        """Test that unknown types default to Utf8."""
+        assert get_polars_type("unknown_type") == pl.Utf8
+        assert get_polars_type("some_random_type") == pl.Utf8

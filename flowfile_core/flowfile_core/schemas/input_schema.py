@@ -51,6 +51,16 @@ InputConnectionClass = Literal[
 
 InputType = Literal["main", "left", "right"]
 
+# Supported database types for SQL connections
+DatabaseType = Literal[
+    "postgresql",
+    "mysql",
+    "sqlite",
+    "mssql",
+    "oracle",
+    "duckdb",
+]
+
 
 class NewDirectory(BaseModel):
     """Defines the information required to create a new directory."""
@@ -505,7 +515,7 @@ class NodeRead(NodeBase):
 class DatabaseConnection(BaseModel):
     """Defines the connection parameters for a database."""
 
-    database_type: str = "postgresql"
+    database_type: DatabaseType = "postgresql"
     username: str | None = None
     password_ref: SecretRef | None = None
     host: str | None = None
@@ -518,7 +528,7 @@ class FullDatabaseConnection(BaseModel):
     """A complete database connection model including the secret password."""
 
     connection_name: str
-    database_type: str = "postgresql"
+    database_type: DatabaseType = "postgresql"
     username: str
     password: SecretStr
     host: str | None = None
@@ -532,7 +542,7 @@ class FullDatabaseConnectionInterface(BaseModel):
     """A database connection model intended for UI display, omitting the password."""
 
     connection_name: str
-    database_type: str = "postgresql"
+    database_type: DatabaseType = "postgresql"
     username: str
     host: str | None = None
     port: int | None = None
