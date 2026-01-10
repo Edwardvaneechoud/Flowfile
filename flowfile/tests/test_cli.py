@@ -5,7 +5,6 @@ Run with:
     pytest flowfile/tests/test_cli.py -v
 """
 
-import logging
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -21,40 +20,6 @@ def temp_dir():
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
-
-@pytest.fixture
-def capture_logs():
-    """Capture logs from the PipelineHandler logger."""
-    # Get the logger used by flowfile_core
-    logger = logging.getLogger("PipelineHandler")
-
-    # Store original settings
-    original_handlers = logger.handlers.copy()
-    original_level = logger.level
-    original_propagate = logger.propagate
-
-    # Create a handler to capture log messages
-    log_capture = []
-
-    class ListHandler(logging.Handler):
-        def emit(self, record):
-            log_capture.append(self.format(record))
-
-    handler = ListHandler()
-    handler.setLevel(logging.DEBUG)
-    handler.setFormatter(logging.Formatter('%(message)s'))
-
-    # Add our handler
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-
-    yield log_capture
-
-    # Restore original settings
-    logger.handlers = original_handlers
-    logger.level = original_level
-    logger.propagate = original_propagate
 
 
 @pytest.fixture
@@ -108,15 +73,15 @@ def simple_flow_yaml(temp_dir: Path) -> Path:
 class TestRunFlowCommand:
     """Tests for the 'flowfile run flow' CLI command."""
 
-    def test_run_flow_file_not_found(self, capture_logs):
+    def test_run_flow_file_not_found(self, capsys):
         """Test error when file doesn't exist."""
         result = run_flow('/nonexistent/path/flow.yaml')
 
         assert result == 1
-        log_text = '\n'.join(capture_logs)
-        assert 'File not found' in log_text
+        captured = capsys.readouterr()
+        assert 'File not found' in captured.err
 
-    def test_run_flow_unsupported_format(self, temp_dir: Path, capture_logs):
+    def test_run_flow_unsupported_format(self, temp_dir: Path, capsys):
         """Test error for unsupported file format."""
         txt_path = temp_dir / 'flow.txt'
         txt_path.write_text('not a flow')
@@ -124,10 +89,10 @@ class TestRunFlowCommand:
         result = run_flow(str(txt_path))
 
         assert result == 1
-        log_text = '\n'.join(capture_logs)
-        assert 'Unsupported file format' in log_text
+        captured = capsys.readouterr()
+        assert 'Unsupported file format' in captured.err
 
-    def test_run_flow_invalid_yaml(self, temp_dir: Path, capture_logs):
+    def test_run_flow_invalid_yaml(self, temp_dir: Path, capsys):
         """Test error when YAML is invalid or not a valid flow."""
         invalid_yaml = temp_dir / 'invalid.yaml'
         invalid_yaml.write_text('not: a: valid: flow')
@@ -135,24 +100,24 @@ class TestRunFlowCommand:
         result = run_flow(str(invalid_yaml))
 
         assert result == 1
-        log_text = '\n'.join(capture_logs)
-        assert 'Error loading flow' in log_text
+        captured = capsys.readouterr()
+        assert 'Error loading flow' in captured.err
 
-    def test_run_flow_success(self, simple_flow_yaml: Path, capture_logs):
+    def test_run_flow_success(self, simple_flow_yaml: Path, capsys):
         """Test successful flow execution."""
         result = run_flow(str(simple_flow_yaml))
 
         assert result == 0
 
-        # Check log output contains expected messages
-        log_text = '\n'.join(capture_logs)
-        assert 'Loading flow from:' in log_text
-        assert 'Running flow:' in log_text
-        assert 'Nodes:' in log_text
-        assert 'Flow completed successfully' in log_text
-        assert 'Nodes completed:' in log_text
+        # Check output contains expected messages
+        captured = capsys.readouterr()
+        assert 'Loading flow from:' in captured.out
+        assert 'Running flow:' in captured.out
+        assert 'Nodes:' in captured.out
+        assert 'Flow completed successfully' in captured.out
+        assert 'Nodes completed:' in captured.out
 
-    def test_run_flow_json_format(self, temp_dir: Path, capture_logs):
+    def test_run_flow_json_format(self, temp_dir: Path, capsys):
         """Test running a flow from JSON format."""
         import json
 
@@ -197,8 +162,8 @@ class TestRunFlowCommand:
         result = run_flow(str(json_path))
 
         assert result == 0
-        log_text = '\n'.join(capture_logs)
-        assert 'Flow completed successfully' in log_text
+        captured = capsys.readouterr()
+        assert 'Flow completed successfully' in captured.out
 
     def test_run_flow_yml_extension(self, temp_dir: Path):
         """Test that .yml extension is supported."""
@@ -242,28 +207,28 @@ class TestRunFlowCommand:
 
         assert result == 0
 
-    def test_run_flow_displays_duration(self, simple_flow_yaml: Path, capture_logs):
+    def test_run_flow_displays_duration(self, simple_flow_yaml: Path, capsys):
         """Test that execution duration is displayed on success."""
         result = run_flow(str(simple_flow_yaml))
 
         assert result == 0
         # Should show duration in seconds
-        log_text = '\n'.join(capture_logs)
-        assert ' in ' in log_text and 's' in log_text
+        captured = capsys.readouterr()
+        assert ' in ' in captured.out and 's' in captured.out
 
-    def test_run_flow_shows_node_count(self, simple_flow_yaml: Path, capture_logs):
+    def test_run_flow_shows_node_count(self, simple_flow_yaml: Path, capsys):
         """Test that node count is displayed."""
         result = run_flow(str(simple_flow_yaml))
 
         assert result == 0
-        log_text = '\n'.join(capture_logs)
-        assert 'Nodes: 1' in log_text
+        captured = capsys.readouterr()
+        assert 'Nodes: 1' in captured.out
 
 
 class TestRunFlowWithFailures:
     """Tests for flow execution failure scenarios."""
 
-    def test_run_flow_empty_flow(self, temp_dir: Path, capture_logs):
+    def test_run_flow_empty_flow(self, temp_dir: Path, capsys):
         """Test running a flow with no nodes."""
         flow_data = {
             'flowfile_version': '0.5.0',
@@ -287,8 +252,8 @@ class TestRunFlowWithFailures:
 
         # Empty flow should still succeed (0 nodes to execute)
         assert result == 0
-        log_text = '\n'.join(capture_logs)
-        assert 'Nodes: 0' in log_text
+        captured = capsys.readouterr()
+        assert 'Nodes: 0' in captured.out
 
 
 class TestCLIArgParsing:
