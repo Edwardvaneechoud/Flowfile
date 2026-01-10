@@ -372,6 +372,7 @@ export const gettingStartedTutorial: Tutorial = {
           <li><strong>Write data</strong> - Final output to be saved</li>
           
         </ul>
+        <p style="font-size: 12px; color: var(--color-text-secondary);"><strong>Tip:</strong> If you don't see any data, make sure you have set up the flow to run in Development mode.</p>
       `,
       position: "center",
       action: "observe",
