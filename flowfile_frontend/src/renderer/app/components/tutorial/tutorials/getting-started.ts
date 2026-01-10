@@ -1,5 +1,6 @@
 // Getting Started Tutorial - Guides users through creating their first flow
 import type { Tutorial } from "../../../stores/tutorial-store";
+import { useNodeStore } from "../../../stores/column-store";
 
 export const gettingStartedTutorial: Tutorial = {
   id: "getting-started",
@@ -169,6 +170,11 @@ export const gettingStartedTutorial: Tutorial = {
       waitForElement: "#nodeSettings",
       showNextButton: true,
       highlightPadding: 4,
+      onExit: () => {
+        // Close the node settings panel by deselecting the node
+        const nodeStore = useNodeStore();
+        nodeStore.nodeId = -1;
+      },
     },
 
     // Step 9: Explore transformations
