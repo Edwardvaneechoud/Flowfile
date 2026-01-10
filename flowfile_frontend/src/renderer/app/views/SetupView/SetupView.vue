@@ -192,7 +192,7 @@ const copyEnvVar = () => {
   display: flex;
   gap: var(--spacing-3);
   padding: var(--spacing-4);
-  background-color: var(--color-info-light);
+  background-color: var(--color-background-secondary);
   border: 1px solid var(--color-info);
   border-radius: var(--border-radius-md);
 }
