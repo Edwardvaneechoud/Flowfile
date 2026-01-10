@@ -70,6 +70,7 @@ class FullCloudStorageConnection(BaseModel):
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret: SecretStr | None = None
+    azure_sas_token: SecretStr | None = None
 
     # Common
     endpoint_url: str | None = None
@@ -84,6 +85,10 @@ class FullCloudStorageConnection(BaseModel):
         """
         if self.storage_type == "s3":
             return self._get_s3_storage_options()
+        elif self.storage_type == "adls":
+            return self._get_adls_storage_options()
+        else:
+            raise ValueError(f"Unsupported storage type: {self.storage_type}")
 
     def _get_s3_storage_options(self) -> dict[str, Any]:
         """Build S3-specific storage options."""
@@ -124,6 +129,44 @@ class FullCloudStorageConnection(BaseModel):
             storage_options["aws_access_key_id"] = credentials["AccessKeyId"]
             storage_options["aws_secret_access_key"] = decrypt_secret(credentials["SecretAccessKey"]).get_secret_value()
             storage_options["aws_session_token"] = decrypt_secret(credentials["SessionToken"]).get_secret_value()
+
+        return storage_options
+
+    def _get_adls_storage_options(self) -> dict[str, Any]:
+        """Build Azure ADLS-specific storage options."""
+        auth_method = self.auth_method
+        print(f"Building ADLS storage options for auth_method: '{auth_method}'")
+
+        storage_options = {}
+
+        # Common options
+        if self.azure_account_name:
+            storage_options["account_name"] = self.azure_account_name
+
+        if auth_method == "access_key":
+            # Account key authentication
+            if self.azure_account_key:
+                storage_options["account_key"] = decrypt_secret(
+                    self.azure_account_key.get_secret_value()
+                ).get_secret_value()
+
+        elif auth_method == "service_principal":
+            # Service principal authentication
+            if self.azure_tenant_id:
+                storage_options["tenant_id"] = self.azure_tenant_id
+            if self.azure_client_id:
+                storage_options["client_id"] = self.azure_client_id
+            if self.azure_client_secret:
+                storage_options["client_secret"] = decrypt_secret(
+                    self.azure_client_secret.get_secret_value()
+                ).get_secret_value()
+
+        elif auth_method == "sas_token":
+            # SAS token authentication
+            if self.azure_sas_token:
+                storage_options["sas_token"] = decrypt_secret(
+                    self.azure_sas_token.get_secret_value()
+                ).get_secret_value()
 
         return storage_options
 

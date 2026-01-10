@@ -59,6 +59,9 @@ tqdm = "^4.67.1"
 s3fs = "^2025.7.0"
 pl-fuzzy-frame-match = ">=0.4.0"
 pyyaml = "^6.0.3"
+azure-storage-blob = "^12.24.0"
+azure-identity = "^1.19.0"
+adlfs = "^2025.1.0"
 
 
 [tool.poetry.scripts]
@@ -71,6 +74,8 @@ stop_postgres = "test_utils.postgres.commands:stop_postgres"
 flowfile = "flowfile.__main__:main"
 start_minio = "test_utils.s3.commands:start_minio"
 stop_minio = "test_utils.s3.commands:stop_minio"
+start_azurite = "test_utils.adls.commands:start_azurite"
+stop_azurite = "test_utils.adls.commands:stop_azurite"
 flowfile-migrate = "tools.migrate.__main__:main"
 
 [tool.poetry.group.build]

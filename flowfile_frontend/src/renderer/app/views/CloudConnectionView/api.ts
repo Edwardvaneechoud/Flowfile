@@ -34,6 +34,7 @@ const toPythonFormat = (
     azure_tenant_id: connection.azureTenantId,
     azure_client_id: connection.azureClientId,
     azure_client_secret: connection.azureClientSecret,
+    azure_sas_token: connection.azureSasToken,
 
     // Common
     endpoint_url: connection.endpointUrl,

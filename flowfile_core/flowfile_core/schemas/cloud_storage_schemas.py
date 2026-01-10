@@ -58,6 +58,7 @@ class FullCloudStorageConnectionWorkerInterface(AuthSettingsInput):
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret: str | None = None
+    azure_sas_token: str | None = None
 
     # Common
     endpoint_url: str | None = None
@@ -81,6 +82,7 @@ class FullCloudStorageConnection(AuthSettingsInput):
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret: SecretStr | None = None
+    azure_sas_token: SecretStr | None = None
 
     # Common
     endpoint_url: str | None = None
@@ -111,6 +113,7 @@ class FullCloudStorageConnection(AuthSettingsInput):
             azure_account_key=encrypt_for_worker(self.azure_account_key, user_id),
             azure_client_id=self.azure_client_id,
             azure_client_secret=encrypt_for_worker(self.azure_client_secret, user_id),
+            azure_sas_token=encrypt_for_worker(self.azure_sas_token, user_id),
             endpoint_url=self.endpoint_url,
             verify_ssl=self.verify_ssl,
         )
