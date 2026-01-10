@@ -90,7 +90,7 @@ defineExpose({
 .button-group .el-button:first-child:not([disabled]) {
   background-color: var(--primary-blue) !important;
   border: 1px solid var(--primary-blue-light) !important;
-  color: var(--color-text-inverse) !important;
+  color: var(--color-accent-subtle) !important;
 }
 
 /* Run button - hover state */
@@ -103,7 +103,7 @@ defineExpose({
 .button-group .el-button:first-child[disabled] {
   background-color: var(--color-gray-400) !important;
   border: 1px solid var(--color-gray-400) !important;
-  color: var(--color-text-inverse) !important;
+  color: var(--color-accent-subtle) !important;
   cursor: not-allowed;
   opacity: 0.7;
 }
@@ -112,7 +112,7 @@ defineExpose({
 .button-group .el-button:nth-child(2) {
   background-color: var(--color-danger) !important;
   border: 1px solid var(--color-danger) !important;
-  color: var(--color-text-inverse) !important;
+  color: var(--color-accent-subtle) !important;
 }
 
 /* Cancel button - hover state */

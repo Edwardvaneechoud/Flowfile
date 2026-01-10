@@ -162,7 +162,7 @@ export const gettingStartedTutorial: Tutorial = {
 {"country":"Germany","product":"Widget","revenue":1500},<br>
 {"country":"France","product":"Gadget","revenue":2100}]
         </div>
-        <p style="font-size: 12px; color: var(--color-text-secondary);">Or manually add columns (country, product, revenue) and rows.</p>
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Or manually add columns (country, product, revenue) and rows. Make sure to change the data type of revenue to "integer".</p>
       `,
       target: "#nodeSettings",
       position: "left",
@@ -306,8 +306,7 @@ export const gettingStartedTutorial: Tutorial = {
         <p>Now it's time to wire everything together!</p>
         <p><strong>Steps to complete:</strong></p>
         <ol style="margin: 12px 0; padding-left: 20px;">
-          <li>Connect <strong>Manual Input → Group By → Write data</strong></li>
-          <li>Click on <strong>Group By</strong> to configure aggregation (e.g., sum revenue by country)</li>
+          <li>Connect <strong>Group By → Write data</strong></li>
           <li>Click on <strong>Write data</strong> to set the output file path</li>
         </ol>
         <p style="font-size: 12px; color: var(--color-text-secondary);">Drag from output handles (right side) to input handles (left side) to connect nodes.</p>
@@ -364,13 +363,14 @@ export const gettingStartedTutorial: Tutorial = {
       id: "view-results",
       title: "Explore Your Results",
       content: `
-        <p style="font-size: 15px;">Your flow has finished running!</p>
+        <p style="font-size: 15px;">Wait for the success message and then your flow has finished running!</p>
         <p><strong>Click on any node</strong> to see its output in the Table Preview below.</p>
         <p>Try clicking on different nodes:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
           <li><strong>Manual Input</strong> - Your raw sales data</li>
           <li><strong>Group By</strong> - Total revenue per country</li>
           <li><strong>Write data</strong> - Final output to be saved</li>
+          
         </ul>
       `,
       position: "center",
