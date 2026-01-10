@@ -143,6 +143,27 @@ watch(
   }
 );
 
+// Track if modal was previously visible to detect when it opens
+const modalWasVisible = ref(false);
+
+// Auto-advance when Quick Create modal opens
+function checkForModalOpen() {
+  if (!tutorialStore.isActive) return;
+
+  const currentStepId = tutorialStore.currentStep?.id;
+  const createFlowBtn = document.querySelector("[data-tutorial='create-flow-confirm-btn']");
+  const modalIsVisible = createFlowBtn !== null;
+
+  // If we're on "click-quick-create" step and the modal just appeared, advance
+  if (currentStepId === "click-quick-create" && modalIsVisible && !modalWasVisible.value) {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
+
+  modalWasVisible.value = modalIsVisible;
+}
+
 // Auto-advance when a node is added to the canvas
 function checkForNewNodes() {
   if (!tutorialStore.isActive) return;
@@ -191,6 +212,7 @@ let mutationObserver: MutationObserver | null = null;
 function setupMutationObserver() {
   mutationObserver = new MutationObserver(() => {
     updateTargetPosition();
+    checkForModalOpen();
     checkForNewNodes();
   });
 
