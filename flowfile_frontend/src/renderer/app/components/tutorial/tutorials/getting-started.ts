@@ -370,7 +370,7 @@ export const gettingStartedTutorial: Tutorial = {
           <li><strong>Manual Input</strong> - Your raw sales data</li>
           <li><strong>Group By</strong> - Total revenue per country</li>
           <li><strong>Write data</strong> - Final output to be saved</li>
-          
+
         </ul>
         <p style="font-size: 12px; color: var(--color-text-secondary);"><strong>Tip:</strong> If you don't see any data, make sure you have set up the flow to run in Development mode.</p>
       `,
@@ -491,8 +491,8 @@ export const gettingStartedTutorial: Tutorial = {
         </ul>
         <p style="margin-top: 16px;">
           <strong>Learn more:</strong> Visit our
-          <a href="https://docs.flowfile.io" target="_blank" style="color: var(--color-accent); text-decoration: underline;">documentation</a>
-          for advanced features and tutorials.
+          <a href="https://edwardvaneechoud.github.io/Flowfile/" target="_blank" style="color: var(--color-accent); text-decoration: underline;">documentation</a>
+          for advanced features and more tutorials.
         </p>
       `,
       position: "center",
