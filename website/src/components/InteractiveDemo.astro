@@ -25,23 +25,9 @@
       <div class="demo-content">
         <!-- Canvas -->
         <div class="canvas">
-          <!-- Connection Lines SVG -->
-          <svg class="connections" viewBox="0 0 480 160" preserveAspectRatio="xMidYMid meet">
-            <defs>
-              <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="#22c55e" stop-opacity="0.6" />
-                <stop offset="33%" stop-color="#6366f1" stop-opacity="0.6" />
-                <stop offset="66%" stop-color="#f97316" stop-opacity="0.6" />
-                <stop offset="100%" stop-color="#ec4899" stop-opacity="0.6" />
-              </linearGradient>
-            </defs>
-            <path class="connection-line" d="M 82 80 C 110 80, 130 80, 158 80" />
-            <path class="connection-line" d="M 202 80 C 230 80, 250 80, 278 80" />
-            <path class="connection-line" d="M 322 80 C 350 80, 370 80, 398 80" />
-          </svg>
-
-          <!-- Nodes -->
+          <!-- Nodes with inline connectors -->
           <div class="nodes-container">
+            <!-- Node 1: CSV Input -->
             <div class="node active" data-type="input" data-node="input">
               <div class="node-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -54,6 +40,23 @@
               <span class="node-label">CSV Input</span>
             </div>
 
+            <!-- Connector 1 -->
+            <div class="connector">
+              <svg viewBox="0 0 60 24" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#22c55e" />
+                    <stop offset="100%" stop-color="#6366f1" />
+                  </linearGradient>
+                  <marker id="arrow1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                    <polygon points="0 0, 8 3, 0 6" fill="#6366f1" />
+                  </marker>
+                </defs>
+                <line x1="0" y1="12" x2="52" y2="12" stroke="url(#grad1)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow1)" />
+              </svg>
+            </div>
+
+            <!-- Node 2: Filter -->
             <div class="node" data-type="filter" data-node="filter">
               <div class="node-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -63,6 +66,23 @@
               <span class="node-label">Filter</span>
             </div>
 
+            <!-- Connector 2 -->
+            <div class="connector">
+              <svg viewBox="0 0 60 24" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#6366f1" />
+                    <stop offset="100%" stop-color="#f97316" />
+                  </linearGradient>
+                  <marker id="arrow2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                    <polygon points="0 0, 8 3, 0 6" fill="#f97316" />
+                  </marker>
+                </defs>
+                <line x1="0" y1="12" x2="52" y2="12" stroke="url(#grad2)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow2)" />
+              </svg>
+            </div>
+
+            <!-- Node 3: Group By -->
             <div class="node" data-type="groupby" data-node="groupby">
               <div class="node-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -75,6 +95,23 @@
               <span class="node-label">Group By</span>
             </div>
 
+            <!-- Connector 3 -->
+            <div class="connector">
+              <svg viewBox="0 0 60 24" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <linearGradient id="grad3" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#f97316" />
+                    <stop offset="100%" stop-color="#ec4899" />
+                  </linearGradient>
+                  <marker id="arrow3" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                    <polygon points="0 0, 8 3, 0 6" fill="#ec4899" />
+                  </marker>
+                </defs>
+                <line x1="0" y1="12" x2="52" y2="12" stroke="url(#grad3)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow3)" />
+              </svg>
+            </div>
+
+            <!-- Node 4: Output -->
             <div class="node" data-type="output" data-node="output">
               <div class="node-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -87,7 +124,7 @@
             </div>
           </div>
 
-          <p class="canvas-hint">👆 Click a node to see its data</p>
+          <p class="canvas-hint">Click a node to see its data</p>
         </div>
 
         <!-- Data Panel -->
@@ -173,29 +210,27 @@
     flex-direction: column;
   }
 
-  .connections {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 160px;
-    pointer-events: none;
-    margin-top: 40px;
-  }
-
-  .connection-line {
-    stroke: url(#lineGradient);
-    stroke-width: 2;
-    fill: none;
-    stroke-dasharray: 6 4;
-  }
-
   .nodes-container {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 40px 20px;
+    justify-content: center;
+    align-items: center;
+    padding: 40px 16px;
     flex: 1;
+    gap: 0;
+  }
+
+  .connector {
+    display: flex;
+    align-items: center;
+    width: 40px;
+    height: 24px;
+    flex-shrink: 0;
+    margin-bottom: 22px; /* Align with node icon center */
+  }
+
+  .connector svg {
+    width: 100%;
+    height: 100%;
   }
 
   /* Nodes */
@@ -383,16 +418,16 @@
 
     .canvas {
       flex: none;
-      min-height: 200px;
-    }
-
-    .connections {
-      height: 120px;
-      margin-top: 20px;
+      min-height: 180px;
     }
 
     .nodes-container {
-      padding: 20px 10px;
+      padding: 20px 8px;
+    }
+
+    .connector {
+      width: 24px;
+      margin-bottom: 18px;
     }
 
     .node-icon {
@@ -405,10 +440,42 @@
       height: 22px;
     }
 
+    .node-label {
+      font-size: 10px;
+    }
+
     .data-panel {
       border-left: none;
       border-top: 1px solid var(--color-border);
       min-height: 350px;
+    }
+  }
+
+  @media (max-width: 500px) {
+    .nodes-container {
+      padding: 16px 4px;
+    }
+
+    .connector {
+      width: 16px;
+    }
+
+    .node-icon {
+      width: 40px;
+      height: 40px;
+    }
+
+    .node-icon svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .node-label {
+      font-size: 9px;
+    }
+
+    .canvas-hint {
+      font-size: 11px;
     }
   }
 </style>
