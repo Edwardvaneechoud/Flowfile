@@ -152,10 +152,20 @@ watch(
 
 // Track modal polling state
 let modalPollInterval: ReturnType<typeof setInterval> | null = null;
+const modalWasInitiallyVisible = ref(false);
 
 // Start polling for Quick Create modal when on the correct step
 function startModalPolling() {
   if (modalPollInterval) return;
+
+  // Check if modal is already visible when we start - if so, don't auto-advance
+  const createFlowBtn = document.querySelector("[data-tutorial='create-flow-confirm-btn']");
+  modalWasInitiallyVisible.value = createFlowBtn !== null;
+
+  // If modal is already open, don't poll (user needs to close it first or click Next)
+  if (modalWasInitiallyVisible.value) {
+    return;
+  }
 
   modalPollInterval = setInterval(() => {
     if (!tutorialStore.isActive) {
@@ -185,6 +195,7 @@ function stopModalPolling() {
     clearInterval(modalPollInterval);
     modalPollInterval = null;
   }
+  modalWasInitiallyVisible.value = false;
 }
 
 // Check if we should start/stop modal polling based on current step
