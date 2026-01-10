@@ -40,8 +40,8 @@ export const gettingStartedTutorial: Tutorial = {
       `,
       target: "[data-tutorial='quick-create-btn']",
       position: "bottom",
-      action: "observe",
-      showNextButton: true,
+      action: "click",
+      showNextButton: false,
       highlightPadding: 4,
     },
 
