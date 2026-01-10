@@ -3,7 +3,9 @@ import { PlaywrightTestConfig } from '@playwright/test';
 
 const config: PlaywrightTestConfig = {
   testDir: './tests',
-  timeout: 60000,
+  // Increase timeout to 120 seconds to allow for slower Windows CI startup
+  // (SERVICES_STARTUP_TIMEOUT is 90 seconds, so we need headroom)
+  timeout: 120000,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   // Use 1 worker for Electron tests to prevent port conflicts
