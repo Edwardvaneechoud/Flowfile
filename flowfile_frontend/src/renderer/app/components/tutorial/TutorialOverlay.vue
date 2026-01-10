@@ -106,6 +106,13 @@ watch(
   async (newStep) => {
     if (!newStep) return;
 
+    // Start/stop modal polling based on current step
+    if (newStep.id === "click-quick-create") {
+      startModalPolling();
+    } else {
+      stopModalPolling();
+    }
+
     // If we need to wait for an element, poll for it
     if (newStep.waitForElement) {
       const maxAttempts = 50;
@@ -143,25 +150,53 @@ watch(
   }
 );
 
-// Track if modal was previously visible to detect when it opens
-const modalWasVisible = ref(false);
+// Track modal polling state
+let modalPollInterval: ReturnType<typeof setInterval> | null = null;
 
-// Auto-advance when Quick Create modal opens
+// Start polling for Quick Create modal when on the correct step
+function startModalPolling() {
+  if (modalPollInterval) return;
+
+  modalPollInterval = setInterval(() => {
+    if (!tutorialStore.isActive) {
+      stopModalPolling();
+      return;
+    }
+
+    const currentStepId = tutorialStore.currentStep?.id;
+    if (currentStepId !== "click-quick-create") {
+      stopModalPolling();
+      return;
+    }
+
+    // Check if the modal's Create Flow button is visible
+    const createFlowBtn = document.querySelector("[data-tutorial='create-flow-confirm-btn']");
+    if (createFlowBtn) {
+      stopModalPolling();
+      setTimeout(() => {
+        tutorialStore.nextStep();
+      }, 200);
+    }
+  }, 100);
+}
+
+function stopModalPolling() {
+  if (modalPollInterval) {
+    clearInterval(modalPollInterval);
+    modalPollInterval = null;
+  }
+}
+
+// Check if we should start/stop modal polling based on current step
 function checkForModalOpen() {
   if (!tutorialStore.isActive) return;
 
   const currentStepId = tutorialStore.currentStep?.id;
-  const createFlowBtn = document.querySelector("[data-tutorial='create-flow-confirm-btn']");
-  const modalIsVisible = createFlowBtn !== null;
-
-  // If we're on "click-quick-create" step and the modal just appeared, advance
-  if (currentStepId === "click-quick-create" && modalIsVisible && !modalWasVisible.value) {
-    setTimeout(() => {
-      tutorialStore.nextStep();
-    }, 300);
+  if (currentStepId === "click-quick-create") {
+    startModalPolling();
+  } else {
+    stopModalPolling();
   }
-
-  modalWasVisible.value = modalIsVisible;
 }
 
 // Auto-advance when a node is added to the canvas
@@ -240,6 +275,7 @@ onUnmounted(() => {
   if (mutationObserver) {
     mutationObserver.disconnect();
   }
+  stopModalPolling();
 });
 </script>
 
