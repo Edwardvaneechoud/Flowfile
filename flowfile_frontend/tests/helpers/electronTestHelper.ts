@@ -69,12 +69,18 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
         }
       });
 
+      // Note: Windows console message detection can be unreliable, but we should
+      // still require both startup signals before considering the app ready.
+      // If this causes legitimate timeout failures, the underlying Windows
+      // console detection issue should be fixed rather than bypassed.
       if (process.platform === 'win32') {
         setTimeout(() => {
-          if (electronApp && (servicesStarted || startupReceived)) {
-            console.log('Safety timeout reached, but Electron app appears to be running');
+          if (electronApp && servicesStarted && startupReceived) {
+            console.log('Safety timeout reached, but Electron app appears to be running with all required signals');
             clearTimeout(timeout);
             resolve(electronApp);
+          } else {
+            console.log(`Safety timeout: servicesStarted=${servicesStarted}, startupReceived=${startupReceived}`);
           }
         }, 30000);
       }
