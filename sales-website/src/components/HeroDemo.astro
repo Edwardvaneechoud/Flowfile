@@ -1,0 +1,829 @@
+---
+// HeroDemo.astro - Combined hero with interactive flow demo
+---
+
+<section class="hero-demo" id="demo">
+  <div class="container">
+    <!-- Hero Text -->
+    <div class="hero-header">
+      <span class="hero-badge">
+        <span class="badge-dot"></span>
+        Open Source ETL Tool
+      </span>
+      <h1 class="hero-title">
+        Visual ETL.<br/>
+        <span class="gradient-text">Polars Speed.</span>
+      </h1>
+      <p class="hero-description">
+        Build data pipelines the way you think — visually or with code.
+        Powered by Polars for 10-100x faster performance than Pandas.
+      </p>
+      <div class="hero-cta">
+        <a href="#install" class="btn btn-primary">
+          Get Started
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </a>
+        <a href="https://github.com/Edwardvaneechoud/Flowfile" class="btn btn-secondary" target="_blank" rel="noopener">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          Star on GitHub
+        </a>
+      </div>
+    </div>
+
+    <!-- Flow Demo Window -->
+    <div class="demo-window">
+      <div class="window-header">
+        <span class="window-dot red"></span>
+        <span class="window-dot yellow"></span>
+        <span class="window-dot green"></span>
+        <span class="window-title">flowfile — pipeline.flowfile</span>
+      </div>
+
+      <!-- Flow Canvas -->
+      <div class="flow-canvas">
+        <div class="flow-row">
+          <!-- CSV Input Node -->
+          <div class="flow-node active" data-type="input" data-node="input">
+            <div class="node-box">
+              <svg class="node-icon" viewBox="0 0 48 48" fill="none">
+                <!-- Document with lines - Input Data style -->
+                <rect x="10" y="6" width="28" height="36" rx="3" stroke="currentColor" stroke-width="2.5" fill="none"/>
+                <path d="M10 14h28" stroke="currentColor" stroke-width="2"/>
+                <line x1="16" y1="22" x2="32" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="16" y1="28" x2="28" y2="28" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="16" y1="34" x2="30" y2="34" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <span class="node-label">CSV Input</span>
+          </div>
+
+          <!-- Arrow -->
+          <div class="flow-arrow arrow-1">
+            <svg viewBox="0 0 60 24" fill="none">
+              <path d="M0 12h48" stroke="url(#arrow-grad-1)" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M44 6l8 6-8 6" stroke="url(#arrow-grad-1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <defs>
+                <linearGradient id="arrow-grad-1" x1="0" y1="0" x2="60" y2="0">
+                  <stop stop-color="#22c55e"/>
+                  <stop offset="1" stop-color="#6366f1"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+
+          <!-- Filter Node -->
+          <div class="flow-node" data-type="filter" data-node="filter">
+            <div class="node-box">
+              <svg class="node-icon" viewBox="0 0 48 48" fill="none">
+                <!-- Funnel filter icon -->
+                <path d="M8 10h32l-11 14v12l-10 4V24L8 10z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" fill="none"/>
+                <circle cx="12" cy="18" r="2" fill="currentColor"/>
+                <circle cx="36" cy="18" r="2" fill="currentColor"/>
+                <circle cx="24" cy="26" r="2" fill="currentColor"/>
+              </svg>
+            </div>
+            <span class="node-label">Filter</span>
+          </div>
+
+          <!-- Arrow -->
+          <div class="flow-arrow arrow-2">
+            <svg viewBox="0 0 60 24" fill="none">
+              <path d="M0 12h48" stroke="url(#arrow-grad-2)" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M44 6l8 6-8 6" stroke="url(#arrow-grad-2)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <defs>
+                <linearGradient id="arrow-grad-2" x1="0" y1="0" x2="60" y2="0">
+                  <stop stop-color="#6366f1"/>
+                  <stop offset="1" stop-color="#f97316"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+
+          <!-- Group By Node -->
+          <div class="flow-node" data-type="groupby" data-node="groupby">
+            <div class="node-box">
+              <svg class="node-icon" viewBox="0 0 48 48" fill="none">
+                <!-- Network/aggregate icon -->
+                <circle cx="24" cy="12" r="6" stroke="currentColor" stroke-width="2.5" fill="none"/>
+                <circle cx="12" cy="36" r="5" stroke="currentColor" stroke-width="2.5" fill="none"/>
+                <circle cx="36" cy="36" r="5" stroke="currentColor" stroke-width="2.5" fill="none"/>
+                <line x1="24" y1="18" x2="14" y2="31" stroke="currentColor" stroke-width="2"/>
+                <line x1="24" y1="18" x2="34" y2="31" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+            <span class="node-label">Group By</span>
+          </div>
+
+          <!-- Arrow -->
+          <div class="flow-arrow arrow-3">
+            <svg viewBox="0 0 60 24" fill="none">
+              <path d="M0 12h48" stroke="url(#arrow-grad-3)" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M44 6l8 6-8 6" stroke="url(#arrow-grad-3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <defs>
+                <linearGradient id="arrow-grad-3" x1="0" y1="0" x2="60" y2="0">
+                  <stop stop-color="#f97316"/>
+                  <stop offset="1" stop-color="#ec4899"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+
+          <!-- Export Node -->
+          <div class="flow-node" data-type="output" data-node="output">
+            <div class="node-box">
+              <svg class="node-icon" viewBox="0 0 48 48" fill="none">
+                <!-- Export/upload icon -->
+                <rect x="8" y="24" width="32" height="18" rx="3" stroke="currentColor" stroke-width="2.5" fill="none"/>
+                <path d="M24 28V8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                <path d="M17 15l7-7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="14" y1="34" x2="22" y2="34" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="26" y1="34" x2="34" y2="34" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <span class="node-label">Export</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data Preview Panel -->
+      <div class="preview-panel">
+        <div class="preview-header">
+          <div class="preview-title-area">
+            <span class="preview-label">PREVIEW</span>
+            <span class="preview-title" id="preview-title">Raw Data</span>
+          </div>
+          <div class="preview-meta" id="preview-meta">8 rows × 6 cols</div>
+        </div>
+        <div id="transform-info" class="transform-info" style="display: none;">
+          <span id="transform-badge" class="transform-badge"></span>
+          <span id="transform-text"></span>
+        </div>
+        <div class="grid-wrapper">
+          <div id="data-grid" class="ag-theme-flowfile"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Install -->
+    <div class="quick-install">
+      <code class="install-command">pip install Flowfile</code>
+      <button class="copy-btn" aria-label="Copy command">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="hero-gradient"></div>
+</section>
+
+<style>
+  .hero-demo {
+    position: relative;
+    padding: 8rem 0 4rem;
+    overflow: hidden;
+    min-height: 100vh;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  .hero-header {
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 100px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    margin-bottom: 1.5rem;
+  }
+
+  .badge-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--color-success);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .hero-title {
+    font-size: clamp(2.5rem, 6vw, 3.5rem);
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 1.25rem;
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, var(--color-primary), var(--color-pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-description {
+    font-size: 1.15rem;
+    color: var(--color-text-muted);
+    line-height: 1.7;
+    max-width: 550px;
+    margin: 0 auto 2rem;
+  }
+
+  .hero-cta {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.875rem 1.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+  }
+
+  .btn-primary {
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--color-primary-hover);
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--color-bg-card);
+  }
+
+  /* Demo Window */
+  .demo-window {
+    background: var(--color-bg);
+    border-radius: 16px;
+    border: 1px solid var(--color-border);
+    overflow: hidden;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.4);
+  }
+
+  .window-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 18px;
+    background: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .window-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+  .window-dot.red { background: #ff5f57; }
+  .window-dot.yellow { background: #febc2e; }
+  .window-dot.green { background: #28c840; }
+
+  .window-title {
+    margin-left: 12px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+  }
+
+  /* Flow Canvas */
+  .flow-canvas {
+    padding: 2.5rem 2rem;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.04) 0%, transparent 60%),
+      linear-gradient(rgba(99, 102, 241, 0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99, 102, 241, 0.015) 1px, transparent 1px);
+    background-size: 100% 100%, 32px 32px, 32px 32px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .flow-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+
+  /* Flow Nodes */
+  .flow-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+
+  .flow-node:hover {
+    transform: scale(1.05);
+  }
+
+  .flow-node.active {
+    transform: scale(1.08);
+  }
+
+  .node-box {
+    width: 72px;
+    height: 72px;
+    border-radius: 14px;
+    background: var(--color-bg-card);
+    border: 2px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.25s ease;
+    position: relative;
+  }
+
+  .flow-node.active .node-box {
+    box-shadow: 0 0 30px var(--node-glow), 0 0 60px var(--node-glow-outer);
+  }
+
+  .node-icon {
+    width: 36px;
+    height: 36px;
+    color: var(--node-color);
+    transition: all 0.25s ease;
+  }
+
+  .node-label {
+    margin-top: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    transition: color 0.2s ease;
+  }
+
+  .flow-node.active .node-label {
+    color: var(--node-color);
+  }
+
+  /* Node Colors */
+  .flow-node[data-type="input"] {
+    --node-color: #22c55e;
+    --node-glow: rgba(34, 197, 94, 0.4);
+    --node-glow-outer: rgba(34, 197, 94, 0.15);
+  }
+  .flow-node[data-type="input"] .node-box { border-color: #22c55e; }
+
+  .flow-node[data-type="filter"] {
+    --node-color: #6366f1;
+    --node-glow: rgba(99, 102, 241, 0.4);
+    --node-glow-outer: rgba(99, 102, 241, 0.15);
+  }
+  .flow-node[data-type="filter"].active .node-box { border-color: #6366f1; }
+
+  .flow-node[data-type="groupby"] {
+    --node-color: #f97316;
+    --node-glow: rgba(249, 115, 22, 0.4);
+    --node-glow-outer: rgba(249, 115, 22, 0.15);
+  }
+  .flow-node[data-type="groupby"].active .node-box { border-color: #f97316; }
+
+  .flow-node[data-type="output"] {
+    --node-color: #ec4899;
+    --node-glow: rgba(236, 72, 153, 0.4);
+    --node-glow-outer: rgba(236, 72, 153, 0.15);
+  }
+  .flow-node[data-type="output"].active .node-box { border-color: #ec4899; }
+
+  /* Flow Arrows */
+  .flow-arrow {
+    width: 60px;
+    height: 24px;
+    flex-shrink: 0;
+    margin: 0 0.5rem;
+  }
+
+  .flow-arrow svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Preview Panel */
+  .preview-panel {
+    background: #0c0c12;
+  }
+
+  .preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .preview-title-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .preview-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    letter-spacing: 0.08em;
+  }
+
+  .preview-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .preview-meta {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    background: rgba(255,255,255,0.05);
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+
+  .transform-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 13px;
+    color: var(--color-text-muted);
+  }
+
+  .transform-badge {
+    padding: 4px 10px;
+    background: var(--color-primary);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .transform-badge.filter { background: #6366f1; }
+  .transform-badge.groupby { background: #f97316; }
+  .transform-badge.output { background: #ec4899; }
+
+  .grid-wrapper {
+    height: 280px;
+  }
+
+  #data-grid {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* AG Grid Theme */
+  .ag-theme-flowfile {
+    --ag-background-color: #0c0c12;
+    --ag-odd-row-background-color: #0c0c12;
+    --ag-row-background-color: #101018;
+    --ag-header-background-color: #16161e;
+    --ag-header-foreground-color: #8888a0;
+    --ag-foreground-color: #e8e8ed;
+    --ag-border-color: #252535;
+    --ag-secondary-foreground-color: #8888a0;
+    --ag-row-hover-color: #1a1a28;
+    --ag-selected-row-background-color: #252540;
+    --ag-font-family: 'JetBrains Mono', monospace;
+    --ag-font-size: 13px;
+    --ag-header-height: 40px;
+    --ag-row-height: 36px;
+    --ag-cell-horizontal-padding: 16px;
+  }
+
+  /* Quick Install */
+  .quick-install {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 2rem;
+    padding: 0.875rem 1.25rem;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .install-command {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    color: var(--color-success);
+  }
+
+  .copy-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    display: flex;
+    transition: color 0.2s;
+  }
+
+  .copy-btn:hover {
+    color: var(--color-text);
+  }
+
+  .hero-gradient {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 1200px;
+    height: 700px;
+    background: radial-gradient(ellipse at center top, rgba(99, 102, 241, 0.12) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* Mobile Responsive */
+  @media (max-width: 768px) {
+    .hero-demo {
+      padding: 6rem 0 3rem;
+    }
+
+    .hero-title {
+      font-size: 2rem;
+    }
+
+    .hero-description {
+      font-size: 1rem;
+    }
+
+    .flow-canvas {
+      padding: 1.5rem 1rem;
+      overflow-x: auto;
+    }
+
+    .flow-row {
+      min-width: 500px;
+      justify-content: flex-start;
+      padding: 0 1rem;
+    }
+
+    .node-box {
+      width: 60px;
+      height: 60px;
+    }
+
+    .node-icon {
+      width: 30px;
+      height: 30px;
+    }
+
+    .node-label {
+      font-size: 11px;
+    }
+
+    .flow-arrow {
+      width: 40px;
+      margin: 0 0.25rem;
+    }
+
+    .grid-wrapper {
+      height: 240px;
+    }
+
+    .quick-install {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .hero-cta {
+      flex-direction: column;
+      width: 100%;
+    }
+
+    .btn {
+      width: 100%;
+    }
+  }
+</style>
+
+<script>
+  // Sample data
+  const RAW_DATA = [
+    { id: 1, product: 'Widget A', category: 'Electronics', region: 'North', sales: 1200, quantity: 24 },
+    { id: 2, product: 'Widget B', category: 'Electronics', region: 'South', sales: 890, quantity: 18 },
+    { id: 3, product: 'Gadget X', category: 'Home', region: 'North', sales: 2100, quantity: 42 },
+    { id: 4, product: 'Gadget Y', category: 'Home', region: 'East', sales: 760, quantity: 15 },
+    { id: 5, product: 'Tool Pro', category: 'Tools', region: 'West', sales: 3200, quantity: 64 },
+    { id: 6, product: 'Tool Basic', category: 'Tools', region: 'North', sales: 450, quantity: 9 },
+    { id: 7, product: 'Widget C', category: 'Electronics', region: 'East', sales: 1800, quantity: 36 },
+    { id: 8, product: 'Gadget Z', category: 'Home', region: 'South', sales: 920, quantity: 23 },
+  ];
+
+  function filterData(data) {
+    return data.filter(row => row.sales > 1000);
+  }
+
+  function groupByData(data) {
+    const grouped = data.reduce((acc, row) => {
+      const key = row.category;
+      if (!acc[key]) {
+        acc[key] = { category: key, total_sales: 0, total_quantity: 0, count: 0 };
+      }
+      acc[key].total_sales += row.sales;
+      acc[key].total_quantity += row.quantity;
+      acc[key].count += 1;
+      return acc;
+    }, {});
+    return Object.values(grouped);
+  }
+
+  const nodeConfigs = {
+    input: {
+      title: 'Raw Data',
+      getData: () => RAW_DATA,
+      columns: [
+        { field: 'id', headerName: 'id', width: 70 },
+        { field: 'product', headerName: 'product', flex: 1, minWidth: 100 },
+        { field: 'category', headerName: 'category', width: 100 },
+        { field: 'region', headerName: 'region', width: 85 },
+        { field: 'sales', headerName: 'sales', width: 85, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'quantity', headerName: 'quantity', width: 85 }
+      ],
+      transform: null
+    },
+    filter: {
+      title: 'Filtered Data',
+      getData: () => filterData(RAW_DATA),
+      columns: [
+        { field: 'id', headerName: 'id', width: 70 },
+        { field: 'product', headerName: 'product', flex: 1, minWidth: 100 },
+        { field: 'category', headerName: 'category', width: 100 },
+        { field: 'region', headerName: 'region', width: 85 },
+        { field: 'sales', headerName: 'sales', width: 85, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'quantity', headerName: 'quantity', width: 85 }
+      ],
+      transform: { type: 'filter', badge: 'Filter', text: 'sales > 1000 → 5 of 8 rows pass' }
+    },
+    groupby: {
+      title: 'Grouped Data',
+      getData: () => groupByData(filterData(RAW_DATA)),
+      columns: [
+        { field: 'category', headerName: 'category', flex: 1, minWidth: 120 },
+        { field: 'total_sales', headerName: 'total_sales', width: 110, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'total_quantity', headerName: 'total_qty', width: 100 },
+        { field: 'count', headerName: 'count', width: 80 }
+      ],
+      transform: { type: 'groupby', badge: 'Group By', text: 'category → SUM(sales), SUM(quantity)' }
+    },
+    output: {
+      title: 'Final Output',
+      getData: () => groupByData(filterData(RAW_DATA)),
+      columns: [
+        { field: 'category', headerName: 'category', flex: 1, minWidth: 120 },
+        { field: 'total_sales', headerName: 'total_sales', width: 110, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'total_quantity', headerName: 'total_qty', width: 100 },
+        { field: 'count', headerName: 'count', width: 80 }
+      ],
+      transform: { type: 'output', badge: 'Export', text: 'Write to Parquet / CSV / Database' }
+    }
+  };
+
+  let activeNode = 'input';
+  let gridApi = null;
+
+  function loadAgGrid() {
+    return new Promise((resolve, reject) => {
+      if (window.agGrid) {
+        resolve();
+        return;
+      }
+
+      const cssLink = document.createElement('link');
+      cssLink.rel = 'stylesheet';
+      cssLink.href = 'https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.1/styles/ag-grid.css';
+      document.head.appendChild(cssLink);
+
+      const themeCss = document.createElement('link');
+      themeCss.rel = 'stylesheet';
+      themeCss.href = 'https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.1/styles/ag-theme-balham.css';
+      document.head.appendChild(themeCss);
+
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.1/dist/ag-grid-community.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  async function initDemo() {
+    await loadAgGrid();
+
+    const gridDiv = document.querySelector('#data-grid');
+    gridApi = agGrid.createGrid(gridDiv, {
+      columnDefs: nodeConfigs.input.columns,
+      rowData: nodeConfigs.input.getData(),
+      defaultColDef: { sortable: true, resizable: true },
+      animateRows: true,
+      headerHeight: 40,
+      rowHeight: 36,
+      suppressCellFocus: true,
+    });
+
+    document.querySelectorAll('.flow-node').forEach(node => {
+      node.addEventListener('click', () => selectNode(node.dataset.node));
+    });
+
+    // Copy button
+    document.querySelector('.copy-btn')?.addEventListener('click', () => {
+      navigator.clipboard.writeText('pip install Flowfile');
+      const btn = document.querySelector('.copy-btn');
+      btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+      setTimeout(() => {
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      }, 2000);
+    });
+  }
+
+  function selectNode(nodeId) {
+    document.querySelectorAll('.flow-node').forEach(n => n.classList.remove('active'));
+    document.querySelector(`[data-node="${nodeId}"]`)?.classList.add('active');
+    activeNode = nodeId;
+    updateGrid();
+  }
+
+  function updateGrid() {
+    const config = nodeConfigs[activeNode];
+    const data = config.getData();
+
+    document.getElementById('preview-title').textContent = config.title;
+    document.getElementById('preview-meta').textContent = `${data.length} rows × ${config.columns.length} cols`;
+
+    const transformInfo = document.getElementById('transform-info');
+    if (config.transform) {
+      transformInfo.style.display = 'flex';
+      document.getElementById('transform-badge').textContent = config.transform.badge;
+      document.getElementById('transform-badge').className = `transform-badge ${config.transform.type}`;
+      document.getElementById('transform-text').textContent = config.transform.text;
+    } else {
+      transformInfo.style.display = 'none';
+    }
+
+    if (gridApi) {
+      gridApi.setGridOption('columnDefs', config.columns);
+      gridApi.setGridOption('rowData', data);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initDemo);
+  } else {
+    initDemo();
+  }
+</script>
