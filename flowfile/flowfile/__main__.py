@@ -53,7 +53,7 @@ def run_flow(flow_path: str) -> int:
     flow_name = flow.flow_settings.name or f"Flow {flow.flow_id}"
     logger.info(f"Running flow: {flow_name} (id={flow.flow_id})")
     logger.info(f"Nodes: {len(flow.nodes)}")
-
+    flow.print_tree()
     try:
         result = flow.run_graph()
     except Exception as e:
