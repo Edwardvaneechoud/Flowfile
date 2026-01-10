@@ -25,13 +25,31 @@ class AuthService {
   private token = ref<string | null>(null);
   private tokenExpiration = ref<number | null>(null);
   private isElectronMode = ref(false);
+  private modeInitialized = false;
   private refreshPromise: Promise<string | null> | null = null;
   private currentUsername = ref<string | null>(null);
 
   constructor() {
+    // Initial detection based on electronAPI presence
     this.isElectronMode.value = this.detectElectronMode();
     this.clearStoredTokens();
     this.loadStoredToken();
+  }
+
+  /**
+   * Update electron mode based on backend status.
+   * This is called when we get the mode from /health/status endpoint.
+   * In "flowfile run ui" mode, electronAPI won't exist but backend mode is "electron".
+   */
+  setModeFromBackend(mode: string): void {
+    if (!this.modeInitialized) {
+      // If electronAPI exists, we're definitely in Electron
+      // If not, trust the backend's mode
+      if (!this.detectElectronMode()) {
+        this.isElectronMode.value = mode === "electron";
+      }
+      this.modeInitialized = true;
+    }
   }
 
   private loadStoredToken(): void {
@@ -227,7 +245,11 @@ class AuthService {
   }
 }
 
+// Create the singleton instance
+export const authService = new AuthService();
+
 // Axios interceptor to handle 401 errors
+// Note: This uses the authService singleton which has the correct mode from backend
 axios.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -237,16 +259,14 @@ axios.interceptors.response.use(
 
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
       originalRequest._retry = true;
-      const isElectron = !!(window as unknown as { electronAPI?: unknown }).electronAPI;
 
-      if (isElectron) {
-        // In Electron mode, auto-refresh the token
+      if (authService.isInElectronMode()) {
+        // In Electron mode (or "flowfile run ui" mode), auto-refresh the token
         localStorage.removeItem("auth_token");
         localStorage.removeItem("auth_token_expiration");
 
-        const authInstance = new AuthService();
-        await authInstance.initialize();
-        const newToken = await authInstance.getToken();
+        await authService.initialize();
+        const newToken = await authService.getToken();
 
         if (newToken) {
           originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
@@ -268,5 +288,4 @@ axios.interceptors.response.use(
   },
 );
 
-export const authService = new AuthService();
 export default authService;

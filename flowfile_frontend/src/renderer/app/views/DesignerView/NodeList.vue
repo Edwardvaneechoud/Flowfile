@@ -1,9 +1,14 @@
 <template>
-  <div class="nodes-wrapper">
+  <div class="nodes-wrapper" data-tutorial="node-list">
     <!-- Search Input -->
     <input v-model="searchQuery" type="text" placeholder="Search nodes..." class="search-input" />
 
-    <div v-for="(categoryInfo, category) in categories" :key="category" class="category-container">
+    <div
+      v-for="(categoryInfo, category) in categories"
+      :key="category"
+      class="category-container"
+      :data-tutorial-category="category"
+    >
       <!-- Category Header -->
       <button class="category-header" @click="toggleCategory(category as CategoryKey)">
         <span class="category-title">{{ categoryInfo.name }}</span>
@@ -22,6 +27,7 @@
           v-for="node in filteredNodes[category]"
           :key="node.item"
           class="node-item"
+          :data-tutorial-node="node.item"
           draggable="true"
           @dragstart="$emit('dragstart', $event, node)"
         >

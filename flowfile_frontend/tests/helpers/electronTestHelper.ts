@@ -1,5 +1,5 @@
 import { _electron as electron } from 'playwright';
-import { ElectronApplication } from 'playwright-core';
+import { ElectronApplication, Page } from 'playwright-core';
 import * as path from 'path';
 
 const SERVICES_STARTUP_TIMEOUT = 90000;
@@ -28,10 +28,9 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
     }, SERVICES_STARTUP_TIMEOUT);
 
     const checkComplete = () => {
-      const isComplete = process.platform === 'win32' 
-        ? (servicesStarted && startupReceived && electronApp)
-        : (servicesStarted && startupReceived && windowReady && electronApp);
-        
+      // All platforms should wait for the same signals: services started, startup received, and window ready
+      const isComplete = servicesStarted && startupReceived && windowReady && electronApp;
+
       if (isComplete) {
         clearTimeout(timeout);
         resolve(electronApp!);
@@ -69,12 +68,17 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
         }
       });
 
+      // Safety timeout for Windows: console message detection can be unreliable,
+      // but we should still require all startup signals (including windowReady)
+      // before considering the app ready.
       if (process.platform === 'win32') {
         setTimeout(() => {
-          if (electronApp && (servicesStarted || startupReceived)) {
-            console.log('Safety timeout reached, but Electron app appears to be running');
+          if (electronApp && servicesStarted && startupReceived && windowReady) {
+            console.log('Safety timeout reached, but Electron app appears to be running with all required signals');
             clearTimeout(timeout);
             resolve(electronApp);
+          } else {
+            console.log(`Safety timeout: servicesStarted=${servicesStarted}, startupReceived=${startupReceived}, windowReady=${windowReady}`);
           }
         }, 30000);
       }
@@ -109,7 +113,8 @@ export async function closeElectronApp(app: ElectronApplication | undefined): Pr
   try {
     let mainWindow;
     try {
-      mainWindow = await app.firstWindow().catch(() => null);
+      // Use getMainWindow to get the actual main window, not the closed loading window
+      mainWindow = await getMainWindow(app).catch(() => null);
       if (mainWindow) {
         console.log('Giving app chance to clean up resources...');
         
@@ -145,4 +150,45 @@ export async function closeElectronApp(app: ElectronApplication | undefined): Pr
   } catch (error) {
     console.error('Error in closeElectronApp:', error);
   }
+}
+
+/**
+ * Gets the main application window (not the loading window).
+ *
+ * The app opens a loading window first, then the main window.
+ * When the main window is ready, the loading window is closed.
+ * Using firstWindow() would return the loading window which may be closed.
+ * This function finds the currently open window that's not the loading screen.
+ */
+export async function getMainWindow(app: ElectronApplication): Promise<Page> {
+  // Get all currently open windows
+  const windows = app.windows();
+
+  // If there's only one window, return it (should be the main window after loading closes)
+  if (windows.length === 1) {
+    return windows[0];
+  }
+
+  // If multiple windows, find the main one (not loading.html)
+  for (const win of windows) {
+    try {
+      const url = win.url();
+      // The loading window loads loading.html, the main window loads localhost or index.html
+      if (!url.includes('loading.html')) {
+        return win;
+      }
+    } catch {
+      // Window might be closed, skip it
+      continue;
+    }
+  }
+
+  // Fallback: wait a bit for loading window to close and try again
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  const retryWindows = app.windows();
+  if (retryWindows.length > 0) {
+    return retryWindows[0];
+  }
+
+  throw new Error('No main window found');
 }
