@@ -53,7 +53,7 @@ export const gettingStartedTutorial: Tutorial = {
         <p>Click <strong>Create Flow</strong> to create the flow with an auto-generated name, or enter a custom name first.</p>
       `,
       target: "[data-tutorial='create-flow-confirm-btn']",
-      position: "top",
+      position: "left",
       action: "observe",
       waitForElement: "[data-tutorial='create-flow-confirm-btn']",
       showNextButton: true,
