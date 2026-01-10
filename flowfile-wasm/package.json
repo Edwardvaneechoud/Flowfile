@@ -1,0 +1,31 @@
+{
+  "name": "flowfile-wasm",
+  "version": "0.1.0",
+  "description": "Lightweight WebAssembly variant of Flowfile with Polars - standard operations with operation graph tracking",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "example": "node examples/basic-operations.js"
+  },
+  "keywords": [
+    "polars",
+    "wasm",
+    "dataframe",
+    "etl",
+    "data-processing"
+  ],
+  "dependencies": {
+    "nodejs-polars": "^0.15.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
