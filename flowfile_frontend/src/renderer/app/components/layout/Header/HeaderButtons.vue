@@ -1,34 +1,45 @@
 <template>
   <div class="action-buttons">
-    <button class="action-btn" @click="openSaveModal">
+    <button class="action-btn" data-tutorial="save-btn" @click="openSaveModal">
       <span class="material-icons btn-icon">save</span>
       <span class="btn-text">Save</span>
     </button>
-    <button class="action-btn" @click="modalVisibleForOpen = true">
+    <button class="action-btn" data-tutorial="open-btn" @click="modalVisibleForOpen = true">
       <span class="material-icons btn-icon">folder_open</span>
       <span class="btn-text">Open</span>
     </button>
-    <button class="action-btn" @click="modalVisibleForCreate = true">
+    <button class="action-btn" data-tutorial="create-btn" @click="modalVisibleForCreate = true">
       <span class="material-icons btn-icon">add_circle_outline</span>
       <span class="btn-text">Create</span>
     </button>
-    <button class="action-btn" @click="modalVisibleForQuickCreate = true">
+    <button class="action-btn" data-tutorial="quick-create-btn" @click="modalVisibleForQuickCreate = true">
       <span class="material-icons btn-icon">flash_on</span>
       <span class="btn-text">Quick Create</span>
     </button>
-    <button class="action-btn" @click="openSettingsModal">
+    <button class="action-btn" data-tutorial="settings-btn" @click="openSettingsModal">
       <span class="material-icons btn-icon">settings</span>
       <span class="btn-text">Settings</span>
     </button>
-    <run-button ref="runButton" :flow-id="nodeStore.flow_id" />
+    <run-button ref="runButton" :flow-id="nodeStore.flow_id" data-tutorial="run-btn" />
     <button
       class="action-btn"
       :class="{ active: nodeStore.showCodeGenerator }"
+      data-tutorial="generate-code-btn"
       title="Generate Python Code (Ctrl+G)"
       @click="toggleCodeGenerator"
     >
       <span class="material-icons btn-icon">code</span>
       <span class="btn-text">Generate code</span>
+    </button>
+    <button
+      class="action-btn tutorial-btn"
+      :class="{ active: tutorialStore.isActive }"
+      data-tutorial="tutorial-btn"
+      title="Start Interactive Tutorial"
+      @click="startTutorial"
+    >
+      <span class="material-icons btn-icon">school</span>
+      <span class="btn-text">Tutorial</span>
     </button>
   </div>
 
@@ -143,6 +154,8 @@ import { FileInfo } from "../../common/FileBrowser/types";
 import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
+import { useTutorialStore } from "../../../stores/tutorial-store";
+import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import {
   createFlow,
   getFlowSettings,
@@ -155,6 +168,7 @@ import {
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const tutorialStore = useTutorialStore();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -302,6 +316,10 @@ const runFlow = () => {
 
 const toggleCodeGenerator = () => {
   nodeStore.toggleCodeGenerator();
+};
+
+const startTutorial = () => {
+  tutorialStore.startTutorial(gettingStartedTutorial);
 };
 
 const handleCreateAction = async (flowPath: string) => {
@@ -483,5 +501,24 @@ onMounted(async () => {
 .dialog-footer {
   display: flex;
   gap: var(--spacing-2);
+}
+
+.tutorial-btn {
+  background: linear-gradient(135deg, var(--color-accent-subtle, rgba(59, 130, 246, 0.1)) 0%, var(--color-background-primary, #fff) 100%);
+  border-color: var(--color-accent, #3b82f6);
+}
+
+.tutorial-btn:hover {
+  background: linear-gradient(135deg, var(--color-accent, #3b82f6) 0%, var(--color-accent-hover, #2563eb) 100%);
+  color: white;
+}
+
+.tutorial-btn:hover .btn-icon {
+  color: white;
+}
+
+.tutorial-btn.active {
+  background: var(--color-accent, #3b82f6);
+  color: white;
 }
 </style>
