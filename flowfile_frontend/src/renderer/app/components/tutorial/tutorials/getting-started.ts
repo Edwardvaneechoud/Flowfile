@@ -438,12 +438,9 @@ export const gettingStartedTutorial: Tutorial = {
         </ul>
         <p>The code is fully functional and can run standalone!</p>
       `,
-      target: ".code-generator-container",
-      position: "left",
+      position: "center",
       action: "observe",
-      waitForElement: ".code-generator-container",
       showNextButton: true,
-      highlightPadding: 8,
     },
 
     // Step 21: Keyboard shortcuts
