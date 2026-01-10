@@ -12,7 +12,7 @@
       <span class="material-icons btn-icon">add_circle_outline</span>
       <span class="btn-text">Create</span>
     </button>
-    <button class="action-btn" data-tutorial="quick-create-btn" @click="modalVisibleForQuickCreate = true">
+    <button class="action-btn" data-tutorial="quick-create-btn" @click="handleQuickCreateClick">
       <span class="material-icons btn-icon">flash_on</span>
       <span class="btn-text">Quick Create</span>
     </button>
@@ -144,6 +144,7 @@ import { FileInfo } from "../../common/FileBrowser/types";
 import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
+import { useTutorialStore } from "../../../stores/tutorial-store";
 import {
   createFlow,
   getFlowSettings,
@@ -156,6 +157,7 @@ import {
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const tutorialStore = useTutorialStore();
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -167,6 +169,17 @@ const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
 const runButton = ref<InstanceType<typeof RunButton> | null>(null);
 const quickCreateName = ref<string>("");
+
+// Handle Quick Create button click - opens modal and advances tutorial if active
+function handleQuickCreateClick() {
+  modalVisibleForQuickCreate.value = true;
+  // Advance tutorial if we're on the "click-quick-create" step
+  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "click-quick-create") {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 200);
+  }
+}
 
 const executionModes = ref<ExecutionMode[]>(["Development", "Performance"]);
 

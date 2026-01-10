@@ -106,13 +106,6 @@ watch(
   async (newStep) => {
     if (!newStep) return;
 
-    // Start/stop modal polling based on current step
-    if (newStep.id === "click-quick-create") {
-      startModalPolling();
-    } else {
-      stopModalPolling();
-    }
-
     // If we need to wait for an element, poll for it
     if (newStep.waitForElement) {
       const maxAttempts = 50;
@@ -149,66 +142,6 @@ watch(
     }
   }
 );
-
-// Track modal polling state
-let modalPollInterval: ReturnType<typeof setInterval> | null = null;
-const modalWasInitiallyVisible = ref(false);
-
-// Start polling for Quick Create modal when on the correct step
-function startModalPolling() {
-  if (modalPollInterval) return;
-
-  // Check if modal is already visible when we start - if so, don't auto-advance
-  const createFlowBtn = document.querySelector("[data-tutorial='create-flow-confirm-btn']");
-  modalWasInitiallyVisible.value = createFlowBtn !== null;
-
-  // If modal is already open, don't poll (user needs to close it first or click Next)
-  if (modalWasInitiallyVisible.value) {
-    return;
-  }
-
-  modalPollInterval = setInterval(() => {
-    if (!tutorialStore.isActive) {
-      stopModalPolling();
-      return;
-    }
-
-    const currentStepId = tutorialStore.currentStep?.id;
-    if (currentStepId !== "click-quick-create") {
-      stopModalPolling();
-      return;
-    }
-
-    // Check if the modal's Create Flow button is visible
-    const createFlowBtn = document.querySelector("[data-tutorial='create-flow-confirm-btn']");
-    if (createFlowBtn) {
-      stopModalPolling();
-      setTimeout(() => {
-        tutorialStore.nextStep();
-      }, 200);
-    }
-  }, 100);
-}
-
-function stopModalPolling() {
-  if (modalPollInterval) {
-    clearInterval(modalPollInterval);
-    modalPollInterval = null;
-  }
-  modalWasInitiallyVisible.value = false;
-}
-
-// Check if we should start/stop modal polling based on current step
-function checkForModalOpen() {
-  if (!tutorialStore.isActive) return;
-
-  const currentStepId = tutorialStore.currentStep?.id;
-  if (currentStepId === "click-quick-create") {
-    startModalPolling();
-  } else {
-    stopModalPolling();
-  }
-}
 
 // Track if node settings was previously visible
 const nodeSettingsWasVisible = ref(false);
@@ -279,7 +212,6 @@ let mutationObserver: MutationObserver | null = null;
 function setupMutationObserver() {
   mutationObserver = new MutationObserver(() => {
     updateTargetPosition();
-    checkForModalOpen();
     checkForNodeSettings();
     checkForNewNodes();
   });
@@ -308,7 +240,6 @@ onUnmounted(() => {
   if (mutationObserver) {
     mutationObserver.disconnect();
   }
-  stopModalPolling();
 });
 </script>
 
