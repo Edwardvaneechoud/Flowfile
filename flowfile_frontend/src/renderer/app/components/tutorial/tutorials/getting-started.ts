@@ -293,25 +293,23 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 14: Configure Write data node
+    // Step 14: Connect and configure nodes
     {
       id: "configure-write-data",
-      title: "Configure Output Path",
+      title: "Connect and Configure Your Nodes",
       content: `
-        <p><strong>Click on the Write data node</strong> to configure where to save your results.</p>
-        <p>In the settings panel, you can:</p>
-        <ul style="margin: 12px 0; padding-left: 20px;">
-          <li>Choose the output file path</li>
-          <li>Select the file format (CSV, Parquet, Excel)</li>
-          <li>Configure additional options</li>
-        </ul>
-        <p>For now, just make sure a valid path is set!</p>
+        <p>Now it's time to wire everything together!</p>
+        <p><strong>Steps to complete:</strong></p>
+        <ol style="margin: 12px 0; padding-left: 20px;">
+          <li>Connect <strong>Manual Input → Group By → Write data</strong></li>
+          <li>Click on <strong>Group By</strong> to configure aggregation (e.g., sum revenue by country)</li>
+          <li>Click on <strong>Write data</strong> to set the output file path</li>
+        </ol>
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Drag from output handles (right side) to input handles (left side) to connect nodes.</p>
       `,
-      target: ".vue-flow__node",
-      position: "left",
-      action: "click",
+      position: "center",
+      action: "observe",
       showNextButton: true,
-      highlightPadding: 8,
     },
 
     // Step 15: Execution settings
