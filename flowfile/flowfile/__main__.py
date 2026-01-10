@@ -37,6 +37,13 @@ def run_flow(flow_path: str) -> int:
     # Force local execution for CLI - no worker service needed
     flow.execution_location = "local"
 
+    # Remove explore_data nodes - they're UI-only and require a worker service
+    explore_data_nodes = [n.node_id for n in flow.nodes if n.node_type == "explore_data"]
+    for node_id in explore_data_nodes:
+        flow.delete_node(node_id)
+    if explore_data_nodes:
+        print(f"Skipping {len(explore_data_nodes)} explore_data node(s) (UI-only)")
+
     flow_name = flow.flow_settings.name or f"Flow {flow.flow_id}"
     print(f"Running flow: {flow_name} (id={flow.flow_id})")
     print(f"Nodes: {len(flow.nodes)}")
