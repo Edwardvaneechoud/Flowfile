@@ -1,0 +1,250 @@
+---
+---
+
+<section id="install" class="install section">
+  <div class="container">
+    <div class="install-content">
+      <span class="section-label">Get Started</span>
+      <h2 class="section-title">Up and running in 60 seconds</h2>
+      <p class="section-description">
+        Install Flowfile with pip and launch the visual editor. No configuration, no Docker, no hassle.
+      </p>
+
+      <div class="install-steps">
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3>Install the package</h3>
+            <div class="code-block">
+              <code>pip install Flowfile</code>
+              <button class="copy-btn" data-copy="pip install Flowfile" aria-label="Copy">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3>Launch the visual editor</h3>
+            <div class="code-block">
+              <code>flowfile run ui</code>
+              <button class="copy-btn" data-copy="flowfile run ui" aria-label="Copy">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h3>Start building pipelines</h3>
+            <p class="step-desc">Browser opens automatically. Drag nodes, connect them, see your data transform in real-time.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="install-alt">
+        <h4>Or use the Python API</h4>
+        <div class="code-block large">
+          <pre><code><span class="keyword">import</span> flowfile <span class="keyword">as</span> ff
+
+<span class="comment"># Load and transform data</span>
+df = ff.read_csv(<span class="string">"sales.csv"</span>)
+result = (df
+    .filter(ff.col(<span class="string">"sales"</span>) > <span class="number">1000</span>)
+    .group_by(<span class="string">"category"</span>)
+    .agg([ff.col(<span class="string">"sales"</span>).sum()])
+)
+
+<span class="comment"># Export to production Polars code</span>
+result.write_parquet(<span class="string">"output.parquet"</span>)</code></pre>
+          <button class="copy-btn" data-copy="import flowfile as ff
+
+# Load and transform data
+df = ff.read_csv(&quot;sales.csv&quot;)
+result = (df
+    .filter(ff.col(&quot;sales&quot;) > 1000)
+    .group_by(&quot;category&quot;)
+    .agg([ff.col(&quot;sales&quot;).sum()])
+)
+
+# Export to production Polars code
+result.write_parquet(&quot;output.parquet&quot;)" aria-label="Copy">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const text = btn.getAttribute('data-copy');
+      if (text) {
+        navigator.clipboard.writeText(text);
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
+        setTimeout(() => {
+          btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+        }, 2000);
+      }
+    });
+  });
+</script>
+
+<style>
+  .install {
+    background:
+      radial-gradient(ellipse at 30% 50%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+      radial-gradient(ellipse at 70% 50%, rgba(236, 72, 153, 0.08) 0%, transparent 50%);
+  }
+
+  .install-content {
+    max-width: 700px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .install-content .section-description {
+    margin: 0 auto 3rem;
+  }
+
+  .install-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin-bottom: 3rem;
+    text-align: left;
+  }
+
+  .step {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+  }
+
+  .step-number {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-primary);
+    color: white;
+    font-weight: 700;
+    border-radius: 10px;
+  }
+
+  .step-content {
+    flex: 1;
+  }
+
+  .step-content h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: var(--color-text);
+  }
+
+  .step-desc {
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+  }
+
+  .code-block {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.875rem 1rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+  }
+
+  .code-block code {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    color: var(--color-success);
+  }
+
+  .code-block.large {
+    display: block;
+    position: relative;
+  }
+
+  .code-block.large pre {
+    overflow-x: auto;
+    padding-right: 3rem;
+  }
+
+  .code-block.large code {
+    display: block;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--color-text);
+  }
+
+  .code-block.large .copy-btn {
+    position: absolute;
+    top: 0.875rem;
+    right: 0.875rem;
+  }
+
+  .keyword { color: #c678dd; }
+  .string { color: #98c379; }
+  .number { color: #d19a66; }
+  .comment { color: #5c6370; }
+
+  .copy-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s;
+    flex-shrink: 0;
+  }
+
+  .copy-btn:hover {
+    color: var(--color-text);
+  }
+
+  .install-alt {
+    border-top: 1px solid var(--color-border);
+    padding-top: 2rem;
+    text-align: left;
+  }
+
+  .install-alt h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    margin-bottom: 1rem;
+    text-align: center;
+  }
+
+  @media (max-width: 600px) {
+    .step {
+      flex-direction: column;
+      gap: 1rem;
+    }
+  }
+</style>

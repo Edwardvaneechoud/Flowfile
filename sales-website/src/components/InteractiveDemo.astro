@@ -1,0 +1,573 @@
+---
+---
+
+<section id="demo" class="demo section">
+  <div class="container">
+    <div class="demo-header">
+      <span class="section-label">Try It</span>
+      <h2 class="section-title">See Flowfile in action</h2>
+      <p class="section-description">
+        Click on each node to see how data transforms through the pipeline. This is real computation — no backend required.
+      </p>
+    </div>
+
+    <div class="demo-container">
+      <div class="window-header">
+        <span class="window-dot red"></span>
+        <span class="window-dot yellow"></span>
+        <span class="window-dot green"></span>
+        <span class="window-title">flowfile — Visual Editor</span>
+      </div>
+
+      <div class="demo-content">
+        <div class="canvas">
+          <div class="nodes-container">
+            <svg class="connections" viewBox="0 0 480 160">
+              <defs>
+                <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#22c55e" stop-opacity="0.6" />
+                  <stop offset="33%" stop-color="#6366f1" stop-opacity="0.6" />
+                  <stop offset="66%" stop-color="#f97316" stop-opacity="0.6" />
+                  <stop offset="100%" stop-color="#ec4899" stop-opacity="0.6" />
+                </linearGradient>
+              </defs>
+              <path class="connection-line" d="M 72 50 C 100 50, 100 50, 128 50" />
+              <path class="connection-line" d="M 192 50 C 220 50, 220 50, 248 50" />
+              <path class="connection-line" d="M 312 50 C 340 50, 340 50, 368 50" />
+            </svg>
+
+            <div class="node active" data-type="input" data-node="input">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+              </div>
+              <span class="node-label">CSV Input</span>
+            </div>
+
+            <div class="node" data-type="filter" data-node="filter">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+              </div>
+              <span class="node-label">Filter</span>
+            </div>
+
+            <div class="node" data-type="groupby" data-node="groupby">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </div>
+              <span class="node-label">Group By</span>
+            </div>
+
+            <div class="node" data-type="output" data-node="output">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+              </div>
+              <span class="node-label">Output</span>
+            </div>
+          </div>
+
+          <div class="canvas-hint">Click a node to see its data</div>
+        </div>
+
+        <div class="data-panel">
+          <div class="table-header">
+            <div>
+              <div class="table-title" id="table-title">Raw Data</div>
+              <div class="table-subtitle" id="table-subtitle">Sales data loaded from CSV file</div>
+            </div>
+            <div class="table-meta" id="table-meta">8 rows x 6 cols</div>
+          </div>
+
+          <div id="transform-info" class="transform-info" style="display: none;">
+            <span id="transform-badge" class="transform-badge"></span>
+            <span id="transform-text"></span>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="data-table" id="data-table">
+              <thead id="table-head"></thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  const RAW_DATA = [
+    { id: 1, product: 'Widget A', category: 'Electronics', region: 'North', sales: 1200, quantity: 24 },
+    { id: 2, product: 'Widget B', category: 'Electronics', region: 'South', sales: 890, quantity: 18 },
+    { id: 3, product: 'Gadget X', category: 'Home', region: 'North', sales: 2100, quantity: 42 },
+    { id: 4, product: 'Gadget Y', category: 'Home', region: 'East', sales: 760, quantity: 15 },
+    { id: 5, product: 'Tool Pro', category: 'Tools', region: 'West', sales: 3200, quantity: 64 },
+    { id: 6, product: 'Tool Basic', category: 'Tools', region: 'North', sales: 450, quantity: 9 },
+    { id: 7, product: 'Widget C', category: 'Electronics', region: 'East', sales: 1800, quantity: 36 },
+    { id: 8, product: 'Gadget Z', category: 'Home', region: 'South', sales: 920, quantity: 23 },
+  ];
+
+  function filterData(data: typeof RAW_DATA) {
+    return data.filter(row => row.sales > 1000);
+  }
+
+  function groupByData(data: typeof RAW_DATA) {
+    const grouped = data.reduce((acc: Record<string, any>, row) => {
+      if (!acc[row.category]) {
+        acc[row.category] = {
+          category: row.category,
+          total_sales: 0,
+          total_quantity: 0,
+          count: 0
+        };
+      }
+      acc[row.category].total_sales += row.sales;
+      acc[row.category].total_quantity += row.quantity;
+      acc[row.category].count += 1;
+      return acc;
+    }, {});
+    return Object.values(grouped);
+  }
+
+  const nodeConfigs: Record<string, any> = {
+    input: {
+      title: 'Raw Data',
+      subtitle: 'Sales data loaded from CSV file',
+      getData: () => RAW_DATA,
+      columns: ['id', 'product', 'category', 'region', 'sales', 'quantity'],
+      transform: null
+    },
+    filter: {
+      title: 'Filtered Data',
+      subtitle: 'Rows where sales > 1000',
+      getData: () => filterData(RAW_DATA),
+      columns: ['id', 'product', 'category', 'region', 'sales', 'quantity'],
+      transform: { type: 'filter', badge: 'Filter', text: 'sales > 1000 → 5 of 8 rows pass' }
+    },
+    groupby: {
+      title: 'Grouped Data',
+      subtitle: 'Aggregated by category',
+      getData: () => groupByData(filterData(RAW_DATA)),
+      columns: ['category', 'total_sales', 'total_quantity', 'count'],
+      transform: { type: 'groupby', badge: 'Group By', text: 'category → SUM(sales), SUM(quantity)' }
+    },
+    output: {
+      title: 'Final Output',
+      subtitle: 'Ready for export',
+      getData: () => groupByData(filterData(RAW_DATA)),
+      columns: ['category', 'total_sales', 'total_quantity', 'count'],
+      transform: { type: 'output', badge: 'Export', text: 'Write to Parquet / CSV / Database' }
+    }
+  };
+
+  let activeNode = 'input';
+
+  function formatValue(val: any): string {
+    if (typeof val === 'number') {
+      return val.toLocaleString();
+    }
+    return String(val);
+  }
+
+  function renderTable(nodeId: string) {
+    const config = nodeConfigs[nodeId];
+    const data = config.getData();
+
+    // Update header info
+    const titleEl = document.getElementById('table-title');
+    const subtitleEl = document.getElementById('table-subtitle');
+    const metaEl = document.getElementById('table-meta');
+
+    if (titleEl) titleEl.textContent = config.title;
+    if (subtitleEl) subtitleEl.textContent = config.subtitle;
+    if (metaEl) metaEl.textContent = `${data.length} rows x ${config.columns.length} cols`;
+
+    // Update transform info
+    const transformInfo = document.getElementById('transform-info');
+    const transformBadge = document.getElementById('transform-badge');
+    const transformText = document.getElementById('transform-text');
+
+    if (config.transform && transformInfo && transformBadge && transformText) {
+      transformInfo.style.display = 'flex';
+      transformBadge.textContent = config.transform.badge;
+      transformBadge.className = `transform-badge ${config.transform.type}`;
+      transformText.textContent = config.transform.text;
+    } else if (transformInfo) {
+      transformInfo.style.display = 'none';
+    }
+
+    // Render table head
+    const thead = document.getElementById('table-head');
+    if (thead) {
+      thead.innerHTML = `<tr>${config.columns.map((col: string) => `<th>${col}</th>`).join('')}</tr>`;
+    }
+
+    // Render table body
+    const tbody = document.getElementById('table-body');
+    if (tbody) {
+      tbody.innerHTML = data.map((row: any) =>
+        `<tr>${config.columns.map((col: string) => `<td>${formatValue(row[col])}</td>`).join('')}</tr>`
+      ).join('');
+    }
+  }
+
+  function selectNode(nodeId: string) {
+    // Update active states
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('active'));
+    const activeNodeEl = document.querySelector(`[data-node="${nodeId}"]`);
+    if (activeNodeEl) activeNodeEl.classList.add('active');
+
+    activeNode = nodeId;
+    renderTable(nodeId);
+  }
+
+  // Initialize on DOM ready
+  document.addEventListener('DOMContentLoaded', () => {
+    renderTable('input');
+
+    // Add click handlers
+    document.querySelectorAll('.node').forEach(node => {
+      node.addEventListener('click', () => {
+        const nodeId = node.getAttribute('data-node');
+        if (nodeId) selectNode(nodeId);
+      });
+    });
+  });
+</script>
+
+<style>
+  .demo-header {
+    text-align: center;
+    max-width: 600px;
+    margin: 0 auto 3rem;
+  }
+
+  .demo-container {
+    background: var(--color-bg);
+    border-radius: 16px;
+    border: 1px solid var(--color-border);
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  }
+
+  .window-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .window-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  .window-dot.red { background: #ff5f57; }
+  .window-dot.yellow { background: #febc2e; }
+  .window-dot.green { background: #28c840; }
+
+  .window-title {
+    margin-left: 12px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .demo-content {
+    display: flex;
+    min-height: 420px;
+  }
+
+  .canvas {
+    flex: 0 0 520px;
+    position: relative;
+    padding: 24px;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.03) 0%, transparent 50%),
+      linear-gradient(rgba(99, 102, 241, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99, 102, 241, 0.02) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
+  }
+
+  .nodes-container {
+    position: relative;
+    height: 160px;
+  }
+
+  .connections {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .connection-line {
+    stroke: url(#lineGradient);
+    stroke-width: 2;
+    fill: none;
+    stroke-dasharray: 6 4;
+  }
+
+  .node {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+
+  .node:hover {
+    transform: scale(1.05);
+  }
+
+  .node.active {
+    transform: scale(1.08);
+  }
+
+  .node[data-node="input"] { left: 20px; top: 18px; }
+  .node[data-node="filter"] { left: 140px; top: 18px; }
+  .node[data-node="groupby"] { left: 260px; top: 18px; }
+  .node[data-node="output"] { left: 380px; top: 18px; }
+
+  .node-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 12px;
+    background: var(--color-bg-card);
+    border: 2px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .node.active .node-icon {
+    box-shadow: 0 4px 24px var(--node-color);
+  }
+
+  .node-icon svg {
+    width: 28px;
+    height: 28px;
+    stroke-width: 1.5;
+    transition: all 0.2s ease;
+  }
+
+  .node-label {
+    margin-top: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-align: center;
+    transition: color 0.2s ease;
+  }
+
+  .node.active .node-label {
+    color: var(--color-text);
+  }
+
+  /* Node type colors */
+  .node[data-type="input"] { --node-color: rgba(34, 197, 94, 0.25); }
+  .node[data-type="input"] .node-icon svg { stroke: #22c55e; }
+  .node[data-type="input"].active .node-icon {
+    background: #22c55e;
+    border-color: #22c55e;
+  }
+  .node[data-type="input"].active .node-icon svg { stroke: white; }
+
+  .node[data-type="filter"] { --node-color: rgba(99, 102, 241, 0.25); }
+  .node[data-type="filter"] .node-icon svg { stroke: #6366f1; }
+  .node[data-type="filter"].active .node-icon {
+    background: #6366f1;
+    border-color: #6366f1;
+  }
+  .node[data-type="filter"].active .node-icon svg { stroke: white; }
+
+  .node[data-type="groupby"] { --node-color: rgba(249, 115, 22, 0.25); }
+  .node[data-type="groupby"] .node-icon svg { stroke: #f97316; }
+  .node[data-type="groupby"].active .node-icon {
+    background: #f97316;
+    border-color: #f97316;
+  }
+  .node[data-type="groupby"].active .node-icon svg { stroke: white; }
+
+  .node[data-type="output"] { --node-color: rgba(236, 72, 153, 0.25); }
+  .node[data-type="output"] .node-icon svg { stroke: #ec4899; }
+  .node[data-type="output"].active .node-icon {
+    background: #ec4899;
+    border-color: #ec4899;
+  }
+  .node[data-type="output"].active .node-icon svg { stroke: white; }
+
+  .canvas-hint {
+    position: absolute;
+    bottom: 16px;
+    left: 24px;
+    font-size: 11px;
+    color: #6b6b7a;
+  }
+
+  .data-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--color-border);
+    background: #0d0d14;
+    overflow: hidden;
+  }
+
+  .table-header {
+    padding: 12px 16px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .table-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-text);
+  }
+
+  .table-subtitle {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 2px;
+  }
+
+  .table-meta {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    background: #0d0d14;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+  }
+
+  .transform-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+
+  .transform-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--color-primary);
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .transform-badge.filter { background: #6366f1; }
+  .transform-badge.groupby { background: #f97316; }
+  .transform-badge.output { background: #ec4899; }
+
+  .table-wrapper {
+    flex: 1;
+    overflow: auto;
+  }
+
+  /* Flowfile-style data table */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+
+  .data-table th {
+    position: sticky;
+    top: 0;
+    background: var(--color-bg-card);
+    color: var(--color-text-muted);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+
+  .data-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text);
+  }
+
+  .data-table tbody tr {
+    background: var(--color-bg-elevated);
+    transition: background 0.15s ease;
+  }
+
+  .data-table tbody tr:nth-child(odd) {
+    background: #15151f;
+  }
+
+  .data-table tbody tr:hover {
+    background: #1e1e2a;
+  }
+
+  @media (max-width: 900px) {
+    .demo-content {
+      flex-direction: column;
+    }
+
+    .canvas {
+      flex: none;
+      min-height: 200px;
+    }
+
+    .data-panel {
+      border-left: none;
+      border-top: 1px solid var(--color-border);
+      min-height: 350px;
+    }
+
+    .nodes-container {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+    }
+
+    .node {
+      position: static !important;
+    }
+
+    .connections {
+      display: none;
+    }
+  }
+</style>

@@ -1,0 +1,312 @@
+---
+const tools = [
+  { name: 'Flowfile', highlight: true },
+  { name: 'Pandas' },
+  { name: 'Airflow' },
+  { name: 'Prefect' },
+  { name: 'dbt' },
+];
+
+const features = [
+  {
+    name: 'Visual Interface',
+    flowfile: { value: true, note: 'Drag-and-drop' },
+    pandas: { value: false },
+    airflow: { value: 'partial', note: 'DAG view only' },
+    prefect: { value: 'partial', note: 'Flow view' },
+    dbt: { value: false },
+  },
+  {
+    name: 'Python API',
+    flowfile: { value: true, note: 'FlowFrame' },
+    pandas: { value: true },
+    airflow: { value: true },
+    prefect: { value: true },
+    dbt: { value: false, note: 'SQL/Jinja' },
+  },
+  {
+    name: 'Code Export',
+    flowfile: { value: true, note: 'Pure Polars' },
+    pandas: { value: 'na' },
+    airflow: { value: 'na' },
+    prefect: { value: 'na' },
+    dbt: { value: 'na' },
+  },
+  {
+    name: 'Performance',
+    flowfile: { value: 'fast', note: 'Polars-powered' },
+    pandas: { value: 'slow', note: 'Single-threaded' },
+    airflow: { value: 'na', note: 'Orchestrator' },
+    prefect: { value: 'na', note: 'Orchestrator' },
+    dbt: { value: 'fast', note: 'DB-native' },
+  },
+  {
+    name: 'Data Preview',
+    flowfile: { value: true, note: 'Real-time' },
+    pandas: { value: 'partial', note: 'Jupyter' },
+    airflow: { value: false },
+    prefect: { value: false },
+    dbt: { value: 'partial', note: 'Via IDE' },
+  },
+  {
+    name: 'No Vendor Lock-in',
+    flowfile: { value: true, note: 'MIT License' },
+    pandas: { value: true },
+    airflow: { value: true },
+    prefect: { value: 'partial', note: 'Cloud tier' },
+    dbt: { value: 'partial', note: 'Cloud tier' },
+  },
+  {
+    name: 'Learning Curve',
+    flowfile: { value: 'easy', note: 'Visual + code' },
+    pandas: { value: 'medium', note: 'Code only' },
+    airflow: { value: 'hard', note: 'Complex setup' },
+    prefect: { value: 'medium' },
+    dbt: { value: 'medium', note: 'SQL knowledge' },
+  },
+  {
+    name: 'Quick Setup',
+    flowfile: { value: true, note: 'pip install' },
+    pandas: { value: true },
+    airflow: { value: false, note: 'Infrastructure' },
+    prefect: { value: 'partial' },
+    dbt: { value: 'partial' },
+  },
+];
+---
+
+<section id="comparison" class="comparison section">
+  <div class="container">
+    <div class="comparison-header">
+      <span class="section-label">Compare</span>
+      <h2 class="section-title">How Flowfile stacks up</h2>
+      <p class="section-description">
+        See how Flowfile compares to other data tools. Different tools for different needs — find what works for you.
+      </p>
+    </div>
+
+    <div class="table-container">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th class="feature-col">Feature</th>
+            {tools.map((tool) => (
+              <th class:list={['tool-col', { highlight: tool.highlight }]}>
+                {tool.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {features.map((feature) => (
+            <tr>
+              <td class="feature-name">{feature.name}</td>
+              <td class="cell highlight">
+                {feature.flowfile.value === true && (
+                  <span class="check">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  </span>
+                )}
+                {feature.flowfile.value === false && <span class="cross">-</span>}
+                {feature.flowfile.value === 'partial' && <span class="partial">~</span>}
+                {feature.flowfile.value === 'na' && <span class="na">N/A</span>}
+                {feature.flowfile.value === 'fast' && <span class="fast">Fast</span>}
+                {feature.flowfile.value === 'slow' && <span class="slow">Slow</span>}
+                {feature.flowfile.value === 'easy' && <span class="easy">Easy</span>}
+                {feature.flowfile.value === 'medium' && <span class="medium">Medium</span>}
+                {feature.flowfile.value === 'hard' && <span class="hard">Hard</span>}
+                {feature.flowfile.note && <span class="note">{feature.flowfile.note}</span>}
+              </td>
+              <td class="cell">
+                {feature.pandas.value === true && <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>}
+                {feature.pandas.value === false && <span class="cross">-</span>}
+                {feature.pandas.value === 'partial' && <span class="partial">~</span>}
+                {feature.pandas.value === 'na' && <span class="na">N/A</span>}
+                {feature.pandas.value === 'slow' && <span class="slow">Slow</span>}
+                {feature.pandas.value === 'medium' && <span class="medium">Medium</span>}
+                {feature.pandas.note && <span class="note">{feature.pandas.note}</span>}
+              </td>
+              <td class="cell">
+                {feature.airflow.value === true && <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>}
+                {feature.airflow.value === false && <span class="cross">-</span>}
+                {feature.airflow.value === 'partial' && <span class="partial">~</span>}
+                {feature.airflow.value === 'na' && <span class="na">N/A</span>}
+                {feature.airflow.value === 'hard' && <span class="hard">Hard</span>}
+                {feature.airflow.note && <span class="note">{feature.airflow.note}</span>}
+              </td>
+              <td class="cell">
+                {feature.prefect.value === true && <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>}
+                {feature.prefect.value === false && <span class="cross">-</span>}
+                {feature.prefect.value === 'partial' && <span class="partial">~</span>}
+                {feature.prefect.value === 'na' && <span class="na">N/A</span>}
+                {feature.prefect.value === 'medium' && <span class="medium">Medium</span>}
+                {feature.prefect.note && <span class="note">{feature.prefect.note}</span>}
+              </td>
+              <td class="cell">
+                {feature.dbt.value === true && <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>}
+                {feature.dbt.value === false && <span class="cross">-</span>}
+                {feature.dbt.value === 'partial' && <span class="partial">~</span>}
+                {feature.dbt.value === 'na' && <span class="na">N/A</span>}
+                {feature.dbt.value === 'fast' && <span class="fast">Fast</span>}
+                {feature.dbt.value === 'medium' && <span class="medium">Medium</span>}
+                {feature.dbt.note && <span class="note">{feature.dbt.note}</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="comparison-note">
+      Note: Each tool has its strengths. Flowfile excels at visual data transformation with code export capabilities.
+    </p>
+  </div>
+</section>
+
+<style>
+  .comparison-header {
+    text-align: center;
+    max-width: 600px;
+    margin: 0 auto 3rem;
+  }
+
+  .table-container {
+    overflow-x: auto;
+    border-radius: 12px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-elevated);
+  }
+
+  .comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 700px;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+    padding: 1rem 1.25rem;
+    text-align: center;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .comparison-table th {
+    background: var(--color-bg-card);
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--color-text);
+  }
+
+  .comparison-table th.highlight {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(236, 72, 153, 0.2));
+    color: white;
+  }
+
+  .feature-col {
+    text-align: left !important;
+    width: 180px;
+  }
+
+  .tool-col {
+    width: 120px;
+  }
+
+  .feature-name {
+    text-align: left;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .cell {
+    position: relative;
+  }
+
+  .cell.highlight {
+    background: rgba(99, 102, 241, 0.05);
+  }
+
+  .check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: rgba(34, 197, 94, 0.15);
+    border-radius: 50%;
+  }
+
+  .check svg {
+    width: 14px;
+    height: 14px;
+    stroke: #22c55e;
+  }
+
+  .cross {
+    color: var(--color-text-muted);
+    font-size: 1.25rem;
+  }
+
+  .partial {
+    color: #f97316;
+    font-weight: 600;
+  }
+
+  .na {
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+  }
+
+  .fast {
+    color: #22c55e;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .slow {
+    color: #ef4444;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .easy {
+    color: #22c55e;
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .medium {
+    color: #f97316;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .hard {
+    color: #ef4444;
+    font-weight: 500;
+    font-size: 0.85rem;
+  }
+
+  .note {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    margin-top: 0.25rem;
+  }
+
+  .comparison-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .comparison-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .comparison-note {
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    margin-top: 1.5rem;
+  }
+</style>
