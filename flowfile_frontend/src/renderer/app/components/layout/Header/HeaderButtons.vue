@@ -280,6 +280,12 @@ const saveFlowAction = async (flowPath: string) => {
     await saveFlow(nodeStore.flow_id, flowPath);
     ElMessage.success("Flow saved successfully");
     modalVisibleForSave.value = false;
+    // Advance tutorial if we're on the "save-flow" step
+    if (tutorialStore.isActive && tutorialStore.currentStep?.id === "save-flow") {
+      setTimeout(() => {
+        tutorialStore.nextStep();
+      }, 300);
+    }
   } catch (error: any) {
     ElMessage.error({
       message: error.message || "Failed to save flow",
@@ -316,6 +322,12 @@ const runFlow = () => {
 
 const toggleCodeGenerator = () => {
   nodeStore.toggleCodeGenerator();
+  // Advance tutorial if we're on the "generate-code" step
+  if (tutorialStore.isActive && tutorialStore.currentStep?.id === "generate-code") {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
 };
 
 const handleCreateAction = async (flowPath: string) => {

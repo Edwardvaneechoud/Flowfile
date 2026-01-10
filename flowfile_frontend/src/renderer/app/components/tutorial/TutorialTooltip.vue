@@ -44,11 +44,14 @@ onUnmounted(() => {
 // Calculate final tooltip position with viewport bounds checking
 const tooltipStyle = computed(() => {
   if (props.isCenterMode) {
+    // Position in bottom-right corner when no target is highlighted
     return {
       position: "fixed" as const,
-      left: "50%",
-      top: "50%",
-      transform: "translate(-50%, -50%)",
+      right: "24px",
+      bottom: "24px",
+      left: "auto",
+      top: "auto",
+      transform: "none",
     };
   }
 

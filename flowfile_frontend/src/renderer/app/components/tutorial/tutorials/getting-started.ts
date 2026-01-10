@@ -290,7 +290,28 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 14: Execution settings
+    // Step 14: Configure Write data node
+    {
+      id: "configure-write-data",
+      title: "Configure Output Path",
+      content: `
+        <p><strong>Click on the Write data node</strong> to configure where to save your results.</p>
+        <p>In the settings panel, you can:</p>
+        <ul style="margin: 12px 0; padding-left: 20px;">
+          <li>Choose the output file path</li>
+          <li>Select the file format (CSV, Parquet, Excel)</li>
+          <li>Configure additional options</li>
+        </ul>
+        <p>For now, just make sure a valid path is set!</p>
+      `,
+      target: ".vue-flow__node",
+      position: "left",
+      action: "click",
+      showNextButton: true,
+      highlightPadding: 8,
+    },
+
+    // Step 15: Execution settings
     {
       id: "execution-settings",
       title: "Configure Execution Mode",
@@ -327,35 +348,19 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 15: View results - prompt to click Group By
+    // Step 16: View results and explore pipeline
     {
       id: "view-results",
-      title: "View Your Aggregated Data",
+      title: "Explore Your Results",
       content: `
         <p style="font-size: 15px;">Your flow has finished running!</p>
-        <p>Now <strong>click on the Group By node</strong> to see your aggregated results in the table preview below.</p>
-        <p style="margin-top: 12px;">You should see the <strong>total revenue per country</strong> - the power of grouping in action!</p>
-      `,
-      target: ".vue-flow",
-      position: "center",
-      action: "observe",
-      showNextButton: true,
-      highlightPadding: 0,
-    },
-
-    // Step 16: Table preview - explore the data
-    {
-      id: "table-preview",
-      title: "Explore Your Pipeline",
-      content: `
-        <p>The <strong>Table Preview</strong> panel lets you inspect data at each step.</p>
-        <p>Try clicking on different nodes to see how your data transforms:</p>
+        <p><strong>Click on any node</strong> to see its output in the Table Preview below.</p>
+        <p>Try clicking on different nodes:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
           <li><strong>Manual Input</strong> - Your raw sales data</li>
-          <li><strong>Group By</strong> - Aggregated revenue per country</li>
+          <li><strong>Group By</strong> - Total revenue per country</li>
           <li><strong>Write data</strong> - Final output to be saved</li>
         </ul>
-        <p>This is great for debugging and understanding your data flow!</p>
       `,
       position: "center",
       action: "observe",
@@ -413,12 +418,34 @@ export const gettingStartedTutorial: Tutorial = {
       `,
       target: "[data-tutorial='generate-code-btn']",
       position: "bottom",
-      action: "observe",
+      action: "click",
       showNextButton: true,
       highlightPadding: 4,
     },
 
-    // Step 20: Keyboard shortcuts
+    // Step 20: Code preview
+    {
+      id: "code-preview",
+      title: "Your Python Code",
+      content: `
+        <p>Here's your flow as <strong>Python/Polars code</strong>!</p>
+        <p>You can:</p>
+        <ul style="margin: 12px 0; padding-left: 20px;">
+          <li>Click <strong>Export Code</strong> to save as a .py file</li>
+          <li>Copy the code directly from the editor</li>
+          <li>Click <strong>Refresh</strong> to regenerate after changes</li>
+        </ul>
+        <p>The code is fully functional and can run standalone!</p>
+      `,
+      target: ".code-generator-container",
+      position: "left",
+      action: "observe",
+      waitForElement: ".code-generator-container",
+      showNextButton: true,
+      highlightPadding: 8,
+    },
+
+    // Step 21: Keyboard shortcuts
     {
       id: "keyboard-shortcuts",
       title: "Keyboard Shortcuts",
@@ -438,7 +465,7 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
     },
 
-    // Step 21: Completion
+    // Step 22: Completion
     {
       id: "completion",
       title: "Congratulations!",
@@ -452,7 +479,11 @@ export const gettingStartedTutorial: Tutorial = {
           <li>Run your flow and preview data</li>
           <li>Save and export your work</li>
         </ul>
-        <p><strong>Tip:</strong> Click the Tutorial button anytime to replay this guide!</p>
+        <p style="margin-top: 16px;">
+          <strong>Learn more:</strong> Visit our
+          <a href="https://docs.flowfile.io" target="_blank" style="color: var(--color-accent); text-decoration: underline;">documentation</a>
+          for advanced features and tutorials.
+        </p>
       `,
       position: "center",
       action: "observe",
