@@ -28,10 +28,9 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
     }, SERVICES_STARTUP_TIMEOUT);
 
     const checkComplete = () => {
-      const isComplete = process.platform === 'win32' 
-        ? (servicesStarted && startupReceived && electronApp)
-        : (servicesStarted && startupReceived && windowReady && electronApp);
-        
+      // All platforms should wait for the same signals: services started, startup received, and window ready
+      const isComplete = servicesStarted && startupReceived && windowReady && electronApp;
+
       if (isComplete) {
         clearTimeout(timeout);
         resolve(electronApp!);
@@ -69,18 +68,17 @@ export async function launchElectronApp(): Promise<ElectronApplication> {
         }
       });
 
-      // Note: Windows console message detection can be unreliable, but we should
-      // still require both startup signals before considering the app ready.
-      // If this causes legitimate timeout failures, the underlying Windows
-      // console detection issue should be fixed rather than bypassed.
+      // Safety timeout for Windows: console message detection can be unreliable,
+      // but we should still require all startup signals (including windowReady)
+      // before considering the app ready.
       if (process.platform === 'win32') {
         setTimeout(() => {
-          if (electronApp && servicesStarted && startupReceived) {
+          if (electronApp && servicesStarted && startupReceived && windowReady) {
             console.log('Safety timeout reached, but Electron app appears to be running with all required signals');
             clearTimeout(timeout);
             resolve(electronApp);
           } else {
-            console.log(`Safety timeout: servicesStarted=${servicesStarted}, startupReceived=${startupReceived}`);
+            console.log(`Safety timeout: servicesStarted=${servicesStarted}, startupReceived=${startupReceived}, windowReady=${windowReady}`);
           }
         }, 30000);
       }

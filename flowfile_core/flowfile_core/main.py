@@ -4,10 +4,9 @@ import signal
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from flowfile_core import ServerRun
 from flowfile_core.configs.flow_logger import clear_all_flow_logs
 from flowfile_core.configs.settings import (
     SERVER_HOST,
@@ -91,7 +90,7 @@ app.include_router(user_defined_components_router, prefix="/user_defined_compone
 
 
 @app.post("/shutdown")
-async def shutdown():
+async def shutdown(background_tasks: BackgroundTasks):
     """An API endpoint to gracefully shut down the server.
 
     This endpoint sets a flag that the Uvicorn server checks, allowing it
@@ -99,7 +98,6 @@ async def shutdown():
     after the HTTP response has been sent.
     """
     # Use a background task to trigger the shutdown after the response is sent
-    background_tasks = ServerRun()
     background_tasks.add_task(trigger_shutdown)
     return {"message": "Server is shutting down"}
 
