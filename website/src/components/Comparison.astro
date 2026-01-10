@@ -1,0 +1,277 @@
+---
+---
+
+<section class="comparison-section" id="comparison">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Compare</span>
+      <h2 class="section-title">How Flowfile stacks up</h2>
+      <p class="section-description">
+        See how Flowfile compares to other popular data tools in the ecosystem.
+      </p>
+    </div>
+
+    <div class="comparison-table-wrapper">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th class="feature-col">Feature</th>
+            <th class="tool-col flowfile">
+              <span class="tool-name">Flowfile</span>
+            </th>
+            <th class="tool-col">Airflow</th>
+            <th class="tool-col">Prefect</th>
+            <th class="tool-col">dbt</th>
+            <th class="tool-col">Pandas</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Visual Editor</span>
+              <span class="feature-desc">Drag-and-drop UI for building pipelines</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="partial">~</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Python API</span>
+              <span class="feature-desc">Programmatic pipeline definition</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Code Generation</span>
+              <span class="feature-desc">Export as standalone Python code</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="na">N/A</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Polars Engine</span>
+              <span class="feature-desc">High-performance data processing</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Local First</span>
+              <span class="feature-desc">No cloud/server required</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="partial">~</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Data Transformations</span>
+              <span class="feature-desc">Filter, join, aggregate, pivot</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Real-time Preview</span>
+              <span class="feature-desc">See data at each pipeline step</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="cross">✗</span></td>
+            <td class="value-cell"><span class="partial">~</span></td>
+          </tr>
+          <tr>
+            <td class="feature-cell">
+              <span class="feature-name">Open Source</span>
+              <span class="feature-desc">MIT license, full transparency</span>
+            </td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+            <td class="value-cell"><span class="check">✓</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="comparison-note">
+      <strong>Note:</strong> Flowfile focuses on data transformation (ETL), while tools like Airflow and Prefect
+      are primarily workflow orchestrators. Choose the right tool for your specific use case.
+    </p>
+  </div>
+</section>
+
+<style>
+  .comparison-section {
+    padding: 6rem 2rem;
+    background: var(--color-bg);
+  }
+
+  .comparison-table-wrapper {
+    max-width: 1000px;
+    margin: 0 auto;
+    overflow-x: auto;
+    border-radius: 16px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+  }
+
+  .comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+    padding: 1rem;
+    text-align: center;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .comparison-table thead th {
+    background: var(--color-bg-elevated);
+    font-weight: 600;
+    color: var(--color-text);
+    position: sticky;
+    top: 0;
+  }
+
+  .feature-col {
+    text-align: left !important;
+    min-width: 200px;
+  }
+
+  .tool-col {
+    min-width: 90px;
+  }
+
+  .tool-col.flowfile {
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .tool-name {
+    font-weight: 600;
+  }
+
+  .tool-col.flowfile .tool-name {
+    color: var(--color-primary);
+  }
+
+  .feature-cell {
+    text-align: left !important;
+    background: var(--color-bg-elevated);
+  }
+
+  .feature-name {
+    display: block;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .feature-desc {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    margin-top: 2px;
+  }
+
+  .value-cell {
+    vertical-align: middle;
+  }
+
+  .value-cell:nth-child(2) {
+    background: rgba(99, 102, 241, 0.05);
+  }
+
+  .check {
+    color: #22c55e;
+    font-weight: 700;
+    font-size: 1.1rem;
+  }
+
+  .cross {
+    color: #ef4444;
+    font-weight: 700;
+    font-size: 1.1rem;
+  }
+
+  .partial {
+    color: #f97316;
+    font-weight: 700;
+    font-size: 1.1rem;
+  }
+
+  .na {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+  }
+
+  .comparison-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .comparison-table tbody tr:hover td {
+    background: var(--color-bg-elevated);
+  }
+
+  .comparison-table tbody tr:hover td:nth-child(2) {
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .comparison-note {
+    max-width: 700px;
+    margin: 2rem auto 0;
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+  }
+
+  .comparison-note strong {
+    color: var(--color-text);
+  }
+
+  @media (max-width: 768px) {
+    .comparison-table {
+      font-size: 0.8rem;
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 0.75rem 0.5rem;
+    }
+
+    .feature-col {
+      min-width: 150px;
+    }
+
+    .tool-col {
+      min-width: 70px;
+    }
+  }
+</style>
