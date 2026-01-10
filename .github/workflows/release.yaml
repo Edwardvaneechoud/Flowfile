@@ -69,7 +69,7 @@ jobs:
       - name: Install Python dependencies
         shell: pwsh
         run: |
-          poetry install
+          poetry install --with build
 
       - name: Build Python services
         shell: pwsh
