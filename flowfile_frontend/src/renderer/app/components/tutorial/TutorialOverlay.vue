@@ -70,7 +70,7 @@ function calculateTooltipPosition() {
       break;
     case "left":
       tooltipPosition.value = {
-        x: rect.left - padding,
+        x: rect.left - padding - 30, // Extra offset to avoid modal overlap
         y: rect.top + rect.height / 2,
       };
       break;

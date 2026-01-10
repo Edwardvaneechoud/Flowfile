@@ -209,7 +209,7 @@ function handleNext() {
   box-shadow:
     0 20px 40px rgba(0, 0, 0, 0.2),
     0 0 0 1px rgba(0, 0, 0, 0.05);
-  z-index: 10002;
+  z-index: 100000;
   overflow: hidden;
   animation: tooltip-appear 0.3s ease-out;
   pointer-events: auto;
