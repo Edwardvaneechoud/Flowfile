@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useTutorialStore } from "../../stores/tutorial-store";
-import { useNodeStore } from "../../stores/column-store";
+import { useFlowStore } from "../../stores/column-store";
 import TutorialTooltip from "./TutorialTooltip.vue";
 
 const tutorialStore = useTutorialStore();
-const nodeStore = useNodeStore();
+const nodeStore = useFlowStore();
 
 const targetRect = ref<DOMRect | null>(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
@@ -127,7 +127,7 @@ watch(
 
 // Auto-advance when flow is created
 watch(
-  () => nodeStore.flow_id,
+  () => nodeStore.flowId,
   (newFlowId, oldFlowId) => {
     if (!tutorialStore.isActive) return;
 
