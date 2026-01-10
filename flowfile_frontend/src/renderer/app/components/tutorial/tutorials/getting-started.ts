@@ -224,7 +224,7 @@ export const gettingStartedTutorial: Tutorial = {
       title: "Add Group By Node",
       content: `
         <p style="font-size: 15px; padding: 12px; background: var(--color-accent-subtle); color: #1a1a1a; border-radius: 6px; margin-bottom: 12px;">
-          <strong>Drag the Group By node</strong> onto the canvas now!
+          <strong style="color: inherit;">Drag the Group By node</strong> onto the canvas now!
         </p>
         <p>This will let you calculate the <strong>total revenue per country</strong> from your sales data.</p>
       `,
