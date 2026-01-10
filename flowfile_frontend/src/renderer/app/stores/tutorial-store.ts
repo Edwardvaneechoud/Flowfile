@@ -20,6 +20,7 @@ export interface TutorialStep {
   onExit?: () => void | Promise<void>;
   highlightPadding?: number;
   spotlightShape?: "rectangle" | "circle";
+  centerInScreen?: boolean; // Show tooltip centered in screen instead of bottom-right corner
 }
 
 export interface Tutorial {

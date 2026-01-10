@@ -255,6 +255,11 @@ export const gettingStartedTutorial: Tutorial = {
       action: "observe",
       showNextButton: true,
       highlightPadding: 0,
+      onExit: () => {
+        // Close the node settings panel by deselecting the node
+        const nodeStore = useNodeStore();
+        nodeStore.nodeId = -1;
+      },
     },
 
     // Step 12: Write data (output operations)
@@ -310,6 +315,11 @@ export const gettingStartedTutorial: Tutorial = {
       position: "center",
       action: "observe",
       showNextButton: true,
+      onExit: () => {
+        // Close the node settings panel by deselecting the node
+        const nodeStore = useNodeStore();
+        nodeStore.nodeId = -1;
+      },
     },
 
     // Step 15: Execution settings
@@ -488,6 +498,7 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
       showPrevButton: false,
       canSkip: false,
+      centerInScreen: true,
     },
   ],
 };

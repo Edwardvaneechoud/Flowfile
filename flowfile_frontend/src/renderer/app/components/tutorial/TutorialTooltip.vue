@@ -44,6 +44,17 @@ onUnmounted(() => {
 // Calculate final tooltip position with viewport bounds checking
 const tooltipStyle = computed(() => {
   if (props.isCenterMode) {
+    // Check if this step should be centered in screen
+    if (props.step.centerInScreen) {
+      return {
+        position: "fixed" as const,
+        left: "50%",
+        top: "50%",
+        right: "auto",
+        bottom: "auto",
+        transform: "translate(-50%, -50%)",
+      };
+    }
     // Position in bottom-right corner when no target is highlighted
     return {
       position: "fixed" as const,
