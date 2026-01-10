@@ -1,0 +1,585 @@
+---
+---
+
+<section class="demo-section" id="demo">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Try It</span>
+      <h2 class="section-title">See Flowfile in action</h2>
+      <p class="section-description">
+        Click on each node to see how data transforms through the pipeline.
+        This is real computation — no backend required.
+      </p>
+    </div>
+
+    <div class="demo-window">
+      <!-- Window Header -->
+      <div class="window-header">
+        <span class="window-dot red"></span>
+        <span class="window-dot yellow"></span>
+        <span class="window-dot green"></span>
+        <span class="window-title">flowfile — Visual Editor</span>
+      </div>
+
+      <!-- Content -->
+      <div class="demo-content">
+        <!-- Canvas -->
+        <div class="canvas">
+          <!-- Connection Lines SVG -->
+          <svg class="connections" viewBox="0 0 480 160" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#22c55e" stop-opacity="0.6" />
+                <stop offset="33%" stop-color="#6366f1" stop-opacity="0.6" />
+                <stop offset="66%" stop-color="#f97316" stop-opacity="0.6" />
+                <stop offset="100%" stop-color="#ec4899" stop-opacity="0.6" />
+              </linearGradient>
+            </defs>
+            <path class="connection-line" d="M 82 80 C 110 80, 130 80, 158 80" />
+            <path class="connection-line" d="M 202 80 C 230 80, 250 80, 278 80" />
+            <path class="connection-line" d="M 322 80 C 350 80, 370 80, 398 80" />
+          </svg>
+
+          <!-- Nodes -->
+          <div class="nodes-container">
+            <div class="node active" data-type="input" data-node="input">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+              </div>
+              <span class="node-label">CSV Input</span>
+            </div>
+
+            <div class="node" data-type="filter" data-node="filter">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+              </div>
+              <span class="node-label">Filter</span>
+            </div>
+
+            <div class="node" data-type="groupby" data-node="groupby">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </div>
+              <span class="node-label">Group By</span>
+            </div>
+
+            <div class="node" data-type="output" data-node="output">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+              </div>
+              <span class="node-label">Output</span>
+            </div>
+          </div>
+
+          <p class="canvas-hint">👆 Click a node to see its data</p>
+        </div>
+
+        <!-- Data Panel -->
+        <div class="data-panel">
+          <div class="table-header">
+            <div class="table-info">
+              <h3 class="table-title" id="table-title">Raw Data</h3>
+              <p class="table-subtitle" id="table-subtitle">Sales data loaded from CSV file</p>
+            </div>
+            <span class="table-meta" id="table-meta">8 rows × 6 cols</span>
+          </div>
+
+          <div class="transform-info" id="transform-info" style="display: none;">
+            <span class="transform-badge" id="transform-badge">Filter</span>
+            <span class="transform-text" id="transform-text">sales &gt; 1000 → 5 of 8 rows pass</span>
+          </div>
+
+          <div id="data-grid" class="ag-theme-balham"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .demo-section {
+    padding: 6rem 2rem;
+    background: var(--color-bg);
+  }
+
+  .demo-window {
+    max-width: 1100px;
+    margin: 0 auto;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  }
+
+  .window-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .window-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  .window-dot.red { background: #ff5f57; }
+  .window-dot.yellow { background: #febc2e; }
+  .window-dot.green { background: #28c840; }
+
+  .window-title {
+    margin-left: 12px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .demo-content {
+    display: flex;
+    min-height: 450px;
+  }
+
+  /* Canvas */
+  .canvas {
+    flex: 0 0 480px;
+    position: relative;
+    padding: 24px;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.03) 0%, transparent 50%),
+      linear-gradient(rgba(99, 102, 241, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99, 102, 241, 0.02) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .connections {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 160px;
+    pointer-events: none;
+    margin-top: 40px;
+  }
+
+  .connection-line {
+    stroke: url(#lineGradient);
+    stroke-width: 2;
+    fill: none;
+    stroke-dasharray: 6 4;
+  }
+
+  .nodes-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 40px 20px;
+    flex: 1;
+  }
+
+  /* Nodes */
+  .node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    z-index: 1;
+  }
+
+  .node:hover {
+    transform: scale(1.05);
+  }
+
+  .node.active {
+    transform: scale(1.08);
+  }
+
+  .node-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 12px;
+    background: var(--color-bg-card);
+    border: 2px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+
+  .node-icon svg {
+    width: 28px;
+    height: 28px;
+    stroke-width: 1.5;
+  }
+
+  .node-label {
+    margin-top: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    transition: color 0.2s ease;
+  }
+
+  .node.active .node-label {
+    color: var(--color-text);
+  }
+
+  /* Node type colors */
+  .node[data-type="input"] .node-icon svg { stroke: #22c55e; }
+  .node[data-type="input"].active .node-icon {
+    background: #22c55e;
+    border-color: #22c55e;
+    box-shadow: 0 4px 24px rgba(34, 197, 94, 0.4);
+  }
+  .node[data-type="input"].active .node-icon svg { stroke: white; }
+
+  .node[data-type="filter"] .node-icon svg { stroke: #6366f1; }
+  .node[data-type="filter"].active .node-icon {
+    background: #6366f1;
+    border-color: #6366f1;
+    box-shadow: 0 4px 24px rgba(99, 102, 241, 0.4);
+  }
+  .node[data-type="filter"].active .node-icon svg { stroke: white; }
+
+  .node[data-type="groupby"] .node-icon svg { stroke: #f97316; }
+  .node[data-type="groupby"].active .node-icon {
+    background: #f97316;
+    border-color: #f97316;
+    box-shadow: 0 4px 24px rgba(249, 115, 22, 0.4);
+  }
+  .node[data-type="groupby"].active .node-icon svg { stroke: white; }
+
+  .node[data-type="output"] .node-icon svg { stroke: #ec4899; }
+  .node[data-type="output"].active .node-icon {
+    background: #ec4899;
+    border-color: #ec4899;
+    box-shadow: 0 4px 24px rgba(236, 72, 153, 0.4);
+  }
+  .node[data-type="output"].active .node-icon svg { stroke: white; }
+
+  .canvas-hint {
+    text-align: center;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    margin-top: auto;
+  }
+
+  /* Data Panel */
+  .data-panel {
+    flex: 1;
+    border-left: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .table-header {
+    padding: 12px 16px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .table-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--color-text);
+  }
+
+  .table-subtitle {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 2px;
+  }
+
+  .table-meta {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    background: #0d0d14;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .transform-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--color-bg-elevated);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+
+  .transform-badge {
+    display: inline-flex;
+    padding: 3px 8px;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .transform-badge.filter { background: #6366f1; }
+  .transform-badge.groupby { background: #f97316; }
+  .transform-badge.output { background: #ec4899; }
+
+  #data-grid {
+    flex: 1;
+    min-height: 300px;
+  }
+
+  /* AG Grid Dark Theme Overrides */
+  :global(.ag-theme-balham) {
+    --ag-background-color: #12121a;
+    --ag-odd-row-background-color: #12121a;
+    --ag-row-background-color: #15151f;
+    --ag-header-background-color: #1a1a24;
+    --ag-header-foreground-color: #9090a0;
+    --ag-foreground-color: #e8e8ed;
+    --ag-border-color: #2a2a3a;
+    --ag-secondary-foreground-color: #9090a0;
+    --ag-row-hover-color: #1e1e2a;
+    --ag-selected-row-background-color: #2a2a40;
+    --ag-font-family: 'JetBrains Mono', monospace;
+    --ag-font-size: 12px;
+    --ag-header-height: 36px;
+    --ag-row-height: 32px;
+    --ag-cell-horizontal-padding: 12px;
+  }
+
+  @media (max-width: 900px) {
+    .demo-content {
+      flex-direction: column;
+    }
+
+    .canvas {
+      flex: none;
+      min-height: 200px;
+    }
+
+    .connections {
+      height: 120px;
+      margin-top: 20px;
+    }
+
+    .nodes-container {
+      padding: 20px 10px;
+    }
+
+    .node-icon {
+      width: 48px;
+      height: 48px;
+    }
+
+    .node-icon svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .data-panel {
+      border-left: none;
+      border-top: 1px solid var(--color-border);
+      min-height: 350px;
+    }
+  }
+</style>
+
+<script>
+  // Demo data
+  const RAW_DATA = [
+    { id: 1, product: 'Widget A', category: 'Electronics', region: 'North', sales: 1200, quantity: 24 },
+    { id: 2, product: 'Widget B', category: 'Electronics', region: 'South', sales: 890, quantity: 18 },
+    { id: 3, product: 'Gadget X', category: 'Home', region: 'North', sales: 2100, quantity: 42 },
+    { id: 4, product: 'Gadget Y', category: 'Home', region: 'East', sales: 760, quantity: 15 },
+    { id: 5, product: 'Tool Pro', category: 'Tools', region: 'West', sales: 3200, quantity: 64 },
+    { id: 6, product: 'Tool Basic', category: 'Tools', region: 'North', sales: 450, quantity: 9 },
+    { id: 7, product: 'Widget C', category: 'Electronics', region: 'East', sales: 1800, quantity: 36 },
+    { id: 8, product: 'Gadget Z', category: 'Home', region: 'South', sales: 920, quantity: 23 },
+  ];
+
+  // Transformations
+  function filterData(data) {
+    return data.filter(row => row.sales > 1000);
+  }
+
+  function groupByData(data) {
+    const grouped = data.reduce((acc, row) => {
+      const key = row.category;
+      if (!acc[key]) {
+        acc[key] = { category: key, total_sales: 0, total_quantity: 0, count: 0 };
+      }
+      acc[key].total_sales += row.sales;
+      acc[key].total_quantity += row.quantity;
+      acc[key].count += 1;
+      return acc;
+    }, {});
+    return Object.values(grouped);
+  }
+
+  // Node configurations
+  const nodeConfigs = {
+    input: {
+      title: 'Raw Data',
+      subtitle: 'Sales data loaded from CSV file',
+      getData: () => RAW_DATA,
+      columns: [
+        { field: 'id', width: 60 },
+        { field: 'product', flex: 1, minWidth: 90 },
+        { field: 'category', width: 90 },
+        { field: 'region', width: 70 },
+        { field: 'sales', width: 70, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'quantity', width: 70 }
+      ],
+      transform: null
+    },
+    filter: {
+      title: 'Filtered Data',
+      subtitle: 'Rows where sales > 1000',
+      getData: () => filterData(RAW_DATA),
+      columns: [
+        { field: 'id', width: 60 },
+        { field: 'product', flex: 1, minWidth: 90 },
+        { field: 'category', width: 90 },
+        { field: 'region', width: 70 },
+        { field: 'sales', width: 70, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'quantity', width: 70 }
+      ],
+      transform: {
+        type: 'filter',
+        badge: 'Filter',
+        text: 'sales > 1000 → 5 of 8 rows pass'
+      }
+    },
+    groupby: {
+      title: 'Grouped Data',
+      subtitle: 'Aggregated by category',
+      getData: () => groupByData(filterData(RAW_DATA)),
+      columns: [
+        { field: 'category', flex: 1, minWidth: 100 },
+        { field: 'total_sales', headerName: 'total_sales', width: 100, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'total_quantity', headerName: 'total_qty', width: 90 },
+        { field: 'count', width: 70 }
+      ],
+      transform: {
+        type: 'groupby',
+        badge: 'Group By',
+        text: 'category → SUM(sales), SUM(quantity)'
+      }
+    },
+    output: {
+      title: 'Final Output',
+      subtitle: 'Ready for export',
+      getData: () => groupByData(filterData(RAW_DATA)),
+      columns: [
+        { field: 'category', flex: 1, minWidth: 100 },
+        { field: 'total_sales', headerName: 'total_sales', width: 100, valueFormatter: p => p.value?.toLocaleString() },
+        { field: 'total_quantity', headerName: 'total_qty', width: 90 },
+        { field: 'count', width: 70 }
+      ],
+      transform: {
+        type: 'output',
+        badge: 'Export',
+        text: 'Write to Parquet / CSV / Database'
+      }
+    }
+  };
+
+  // Initialize
+  document.addEventListener('DOMContentLoaded', () => {
+    let gridApi;
+
+    // Initialize AG Grid
+    const gridDiv = document.querySelector('#data-grid');
+    if (gridDiv && typeof agGrid !== 'undefined') {
+      const gridOptions = {
+        columnDefs: nodeConfigs.input.columns,
+        rowData: nodeConfigs.input.getData(),
+        defaultColDef: {
+          sortable: true,
+          resizable: true,
+        },
+        animateRows: true,
+        headerHeight: 36,
+        rowHeight: 32,
+        suppressCellFocus: true,
+      };
+
+      gridApi = agGrid.createGrid(gridDiv, gridOptions);
+    }
+
+    // Update display function
+    function updateDisplay(nodeKey) {
+      const config = nodeConfigs[nodeKey];
+      const data = config.getData();
+
+      // Update header
+      document.getElementById('table-title').textContent = config.title;
+      document.getElementById('table-subtitle').textContent = config.subtitle;
+
+      const cols = config.columns.length;
+      const rows = data.length;
+      document.getElementById('table-meta').textContent = `${rows} rows × ${cols} cols`;
+
+      // Update transform info
+      const transformInfo = document.getElementById('transform-info');
+      if (config.transform) {
+        transformInfo.style.display = 'flex';
+        const badge = document.getElementById('transform-badge');
+        badge.textContent = config.transform.badge;
+        badge.className = `transform-badge ${config.transform.type}`;
+        document.getElementById('transform-text').textContent = config.transform.text;
+      } else {
+        transformInfo.style.display = 'none';
+      }
+
+      // Update grid
+      if (gridApi) {
+        gridApi.setGridOption('columnDefs', config.columns);
+        gridApi.setGridOption('rowData', data);
+      }
+    }
+
+    // Node click handlers
+    const nodes = document.querySelectorAll('.node');
+    nodes.forEach(node => {
+      node.addEventListener('click', () => {
+        // Update active state
+        nodes.forEach(n => n.classList.remove('active'));
+        node.classList.add('active');
+
+        // Update display
+        const nodeKey = node.dataset.node;
+        updateDisplay(nodeKey);
+      });
+    });
+  });
+</script>
