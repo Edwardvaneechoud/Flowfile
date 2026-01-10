@@ -9,7 +9,6 @@ const nodeStore = useFlowStore();
 
 const targetRect = ref<DOMRect | null>(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
-const previousFlowId = ref<number | null>(null);
 const previousNodeCount = ref<number>(0);
 
 // Compute spotlight position and size
