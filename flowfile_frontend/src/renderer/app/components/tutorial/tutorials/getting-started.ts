@@ -154,7 +154,7 @@ export const gettingStartedTutorial: Tutorial = {
       content: `
         <p>The <strong>Node Settings</strong> panel lets you configure your data.</p>
         <p><strong>Quick option:</strong> Click <strong>Edit JSON</strong> button, paste this sample data, then click <strong>Apply JSON to table</strong>:</p>
-        <div style="background: var(--color-background-muted); color: #1a1a1a; padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace; font-size: 11px; max-height: 120px; overflow: auto;">
+        <div style="background: var(--color-background-muted); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace; font-size: 11px; max-height: 120px; overflow: auto;">
 [{"country":"USA","product":"Widget","revenue":1000},<br>
 {"country":"Germany","product":"Gadget","revenue":2500},<br>
 {"country":"France","product":"Widget","revenue":1800},<br>
