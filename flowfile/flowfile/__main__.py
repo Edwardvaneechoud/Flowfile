@@ -34,6 +34,9 @@ def run_flow(flow_path: str) -> int:
         print(f"Error loading flow: {e}")
         return 1
 
+    # Force local execution for CLI - no worker service needed
+    flow.execution_location = "local"
+
     flow_name = flow.flow_settings.name or f"Flow {flow.flow_id}"
     print(f"Running flow: {flow_name} (id={flow.flow_id})")
     print(f"Nodes: {len(flow.nodes)}")
