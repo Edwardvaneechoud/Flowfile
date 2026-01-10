@@ -155,13 +155,16 @@ export const gettingStartedTutorial: Tutorial = {
       title: "Add Sample Data",
       content: `
         <p>The <strong>Node Settings</strong> panel lets you configure your data.</p>
-        <p>Try creating a simple sales dataset with these columns:</p>
-        <ul style="margin: 12px 0; padding-left: 20px;">
-          <li><strong>country</strong> (String) - e.g., "USA", "Germany", "France"</li>
-          <li><strong>product</strong> (String) - e.g., "Widget", "Gadget"</li>
-          <li><strong>revenue</strong> (Integer) - e.g., 1000, 2500, 1800</li>
-        </ul>
-        <p>Add 5-6 rows with different countries and products. This will help demonstrate grouping later!</p>
+        <p><strong>Quick option:</strong> Click <strong>Edit JSON</strong> button, paste this sample data, then click <strong>Apply JSON to table</strong>:</p>
+        <div style="background: var(--color-background-muted); padding: 8px; border-radius: 4px; margin: 8px 0; font-family: monospace; font-size: 11px; max-height: 120px; overflow: auto;">
+[{"country":"USA","product":"Widget","revenue":1000},<br>
+{"country":"Germany","product":"Gadget","revenue":2500},<br>
+{"country":"France","product":"Widget","revenue":1800},<br>
+{"country":"USA","product":"Gadget","revenue":3200},<br>
+{"country":"Germany","product":"Widget","revenue":1500},<br>
+{"country":"France","product":"Gadget","revenue":2100}]
+        </div>
+        <p style="font-size: 12px; color: var(--color-text-secondary);">Or manually add columns (country, product, revenue) and rows.</p>
       `,
       target: "#nodeSettings",
       position: "left",
@@ -279,7 +282,7 @@ export const gettingStartedTutorial: Tutorial = {
         <p>This will let you save your aggregated revenue per country to a CSV file!</p>
         <p>After adding it, connect it to the Group By node's output.</p>
       `,
-      target: "[data-tutorial-node='write_data']",
+      target: "[data-tutorial-node='output']",
       position: "right",
       action: "drag",
       actionTarget: ".vue-flow",

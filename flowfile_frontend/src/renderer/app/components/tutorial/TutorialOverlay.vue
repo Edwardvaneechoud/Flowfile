@@ -199,6 +199,27 @@ function checkForModalOpen() {
   }
 }
 
+// Track if node settings was previously visible
+const nodeSettingsWasVisible = ref(false);
+
+// Auto-advance when node settings panel appears (for configure-manual-input step)
+function checkForNodeSettings() {
+  if (!tutorialStore.isActive) return;
+
+  const currentStepId = tutorialStore.currentStep?.id;
+  const nodeSettings = document.querySelector("#nodeSettings");
+  const nodeSettingsIsVisible = nodeSettings !== null;
+
+  // If we're on "configure-manual-input" step and nodeSettings just appeared, advance
+  if (currentStepId === "configure-manual-input" && nodeSettingsIsVisible && !nodeSettingsWasVisible.value) {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
+
+  nodeSettingsWasVisible.value = nodeSettingsIsVisible;
+}
+
 // Auto-advance when a node is added to the canvas
 function checkForNewNodes() {
   if (!tutorialStore.isActive) return;
@@ -248,6 +269,7 @@ function setupMutationObserver() {
   mutationObserver = new MutationObserver(() => {
     updateTargetPosition();
     checkForModalOpen();
+    checkForNodeSettings();
     checkForNewNodes();
   });
 
