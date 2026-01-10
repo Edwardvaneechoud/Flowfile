@@ -48,11 +48,14 @@
                     <stop offset="0%" stop-color="#22c55e" />
                     <stop offset="100%" stop-color="#6366f1" />
                   </linearGradient>
-                  <marker id="arrow1" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                    <polygon points="0 0, 8 3, 0 6" fill="#6366f1" />
-                  </marker>
                 </defs>
-                <line x1="0" y1="12" x2="52" y2="12" stroke="url(#grad1)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow1)" />
+                <line x1="0" y1="12" x2="60" y2="12" stroke="url(#grad1)" stroke-width="2" stroke-dasharray="6 3" opacity="0.5" />
+                <circle class="data-particle" r="4" fill="#22c55e">
+                  <animateMotion dur="1.2s" repeatCount="indefinite" path="M0,12 L60,12" />
+                </circle>
+                <circle class="data-particle" r="3" fill="#4ade80">
+                  <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.4s" path="M0,12 L60,12" />
+                </circle>
               </svg>
             </div>
 
@@ -74,11 +77,14 @@
                     <stop offset="0%" stop-color="#6366f1" />
                     <stop offset="100%" stop-color="#f97316" />
                   </linearGradient>
-                  <marker id="arrow2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                    <polygon points="0 0, 8 3, 0 6" fill="#f97316" />
-                  </marker>
                 </defs>
-                <line x1="0" y1="12" x2="52" y2="12" stroke="url(#grad2)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow2)" />
+                <line x1="0" y1="12" x2="60" y2="12" stroke="url(#grad2)" stroke-width="2" stroke-dasharray="6 3" opacity="0.5" />
+                <circle class="data-particle" r="4" fill="#6366f1">
+                  <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.2s" path="M0,12 L60,12" />
+                </circle>
+                <circle class="data-particle" r="3" fill="#818cf8">
+                  <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.6s" path="M0,12 L60,12" />
+                </circle>
               </svg>
             </div>
 
@@ -103,11 +109,14 @@
                     <stop offset="0%" stop-color="#f97316" />
                     <stop offset="100%" stop-color="#ec4899" />
                   </linearGradient>
-                  <marker id="arrow3" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                    <polygon points="0 0, 8 3, 0 6" fill="#ec4899" />
-                  </marker>
                 </defs>
-                <line x1="0" y1="12" x2="52" y2="12" stroke="url(#grad3)" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow3)" />
+                <line x1="0" y1="12" x2="60" y2="12" stroke="url(#grad3)" stroke-width="2" stroke-dasharray="6 3" opacity="0.5" />
+                <circle class="data-particle" r="4" fill="#f97316">
+                  <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.4s" path="M0,12 L60,12" />
+                </circle>
+                <circle class="data-particle" r="3" fill="#fb923c">
+                  <animateMotion dur="1.2s" repeatCount="indefinite" begin="0.8s" path="M0,12 L60,12" />
+                </circle>
               </svg>
             </div>
 
@@ -231,6 +240,11 @@
   .connector svg {
     width: 100%;
     height: 100%;
+    overflow: visible;
+  }
+
+  .data-particle {
+    filter: drop-shadow(0 0 4px currentColor);
   }
 
   /* Nodes */
