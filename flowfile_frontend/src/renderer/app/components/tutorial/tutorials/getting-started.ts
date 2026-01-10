@@ -44,20 +44,17 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 3: Click Create Flow in modal
+    // Step 3: Click Create Flow in modal (no highlight - tooltip stays in corner)
     {
       id: "confirm-create-flow",
       title: "Confirm Flow Creation",
       content: `
         <p>A dialog appeared where you can optionally name your flow.</p>
-        <p>Click <strong>Create Flow</strong> to create the flow with an auto-generated name, or enter a custom name first.</p>
+        <p>Click <strong>Create Flow</strong> in the dialog to continue.</p>
       `,
-      target: "[data-tutorial='create-flow-confirm-btn']",
-      position: "left",
+      position: "center",
       action: "observe",
-      waitForElement: "[data-tutorial='create-flow-confirm-btn']",
-      showNextButton: true,
-      highlightPadding: 4,
+      showNextButton: false,
     },
 
     // Step 4: Explore the canvas
