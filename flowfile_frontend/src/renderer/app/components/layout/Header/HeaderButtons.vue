@@ -31,17 +31,6 @@
       <span class="material-icons btn-icon">code</span>
       <span class="btn-text">Generate code</span>
     </button>
-    <button
-      v-if="!hasActiveFlow || tutorialStore.isActive"
-      class="action-btn tutorial-btn"
-      :class="{ active: tutorialStore.isActive }"
-      data-tutorial="tutorial-btn"
-      title="Start Interactive Tutorial"
-      @click="startTutorial"
-    >
-      <span class="material-icons btn-icon">school</span>
-      <span class="btn-text">Tutorial</span>
-    </button>
   </div>
 
   <el-dialog v-model="modalVisibleForOpen" title="Select or Enter a Flow File" width="70%" custom-class="high-z-index-dialog">
@@ -145,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlow } from "./utils";
@@ -155,8 +144,6 @@ import { FileInfo } from "../../common/FileBrowser/types";
 import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileBrowser/constants";
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
-import { useTutorialStore } from "../../../stores/tutorial-store";
-import { gettingStartedTutorial } from "../../tutorial/tutorials";
 import {
   createFlow,
   getFlowSettings,
@@ -169,10 +156,6 @@ import {
 
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
-const tutorialStore = useTutorialStore();
-
-// Show tutorial button only when no flow is open
-const hasActiveFlow = computed(() => nodeStore.flow_id && nodeStore.flow_id > 0);
 
 const modalVisibleForOpen = ref(false);
 const modalVisibleForSave = ref(false);
@@ -320,10 +303,6 @@ const runFlow = () => {
 
 const toggleCodeGenerator = () => {
   nodeStore.toggleCodeGenerator();
-};
-
-const startTutorial = () => {
-  tutorialStore.startTutorial(gettingStartedTutorial);
 };
 
 const handleCreateAction = async (flowPath: string) => {
@@ -505,35 +484,5 @@ onMounted(async () => {
 .dialog-footer {
   display: flex;
   gap: var(--spacing-2);
-}
-
-.tutorial-btn {
-  background-color: var(--color-accent-subtle);
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-.tutorial-btn .btn-icon {
-  color: var(--color-accent);
-}
-
-.tutorial-btn:hover {
-  background-color: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-text-on-accent, #fff);
-}
-
-.tutorial-btn:hover .btn-icon {
-  color: var(--color-text-on-accent, #fff);
-}
-
-.tutorial-btn.active {
-  background-color: var(--color-accent);
-  border-color: var(--color-accent);
-  color: var(--color-text-on-accent, #fff);
-}
-
-.tutorial-btn.active .btn-icon {
-  color: var(--color-text-on-accent, #fff);
 }
 </style>

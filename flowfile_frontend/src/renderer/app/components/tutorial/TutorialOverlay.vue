@@ -1,12 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useTutorialStore } from "../../stores/tutorial-store";
+import { useNodeStore } from "../../stores/column-store";
 import TutorialTooltip from "./TutorialTooltip.vue";
 
 const tutorialStore = useTutorialStore();
+const nodeStore = useNodeStore();
 
 const targetRect = ref<DOMRect | null>(null);
 const tooltipPosition = ref({ x: 0, y: 0 });
+const previousFlowId = ref<number | null>(null);
+const previousNodeCount = ref<number>(0);
 
 // Compute spotlight position and size
 const spotlightStyle = computed(() => {
@@ -121,6 +125,56 @@ watch(
   { immediate: true }
 );
 
+// Auto-advance when flow is created
+watch(
+  () => nodeStore.flow_id,
+  (newFlowId, oldFlowId) => {
+    if (!tutorialStore.isActive) return;
+
+    const currentStepId = tutorialStore.currentStep?.id;
+
+    // If we're on the "confirm-create-flow" step and a flow was just created, advance
+    if (currentStepId === "confirm-create-flow" && newFlowId && newFlowId > 0 && (!oldFlowId || oldFlowId <= 0)) {
+      // Small delay to let the UI update
+      setTimeout(() => {
+        tutorialStore.nextStep();
+      }, 500);
+    }
+  }
+);
+
+// Auto-advance when a node is added to the canvas
+function checkForNewNodes() {
+  if (!tutorialStore.isActive) return;
+
+  const currentStepId = tutorialStore.currentStep?.id;
+  const nodes = document.querySelectorAll(".vue-flow__node");
+  const currentNodeCount = nodes.length;
+
+  // If we're on a "drag" step and a new node was added, advance
+  if (currentStepId === "drag-manual-input" && currentNodeCount > previousNodeCount.value) {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
+
+  // Track for "drag-group-by" step
+  if (currentStepId === "drag-group-by" && currentNodeCount > previousNodeCount.value) {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
+
+  // Track for "drag-write-data" step
+  if (currentStepId === "drag-write-data" && currentNodeCount > previousNodeCount.value) {
+    setTimeout(() => {
+      tutorialStore.nextStep();
+    }, 300);
+  }
+
+  previousNodeCount.value = currentNodeCount;
+}
+
 // Handle window resize
 function handleResize() {
   updateTargetPosition();
@@ -137,6 +191,7 @@ let mutationObserver: MutationObserver | null = null;
 function setupMutationObserver() {
   mutationObserver = new MutationObserver(() => {
     updateTargetPosition();
+    checkForNewNodes();
   });
 
   mutationObserver.observe(document.body, {
@@ -152,6 +207,9 @@ onMounted(() => {
   window.addEventListener("scroll", handleScroll, true);
   setupMutationObserver();
   updateTargetPosition();
+
+  // Initialize node count
+  previousNodeCount.value = document.querySelectorAll(".vue-flow__node").length;
 });
 
 onUnmounted(() => {

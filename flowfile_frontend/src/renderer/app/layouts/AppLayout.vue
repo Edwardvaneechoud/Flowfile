@@ -20,6 +20,9 @@
 
     <!-- Interactive Tutorial Overlay -->
     <TutorialOverlay />
+
+    <!-- Floating Tutorial Start Button -->
+    <TutorialStartButton />
   </div>
 </template>
 
@@ -29,6 +32,7 @@ import Header from "../components/layout/Header/AppHeader.vue";
 import Sidebar from "../components/layout/Sidebar/Sidebar.vue";
 import ChangePasswordModal from "../components/common/ChangePasswordModal/ChangePasswordModal.vue";
 import TutorialOverlay from "../components/tutorial/TutorialOverlay.vue";
+import TutorialStartButton from "../components/tutorial/TutorialStartButton.vue";
 import { useAuthStore } from "../stores/auth-store";
 import authService from "../services/auth.service";
 

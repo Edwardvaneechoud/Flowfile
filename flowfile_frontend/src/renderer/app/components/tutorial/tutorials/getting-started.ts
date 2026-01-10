@@ -149,19 +149,19 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 8,
     },
 
-    // Step 8: Show node settings
+    // Step 8: Show node settings with sample data suggestion
     {
       id: "node-settings",
-      title: "Node Settings Panel",
+      title: "Add Sample Data",
       content: `
-        <p>The <strong>Node Settings</strong> panel lets you configure each node.</p>
-        <p>For Manual Input, you can:</p>
+        <p>The <strong>Node Settings</strong> panel lets you configure your data.</p>
+        <p>Try creating a simple sales dataset with these columns:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
-          <li>Define column names and types</li>
-          <li>Enter sample data rows</li>
-          <li>Import data from clipboard</li>
+          <li><strong>country</strong> (String) - e.g., "USA", "Germany", "France"</li>
+          <li><strong>product</strong> (String) - e.g., "Widget", "Gadget"</li>
+          <li><strong>revenue</strong> (Integer) - e.g., 1000, 2500, 1800</li>
         </ul>
-        <p>Try adding columns like "category" and "value"!</p>
+        <p>Add 5-6 rows with different countries and products. This will help demonstrate grouping later!</p>
       `,
       target: "#nodeSettings",
       position: "left",
@@ -192,18 +192,18 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 10: Aggregations
+    // Step 10: Aggregations - More prominent Group By explanation
     {
       id: "aggregations-overview",
-      title: "Aggregation Nodes",
+      title: "Let's Aggregate Your Data!",
       content: `
-        <p>The <strong>Aggregations</strong> section contains:</p>
+        <p style="font-size: 15px; margin-bottom: 16px;"><strong>Grouping</strong> is one of the most powerful data operations. It lets you summarize data by categories.</p>
+        <p><strong>Example:</strong> With your sales data, you can answer questions like:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
-          <li><strong>Group By</strong> - Aggregate data by categories</li>
-          <li><strong>Pivot</strong> - Reshape data (rows to columns)</li>
-          <li><strong>Unpivot</strong> - Reshape data (columns to rows)</li>
+          <li>"What is the <strong>total revenue per country</strong>?"</li>
+          <li>"How many products were sold in each region?"</li>
+          <li>"What's the average order value by product type?"</li>
         </ul>
-        <p>Drag a <strong>Group By</strong> node to the canvas to aggregate your data!</p>
       `,
       target: "[data-tutorial-category='aggregate']",
       position: "right",
@@ -212,7 +212,25 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 11: Connect nodes
+    // Step 11: Drag Group By node
+    {
+      id: "drag-group-by",
+      title: "Add Group By Node",
+      content: `
+        <p style="font-size: 15px; padding: 12px; background: var(--color-accent-subtle); border-radius: 6px; margin-bottom: 12px;">
+          <strong>Drag the Group By node</strong> onto the canvas now!
+        </p>
+        <p>This will let you calculate the <strong>total revenue per country</strong> from your sales data.</p>
+      `,
+      target: "[data-tutorial-node='group_by']",
+      position: "right",
+      action: "drag",
+      actionTarget: ".vue-flow",
+      showNextButton: true,
+      highlightPadding: 4,
+    },
+
+    // Step 12: Connect nodes with grouping context
     {
       id: "connect-nodes",
       title: "Connect Your Nodes",
@@ -223,7 +241,8 @@ export const gettingStartedTutorial: Tutorial = {
           <li><strong>Right side</strong> - Output handle (data goes out)</li>
           <li><strong>Left side</strong> - Input handle (data comes in)</li>
         </ul>
-        <p>Click and drag from an output to an input to create a connection!</p>
+        <p><strong>Click and drag</strong> from Manual Input's output to Group By's input.</p>
+        <p style="margin-top: 12px;">Once connected, click on Group By to configure it - select <strong>country</strong> as the group column and <strong>sum of revenue</strong> as the aggregation!</p>
       `,
       target: ".vue-flow",
       position: "center",
@@ -232,18 +251,17 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 0,
     },
 
-    // Step 12: Output operations
+    // Step 12: Write data (output operations)
     {
       id: "output-overview",
-      title: "Output Nodes",
+      title: "Write Your Results",
       content: `
         <p>The <strong>Output Operations</strong> section lets you save your results:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
-          <li><strong>Output</strong> - Write to CSV, Parquet, or Excel</li>
+          <li><strong>Write data</strong> - Save to CSV, Parquet, or Excel files</li>
           <li><strong>Database Writer</strong> - Save to a database</li>
           <li><strong>Cloud Storage</strong> - Upload to S3, GCS, etc.</li>
         </ul>
-        <p>Drag an <strong>Output</strong> node and connect it to see your results!</p>
       `,
       target: "[data-tutorial-category='output']",
       position: "right",
@@ -252,12 +270,45 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 13: Run the flow
+    // Step 13: Drag Write data node
+    {
+      id: "drag-write-data",
+      title: "Add Write Data Node",
+      content: `
+        <p>Now <strong>drag the Write data node</strong> onto the canvas.</p>
+        <p>This will let you save your aggregated revenue per country to a CSV file!</p>
+        <p>After adding it, connect it to the Group By node's output.</p>
+      `,
+      target: "[data-tutorial-node='write_data']",
+      position: "right",
+      action: "drag",
+      actionTarget: ".vue-flow",
+      showNextButton: true,
+      highlightPadding: 4,
+    },
+
+    // Step 14: Execution settings
+    {
+      id: "execution-settings",
+      title: "Configure Execution Mode",
+      content: `
+        <p>Before running, let's check the <strong>execution settings</strong>.</p>
+        <p>Click the <strong>Settings</strong> button to open execution options.</p>
+        <p>Make sure <strong>Development</strong> mode is selected - this gives you detailed feedback and is perfect for building and testing flows!</p>
+      `,
+      target: "[data-tutorial='settings-btn']",
+      position: "bottom",
+      action: "observe",
+      showNextButton: true,
+      highlightPadding: 4,
+    },
+
+    // Step 14: Run the flow
     {
       id: "run-flow",
       title: "Run Your Flow",
       content: `
-        <p>Once your nodes are connected, click <strong>Run</strong> to execute your flow!</p>
+        <p>Now click <strong>Run</strong> to execute your flow!</p>
         <p>Flowfile will process your data through each node in sequence.</p>
         <p>Watch the nodes change color as they execute:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
@@ -273,26 +324,42 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 14: Table preview
+    // Step 15: View results - prompt to click Group By
+    {
+      id: "view-results",
+      title: "View Your Aggregated Data",
+      content: `
+        <p style="font-size: 15px;">Your flow has finished running!</p>
+        <p>Now <strong>click on the Group By node</strong> to see your aggregated results in the table preview below.</p>
+        <p style="margin-top: 12px;">You should see the <strong>total revenue per country</strong> - the power of grouping in action!</p>
+      `,
+      target: ".vue-flow",
+      position: "center",
+      action: "observe",
+      showNextButton: true,
+      highlightPadding: 0,
+    },
+
+    // Step 16: Table preview - explore the data
     {
       id: "table-preview",
-      title: "Preview Your Data",
+      title: "Explore Your Pipeline",
       content: `
-        <p>Click on any node to see its output in the <strong>Table Preview</strong> panel at the bottom.</p>
-        <p>This lets you inspect your data at each step of the pipeline!</p>
-        <p>You can:</p>
+        <p>The <strong>Table Preview</strong> panel lets you inspect data at each step.</p>
+        <p>Try clicking on different nodes to see how your data transforms:</p>
         <ul style="margin: 12px 0; padding-left: 20px;">
-          <li>Scroll through rows and columns</li>
-          <li>See data types for each column</li>
-          <li>Resize the panel by dragging</li>
+          <li><strong>Manual Input</strong> - Your raw sales data</li>
+          <li><strong>Group By</strong> - Aggregated revenue per country</li>
+          <li><strong>Write data</strong> - Final output to be saved</li>
         </ul>
+        <p>This is great for debugging and understanding your data flow!</p>
       `,
       position: "center",
       action: "observe",
       showNextButton: true,
     },
 
-    // Step 15: Save the flow
+    // Step 17: Save the flow
     {
       id: "save-flow",
       title: "Save Your Flow",
@@ -307,7 +374,7 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 16: YAML format explanation
+    // Step 18: YAML format explanation
     {
       id: "yaml-format",
       title: "Flows are Saved as YAML",
@@ -327,7 +394,7 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
     },
 
-    // Step 17: Generate code
+    // Step 19: Generate code
     {
       id: "generate-code",
       title: "Generate Python Code",
@@ -348,7 +415,7 @@ export const gettingStartedTutorial: Tutorial = {
       highlightPadding: 4,
     },
 
-    // Step 18: Keyboard shortcuts
+    // Step 20: Keyboard shortcuts
     {
       id: "keyboard-shortcuts",
       title: "Keyboard Shortcuts",
@@ -368,7 +435,7 @@ export const gettingStartedTutorial: Tutorial = {
       showNextButton: true,
     },
 
-    // Step 19: Completion
+    // Step 21: Completion
     {
       id: "completion",
       title: "Congratulations!",
