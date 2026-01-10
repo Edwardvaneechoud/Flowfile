@@ -411,6 +411,7 @@ export const gettingStartedTutorial: Tutorial = {
       position: "center",
       action: "observe",
       showNextButton: true,
+      centerInScreen: true,
     },
 
     // Step 19: Generate code

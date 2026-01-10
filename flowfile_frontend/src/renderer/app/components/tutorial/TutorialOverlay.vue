@@ -250,7 +250,7 @@ onUnmounted(() => {
         v-if="tutorialStore.isActive && !tutorialStore.tutorialPaused"
         class="tutorial-overlay"
       >
-        <!-- Backdrop with spotlight cutout - only show when there's a target to highlight -->
+        <!-- Backdrop with spotlight cutout - show when there's a target to highlight -->
         <div v-if="spotlightStyle" class="tutorial-backdrop">
           <!-- SVG mask for spotlight effect -->
           <svg class="tutorial-mask" width="100%" height="100%">
@@ -271,6 +271,9 @@ onUnmounted(() => {
             <rect width="100%" height="100%" fill="rgba(0, 0, 0, 0.7)" mask="url(#spotlight-mask)" />
           </svg>
         </div>
+
+        <!-- Full backdrop without spotlight - show for centerInScreen steps -->
+        <div v-else-if="tutorialStore.currentStep?.centerInScreen" class="tutorial-backdrop tutorial-backdrop-full"></div>
 
         <!-- Spotlight border/highlight - visual only, no pointer events -->
         <div v-if="spotlightStyle" class="tutorial-spotlight" :style="spotlightStyle">
@@ -315,6 +318,10 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+.tutorial-backdrop-full {
+  background: rgba(0, 0, 0, 0.7);
 }
 
 .tutorial-mask {
