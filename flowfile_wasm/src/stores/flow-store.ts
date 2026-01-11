@@ -582,9 +582,11 @@ for nid in orphaned_ids:
   /**
    * Sync a node's settings with its input schema
    * This updates column-based settings (like select_input) when upstream schema changes
+   * Returns true if settings were modified (triggers re-set in nodes Map for reactivity)
    */
-  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null) {
+  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null): boolean {
     const settings = node.settings as any
+    let modified = false
 
     if (node.type === 'select') {
       // Sync select_input with available columns
@@ -635,6 +637,7 @@ for nid in orphaned_ids:
       // Update settings
       settings.select_input = newSelectInput
       node.settings = settings
+      modified = true
     }
 
     if (node.type === 'group_by') {
@@ -651,6 +654,7 @@ for nid in orphaned_ids:
 
       settings.groupby_input = { ...groupbyInput, agg_cols: newAggCols }
       node.settings = settings
+      modified = true
     }
 
     if (node.type === 'join' && rightInputSchema) {
@@ -682,8 +686,11 @@ for nid in orphaned_ids:
         }))
         settings.sort_input = sortInput
         node.settings = settings
+        modified = true
       }
     }
+
+    return modified
   }
 
   /**
@@ -723,7 +730,11 @@ for nid in orphaned_ids:
 
       // Sync node settings with input schema (updates select_input, agg_cols, etc.)
       if (inputSchema && inputSchema.length > 0) {
-        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        // Trigger Vue reactivity by re-setting the node in the Map
+        if (modified) {
+          nodes.value.set(nodeId, { ...node })
+        }
       }
 
       // Infer output schema
@@ -735,8 +746,6 @@ for nid in orphaned_ids:
       )
 
       // Update nodeResults with inferred schema
-      // Always update the schema to reflect current settings, even if we have execution data
-      // This ensures downstream nodes see the correct schema when settings change
       if (inferredSchema) {
         const existingResult = nodeResults.value.get(nodeId)
         nodeResults.value.set(nodeId, {
@@ -746,13 +755,19 @@ for nid in orphaned_ids:
           data: existingResult?.data,
           execution_time: existingResult?.execution_time
         })
-      } else if (!inputSchema && !isSourceNode(node.type)) {
-        // No input schema available and not a source node - clear any inferred schema
-        // but keep results with actual data
+      } else {
+        // inferOutputSchema returned null - this means:
+        // 1. For polars_code/formula: schema can only be known after execution
+        // 2. For other nodes: input schema might be missing
+        //
+        // Keep any existing executed result (which has actual schema from Python)
+        // Only clear if there's no input AND no existing data
         const existingResult = nodeResults.value.get(nodeId)
-        if (existingResult && !existingResult.data) {
+        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data) {
           nodeResults.value.delete(nodeId)
         }
+        // If there's an existing result with actual data, keep it - the schema from
+        // execution is authoritative for nodes we can't infer (like polars_code)
       }
     }
   }
@@ -964,6 +979,9 @@ result
       for (const nodeId of order) {
         await executeNode(nodeId)
       }
+      // After execution, propagate schemas to update downstream node settings
+      // This syncs select_input, agg_cols, etc. with actual executed schemas
+      propagateSchemas()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage

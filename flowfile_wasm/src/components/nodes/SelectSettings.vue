@@ -2,8 +2,12 @@
   <div class="listbox-wrapper">
     <div class="listbox-subtitle">Columns</div>
 
-    <div v-if="columns.length === 0 && availableColumns.length === 0" class="no-columns">
-      No input columns available. Connect an input node first.
+    <div v-if="!hasInputConnection" class="no-columns">
+      No input connected. Connect an input node first.
+    </div>
+
+    <div v-else-if="columns.length === 0 && availableColumns.length === 0" class="no-columns">
+      Run the flow to see available columns.
     </div>
 
     <div v-else-if="availableColumns.length > 0" class="table-wrapper">
@@ -78,6 +82,13 @@ const localColumns = ref<LocalColumn[]>([])
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
+})
+
+// Check if this node has an input connection
+const hasInputConnection = computed(() => {
+  const node = flowStore.getNode(props.nodeId)
+  if (!node) return false
+  return node.inputIds.length > 0 || node.leftInputId !== undefined
 })
 
 // Computed property for available columns only (for display)

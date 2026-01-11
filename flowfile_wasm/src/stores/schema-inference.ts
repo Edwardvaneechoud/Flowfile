@@ -231,10 +231,11 @@ export function inferOutputSchema(
     case 'preview':
       return inputSchema
 
-    // Polars code - can't infer transformations, return input schema
+    // Polars code - can't infer transformations without execution
+    // Return null so downstream nodes don't get incorrect inferred schemas
     case 'polars_code':
     case 'formula':
-      return inputSchema
+      return null
 
     // Select - filter/reorder columns
     case 'select':
