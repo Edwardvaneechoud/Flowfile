@@ -14,31 +14,30 @@ The master key encrypts all secrets. Without it, secrets cannot be decrypted.
 
 | Mode | Configuration |
 |------|---------------|
-| **Docker** | `FLOWFILE_MASTER_KEY` env variable, or generate via setup wizard |
-| **Desktop** | Auto-generated at `~/.config/flowfile/.secret_key` |
-| **Python API** | Uses desktop location or `FLOWFILE_MASTER_KEY` env variable |
+| **Desktop (Electron)** | Auto-generated on first open, stored at `~/.config/flowfile/` |
+| **Python API** | Auto-generated on first use, stored at `~/.config/flowfile/` |
+| **Docker** | Generate via setup wizard, set as `FLOWFILE_MASTER_KEY` env variable |
 
-### Generating a Master Key
+### Desktop & Python API
 
-**Via Setup Wizard (Docker):**
+The master key is automatically generated on first use and stored securely. No manual configuration needed.
 
-On first start without a master key, Flowfile shows a setup screen. Click **Generate Master Key**, copy it, and add to your `.env` file.
+!!! note "Backup recommended"
+    The key is stored in `~/.config/flowfile/`. Back up this directory to preserve access to your encrypted secrets.
 
-<!-- IMAGE: setup_wizard_key.png - Setup wizard with generated key displayed -->
+### Docker
+
+On first start without a master key, Flowfile shows a setup screen:
+
+1. Click **Generate Master Key**
+2. Copy the generated key
+3. Add to your `.env` file: `FLOWFILE_MASTER_KEY=<your-key>`
+4. Restart the containers
+
 ![Setup Wizard](../../assets/images/guides/docker-deployment/setup_wizard.png)
 
-**Manually:**
-
-```bash
-# Python
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-# Or openssl (for file-based approach)
-openssl rand -base64 32
-```
-
 !!! danger "Protect your master key"
-    - Back it up securely
+    - Back up your `.env` file securely
     - Never commit to version control
     - Losing it = losing access to all encrypted secrets
 
@@ -50,7 +49,6 @@ openssl rand -base64 32
 4. Enter value
 5. Save
 
-<!-- IMAGE: secrets_panel.png - Secrets management panel showing list of secrets -->
 ![Secrets Panel](../../assets/images/guides/secrets/secrets_panel.png)
 
 ## Using Secrets
