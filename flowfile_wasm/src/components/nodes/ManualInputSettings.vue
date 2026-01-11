@@ -153,12 +153,12 @@ function loadData() {
   const settings = props.settings as any
   console.log('[ManualInputSettings] loadData called with:', settings)
 
-  // Try raw_data format (new schema)
-  if (settings?.raw_data?.fields?.length > 0) {
-    const rd = settings.raw_data as RawData
-    console.log('[ManualInputSettings] Loading from raw_data:', rd)
+  // Try raw_data_format (flowfile_core schema)
+  if (settings?.raw_data_format?.columns?.length > 0) {
+    const rd = settings.raw_data_format as RawData
+    console.log('[ManualInputSettings] Loading from raw_data_format:', rd)
 
-    columns.value = rd.fields.map((f, idx) => ({
+    columns.value = rd.columns.map((f: MinimalFieldInfo, idx: number) => ({
       id: idx + 1,
       name: f.name,
       dataType: f.data_type || 'String'
@@ -292,20 +292,21 @@ function saveData() {
   console.log('[ManualInputSettings] saveData called')
   errorMessage.value = ''
 
-  // Build RawData structure
-  const fields: MinimalFieldInfo[] = columns.value.map(col => ({
+  // Build RawData structure matching flowfile_core format
+  const columnsData: MinimalFieldInfo[] = columns.value.map(col => ({
     name: col.name,
     data_type: col.dataType
   }))
 
-  // Row-oriented data (each row is an array)
-  const data: any[][] = rows.value.map(row =>
-    columns.value.map(col => row.values[col.id] || '')
+  // Columnar data format (each inner array is a column's values)
+  // This matches flowfile_core's RawData.data format
+  const data: any[][] = columns.value.map(col =>
+    rows.value.map(row => row.values[col.id] || '')
   )
 
-  const rawData: RawData = { fields, data }
+  const rawData: RawData = { columns: columnsData, data }
 
-  // Also build CSV for execution engine
+  // Also build CSV for legacy execution engine
   const csvData = convertToCsv()
 
   const newSettings: NodeManualInputSettings = {
@@ -315,8 +316,8 @@ function saveData() {
     pos_y: (props.settings as any).pos_y ?? 0,
     is_setup: rows.value.length > 0 && columns.value.length > 0,
     description: (props.settings as any).description ?? '',
-    raw_data: rawData,
-    // Keep legacy format for execution
+    raw_data_format: rawData,
+    // Keep legacy format for backward compatibility
     manual_input: {
       data: csvData,
       columns: columns.value.map(c => c.name),
@@ -332,7 +333,7 @@ function saveData() {
   flowStore.setFileContent(props.nodeId, csvData)
 
   // Update source node schema for reactive schema propagation
-  flowStore.setSourceNodeSchema(props.nodeId, fields)
+  flowStore.setSourceNodeSchema(props.nodeId, columnsData)
 
   // Update JSON display
   jsonInput.value = JSON.stringify(tableAsJson.value, null, 2)
