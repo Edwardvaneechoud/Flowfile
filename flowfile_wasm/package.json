@@ -9,6 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ag-grid-community/client-side-row-model": "^31.1.1",
+    "@ag-grid-community/core": "^31.1.1",
+    "@ag-grid-community/styles": "^31.1.1",
+    "@ag-grid-community/vue3": "^31.1.1",
     "@codemirror/autocomplete": "^6.20.0",
     "@codemirror/commands": "^6.10.1",
     "@codemirror/lang-python": "^6.2.1",

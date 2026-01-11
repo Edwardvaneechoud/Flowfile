@@ -42,31 +42,38 @@
 
     <!-- Toolbar -->
     <div class="toolbar">
-      <button class="toolbar-btn" @click="handleRunFlow" :disabled="isExecuting" title="Run Flow">
-        <span class="icon">▶</span>
-        {{ isExecuting ? 'Running...' : 'Run' }}
-      </button>
-      <div class="toolbar-divider"></div>
-      <button class="toolbar-btn" @click="handleSaveFlow" title="Save Flow">
-        <span class="icon">💾</span>
-        Save
-      </button>
-      <button class="toolbar-btn" @click="triggerLoadFlow" title="Load Flow">
-        <span class="icon">📂</span>
-        Load
-      </button>
-      <input
-        ref="fileInputRef"
-        type="file"
-        accept=".flowfile,.json"
-        @change="handleLoadFlow"
-        style="display: none"
-      />
-      <div class="toolbar-divider"></div>
-      <button class="toolbar-btn danger" @click="handleClearFlow" title="Clear Flow">
-        <span class="icon">🗑️</span>
-        Clear
-      </button>
+      <div class="action-buttons">
+        <button
+          class="action-btn run-btn"
+          @click="handleRunFlow"
+          :disabled="isExecuting"
+          title="Run Flow (Ctrl+E)"
+        >
+          <span class="material-icons btn-icon">play_arrow</span>
+          <span class="btn-text">{{ isExecuting ? 'Running...' : 'Run' }}</span>
+        </button>
+        <div class="toolbar-divider"></div>
+        <button class="action-btn" @click="handleSaveFlow" title="Save Flow">
+          <span class="material-icons btn-icon">save</span>
+          <span class="btn-text">Save</span>
+        </button>
+        <button class="action-btn" @click="triggerLoadFlow" title="Load Flow">
+          <span class="material-icons btn-icon">folder_open</span>
+          <span class="btn-text">Open</span>
+        </button>
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept=".flowfile,.json"
+          @change="handleLoadFlow"
+          style="display: none"
+        />
+        <div class="toolbar-divider"></div>
+        <button class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
+          <span class="material-icons btn-icon">delete</span>
+          <span class="btn-text">Clear</span>
+        </button>
+      </div>
     </div>
 
     <!-- Vue Flow Canvas -->
@@ -95,7 +102,6 @@
         </template>
         <MiniMap />
         <Controls />
-        <Background />
       </VueFlow>
     </div>
 
@@ -160,12 +166,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
-import { Background } from '@vue-flow/background'
 import { useFlowStore } from '../stores/flow-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge } from '../types'
@@ -320,8 +325,7 @@ const vueEdges = computed<Edge[]>({
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.sourceHandle,
-      targetHandle: edge.targetHandle,
-      animated: true
+      targetHandle: edge.targetHandle
     }))
   },
   set() {}
@@ -506,6 +510,26 @@ function handleClearFlow() {
     flowStore.clearFlow()
   }
 }
+
+// Keyboard shortcut handler
+function handleKeyDown(event: KeyboardEvent) {
+  // Ctrl+E or Cmd+E to run flow
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'e' || event.key === 'E')) {
+    event.preventDefault()
+    if (!isExecuting.value) {
+      handleRunFlow()
+    }
+  }
+}
+
+// Register keyboard shortcuts
+onMounted(() => {
+  window.addEventListener('keydown', handleKeyDown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown)
+})
 </script>
 
 <style scoped>
@@ -527,64 +551,16 @@ function handleClearFlow() {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  padding: 0 16px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
   z-index: 100;
-}
-
-.toolbar-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.toolbar-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  border-color: var(--accent-color);
-}
-
-.toolbar-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.toolbar-btn.danger:hover:not(:disabled) {
-  background: rgba(244, 67, 54, 0.1);
-  border-color: var(--error-color);
-  color: var(--error-color);
-}
-
-.toolbar-btn .icon {
-  font-size: 14px;
-}
-
-.toolbar-divider {
-  width: 1px;
-  height: 24px;
-  background: var(--border-color);
-  margin: 0 4px;
 }
 
 .flow-canvas {
   flex: 1;
   height: 100%;
   overflow: hidden;
-}
-
-/* Canvas background */
-.animated-bg-gradient {
-  background: #f5f7fa;
 }
 
 /* Vue Flow customizations */
