@@ -123,6 +123,9 @@ nav:
     - Secrets: users/secrets.md
 
   - Deployment:
+    - Overview: users/deployment/index.md
+    - Desktop App: users/deployment/desktop.md
+    - Python Package: users/deployment/python.md
     - Docker: users/deployment/docker.md
 
   - For Developers:
