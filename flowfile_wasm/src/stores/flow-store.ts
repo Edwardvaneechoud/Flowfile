@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
+import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
 import type {
   FlowNode,
   FlowEdge,
@@ -17,6 +18,18 @@ import type {
   NodeSelectSettings,
   NodeGroupBySettings
 } from '../types'
+
+// Simple debounce utility
+function debounce<T extends (...args: any[]) => any>(fn: T, delay: number): T {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  return ((...args: Parameters<T>) => {
+    if (timeoutId) clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => {
+      fn(...args)
+      timeoutId = null
+    }, delay)
+  }) as T
+}
 
 // Session storage keys
 const STORAGE_KEY = 'flowfile_wasm_state'
@@ -187,8 +200,37 @@ export const useFlowStore = defineStore('flow', () => {
 
   watch([nodes, edges, fileContents, nodeIdCounter], scheduleSave, { deep: true })
 
+  // Watch for edge changes to trigger schema propagation
+  watch(() => edges.value, () => {
+    debouncedPropagateSchemas()
+  }, { deep: true })
+
+  // Watch for node settings changes to trigger schema propagation
+  // We need to watch the settings of each node for changes
+  watch(
+    () => {
+      // Create a dependency on all node settings
+      const settingsSnapshot: Record<number, string> = {}
+      nodes.value.forEach((node, id) => {
+        // Stringify settings to detect deep changes
+        settingsSnapshot[id] = JSON.stringify(node.settings)
+      })
+      return settingsSnapshot
+    },
+    () => {
+      debouncedPropagateSchemas()
+    },
+    { deep: true }
+  )
+
   // Load on init
   loadFromStorage()
+
+  // Initial schema propagation after loading
+  // Use setTimeout to ensure nodeResults are populated from storage
+  setTimeout(() => {
+    propagateSchemas()
+  }, 0)
 
   // Getters
   const nodeList = computed(() => Array.from(nodes.value.values()))
@@ -320,6 +362,9 @@ export const useFlowStore = defineStore('flow', () => {
           targetNode.rightInputId = sourceId
         }
       }
+
+      // Trigger immediate schema propagation for new connection
+      debouncedPropagateSchemas()
     }
   }
 
@@ -334,14 +379,66 @@ export const useFlowStore = defineStore('flow', () => {
         targetNode.inputIds = targetNode.inputIds.filter(id => id !== sourceId)
         if (targetNode.leftInputId === sourceId) targetNode.leftInputId = undefined
         if (targetNode.rightInputId === sourceId) targetNode.rightInputId = undefined
+
+        // Clear inferred schema for disconnected node (unless it has execution data)
+        const existingResult = nodeResults.value.get(targetId)
+        if (existingResult && !existingResult.data) {
+          nodeResults.value.delete(targetId)
+        }
       }
 
       edges.value = edges.value.filter(e => e.id !== edgeId)
+
+      // Trigger schema propagation to update downstream nodes
+      debouncedPropagateSchemas()
     }
   }
 
   function setFileContent(nodeId: number, content: string) {
     fileContents.value.set(nodeId, content)
+
+    // Get node to check settings for CSV parsing options
+    const node = nodes.value.get(nodeId)
+    if (node && (node.type === 'read_csv' || node.type === 'manual_input')) {
+      let hasHeaders = true
+      let delimiter = ','
+
+      if (node.type === 'read_csv') {
+        const settings = node.settings as any
+        hasHeaders = settings?.received_table?.table_settings?.has_headers ?? true
+        delimiter = settings?.received_table?.table_settings?.delimiter ?? ','
+      }
+
+      // Infer schema from CSV content
+      const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
+      if (schema) {
+        // Set schema for source node
+        nodeResults.value.set(nodeId, {
+          success: true,
+          schema
+        })
+
+        // Trigger schema propagation to update downstream nodes
+        debouncedPropagateSchemas()
+      }
+    }
+  }
+
+  /**
+   * Set schema for a source node from raw data fields
+   * Used by manual input nodes when data structure changes
+   */
+  function setSourceNodeSchema(nodeId: number, fields: { name: string; data_type: string }[]) {
+    const schema = inferSchemaFromRawData(fields)
+    if (schema) {
+      nodeResults.value.set(nodeId, {
+        success: true,
+        schema
+      })
+
+      // Trigger schema propagation
+      debouncedPropagateSchemas()
+    }
   }
 
   function selectNode(id: number | null) {
@@ -481,6 +578,76 @@ for nid in orphaned_ids:
     nodes.value.forEach((_, id) => visit(id))
     return order
   }
+
+  /**
+   * Propagate schemas through the flow graph
+   * This updates nodeResults with inferred schemas for all nodes that can be computed
+   * without actually executing the flow
+   */
+  function propagateSchemas() {
+    const order = getExecutionOrder()
+
+    for (const nodeId of order) {
+      const node = nodes.value.get(nodeId)
+      if (!node) continue
+
+      // Skip source nodes - their schema comes from actual data
+      if (isSourceNode(node.type)) {
+        // Keep existing schema if present (from data load)
+        continue
+      }
+
+      // Get input schema from upstream node
+      let inputSchema: ColumnSchema[] | null = null
+      let rightInputSchema: ColumnSchema[] | null = null
+
+      // Get primary input schema
+      const primaryInputId = node.leftInputId || node.inputIds[0]
+      if (primaryInputId) {
+        const inputResult = nodeResults.value.get(primaryInputId)
+        inputSchema = inputResult?.schema || null
+      }
+
+      // For join nodes, also get right input schema
+      if (node.type === 'join' && node.rightInputId) {
+        const rightResult = nodeResults.value.get(node.rightInputId)
+        rightInputSchema = rightResult?.schema || null
+      }
+
+      // Infer output schema
+      const inferredSchema = inferOutputSchema(
+        node.type,
+        inputSchema,
+        node.settings,
+        rightInputSchema
+      )
+
+      // Update nodeResults with inferred schema
+      if (inferredSchema) {
+        const existingResult = nodeResults.value.get(nodeId)
+        // Only update if we don't have execution data or if schema changed
+        if (!existingResult?.data) {
+          nodeResults.value.set(nodeId, {
+            success: true,
+            schema: inferredSchema,
+            // Preserve existing data if any
+            data: existingResult?.data,
+            execution_time: existingResult?.execution_time
+          })
+        }
+      } else if (!inputSchema && !isSourceNode(node.type)) {
+        // No input schema available and not a source node - clear any inferred schema
+        // but keep results with actual data
+        const existingResult = nodeResults.value.get(nodeId)
+        if (existingResult && !existingResult.data) {
+          nodeResults.value.delete(nodeId)
+        }
+      }
+    }
+  }
+
+  // Debounced schema propagation to avoid excessive updates
+  const debouncedPropagateSchemas = debounce(propagateSchemas, 50)
 
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
@@ -943,6 +1110,10 @@ result
         edges.value.push(edge)
       }
 
+      // Trigger schema propagation after import
+      // Note: Source nodes will need data loaded before schemas propagate
+      setTimeout(() => propagateSchemas(), 0)
+
       return true
     } catch (error) {
       console.error('Failed to import flow', error)
@@ -1030,6 +1201,8 @@ result
     executeFlow,
     clearFlow,
     cleanupOrphanedData,
+    propagateSchemas,
+    setSourceNodeSchema,
 
     // Import/Export (FlowfileData format)
     exportToFlowfile,

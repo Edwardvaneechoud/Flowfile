@@ -199,6 +199,18 @@ function updateTableSetting(key: string, value: any) {
     (localSettings.value.received_table.table_settings as any)[key] = value
   }
   emitUpdate()
+
+  // Re-infer schema if delimiter or has_headers changed and we have file content
+  if (key === 'delimiter' || key === 'has_headers') {
+    const content = flowStore.fileContents.get(props.nodeId)
+    if (content) {
+      // Re-set the file content to trigger schema re-inference with new settings
+      // The settings need to be updated first, so we delay slightly
+      setTimeout(() => {
+        flowStore.setFileContent(props.nodeId, content)
+      }, 0)
+    }
+  }
 }
 
 function emitUpdate() {
