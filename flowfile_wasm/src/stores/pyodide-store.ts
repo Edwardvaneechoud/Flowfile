@@ -264,7 +264,7 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
             result = df
         else:
             # Separate groupby columns from aggregation columns
-            group_cols = [c["old_name"] for c in agg_cols if c.get("agg") == "groupby"]
+            group_cols = [pl.col(c["old_name"]).alias(c["new_name"]) for c in agg_cols if c.get("agg") == "groupby"]
             agg_defs = [c for c in agg_cols if c.get("agg") != "groupby"]
 
             if not group_cols:
