@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
+import yaml from 'js-yaml'
 import type {
   FlowNode,
   FlowEdge,
@@ -927,18 +928,39 @@ result
   }
 
   /**
-   * Download the current flow as a .flowfile JSON file
+   * Download the current flow as a file
+   * @param name - Optional name for the flow
+   * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
    */
-  function downloadFlowfile(name?: string) {
+  function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
     const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
     const data = exportToFlowfile(flowName)
-    const json = JSON.stringify(data, null, 2)
-    const blob = new Blob([json], { type: 'application/json' })
+
+    let content: string
+    let mimeType: string
+    let extension: string
+
+    if (format === 'yaml') {
+      content = yaml.dump(data, {
+        indent: 2,
+        lineWidth: -1,  // No line wrapping
+        noRefs: true,   // Don't use YAML references
+        sortKeys: false // Preserve key order
+      })
+      mimeType = 'application/x-yaml'
+      extension = 'yaml'
+    } else {
+      content = JSON.stringify(data, null, 2)
+      mimeType = 'application/json'
+      extension = 'json'
+    }
+
+    const blob = new Blob([content], { type: mimeType })
     const url = URL.createObjectURL(blob)
 
     const a = document.createElement('a')
     a.href = url
-    a.download = `${flowName}.flowfile`
+    a.download = `${flowName}.${extension}`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -946,12 +968,33 @@ result
   }
 
   /**
-   * Load a .flowfile from a File object
+   * Load a flowfile from a File object
+   * Supports both JSON and YAML formats (auto-detected by extension or content)
    */
   async function loadFlowfile(file: File): Promise<boolean> {
     try {
       const text = await file.text()
-      const data = JSON.parse(text) as FlowfileData
+      const fileName = file.name.toLowerCase()
+
+      let data: FlowfileData
+
+      // Detect format by extension or content
+      if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) {
+        // Parse as YAML
+        data = yaml.load(text) as FlowfileData
+      } else if (fileName.endsWith('.json') || fileName.endsWith('.flowfile')) {
+        // Parse as JSON
+        data = JSON.parse(text) as FlowfileData
+      } else {
+        // Try to auto-detect: if it starts with '{', it's probably JSON
+        const trimmed = text.trim()
+        if (trimmed.startsWith('{')) {
+          data = JSON.parse(text) as FlowfileData
+        } else {
+          // Assume YAML
+          data = yaml.load(text) as FlowfileData
+        }
+      }
 
       if (!data.flowfile_version || !data.nodes) {
         throw new Error('Invalid flowfile format')
