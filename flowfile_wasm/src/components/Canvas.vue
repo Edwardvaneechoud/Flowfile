@@ -175,7 +175,7 @@ import SelectSettings from './nodes/SelectSettings.vue'
 import GroupBySettings from './nodes/GroupBySettings.vue'
 import JoinSettings from './nodes/JoinSettings.vue'
 import SortSettings from './nodes/SortSettings.vue'
-import WithColumnsSettings from './nodes/WithColumnsSettings.vue'
+import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
@@ -229,7 +229,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'filter', name: 'Filter', icon: 'filter.png', inputs: 1, outputs: 1 },
       { type: 'select', name: 'Select', icon: 'select.png', inputs: 1, outputs: 1 },
       { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
-      { type: 'with_columns', name: 'With Columns', icon: 'formula.png', inputs: 1, outputs: 1 },
+      { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1 },
       { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
       { type: 'head', name: 'Head/Limit', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
@@ -441,7 +441,7 @@ function getSettingsComponent(type: string) {
     group_by: GroupBySettings,
     join: JoinSettings,
     sort: SortSettings,
-    with_columns: WithColumnsSettings,
+    polars_code: PolarsCodeSettings,
     unique: UniqueSettings,
     head: HeadSettings,
     preview: PreviewSettings

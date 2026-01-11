@@ -2,11 +2,11 @@
   <div class="listbox-wrapper">
     <div class="listbox-subtitle">Columns</div>
 
-    <div v-if="columns.length === 0" class="no-columns">
+    <div v-if="columns.length === 0 && localColumns.length === 0" class="no-columns">
       No input columns available. Connect an input node first.
     </div>
 
-    <div v-else class="table-wrapper">
+    <div v-else-if="localColumns.length > 0" class="table-wrapper">
       <table class="styled-table">
         <thead>
           <tr>
@@ -50,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { SelectSettings, ColumnSchema } from '../../types'
 
@@ -75,35 +75,35 @@ interface LocalColumn {
 
 const localColumns = ref<LocalColumn[]>([])
 const dragIndex = ref<number | null>(null)
-const initialized = ref(false)
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-// Initialize on mount from existing settings or wait for columns
-onMounted(() => {
-  if (props.settings.select_input && props.settings.select_input.length > 0) {
-    // Load from existing settings
-    localColumns.value = props.settings.select_input.map((col, idx) => ({
-      old_name: col.old_name,
-      new_name: col.new_name,
-      keep: col.keep,
-      position: col.position ?? idx,
-      data_type: col.data_type || 'unknown'
-    }))
-    initialized.value = true
-  } else if (columns.value.length > 0) {
-    // Initialize from input schema
-    initializeFromColumns()
-  }
-})
+// Initialize from settings immediately if available
+if (props.settings.select_input && props.settings.select_input.length > 0) {
+  localColumns.value = props.settings.select_input.map((col, idx) => ({
+    old_name: col.old_name,
+    new_name: col.new_name,
+    keep: col.keep,
+    position: col.position ?? idx,
+    data_type: col.data_type || 'unknown'
+  }))
+}
 
-// Watch for input columns becoming available (e.g., when upstream node executes)
+// Watch for input columns becoming available (only if we don't have settings yet)
 watch(columns, (newColumns) => {
-  if (newColumns.length > 0 && !initialized.value) {
-    initializeFromColumns()
-  } else if (newColumns.length > 0 && initialized.value) {
+  // Only initialize from columns if we don't have any local columns yet
+  if (newColumns.length > 0 && localColumns.value.length === 0) {
+    localColumns.value = newColumns.map((col, idx) => ({
+      old_name: col.name,
+      new_name: col.name,
+      keep: true,
+      position: idx,
+      data_type: col.data_type
+    }))
+    emitUpdate()
+  } else if (newColumns.length > 0 && localColumns.value.length > 0) {
     // Check if we need to add new columns that appeared
     const existingNames = new Set(localColumns.value.map(c => c.old_name))
     const newCols = newColumns.filter(c => !existingNames.has(c.name))
@@ -123,18 +123,6 @@ watch(columns, (newColumns) => {
     }
   }
 }, { immediate: true })
-
-function initializeFromColumns() {
-  localColumns.value = columns.value.map((col, idx) => ({
-    old_name: col.name,
-    new_name: col.name,
-    keep: true,
-    position: idx,
-    data_type: col.data_type
-  }))
-  initialized.value = true
-  emitUpdate()
-}
 
 function toggleKeep(index: number) {
   localColumns.value[index].keep = !localColumns.value[index].keep

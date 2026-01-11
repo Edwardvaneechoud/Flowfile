@@ -504,6 +504,13 @@ export interface WithColumnsSettings extends NodeBase {
   depending_on_id?: number
 }
 
+export interface PolarsCodeSettings extends NodeBase {
+  polars_code_input: {
+    polars_code: string
+  }
+  depending_on_id?: number
+}
+
 export interface PreviewSettings extends NodeBase {
   depending_on_id?: number
 }

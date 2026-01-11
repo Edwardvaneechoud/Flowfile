@@ -392,36 +392,30 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def execute_with_columns(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute with_columns node"""
+def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute polars code node - runs arbitrary Polars code"""
     try:
-        df = get_dataframe(input_id)
-        if df is None:
+        input_df = get_dataframe(input_id)
+        if input_df is None:
             return {"success": False, "error": f"No input data from node {input_id}"}
 
-        with_cols_input = settings.get("with_columns_input", {})
-        columns = with_cols_input.get("columns", [])
+        polars_code_input = settings.get("polars_code_input", {})
+        code = polars_code_input.get("polars_code", "input_df")
 
-        if not columns:
-            result = df
+        if not code or not code.strip():
+            result = input_df
         else:
-            exprs = []
-            for c in columns:
-                name = c.get("name", "")
-                expr_str = c.get("expression", "")
-                if name and expr_str:
-                    # Evaluate the expression
-                    try:
-                        expr = eval(expr_str)
-                        exprs.append(expr.alias(name))
-                    except:
-                        # If eval fails, treat as literal
-                        exprs.append(pl.lit(expr_str).alias(name))
+            # Execute the code with input_df and pl available
+            local_vars = {"input_df": input_df, "pl": pl}
+            exec_result = eval(code.strip(), {"pl": pl}, local_vars)
 
-            if exprs:
-                result = df.with_columns(exprs)
+            # The result should be a DataFrame
+            if isinstance(exec_result, pl.DataFrame):
+                result = exec_result
+            elif exec_result is None:
+                result = input_df
             else:
-                result = df
+                return {"success": False, "error": f"Code must return a DataFrame, got {type(exec_result).__name__}"}
 
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}

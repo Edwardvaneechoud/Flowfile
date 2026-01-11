@@ -503,7 +503,7 @@ result
           break
         }
 
-        case 'with_columns': {
+        case 'polars_code': {
           const inputId = node.inputIds[0]
           if (!inputId) {
             return { success: false, error: 'No input connected' }
@@ -512,7 +512,7 @@ result
           const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_with_columns(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_polars_code(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -714,12 +714,11 @@ result
         } as any
 
       case 'formula':
-      case 'with_columns':
+      case 'polars_code':
         return {
           ...base,
-          function_input: [],
-          with_columns_input: {
-            columns: []
+          polars_code_input: {
+            polars_code: 'input_df'
           }
         } as any
 
