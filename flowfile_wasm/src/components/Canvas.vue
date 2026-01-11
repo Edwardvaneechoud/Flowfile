@@ -102,12 +102,16 @@
     <!-- Node Settings Panel -->
     <DraggablePanel
       v-if="selectedNode"
-      :title="getNodeTitle(selectedNode.type)"
+      :title="getNodeDescription(selectedNode.type).title"
       initial-position="right"
       :initial-width="450"
       :initial-top="50"
       :on-close="() => flowStore.selectNode(null)"
     >
+      <NodeTitle
+        :title="getNodeDescription(selectedNode.type).title"
+        :intro="getNodeDescription(selectedNode.type).intro"
+      />
       <component
         :is="getSettingsComponent(selectedNode.type)"
         :node-id="selectedNode.id"
@@ -168,6 +172,7 @@ import type { NodeSettings, FlowEdge } from '../types'
 // Components
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
+import NodeTitle from './nodes/NodeTitle.vue'
 import ReadCsvSettings from './nodes/ReadCsvSettings.vue'
 import ManualInputSettings from './nodes/ManualInputSettings.vue'
 import FilterSettings from './nodes/FilterSettings.vue'
@@ -179,6 +184,7 @@ import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
+import { getNodeDescription } from '../config/nodeDescriptions'
 
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
@@ -447,12 +453,6 @@ function getSettingsComponent(type: string) {
     preview: PreviewSettings
   }
   return components[type] || null
-}
-
-// Get node title
-function getNodeTitle(type: string): string {
-  const def = findNodeDef(type)
-  return def?.name || type
 }
 
 // Format cell value for display

@@ -18,16 +18,6 @@ import type {
   NodeGroupBySettings
 } from '../types'
 
-// Logger utility
-const log = (category: string, message: string, data?: any) => {
-  const timestamp = new Date().toISOString().split('T')[1].slice(0, 12)
-  if (data !== undefined) {
-    console.log(`[${timestamp}] [FlowStore:${category}] ${message}`, data)
-  } else {
-    console.log(`[${timestamp}] [FlowStore:${category}] ${message}`)
-  }
-}
-
 // Session storage keys
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
@@ -52,16 +42,12 @@ export const useFlowStore = defineStore('flow', () => {
       const saved = sessionStorage.getItem(STORAGE_KEY)
       if (saved) {
         const state = JSON.parse(saved)
-        log('Storage', 'Loading state from session storage')
-
         // Check for new FlowfileData format (version 2+)
         if (state.version === STORAGE_VERSION && state.flowfileData) {
-          log('Storage', 'Loading FlowfileData format (v2)')
           const data = state.flowfileData as FlowfileData
 
           // Import from FlowfileData
           for (const flowfileNode of data.nodes) {
-            log('Storage', `Loading node ${flowfileNode.id}: type=${flowfileNode.type}, left_input_id=${flowfileNode.left_input_id}, right_input_id=${flowfileNode.right_input_id}`)
             const node: FlowNode = {
               id: flowfileNode.id,
               type: flowfileNode.type,
@@ -74,7 +60,6 @@ export const useFlowStore = defineStore('flow', () => {
               description: flowfileNode.description
             }
             nodes.value.set(flowfileNode.id, node)
-            log('Storage', `Node ${flowfileNode.id} stored with leftInputId=${node.leftInputId}, rightInputId=${node.rightInputId}`)
           }
 
           for (const conn of data.connections) {
@@ -94,37 +79,27 @@ export const useFlowStore = defineStore('flow', () => {
 
           // Restore node schemas for quick column access
           if (state.nodeSchemas) {
-            log('Storage', `Found ${state.nodeSchemas.length} node schemas to restore`)
             for (const [id, schema] of state.nodeSchemas) {
-              log('Storage', `Schema entry: id=${id} (type=${typeof id}), schema=${schema ? `${schema.length} cols` : 'null'}`)
               if (schema && schema.length > 0) {
                 nodeResults.value.set(id, { success: true, schema })
-                log('Storage', `Set nodeResults for id=${id}`)
               }
             }
-            log('Storage', `nodeResults keys after restore: ${Array.from(nodeResults.value.keys())}`)
           }
 
           // Restore counter
           const maxId = Math.max(0, ...data.nodes.map(n => n.id))
           nodeIdCounter.value = state.nodeIdCounter ?? maxId
-
-          log('Storage', `Loaded ${data.nodes.length} nodes and ${data.connections.length} connections`)
         }
         // Fallback: legacy format (version 1)
         else if (state.nodes) {
-          log('Storage', 'Loading legacy format (v1)')
           nodes.value = new Map(state.nodes)
           if (state.edges) edges.value = state.edges
           if (state.fileContents) fileContents.value = new Map(state.fileContents)
           if (state.nodeIdCounter !== undefined) nodeIdCounter.value = state.nodeIdCounter
-          log('Storage', `Loaded ${state.nodes.length} nodes (legacy)`)
         }
-      } else {
-        log('Storage', 'No saved state found')
       }
     } catch (err) {
-      log('Storage', 'Failed to load state from session storage', err)
+      console.error('Failed to load state from session storage', err)
     }
   }
 
@@ -191,7 +166,7 @@ export const useFlowStore = defineStore('flow', () => {
 
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
     } catch (err) {
-      log('Storage', 'Failed to save state to session storage', err)
+      console.error('Failed to save state to session storage', err)
     }
   }
 
@@ -239,26 +214,15 @@ export const useFlowStore = defineStore('flow', () => {
 
   const getLeftInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
-    log('Schema', `getLeftInputSchema(${nodeId}): leftInputId=${node?.leftInputId}, rightInputId=${node?.rightInputId}`)
-    if (!node?.leftInputId) {
-      log('Schema', `getLeftInputSchema(${nodeId}): no leftInputId - returning empty`)
-      return []
-    }
+    if (!node?.leftInputId) return []
     const result = nodeResults.value.get(node.leftInputId)
-    log('Schema', `getLeftInputSchema(${nodeId}): result for ${node.leftInputId}=${result ? `found (${result.schema?.length || 0} cols)` : 'NOT FOUND'}`)
-    log('Schema', `getLeftInputSchema(${nodeId}): nodeResults keys=${Array.from(nodeResults.value.keys())}`)
     return result?.schema || []
   }
 
   const getRightInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
-    log('Schema', `getRightInputSchema(${nodeId}): leftInputId=${node?.leftInputId}, rightInputId=${node?.rightInputId}`)
-    if (!node?.rightInputId) {
-      log('Schema', `getRightInputSchema(${nodeId}): no rightInputId - returning empty`)
-      return []
-    }
+    if (!node?.rightInputId) return []
     const result = nodeResults.value.get(node.rightInputId)
-    log('Schema', `getRightInputSchema(${nodeId}): result for ${node.rightInputId}=${result ? `found (${result.schema?.length || 0} cols)` : 'NOT FOUND'}`)
     return result?.schema || []
   }
 
@@ -284,7 +248,6 @@ export const useFlowStore = defineStore('flow', () => {
     }
 
     nodes.value.set(id, node)
-    log('Node', `Added node ${id} of type '${type}' at (${x}, ${y})`)
     return id
   }
 
@@ -300,7 +263,6 @@ export const useFlowStore = defineStore('flow', () => {
     if (node) {
       node.settings = settings
       nodes.value.set(id, node)
-      log('Settings', `Updated settings for node ${id}`, settings)
     }
   }
 
@@ -375,7 +337,6 @@ export const useFlowStore = defineStore('flow', () => {
 
   function setFileContent(nodeId: number, content: string) {
     fileContents.value.set(nodeId, content)
-    log('File', `Set file content for node ${nodeId} (${content.length} chars)`)
   }
 
   function selectNode(id: number | null) {
@@ -411,11 +372,9 @@ export const useFlowStore = defineStore('flow', () => {
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
-      log('Exec', `Node ${nodeId} not found`)
       return { success: false, error: 'Node not found' }
     }
 
-    log('Exec', `Executing node ${nodeId} (type: ${node.type})`)
     const { runPythonWithResult } = pyodideStore
 
     try {
@@ -592,15 +551,9 @@ result
       }
 
       nodeResults.value.set(nodeId, result)
-      if (result.success) {
-        log('Exec', `Node ${nodeId} completed successfully`, { rows: result.data?.total_rows })
-      } else {
-        log('Exec', `Node ${nodeId} failed`, { error: result.error })
-      }
       return result
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      log('Exec', `Node ${nodeId} threw exception`, { error: errorMessage })
       const errorResult: NodeResult = {
         success: false,
         error: errorMessage
@@ -612,37 +565,23 @@ result
 
   async function executeFlow() {
     if (!pyodideStore.isReady) {
-      log('Flow', 'Cannot execute - Pyodide not ready')
       return
     }
 
-    log('Flow', 'Starting flow execution')
     isExecuting.value = true
     nodeResults.value.clear()
 
     try {
       // Clear Python state
-      log('Flow', 'Clearing Python state')
       await pyodideStore.runPython('clear_all()')
 
-      // Get execution order
+      // Get execution order and execute nodes
       const order = getExecutionOrder()
-      log('Flow', `Execution order: ${order.join(' -> ')}`)
-
-      // Execute nodes in order
-      let successCount = 0
-      let failCount = 0
       for (const nodeId of order) {
-        const result = await executeNode(nodeId)
-        if (result.success) {
-          successCount++
-        } else {
-          failCount++
-        }
+        await executeNode(nodeId)
       }
-      log('Flow', `Execution complete: ${successCount} succeeded, ${failCount} failed`)
     } catch (error) {
-      log('Flow', 'Flow execution error', error)
+      console.error('Flow execution error', error)
     } finally {
       isExecuting.value = false
     }
@@ -786,7 +725,6 @@ result
    * This produces a JSON structure compatible with flowfile_core
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
-    log('Export', `Exporting flow as '${name}'`)
 
     const flowfileNodes: FlowfileNode[] = []
     const flowfileConnections: NodeConnection[] = []
@@ -844,7 +782,6 @@ result
       connections: flowfileConnections
     }
 
-    log('Export', `Exported ${flowfileNodes.length} nodes and ${flowfileConnections.length} connections`)
     return flowfileData
   }
 
@@ -853,7 +790,6 @@ result
    * This loads a flow file that was created in flowfile_core or this WASM app
    */
   function importFromFlowfile(data: FlowfileData): boolean {
-    log('Import', `Importing flow '${data.flowfile_name}' (version: ${data.flowfile_version})`)
 
     try {
       // Clear existing state
@@ -899,10 +835,9 @@ result
         edges.value.push(edge)
       }
 
-      log('Import', `Imported ${data.nodes.length} nodes and ${data.connections.length} connections`)
       return true
     } catch (error) {
-      log('Import', 'Failed to import flow', error)
+      console.error('Failed to import flow', error)
       return false
     }
   }
@@ -924,8 +859,6 @@ result
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-
-    log('Export', `Downloaded flow as ${flowName}.flowfile`)
   }
 
   /**
@@ -942,13 +875,12 @@ result
 
       return importFromFlowfile(data)
     } catch (error) {
-      log('Import', 'Failed to load flowfile', error)
+      console.error('Failed to load flowfile', error)
       return false
     }
   }
 
   function clearFlow() {
-    log('Flow', 'Clearing flow')
     nodes.value.clear()
     edges.value = []
     nodeResults.value.clear()

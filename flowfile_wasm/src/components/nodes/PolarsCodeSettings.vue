@@ -77,6 +77,7 @@ import { EditorState, Extension, Prec } from '@codemirror/state'
 import { autocompletion, CompletionSource, acceptCompletion } from '@codemirror/autocomplete'
 import { indentMore, indentLess } from '@codemirror/commands'
 import { useFlowStore } from '../../stores/flow-store'
+import { polarsCompletionVals } from '../../config/polarsCompletions'
 import type { PolarsCodeSettings, ColumnSchema } from '../../types'
 
 const props = defineProps<{
@@ -117,38 +118,19 @@ const columns = computed<ColumnSchema[]>(() => {
 
 // Polars-specific autocompletions
 const polarsCompletions: CompletionSource = (context) => {
-  const word = context.matchBefore(/\w*/)
+  const word = context.matchBefore(/[\w.]*/)
   if (word?.from === word?.to && !context.explicit) {
     return null
   }
 
-  const completionOptions = [
-    { label: 'input_df', type: 'variable', detail: 'Input DataFrame' },
-    { label: 'pl', type: 'module', detail: 'Polars module' },
-    { label: 'pl.col', type: 'function', detail: 'Column expression' },
-    { label: 'pl.lit', type: 'function', detail: 'Literal value' },
-    { label: 'pl.when', type: 'function', detail: 'Conditional expression' },
-    { label: 'filter', type: 'method', detail: 'Filter rows' },
-    { label: 'select', type: 'method', detail: 'Select columns' },
-    { label: 'with_columns', type: 'method', detail: 'Add/modify columns' },
-    { label: 'group_by', type: 'method', detail: 'Group by columns' },
-    { label: 'agg', type: 'method', detail: 'Aggregate' },
-    { label: 'sort', type: 'method', detail: 'Sort rows' },
-    { label: 'head', type: 'method', detail: 'First n rows' },
-    { label: 'tail', type: 'method', detail: 'Last n rows' },
-    { label: 'unique', type: 'method', detail: 'Unique rows' },
-    { label: 'drop_nulls', type: 'method', detail: 'Drop null values' },
-    { label: 'fill_null', type: 'method', detail: 'Fill null values' },
-    { label: 'cast', type: 'method', detail: 'Cast to type' },
-    { label: 'alias', type: 'method', detail: 'Rename column' },
-    { label: 'sum', type: 'method', detail: 'Sum aggregation' },
-    { label: 'mean', type: 'method', detail: 'Mean aggregation' },
-    { label: 'count', type: 'method', detail: 'Count aggregation' },
-    { label: 'max', type: 'method', detail: 'Max aggregation' },
-    { label: 'min', type: 'method', detail: 'Min aggregation' },
-  ]
+  // Convert polarsCompletionVals to CodeMirror format
+  const completionOptions = polarsCompletionVals.map(item => ({
+    label: item.label,
+    type: item.type,
+    detail: item.info
+  }))
 
-  // Add column completions
+  // Add column completions from input schema
   columns.value.forEach(col => {
     completionOptions.push({
       label: `pl.col("${col.name}")`,

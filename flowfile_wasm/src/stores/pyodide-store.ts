@@ -39,10 +39,7 @@ export const usePyodideStore = defineStore('pyodide', () => {
       })
 
       loadingStatus.value = 'Installing packages...'
-      // In Pyodide 0.27, polars and numpy are pre-built packages
-      console.log('[Pyodide] Loading numpy and polars packages...')
       await pyodide.value.loadPackage(['numpy', 'polars'])
-      console.log('[Pyodide] Packages loaded successfully')
 
       loadingStatus.value = 'Setting up execution engine...'
       await setupExecutionEngine()
@@ -502,8 +499,6 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-print("Flowfile WASM execution engine ready")
 `)
   }
 
