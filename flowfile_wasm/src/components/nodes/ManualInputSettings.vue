@@ -77,7 +77,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
-import type { NodeSettings } from '../../types'
+import type { NodeSettings, NodeManualInputSettings, RawData, MinimalFieldInfo } from '../../types'
 
 const props = defineProps<{
   nodeId: number
@@ -165,26 +165,69 @@ function parseData() {
 function applySettings() {
   if (!isValid.value) return
 
-  // Convert to CSV format for storage
+  // Convert to CSV format for storage (used by execution)
   const csvData = inputMode.value === 'json'
     ? convertJsonToCsv(previewData.value, columns.value)
     : dataInput.value
 
-  const newSettings: NodeSettings = {
-    ...props.settings,
+  // Build RawData structure matching flowfile_core schema
+  const fields: MinimalFieldInfo[] = columns.value.map(col => ({
+    name: col,
+    data_type: inferDataType(previewData.value, col)
+  }))
+
+  // Convert to array of arrays format
+  const dataRows: any[][] = previewData.value.map(row =>
+    columns.value.map(col => row[col])
+  )
+
+  const rawData: RawData = {
+    fields,
+    data: dataRows
+  }
+
+  const newSettings: NodeManualInputSettings = {
+    node_id: props.settings.node_id ?? props.nodeId,
+    cache_results: (props.settings as any).cache_results ?? true,
+    pos_x: (props.settings as any).pos_x ?? 0,
+    pos_y: (props.settings as any).pos_y ?? 0,
+    is_setup: true,
+    description: (props.settings as any).description ?? '',
+    raw_data: rawData,
+    // Keep legacy format for backwards compatibility
     manual_input: {
       data: csvData,
       columns: columns.value,
       has_headers: hasHeaders.value,
       delimiter: delimiter.value
-    },
-    is_setup: true
-  }
+    }
+  } as any
 
   emit('update:settings', newSettings)
 
   // Store the data for execution
   flowStore.setFileContent(props.nodeId, csvData)
+}
+
+function inferDataType(data: Record<string, any>[], column: string): string {
+  // Sample first few non-null values to infer type
+  for (const row of data.slice(0, 10)) {
+    const val = row[column]
+    if (val === null || val === undefined || val === '') continue
+
+    if (typeof val === 'number') {
+      return Number.isInteger(val) ? 'Int64' : 'Float64'
+    }
+    if (typeof val === 'boolean') {
+      return 'Boolean'
+    }
+    // Try to parse as number
+    const num = parseFloat(val)
+    if (!isNaN(num)) {
+      return Number.isInteger(num) ? 'Int64' : 'Float64'
+    }
+  }
+  return 'Utf8'  // Default to string
 }
 
 function convertJsonToCsv(data: Record<string, any>[], cols: string[]): string {
@@ -201,12 +244,30 @@ function convertJsonToCsv(data: Record<string, any>[], cols: string[]): string {
 
 function loadData() {
   const settings = props.settings as any
-  if (settings?.manual_input) {
+
+  // Try new schema first (raw_data)
+  if (settings?.raw_data?.fields && settings?.raw_data?.data) {
+    const rd = settings.raw_data as RawData
+    columns.value = rd.fields.map(f => f.name)
+    previewData.value = rd.data.map(row => {
+      const obj: Record<string, any> = {}
+      columns.value.forEach((col, idx) => {
+        obj[col] = row[idx]
+      })
+      return obj
+    })
+    // Reconstruct CSV for editing
+    dataInput.value = convertJsonToCsv(previewData.value, columns.value)
+    console.log('[ManualInputSettings] Loaded from raw_data schema')
+  }
+  // Fallback to legacy schema (manual_input)
+  else if (settings?.manual_input) {
     const mi = settings.manual_input
     dataInput.value = mi.data || ''
     hasHeaders.value = mi.has_headers ?? true
     delimiter.value = mi.delimiter || ','
     parseData()
+    console.log('[ManualInputSettings] Loaded from legacy manual_input schema')
   }
 }
 

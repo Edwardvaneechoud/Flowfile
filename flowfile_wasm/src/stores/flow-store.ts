@@ -1,7 +1,22 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
-import type { FlowNode, FlowEdge, NodeResult, NodeSettings, ColumnSchema } from '../types'
+import type {
+  FlowNode,
+  FlowEdge,
+  NodeResult,
+  NodeSettings,
+  ColumnSchema,
+  FlowfileData,
+  FlowfileNode,
+  NodeConnection,
+  NodeBase,
+  NodeReadSettings,
+  NodeManualInputSettings,
+  NodeFilterSettings,
+  NodeSelectSettings,
+  NodeGroupBySettings
+} from '../types'
 
 // Logger utility
 const log = (category: string, message: string, data?: any) => {
@@ -15,6 +30,7 @@ const log = (category: string, message: string, data?: any) => {
 
 // Session storage keys
 const STORAGE_KEY = 'flowfile_wasm_state'
+const STORAGE_VERSION = '2'  // Increment when storage format changes
 
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
@@ -38,27 +54,56 @@ export const useFlowStore = defineStore('flow', () => {
         const state = JSON.parse(saved)
         log('Storage', 'Loading state from session storage')
 
-        // Restore nodes
-        if (state.nodes) {
+        // Check for new FlowfileData format (version 2+)
+        if (state.version === STORAGE_VERSION && state.flowfileData) {
+          log('Storage', 'Loading FlowfileData format (v2)')
+          const data = state.flowfileData as FlowfileData
+
+          // Import from FlowfileData
+          for (const flowfileNode of data.nodes) {
+            const node: FlowNode = {
+              id: flowfileNode.id,
+              type: flowfileNode.type,
+              x: flowfileNode.x_position,
+              y: flowfileNode.y_position,
+              settings: flowfileNode.setting_input as NodeSettings,
+              inputIds: flowfileNode.input_ids || [],
+              leftInputId: flowfileNode.left_input_id,
+              rightInputId: flowfileNode.right_input_id,
+              description: flowfileNode.description
+            }
+            nodes.value.set(flowfileNode.id, node)
+          }
+
+          for (const conn of data.connections) {
+            edges.value.push({
+              id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
+              source: String(conn.from_node),
+              target: String(conn.to_node),
+              sourceHandle: conn.from_handle,
+              targetHandle: conn.to_handle
+            })
+          }
+
+          // Restore file contents separately (not part of FlowfileData)
+          if (state.fileContents) {
+            fileContents.value = new Map(state.fileContents)
+          }
+
+          // Restore counter
+          const maxId = Math.max(0, ...data.nodes.map(n => n.id))
+          nodeIdCounter.value = state.nodeIdCounter ?? maxId
+
+          log('Storage', `Loaded ${data.nodes.length} nodes and ${data.connections.length} connections`)
+        }
+        // Fallback: legacy format (version 1)
+        else if (state.nodes) {
+          log('Storage', 'Loading legacy format (v1)')
           nodes.value = new Map(state.nodes)
-          log('Storage', `Loaded ${state.nodes.length} nodes`)
-        }
-
-        // Restore edges
-        if (state.edges) {
-          edges.value = state.edges
-          log('Storage', `Loaded ${state.edges.length} edges`)
-        }
-
-        // Restore file contents
-        if (state.fileContents) {
-          fileContents.value = new Map(state.fileContents)
-          log('Storage', `Loaded ${state.fileContents.length} file contents`)
-        }
-
-        // Restore counter
-        if (state.nodeIdCounter !== undefined) {
-          nodeIdCounter.value = state.nodeIdCounter
+          if (state.edges) edges.value = state.edges
+          if (state.fileContents) fileContents.value = new Map(state.fileContents)
+          if (state.nodeIdCounter !== undefined) nodeIdCounter.value = state.nodeIdCounter
+          log('Storage', `Loaded ${state.nodes.length} nodes (legacy)`)
         }
       } else {
         log('Storage', 'No saved state found')
@@ -68,15 +113,65 @@ export const useFlowStore = defineStore('flow', () => {
     }
   }
 
-  // Save state to session storage
+  // Save state to session storage using FlowfileData format
   function saveToStorage() {
     try {
+      // Build FlowfileData structure
+      const flowfileNodes: FlowfileNode[] = []
+      const flowfileConnections: NodeConnection[] = []
+
+      nodes.value.forEach((node, id) => {
+        const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
+        const outputs = edges.value
+          .filter(e => e.source === String(id))
+          .map(e => parseInt(e.target))
+
+        flowfileNodes.push({
+          id: node.id,
+          type: node.type,
+          is_start_node: isStartNode,
+          description: (node.settings as NodeBase).description || '',
+          x_position: node.x,
+          y_position: node.y,
+          left_input_id: node.leftInputId,
+          right_input_id: node.rightInputId,
+          input_ids: node.inputIds,
+          outputs,
+          setting_input: node.settings
+        })
+      })
+
+      edges.value.forEach(edge => {
+        flowfileConnections.push({
+          from_node: parseInt(edge.source),
+          to_node: parseInt(edge.target),
+          from_handle: edge.sourceHandle,
+          to_handle: edge.targetHandle
+        })
+      })
+
+      const flowfileData: FlowfileData = {
+        flowfile_version: '1.0.0-wasm',
+        flowfile_id: Date.now(),
+        flowfile_name: 'Session Flow',
+        flowfile_settings: {
+          description: '',
+          execution_mode: 'Development',
+          execution_location: 'local',
+          auto_save: true,
+          show_detailed_progress: false
+        },
+        nodes: flowfileNodes,
+        connections: flowfileConnections
+      }
+
       const state = {
-        nodes: Array.from(nodes.value.entries()),
-        edges: edges.value,
+        version: STORAGE_VERSION,
+        flowfileData,
         fileContents: Array.from(fileContents.value.entries()),
         nodeIdCounter: nodeIdCounter.value
       }
+
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
     } catch (err) {
       log('Storage', 'Failed to save state to session storage', err)
@@ -147,7 +242,7 @@ export const useFlowStore = defineStore('flow', () => {
 
   function addNode(type: string, x: number, y: number): number {
     const id = generateNodeId()
-    const defaultSettings = getDefaultSettings(type, id)
+    const defaultSettings = getDefaultSettings(type, id, x, y)
 
     const node: FlowNode = {
       id,
@@ -516,33 +611,46 @@ result
     }
   }
 
-  function getDefaultSettings(type: string, nodeId: number): NodeSettings {
-    const base = {
+  function getDefaultSettings(type: string, nodeId: number, x: number = 0, y: number = 0): NodeSettings {
+    // Base settings matching flowfile_core/schemas/input_schema.py NodeBase
+    const base: NodeBase = {
       node_id: nodeId,
       is_setup: false,
-      cache_results: true
+      cache_results: true,
+      pos_x: x,
+      pos_y: y,
+      description: ''
     }
 
     switch (type) {
       case 'read_csv':
         return {
           ...base,
-          file_name: '',
-          has_headers: true,
-          delimiter: ',',
-          skip_rows: 0
-        }
+          received_table: {
+            name: '',
+            file_type: 'csv',
+            table_settings: {
+              file_type: 'csv',
+              delimiter: ',',
+              has_headers: true,
+              starting_from_line: 0,
+              encoding: 'utf-8',
+              infer_schema_length: 100,
+              truncate_ragged_lines: false,
+              ignore_errors: false
+            }
+          },
+          file_name: ''
+        } as NodeReadSettings
 
       case 'manual_input':
         return {
           ...base,
-          manual_input: {
-            data: '',
-            columns: [],
-            has_headers: true,
-            delimiter: ','
+          raw_data: {
+            fields: [],
+            data: []
           }
-        }
+        } as NodeManualInputSettings
 
       case 'filter':
         return {
@@ -557,14 +665,14 @@ result
             },
             advanced_filter: ''
           }
-        }
+        } as NodeFilterSettings
 
       case 'select':
         return {
           ...base,
           select_input: [],
           keep_missing: false
-        }
+        } as NodeSelectSettings
 
       case 'group_by':
         return {
@@ -572,18 +680,20 @@ result
           groupby_input: {
             agg_cols: []
           }
-        }
+        } as NodeGroupBySettings
 
       case 'join':
         return {
           ...base,
+          depending_on_ids: [],
           join_input: {
             join_type: 'inner',
+            how: 'inner',
             join_mapping: [],
             left_suffix: '_left',
             right_suffix: '_right'
           }
-        }
+        } as any
 
       case 'sort':
         return {
@@ -591,36 +701,213 @@ result
           sort_input: {
             sort_cols: []
           }
-        }
+        } as any
 
+      case 'formula':
       case 'with_columns':
         return {
           ...base,
+          function_input: [],
           with_columns_input: {
             columns: []
           }
-        }
+        } as any
 
       case 'unique':
         return {
           ...base,
           unique_input: {
+            columns: [],
             subset: [],
+            strategy: 'first',
             keep: 'first',
             maintain_order: true
           }
-        }
+        } as any
 
+      case 'sample':
       case 'head':
         return {
           ...base,
+          sample_size: 10,
           head_input: {
             n: 10
           }
-        }
+        } as any
+
+      case 'preview':
+        return {
+          ...base
+        } as NodeSettings
 
       default:
         return base as NodeSettings
+    }
+  }
+
+  /**
+   * Export the current flow state to FlowfileData format
+   * This produces a JSON structure compatible with flowfile_core
+   */
+  function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
+    log('Export', `Exporting flow as '${name}'`)
+
+    const flowfileNodes: FlowfileNode[] = []
+    const flowfileConnections: NodeConnection[] = []
+
+    // Convert nodes
+    nodes.value.forEach((node, id) => {
+      // Determine if this is a start node (no inputs)
+      const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
+
+      // Get output nodes
+      const outputs = edges.value
+        .filter(e => e.source === String(id))
+        .map(e => parseInt(e.target))
+
+      const flowfileNode: FlowfileNode = {
+        id: node.id,
+        type: node.type,
+        is_start_node: isStartNode,
+        description: (node.settings as NodeBase).description || '',
+        x_position: node.x,
+        y_position: node.y,
+        left_input_id: node.leftInputId,
+        right_input_id: node.rightInputId,
+        input_ids: node.inputIds,
+        outputs,
+        setting_input: node.settings
+      }
+
+      flowfileNodes.push(flowfileNode)
+    })
+
+    // Convert edges to connections
+    edges.value.forEach(edge => {
+      const connection: NodeConnection = {
+        from_node: parseInt(edge.source),
+        to_node: parseInt(edge.target),
+        from_handle: edge.sourceHandle,
+        to_handle: edge.targetHandle
+      }
+      flowfileConnections.push(connection)
+    })
+
+    const flowfileData: FlowfileData = {
+      flowfile_version: '1.0.0-wasm',
+      flowfile_id: Date.now(),
+      flowfile_name: name,
+      flowfile_settings: {
+        description: '',
+        execution_mode: 'Development',
+        execution_location: 'local',
+        auto_save: true,
+        show_detailed_progress: false
+      },
+      nodes: flowfileNodes,
+      connections: flowfileConnections
+    }
+
+    log('Export', `Exported ${flowfileNodes.length} nodes and ${flowfileConnections.length} connections`)
+    return flowfileData
+  }
+
+  /**
+   * Import a FlowfileData structure into the current state
+   * This loads a flow file that was created in flowfile_core or this WASM app
+   */
+  function importFromFlowfile(data: FlowfileData): boolean {
+    log('Import', `Importing flow '${data.flowfile_name}' (version: ${data.flowfile_version})`)
+
+    try {
+      // Clear existing state
+      nodes.value.clear()
+      edges.value = []
+      nodeResults.value.clear()
+      fileContents.value.clear()
+      selectedNodeId.value = null
+
+      // Find max node id for counter
+      let maxId = 0
+
+      // Import nodes
+      for (const flowfileNode of data.nodes) {
+        if (flowfileNode.id > maxId) maxId = flowfileNode.id
+
+        const node: FlowNode = {
+          id: flowfileNode.id,
+          type: flowfileNode.type,
+          x: flowfileNode.x_position,
+          y: flowfileNode.y_position,
+          settings: flowfileNode.setting_input as NodeSettings,
+          inputIds: flowfileNode.input_ids || [],
+          leftInputId: flowfileNode.left_input_id,
+          rightInputId: flowfileNode.right_input_id,
+          description: flowfileNode.description
+        }
+
+        nodes.value.set(flowfileNode.id, node)
+      }
+
+      nodeIdCounter.value = maxId
+
+      // Import connections as edges
+      for (const conn of data.connections) {
+        const edge: FlowEdge = {
+          id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
+          source: String(conn.from_node),
+          target: String(conn.to_node),
+          sourceHandle: conn.from_handle,
+          targetHandle: conn.to_handle
+        }
+        edges.value.push(edge)
+      }
+
+      log('Import', `Imported ${data.nodes.length} nodes and ${data.connections.length} connections`)
+      return true
+    } catch (error) {
+      log('Import', 'Failed to import flow', error)
+      return false
+    }
+  }
+
+  /**
+   * Download the current flow as a .flowfile JSON file
+   */
+  function downloadFlowfile(name?: string) {
+    const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
+    const data = exportToFlowfile(flowName)
+    const json = JSON.stringify(data, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${flowName}.flowfile`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+
+    log('Export', `Downloaded flow as ${flowName}.flowfile`)
+  }
+
+  /**
+   * Load a .flowfile from a File object
+   */
+  async function loadFlowfile(file: File): Promise<boolean> {
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text) as FlowfileData
+
+      if (!data.flowfile_version || !data.nodes) {
+        throw new Error('Invalid flowfile format')
+      }
+
+      return importFromFlowfile(data)
+    } catch (error) {
+      log('Import', 'Failed to load flowfile', error)
+      return false
     }
   }
 
@@ -664,6 +951,12 @@ result
     selectNode,
     executeNode,
     executeFlow,
-    clearFlow
+    clearFlow,
+
+    // Import/Export (FlowfileData format)
+    exportToFlowfile,
+    importFromFlowfile,
+    downloadFlowfile,
+    loadFlowfile
   }
 })

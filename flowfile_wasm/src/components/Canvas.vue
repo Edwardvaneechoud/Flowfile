@@ -40,6 +40,35 @@
       </div>
     </DraggablePanel>
 
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <button class="toolbar-btn" @click="handleRunFlow" :disabled="isExecuting" title="Run Flow">
+        <span class="icon">▶</span>
+        {{ isExecuting ? 'Running...' : 'Run' }}
+      </button>
+      <div class="toolbar-divider"></div>
+      <button class="toolbar-btn" @click="handleSaveFlow" title="Save Flow">
+        <span class="icon">💾</span>
+        Save
+      </button>
+      <button class="toolbar-btn" @click="triggerLoadFlow" title="Load Flow">
+        <span class="icon">📂</span>
+        Load
+      </button>
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept=".flowfile,.json"
+        @change="handleLoadFlow"
+        style="display: none"
+      />
+      <div class="toolbar-divider"></div>
+      <button class="toolbar-btn danger" @click="handleClearFlow" title="Clear Flow">
+        <span class="icon">🗑️</span>
+        Clear
+      </button>
+    </div>
+
     <!-- Vue Flow Canvas -->
     <div class="flow-canvas animated-bg-gradient" @drop="onDrop" @dragover="onDragOver">
       <VueFlow
@@ -152,9 +181,10 @@ import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
 
 const flowStore = useFlowStore()
-const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults } = storeToRefs(flowStore)
+const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 
 const vueFlowRef = ref()
+const fileInputRef = ref<HTMLInputElement | null>(null)
 const { screenToFlowCoordinate, removeNodes } = useVueFlow()
 const searchQuery = ref('')
 
@@ -431,6 +461,45 @@ function formatCell(value: any): string {
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
+
+// Toolbar handlers
+async function handleRunFlow() {
+  await flowStore.executeFlow()
+}
+
+function handleSaveFlow() {
+  const name = prompt('Enter flow name:', 'my_flow')
+  if (name) {
+    flowStore.downloadFlowfile(name)
+  }
+}
+
+function triggerLoadFlow() {
+  fileInputRef.value?.click()
+}
+
+async function handleLoadFlow(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+
+  if (!file) return
+
+  const success = await flowStore.loadFlowfile(file)
+  if (success) {
+    console.log('[Canvas] Flow loaded successfully')
+  } else {
+    alert('Failed to load flow file. Please check the file format.')
+  }
+
+  // Reset input so same file can be loaded again
+  input.value = ''
+}
+
+function handleClearFlow() {
+  if (confirm('Are you sure you want to clear the entire flow? This cannot be undone.')) {
+    flowStore.clearFlow()
+  }
+}
 </script>
 
 <style scoped>
@@ -442,14 +511,69 @@ function formatCell(value: any): string {
 
 .canvas-container {
   display: flex;
+  flex-direction: column;
   height: 100%;
   position: relative;
   background: var(--bg-primary);
 }
 
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  z-index: 100;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent-color);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toolbar-btn.danger:hover:not(:disabled) {
+  background: rgba(244, 67, 54, 0.1);
+  border-color: var(--error-color);
+  color: var(--error-color);
+}
+
+.toolbar-btn .icon {
+  font-size: 14px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
 .flow-canvas {
   flex: 1;
   height: 100%;
+  overflow: hidden;
 }
 
 /* Canvas background */

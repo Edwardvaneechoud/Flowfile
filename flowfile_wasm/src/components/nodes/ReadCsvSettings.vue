@@ -16,14 +16,22 @@
 
     <div class="form-group">
       <label class="checkbox-label">
-        <input type="checkbox" v-model="localSettings.has_headers" @change="emitUpdate" />
+        <input
+          type="checkbox"
+          :checked="tableSettings?.has_headers ?? true"
+          @change="updateTableSetting('has_headers', ($event.target as HTMLInputElement).checked)"
+        />
         <span>Has Headers</span>
       </label>
     </div>
 
     <div class="form-group">
       <label>Delimiter</label>
-      <select v-model="localSettings.delimiter" @change="emitUpdate" class="select">
+      <select
+        :value="tableSettings?.delimiter ?? ','"
+        @change="updateTableSetting('delimiter', ($event.target as HTMLSelectElement).value)"
+        class="select"
+      >
         <option value=",">Comma (,)</option>
         <option value=";">Semicolon (;)</option>
         <option value="\t">Tab</option>
@@ -35,8 +43,8 @@
       <label>Skip Rows</label>
       <input
         type="number"
-        v-model.number="localSettings.skip_rows"
-        @change="emitUpdate"
+        :value="tableSettings?.starting_from_line ?? 0"
+        @change="updateTableSetting('starting_from_line', parseInt(($event.target as HTMLInputElement).value) || 0)"
         min="0"
         class="input"
       />
@@ -47,38 +55,90 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
-import type { ReadCsvSettings } from '../../types'
+import type { NodeReadSettings, NodeSettings } from '../../types'
 
 const props = defineProps<{
   nodeId: number
-  settings: ReadCsvSettings
+  settings: NodeSettings
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:settings', settings: ReadCsvSettings): void
+  (e: 'update:settings', settings: NodeSettings): void
 }>()
 
 const flowStore = useFlowStore()
 const fileName = ref('')
 const fileError = ref('')
-const localSettings = ref<ReadCsvSettings>({ ...props.settings })
 
-// Load initial file name from settings
-onMounted(() => {
-  if (props.settings?.file_name) {
-    fileName.value = props.settings.file_name
-    console.log('[ReadCsvSettings] Loaded file name from settings:', fileName.value)
-  }
+// Support both new schema (NodeReadSettings) and legacy (ReadCsvSettings)
+const localSettings = ref<NodeReadSettings>({
+  node_id: props.nodeId,
+  cache_results: true,
+  pos_x: 0,
+  pos_y: 0,
+  is_setup: false,
+  description: '',
+  received_table: {
+    name: '',
+    file_type: 'csv',
+    table_settings: {
+      file_type: 'csv',
+      delimiter: ',',
+      has_headers: true,
+      starting_from_line: 0,
+      encoding: 'utf-8'
+    }
+  },
+  file_name: ''
 })
 
-watch(() => props.settings, (newSettings) => {
-  localSettings.value = { ...newSettings }
-  // Also update fileName when settings change
-  if (newSettings?.file_name) {
-    fileName.value = newSettings.file_name
+// Get table settings helper
+const tableSettings = computed(() => localSettings.value.received_table?.table_settings)
+
+// Load settings on mount
+onMounted(() => {
+  loadSettings(props.settings)
+})
+
+function loadSettings(settings: NodeSettings) {
+  const s = settings as any
+
+  // Copy base properties
+  localSettings.value.node_id = s.node_id ?? props.nodeId
+  localSettings.value.is_setup = s.is_setup ?? false
+  localSettings.value.description = s.description ?? ''
+  localSettings.value.pos_x = s.pos_x ?? 0
+  localSettings.value.pos_y = s.pos_y ?? 0
+  localSettings.value.cache_results = s.cache_results ?? true
+
+  // Handle new schema (received_table)
+  if (s.received_table) {
+    localSettings.value.received_table = s.received_table
+    localSettings.value.file_name = s.file_name ?? s.received_table.name ?? ''
   }
+  // Handle legacy schema (direct properties)
+  else if (s.file_name !== undefined || s.has_headers !== undefined) {
+    localSettings.value.file_name = s.file_name ?? ''
+    localSettings.value.received_table = {
+      name: s.file_name ?? '',
+      file_type: 'csv',
+      table_settings: {
+        file_type: 'csv',
+        delimiter: s.delimiter ?? ',',
+        has_headers: s.has_headers ?? true,
+        starting_from_line: s.skip_rows ?? 0
+      }
+    }
+  }
+
+  fileName.value = localSettings.value.file_name ?? ''
+  console.log('[ReadCsvSettings] Loaded settings:', localSettings.value)
+}
+
+watch(() => props.settings, (newSettings) => {
+  loadSettings(newSettings)
 }, { deep: true })
 
 async function handleFileSelect(event: Event) {
@@ -93,13 +153,25 @@ async function handleFileSelect(event: Event) {
   try {
     const content = await file.text()
     flowStore.setFileContent(props.nodeId, content)
+
+    // Update settings
     localSettings.value.file_name = file.name
+    if (localSettings.value.received_table) {
+      localSettings.value.received_table.name = file.name
+    }
     localSettings.value.is_setup = true
     emitUpdate()
   } catch (err) {
     fileError.value = 'Failed to read file'
     console.error(err)
   }
+}
+
+function updateTableSetting(key: string, value: any) {
+  if (localSettings.value.received_table?.table_settings) {
+    (localSettings.value.received_table.table_settings as any)[key] = value
+  }
+  emitUpdate()
 }
 
 function emitUpdate() {
