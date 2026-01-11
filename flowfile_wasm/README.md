@@ -6,16 +6,18 @@ A minimal, browser-based data flow designer using Pyodide and Polars. This is a 
 
 - **Browser-Based Execution**: All data processing happens in your browser using WebAssembly
 - **Polars Integration**: Full Polars DataFrame operations via Pyodide
-- **10 Essential Nodes**:
+- **Session Persistence**: Your flow is automatically saved to session storage
+- **11 Essential Nodes**:
   - **Read CSV**: Load CSV files from your local machine
-  - **Filter**: Apply conditional row filtering
+  - **Manual Input**: Enter data manually in CSV format
+  - **Filter**: Apply conditional row filtering (basic and advanced modes)
   - **Select**: Pick, reorder, and rename columns
-  - **Group By**: Aggregate data with various functions
-  - **Join**: Combine datasets with different join types
+  - **Group By**: Aggregate data with various functions (sum, count, mean, min, max, etc.)
+  - **Join**: Combine datasets with different join types (inner, left, right, full, semi, anti)
   - **Sort**: Order rows by one or more columns
-  - **With Columns**: Add or modify columns using expressions
-  - **Unique**: Get distinct rows
-  - **Head/Limit**: Sample first N rows
+  - **Polars Code**: Write custom Polars/Python code for advanced transformations
+  - **Unique**: Remove duplicate rows
+  - **Take Sample**: Limit to first N rows
   - **Preview**: Display results
 
 ## Getting Started
@@ -52,17 +54,34 @@ The output will be in the `dist` folder.
 5. **Run the flow** by clicking the "Run Flow" button in the header
 6. **View results** in the Table Preview panel at the bottom
 
+## Polars Code Node
+
+The Polars Code node allows you to write custom Python/Polars code for advanced transformations. Your code receives `input_df` (a Polars DataFrame) and should produce a result DataFrame.
+
+Example:
+```python
+# Simple transformation
+output_df = input_df.with_columns(
+    pl.col("price") * pl.col("quantity").alias("total")
+)
+
+# Or just return an expression
+input_df.filter(pl.col("status") == "active")
+```
+
+The editor includes autocompletion for Polars functions and your DataFrame columns.
+
 ## Technical Details
 
 - **Frontend**: Vue 3 + TypeScript + Vite
 - **Graph Visualization**: Vue Flow
 - **State Management**: Pinia
-- **Python Runtime**: Pyodide 0.26.4
+- **Code Editor**: CodeMirror 6 with Python syntax highlighting
+- **Python Runtime**: Pyodide 0.27.7
 - **Data Processing**: Polars (via WASM)
 
 ## Limitations
 
 - File size limited by browser memory
-- No persistence (flows are not saved)
-- Limited to the 10 essential nodes
-- No Python code execution in advanced mode (expressions only)
+- Session storage persistence only (cleared when browser tab is closed)
+- Limited to the 11 essential nodes (compared to the full Flowfile editor)
