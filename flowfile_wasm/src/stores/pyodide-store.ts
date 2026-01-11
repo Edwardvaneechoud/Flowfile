@@ -15,11 +15,7 @@ export const usePyodideStore = defineStore('pyodide', () => {
   const error = ref<string | null>(null)
 
   async function initialize() {
-    console.log('[PyodideStore] initialize: Starting initialization')
-    console.log('[PyodideStore] initialize: isReady:', isReady.value, 'isLoading:', isLoading.value)
-
     if (isReady.value || isLoading.value) {
-      console.log('[PyodideStore] initialize: Already ready or loading, skipping')
       return
     }
 
@@ -28,7 +24,6 @@ export const usePyodideStore = defineStore('pyodide', () => {
 
     try {
       loadingStatus.value = 'Loading Pyodide...'
-      console.log('[PyodideStore] initialize: Loading Pyodide script from CDN')
 
       // Load Pyodide from CDN - using v0.27.7 which is the last version with Polars support
       const script = document.createElement('script')
@@ -36,42 +31,28 @@ export const usePyodideStore = defineStore('pyodide', () => {
       document.head.appendChild(script)
 
       await new Promise<void>((resolve, reject) => {
-        script.onload = () => {
-          console.log('[PyodideStore] initialize: Pyodide script loaded')
-          resolve()
-        }
-        script.onerror = () => {
-          console.error('[PyodideStore] initialize: Failed to load Pyodide script')
-          reject(new Error('Failed to load Pyodide script'))
-        }
+        script.onload = () => resolve()
+        script.onerror = () => reject(new Error('Failed to load Pyodide script'))
       })
 
       loadingStatus.value = 'Initializing Python runtime...'
-      console.log('[PyodideStore] initialize: Initializing Python runtime')
       pyodide.value = await window.loadPyodide({
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/'
       })
-      console.log('[PyodideStore] initialize: Python runtime initialized')
 
       loadingStatus.value = 'Installing packages...'
-      console.log('[PyodideStore] initialize: Installing numpy and polars')
       await pyodide.value.loadPackage(['numpy', 'polars'])
-      console.log('[PyodideStore] initialize: Packages installed')
 
       loadingStatus.value = 'Setting up execution engine...'
-      console.log('[PyodideStore] initialize: Setting up execution engine')
       await setupExecutionEngine()
-      console.log('[PyodideStore] initialize: Execution engine ready')
 
       isReady.value = true
       loadingStatus.value = 'Ready'
-      console.log('[PyodideStore] initialize: Initialization complete, isReady:', isReady.value)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to initialize Pyodide'
-      console.error('[PyodideStore] initialize: Initialization error:', err)
+      console.error('Pyodide initialization error:', err)
     } finally {
       isLoading.value = false
-      console.log('[PyodideStore] initialize: Finished, isLoading:', isLoading.value)
     }
   }
 
@@ -570,43 +551,19 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
   }
 
   async function runPython(code: string): Promise<any> {
-    console.log('[PyodideStore] runPython: Executing code')
-    console.log('[PyodideStore] runPython: Code snippet:', code.substring(0, 200) + (code.length > 200 ? '...' : ''))
-
     if (!isReady.value) {
-      console.error('[PyodideStore] runPython: Pyodide not ready')
       throw new Error('Pyodide is not ready')
     }
-
-    try {
-      const result = await pyodide.value.runPythonAsync(code)
-      console.log('[PyodideStore] runPython: Execution completed')
-      return result
-    } catch (error) {
-      console.error('[PyodideStore] runPython: Execution failed:', error)
-      throw error
-    }
+    return await pyodide.value.runPythonAsync(code)
   }
 
   async function runPythonWithResult(code: string): Promise<any> {
-    console.log('[PyodideStore] runPythonWithResult: Executing code')
-    console.log('[PyodideStore] runPythonWithResult: Code snippet:', code.substring(0, 200) + (code.length > 200 ? '...' : ''))
-
     if (!isReady.value) {
-      console.error('[PyodideStore] runPythonWithResult: Pyodide not ready')
       throw new Error('Pyodide is not ready')
     }
 
-    try {
-      const rawResult = await pyodide.value.runPythonAsync(code)
-      console.log('[PyodideStore] runPythonWithResult: Raw result type:', typeof rawResult)
-      const result = rawResult?.toJs ? rawResult.toJs({ dict_converter: Object.fromEntries }) : rawResult
-      console.log('[PyodideStore] runPythonWithResult: Converted result:', result)
-      return result
-    } catch (error) {
-      console.error('[PyodideStore] runPythonWithResult: Execution failed:', error)
-      throw error
-    }
+    const rawResult = await pyodide.value.runPythonAsync(code)
+    return rawResult?.toJs ? rawResult.toJs({ dict_converter: Object.fromEntries }) : rawResult
   }
 
   return {

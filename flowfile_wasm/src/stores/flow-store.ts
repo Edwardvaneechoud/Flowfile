@@ -671,13 +671,7 @@ result
   }
 
   async function executeFlow() {
-    console.log('[FlowStore] executeFlow: Starting flow execution')
-    console.log('[FlowStore] executeFlow: Pyodide ready:', pyodideStore.isReady)
-    console.log('[FlowStore] executeFlow: Total nodes:', nodes.value.size)
-    console.log('[FlowStore] executeFlow: File contents available for nodes:', Array.from(fileContents.value.keys()))
-
     if (!pyodideStore.isReady) {
-      console.warn('[FlowStore] executeFlow: Pyodide not ready, aborting')
       return
     }
 
@@ -687,31 +681,23 @@ result
 
     try {
       // Clean up orphaned data before execution
-      console.log('[FlowStore] executeFlow: Cleaning up orphaned data')
       await cleanupOrphanedData()
 
       // Clear Python state
-      console.log('[FlowStore] executeFlow: Clearing Python state')
       await pyodideStore.runPython('clear_all()')
 
       // Get execution order and execute nodes
       const order = getExecutionOrder()
-      console.log('[FlowStore] executeFlow: Execution order:', order)
 
       for (const nodeId of order) {
-        console.log(`[FlowStore] executeFlow: Executing node #${nodeId}`)
-        const result = await executeNode(nodeId)
-        console.log(`[FlowStore] executeFlow: Node #${nodeId} completed with success:`, result.success)
+        await executeNode(nodeId)
       }
-
-      console.log('[FlowStore] executeFlow: Flow execution completed successfully')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
-      console.error('[FlowStore] executeFlow: Flow execution error:', error)
+      console.error('Flow execution error:', error)
     } finally {
       isExecuting.value = false
-      console.log('[FlowStore] executeFlow: Execution finished, isExecuting:', isExecuting.value)
     }
   }
 
