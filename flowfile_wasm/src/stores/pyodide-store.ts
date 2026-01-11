@@ -23,9 +23,9 @@ export const usePyodideStore = defineStore('pyodide', () => {
     try {
       loadingStatus.value = 'Loading Pyodide...'
 
-      // Load Pyodide from CDN
+      // Load Pyodide from CDN - using v0.27.x which has Polars support
       const script = document.createElement('script')
-      script.src = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js'
+      script.src = 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js'
       document.head.appendChild(script)
 
       await new Promise<void>((resolve, reject) => {
@@ -35,13 +35,12 @@ export const usePyodideStore = defineStore('pyodide', () => {
 
       loadingStatus.value = 'Initializing Python runtime...'
       pyodide.value = await window.loadPyodide({
-        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/'
+        indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/'
       })
 
       loadingStatus.value = 'Installing Polars...'
-      await pyodide.value.loadPackage('micropip')
-      const micropip = pyodide.value.pyimport('micropip')
-      await micropip.install('polars')
+      // In Pyodide 0.27, polars is a pre-built package that can be loaded directly
+      await pyodide.value.loadPackage('polars')
 
       loadingStatus.value = 'Setting up execution engine...'
       await setupExecutionEngine()

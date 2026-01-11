@@ -32,7 +32,7 @@
               draggable="true"
               @dragstart="onDragStart($event, node)"
             >
-              <span class="node-icon">{{ node.icon }}</span>
+              <img :src="getIconUrl(node.icon)" :alt="node.name" class="node-icon-img" />
               <span class="node-name">{{ node.name }}</span>
             </div>
           </div>
@@ -41,7 +41,7 @@
     </DraggablePanel>
 
     <!-- Vue Flow Canvas -->
-    <div class="flow-canvas" @drop="onDrop" @dragover="onDragOver">
+    <div class="flow-canvas animated-bg-gradient" @drop="onDrop" @dragover="onDragOver">
       <VueFlow
         ref="vueFlowRef"
         v-model:nodes="vueNodes"
@@ -49,6 +49,7 @@
         :node-types="nodeTypes"
         :default-viewport="{ zoom: 1, x: 0, y: 0 }"
         :connection-mode="ConnectionMode.Strict"
+        class="custom-node-flow"
         fit-view-on-init
         @connect="onConnect"
         @node-click="onNodeClick"
@@ -56,6 +57,13 @@
         @edges-change="onEdgesChange"
         @nodes-change="onNodesChange"
       >
+        <template #node-flow-node="nodeProps">
+          <FlowNode
+            :data="nodeProps.data"
+            @delete="handleDeleteNode"
+            @run="handleRunNode"
+          />
+        </template>
         <MiniMap />
         <Controls />
         <Background />
@@ -146,12 +154,17 @@ const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults } = storeToRefs(flowStore)
 
 const vueFlowRef = ref()
-const { screenToFlowCoordinate } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes } = useVueFlow()
 const searchQuery = ref('')
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
   'flow-node': markRaw(FlowNode)
+}
+
+// Get icon URL
+function getIconUrl(iconFile: string): string {
+  return new URL(`../assets/icons/${iconFile}`, import.meta.url).href
 }
 
 // Node definition interface
@@ -174,40 +187,40 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Input Sources',
     isOpen: true,
     nodes: [
-      { type: 'read_csv', name: 'Read CSV', icon: '📄', inputs: 0, outputs: 1 }
+      { type: 'read_csv', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 }
     ]
   },
   {
     name: 'Transformations',
     isOpen: true,
     nodes: [
-      { type: 'filter', name: 'Filter', icon: '🔍', inputs: 1, outputs: 1 },
-      { type: 'select', name: 'Select', icon: '📋', inputs: 1, outputs: 1 },
-      { type: 'sort', name: 'Sort', icon: '↕️', inputs: 1, outputs: 1 },
-      { type: 'with_columns', name: 'With Columns', icon: '➕', inputs: 1, outputs: 1 },
-      { type: 'unique', name: 'Unique', icon: '🔷', inputs: 1, outputs: 1 },
-      { type: 'head', name: 'Head/Limit', icon: '🔝', inputs: 1, outputs: 1 }
+      { type: 'filter', name: 'Filter', icon: 'filter.png', inputs: 1, outputs: 1 },
+      { type: 'select', name: 'Select', icon: 'select.png', inputs: 1, outputs: 1 },
+      { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
+      { type: 'with_columns', name: 'With Columns', icon: 'formula.png', inputs: 1, outputs: 1 },
+      { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
+      { type: 'head', name: 'Head/Limit', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
   },
   {
     name: 'Combine Operations',
     isOpen: true,
     nodes: [
-      { type: 'join', name: 'Join', icon: '🔗', inputs: 2, outputs: 1 }
+      { type: 'join', name: 'Join', icon: 'join.png', inputs: 2, outputs: 1 }
     ]
   },
   {
     name: 'Aggregations',
     isOpen: true,
     nodes: [
-      { type: 'group_by', name: 'Group By', icon: '📊', inputs: 1, outputs: 1 }
+      { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1 }
     ]
   },
   {
     name: 'Output Operations',
     isOpen: true,
     nodes: [
-      { type: 'preview', name: 'Preview', icon: '👁️', inputs: 1, outputs: 0 }
+      { type: 'preview', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 }
     ]
   }
 ])
@@ -245,7 +258,6 @@ const vueNodes = computed<Node[]>({
           id: node.id,
           type: node.type,
           label: def?.name || node.type,
-          icon: def?.icon || '📦',
           inputs: def?.inputs || 1,
           outputs: def?.outputs || 1,
           result: nodeResults.value.get(node.id)
@@ -369,6 +381,17 @@ function onNodesChange(changes: NodeChange[]) {
   })
 }
 
+// Handle delete from context menu
+function handleDeleteNode(nodeId: number) {
+  removeNodes(String(nodeId))
+  flowStore.removeNode(nodeId)
+}
+
+// Handle run from context menu
+async function handleRunNode(nodeId: number) {
+  await flowStore.executeNode(nodeId)
+}
+
 // Update settings
 function updateSettings(settings: NodeSettings) {
   if (selectedNodeId.value !== null) {
@@ -408,6 +431,12 @@ function formatCell(value: any): string {
 </script>
 
 <style scoped>
+/* Vue Flow imports */
+@import '@vue-flow/core/dist/style.css';
+@import '@vue-flow/core/dist/theme-default.css';
+@import '@vue-flow/controls/dist/style.css';
+@import '@vue-flow/minimap/dist/style.css';
+
 .canvas-container {
   display: flex;
   height: 100%;
@@ -418,6 +447,40 @@ function formatCell(value: any): string {
 .flow-canvas {
   flex: 1;
   height: 100%;
+}
+
+/* Animated gradient background like flowfile */
+.animated-bg-gradient {
+  background: linear-gradient(
+    122deg,
+    rgba(214, 219, 220, 0.8),
+    rgba(255, 255, 255, 0.8),
+    rgba(214, 219, 220, 0.8)
+  );
+  background-size: 400% 400%;
+  animation: gradient 4s ease infinite;
+}
+
+@keyframes gradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Vue Flow customizations */
+.custom-node-flow :deep(.vue-flow__edges) {
+  filter: invert(100%);
+}
+
+.custom-node-flow :deep(.vue-flow__minimap) {
+  transform: scale(75%);
+  transform-origin: bottom right;
 }
 
 /* Node list styles */
@@ -499,8 +562,10 @@ function formatCell(value: any): string {
   cursor: grabbing;
 }
 
-.node-icon {
-  font-size: 16px;
+.node-icon-img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .node-name {
