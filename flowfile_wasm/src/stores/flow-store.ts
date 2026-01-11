@@ -313,17 +313,16 @@ export const useFlowStore = defineStore('flow', () => {
 
       if (targetNode) {
         // Determine which input based on handle
-        if (edge.targetHandle === 'input-0') {
+        if (edge.targetHandle === 'input-0' || !edge.targetHandle) {
+          // input-0 is the default/left input
           if (!targetNode.inputIds.includes(sourceId)) {
             targetNode.inputIds.push(sourceId)
           }
+          // For join nodes, also set leftInputId
+          targetNode.leftInputId = sourceId
         } else if (edge.targetHandle === 'input-1') {
           // For join nodes, input-1 is the right input
           targetNode.rightInputId = sourceId
-          // Also set left input if not set
-          if (targetNode.inputIds.length > 0) {
-            targetNode.leftInputId = targetNode.inputIds[0]
-          }
         }
       }
     }

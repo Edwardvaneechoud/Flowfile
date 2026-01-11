@@ -92,7 +92,7 @@ const iconMap: Record<string, string> = {
   group_by: 'group_by.png',
   join: 'join.png',
   sort: 'sort.png',
-  with_columns: 'formula.png',
+  polars_code: 'polars_code.png',
   unique: 'unique.png',
   head: 'sample.png',
   preview: 'view.png'
