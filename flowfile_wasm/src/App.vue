@@ -2,7 +2,8 @@
   <div class="app-container">
     <header class="app-header">
       <div class="header-left">
-        <h1 class="app-title">Flowfile WASM</h1>
+        <img src="/flowfile.png" alt="Flowfile" class="app-logo" />
+        <h1 class="app-title">Flowfile</h1>
         <span class="app-subtitle">Browser-Based Data Designer</span>
       </div>
       <div class="header-right">
@@ -73,8 +74,13 @@ const runFlow = async () => {
 
 .header-left {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-logo {
+  height: 32px;
+  width: auto;
 }
 
 .app-title {

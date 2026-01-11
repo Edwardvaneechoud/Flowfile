@@ -38,7 +38,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     intro: 'Remove duplicate rows from your data. Optionally specify which columns to consider for uniqueness.'
   },
   head: {
-    title: 'Sample / Head',
+    title: 'Take Sample',
     intro: 'Limit the number of rows in your dataset. Useful for previewing large datasets or taking samples.'
   },
   polars_code: {

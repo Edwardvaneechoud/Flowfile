@@ -237,7 +237,7 @@ const nodeCategories = ref<NodeCategory[]>([
       { type: 'sort', name: 'Sort', icon: 'sort.png', inputs: 1, outputs: 1 },
       { type: 'polars_code', name: 'Polars Code', icon: 'polars_code.png', inputs: 1, outputs: 1 },
       { type: 'unique', name: 'Unique', icon: 'unique.png', inputs: 1, outputs: 1 },
-      { type: 'head', name: 'Head/Limit', icon: 'sample.png', inputs: 1, outputs: 1 }
+      { type: 'head', name: 'Take Sample', icon: 'sample.png', inputs: 1, outputs: 1 }
     ]
   },
   {
