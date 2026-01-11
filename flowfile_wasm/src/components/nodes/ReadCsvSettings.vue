@@ -75,10 +75,10 @@ const fileError = ref('')
 const fileWarning = ref('')
 
 // File size limits (in bytes)
-const FILE_SIZE_WARNING_MB = 50
-const FILE_SIZE_LIMIT_MB = 100
-const FILE_SIZE_WARNING = FILE_SIZE_WARNING_MB * 1024 * 1024  // 50MB
-const FILE_SIZE_LIMIT = FILE_SIZE_LIMIT_MB * 1024 * 1024      // 100MB
+const FILE_SIZE_WARNING_MB = 100
+const FILE_SIZE_LIMIT_MB = 200
+const FILE_SIZE_WARNING = FILE_SIZE_WARNING_MB * 1024 * 1024  // 100MB
+const FILE_SIZE_LIMIT = FILE_SIZE_LIMIT_MB * 1024 * 1024      // 200MB
 
 // Support both new schema (NodeReadSettings) and legacy (ReadCsvSettings)
 const localSettings = ref<NodeReadSettings>({
