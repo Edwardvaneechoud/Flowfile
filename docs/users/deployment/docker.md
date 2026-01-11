@@ -5,11 +5,8 @@ Run Flowfile with Docker using pre-built images from Docker Hub.
 ## Quick Start
 
 ```bash
-mkdir flowfile && cd flowfile
-
-# Create docker-compose.yml (see below)
-# Create .env file
-
+git clone https://github.com/edwardvaneechoud/Flowfile.git
+cd Flowfile
 docker compose up -d
 ```
 
