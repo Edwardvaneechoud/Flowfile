@@ -184,7 +184,7 @@ export interface SampleInput {
 }
 
 // =============================================================================
-// MANUAL INPUT / RAW DATA SCHEMAS
+// MANUAL INPUT / RAW DATA SCHEMAS (matches flowfile_core/schemas/input_schema.py)
 // =============================================================================
 
 export interface MinimalFieldInfo {
@@ -193,7 +193,7 @@ export interface MinimalFieldInfo {
 }
 
 export interface RawData {
-  fields: MinimalFieldInfo[]
+  columns: MinimalFieldInfo[]  // Changed from 'fields' to match flowfile_core
   data: any[][]
 }
 
@@ -235,7 +235,7 @@ export interface NodeReadSettings extends NodeBase {
 }
 
 export interface NodeManualInputSettings extends NodeBase {
-  raw_data?: RawData
+  raw_data_format?: RawData  // Changed from 'raw_data' to match flowfile_core
 }
 
 export interface NodeFilterSettings extends NodeSingleInput {

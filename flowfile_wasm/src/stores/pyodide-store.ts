@@ -233,18 +233,42 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
 
 
 def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
-    """Execute manual input node"""
+    """Execute manual input node
+
+    Supports two formats:
+    1. raw_data_format (flowfile_core format): columnar data with columns metadata
+    2. Legacy format: CSV string with manual_input settings (has_headers, delimiter)
+    """
     try:
         import io
-        manual_input = settings.get("manual_input", {})
-        has_headers = manual_input.get("has_headers", True)
-        delimiter = manual_input.get("delimiter", ",")
 
-        df = pl.read_csv(
-            io.StringIO(data_content),
-            has_header=has_headers,
-            separator=delimiter
-        )
+        # Check for flowfile_core format (raw_data_format)
+        raw_data_format = settings.get("raw_data_format")
+        if raw_data_format and raw_data_format.get("columns") and raw_data_format.get("data"):
+            # Build DataFrame from columnar format
+            columns_meta = raw_data_format["columns"]
+            data = raw_data_format["data"]
+
+            # data is in columnar format: [[col1_values], [col2_values], ...]
+            if len(columns_meta) > 0 and len(data) > 0:
+                col_names = [c["name"] for c in columns_meta]
+                # Create dict for DataFrame constructor
+                df_dict = {name: values for name, values in zip(col_names, data)}
+                df = pl.DataFrame(df_dict)
+            else:
+                df = pl.DataFrame()
+        else:
+            # Legacy format: parse CSV from data_content string
+            manual_input = settings.get("manual_input", {})
+            has_headers = manual_input.get("has_headers", True)
+            delimiter = manual_input.get("delimiter", ",")
+
+            df = pl.read_csv(
+                io.StringIO(data_content),
+                has_header=has_headers,
+                separator=delimiter
+            )
+
         store_dataframe(node_id, df)
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:

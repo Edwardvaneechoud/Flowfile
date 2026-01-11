@@ -1128,8 +1128,8 @@ result
       case 'manual_input':
         return {
           ...base,
-          raw_data: {
-            fields: [],
+          raw_data_format: {
+            columns: [],
             data: []
           }
         } as NodeManualInputSettings
