@@ -735,18 +735,17 @@ for nid in orphaned_ids:
       )
 
       // Update nodeResults with inferred schema
+      // Always update the schema to reflect current settings, even if we have execution data
+      // This ensures downstream nodes see the correct schema when settings change
       if (inferredSchema) {
         const existingResult = nodeResults.value.get(nodeId)
-        // Only update if we don't have execution data or if schema changed
-        if (!existingResult?.data) {
-          nodeResults.value.set(nodeId, {
-            success: true,
-            schema: inferredSchema,
-            // Preserve existing data if any
-            data: existingResult?.data,
-            execution_time: existingResult?.execution_time
-          })
-        }
+        nodeResults.value.set(nodeId, {
+          success: true,
+          schema: inferredSchema,
+          // Preserve existing data if any (for display purposes)
+          data: existingResult?.data,
+          execution_time: existingResult?.execution_time
+        })
       } else if (!inputSchema && !isSourceNode(node.type)) {
         // No input schema available and not a source node - clear any inferred schema
         // but keep results with actual data
