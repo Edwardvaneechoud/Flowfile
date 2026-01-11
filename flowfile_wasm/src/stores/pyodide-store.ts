@@ -566,11 +566,6 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
     return rawResult?.toJs ? rawResult.toJs({ dict_converter: Object.fromEntries }) : rawResult
   }
 
-  /**
-   * Set a global variable in Python.
-   * Use this for passing large data (like file contents) to avoid
-   * embedding them directly in code strings.
-   */
   function setGlobal(name: string, value: unknown): void {
     if (!isReady.value) {
       throw new Error('Pyodide is not ready')
@@ -578,9 +573,6 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
     pyodide.value.globals.set(name, value)
   }
 
-  /**
-   * Delete a global variable in Python.
-   */
   function deleteGlobal(name: string): void {
     if (!isReady.value) {
       throw new Error('Pyodide is not ready')

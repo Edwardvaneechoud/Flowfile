@@ -22,13 +22,7 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
-/**
- * Safely encode a value for passing to Python via json.loads().
- * Double-stringifies to produce a Python string literal containing JSON.
- * e.g., {a: true} becomes '"{\"a\":true}"' which Python parses as a string.
- */
 function toPythonJson(value: unknown): string {
-  // Double stringify: inner converts to JSON, outer makes it a valid Python string literal
   return JSON.stringify(JSON.stringify(value))
 }
 
@@ -505,7 +499,6 @@ for nid in orphaned_ids:
           if (!content) {
             return { success: false, error: 'No file loaded' }
           }
-          // Use globals to pass large file content efficiently
           setGlobal('_temp_content', content)
           try {
             result = await runPythonWithResult(`
@@ -524,7 +517,6 @@ result
           if (!content) {
             return { success: false, error: 'No data entered' }
           }
-          // Use globals to pass data content efficiently
           setGlobal('_temp_content', content)
           try {
             result = await runPythonWithResult(`
