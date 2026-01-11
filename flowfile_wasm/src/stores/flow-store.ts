@@ -490,8 +490,13 @@ for nid in orphaned_ids:
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
+      console.error(`[FlowStore] executeNode: Node ${nodeId} not found`)
       return { success: false, error: 'Node not found' }
     }
+
+    console.log(`[FlowStore] executeNode: Starting node #${nodeId} (type: ${node.type})`)
+    console.log(`[FlowStore] executeNode: Node settings:`, JSON.stringify(node.settings, null, 2))
+    console.log(`[FlowStore] executeNode: Node inputs:`, { inputIds: node.inputIds, leftInputId: node.leftInputId, rightInputId: node.rightInputId })
 
     const { runPythonWithResult } = pyodideStore
 
@@ -643,13 +648,19 @@ result
         }
 
         default:
+          console.error(`[FlowStore] executeNode: Unknown node type: ${node.type}`)
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
 
+      console.log(`[FlowStore] executeNode: Node #${nodeId} result:`, result)
+      if (!result.success) {
+        console.error(`[FlowStore] executeNode: Node #${nodeId} failed:`, result.error)
+      }
       nodeResults.value.set(nodeId, result)
       return result
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error(`[FlowStore] executeNode: Node #${nodeId} threw exception:`, error)
       const errorResult: NodeResult = {
         success: false,
         error: errorMessage
@@ -660,7 +671,13 @@ result
   }
 
   async function executeFlow() {
+    console.log('[FlowStore] executeFlow: Starting flow execution')
+    console.log('[FlowStore] executeFlow: Pyodide ready:', pyodideStore.isReady)
+    console.log('[FlowStore] executeFlow: Total nodes:', nodes.value.size)
+    console.log('[FlowStore] executeFlow: File contents available for nodes:', Array.from(fileContents.value.keys()))
+
     if (!pyodideStore.isReady) {
+      console.warn('[FlowStore] executeFlow: Pyodide not ready, aborting')
       return
     }
 
@@ -670,22 +687,31 @@ result
 
     try {
       // Clean up orphaned data before execution
-      cleanupOrphanedData()
+      console.log('[FlowStore] executeFlow: Cleaning up orphaned data')
+      await cleanupOrphanedData()
 
       // Clear Python state
+      console.log('[FlowStore] executeFlow: Clearing Python state')
       await pyodideStore.runPython('clear_all()')
 
       // Get execution order and execute nodes
       const order = getExecutionOrder()
+      console.log('[FlowStore] executeFlow: Execution order:', order)
+
       for (const nodeId of order) {
-        await executeNode(nodeId)
+        console.log(`[FlowStore] executeFlow: Executing node #${nodeId}`)
+        const result = await executeNode(nodeId)
+        console.log(`[FlowStore] executeFlow: Node #${nodeId} completed with success:`, result.success)
       }
+
+      console.log('[FlowStore] executeFlow: Flow execution completed successfully')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
-      console.error('Flow execution error', error)
+      console.error('[FlowStore] executeFlow: Flow execution error:', error)
     } finally {
       isExecuting.value = false
+      console.log('[FlowStore] executeFlow: Execution finished, isExecuting:', isExecuting.value)
     }
   }
 
