@@ -342,7 +342,7 @@ html, body, #app {
 }
 
 /* ==========================================================================
-   AG Grid Theme Customization
+   AG Grid Theme Customization (matching flowfile_frontend)
    ========================================================================== */
 
 .ag-theme-balham {
@@ -360,6 +360,33 @@ html, body, #app {
   --ag-selected-row-background-color: var(--color-background-selected);
   --ag-font-family: var(--font-family-base);
   --ag-font-size: var(--font-size-sm);
+  --ag-cell-horizontal-padding: 12px;
+  --ag-header-height: 36px;
+  --ag-row-height: 32px;
+  --ag-grid-size: 4px;
+  --ag-list-item-height: 28px;
+  --ag-input-focus-border-color: var(--color-accent);
+  --ag-range-selection-border-color: var(--color-accent);
+  --ag-checkbox-checked-color: var(--color-accent);
+  --ag-input-border-color: var(--color-border-primary);
+}
+
+/* AG Grid header styling */
+.ag-theme-balham .ag-header-cell {
+  font-weight: var(--font-weight-semibold);
+}
+
+/* AG Grid cell styling */
+.ag-theme-balham .ag-cell {
+  line-height: 30px;
+}
+
+/* AG Grid filter styling */
+.ag-theme-balham .ag-filter-toolpanel-header,
+.ag-theme-balham .ag-filter-toolpanel-search,
+.ag-theme-balham .ag-status-bar,
+.ag-theme-balham .ag-header-row {
+  font-weight: var(--font-weight-medium);
 }
 
 /* ==========================================================================

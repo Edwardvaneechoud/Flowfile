@@ -5,8 +5,7 @@
         <img src="/flowfile.png" alt="Flowfile" class="app-logo" />
         <h1 class="app-title">Flowfile</h1>
         <span class="app-subtitle">Browser-Based Data Designer</span>
-      </div>
-      <div class="header-right">
+        <div class="header-divider"></div>
         <div v-if="!pyodideReady" class="loading-indicator">
           <span class="spinner"></span>
           <span>Loading Pyodide...</span>
@@ -15,6 +14,9 @@
           <span class="ready-dot"></span>
           <span>Ready</span>
         </div>
+      </div>
+      <div class="header-right">
+        <!-- Empty for now, could add additional controls -->
       </div>
     </header>
     <main class="app-main">
@@ -96,6 +98,13 @@ onMounted(async () => {
   justify-content: flex-end;
 }
 
+.header-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border-light);
+  margin: 0 6px;
+}
+
 .app-logo {
   height: 28px;
   width: auto;
@@ -119,8 +128,8 @@ onMounted(async () => {
 .loading-indicator, .ready-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12px;
   color: var(--color-text-secondary);
 }
 
@@ -132,8 +141,8 @@ onMounted(async () => {
 }
 
 .spinner {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border: 2px solid var(--color-border-primary);
   border-top-color: var(--color-accent);
   border-radius: 50%;
