@@ -153,26 +153,26 @@ export const useFlowStore = defineStore('flow', () => {
 
     // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
     for (const targetNode of flowfileNodes) {
-      // Handle left_input_id (for join nodes)
+      // Handle left_input_id (for join nodes - first input)
       if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
         const sourceId = targetNode.left_input_id
         edges.value.push({
-          id: `e${sourceId}-${targetNode.id}-output-input-0`,
+          id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
           source: String(sourceId),
           target: String(targetNode.id),
-          sourceHandle: 'output',
+          sourceHandle: 'output-0',
           targetHandle: 'input-0'
         })
       }
 
-      // Handle right_input_id (for join nodes)
+      // Handle right_input_id (for join nodes - second input)
       if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
         const sourceId = targetNode.right_input_id
         edges.value.push({
-          id: `e${sourceId}-${targetNode.id}-output-input-1`,
+          id: `e${sourceId}-${targetNode.id}-output-0-input-1`,
           source: String(sourceId),
           target: String(targetNode.id),
-          sourceHandle: 'output',
+          sourceHandle: 'output-0',
           targetHandle: 'input-1'
         })
       }
@@ -183,10 +183,10 @@ export const useFlowStore = defineStore('flow', () => {
         if (!targetNode.left_input_id && !targetNode.right_input_id) {
           for (const sourceId of targetNode.input_ids) {
             edges.value.push({
-              id: `e${sourceId}-${targetNode.id}-output-input-0`,
+              id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
               source: String(sourceId),
               target: String(targetNode.id),
-              sourceHandle: 'output',
+              sourceHandle: 'output-0',
               targetHandle: 'input-0'
             })
           }
