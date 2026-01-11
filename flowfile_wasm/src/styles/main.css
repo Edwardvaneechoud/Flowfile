@@ -1189,3 +1189,132 @@ html, body, #app {
   width: 18px;
   height: 18px;
 }
+
+/* ==========================================================================
+   Material Icons
+   ========================================================================== */
+
+.material-icons {
+  font-family: 'Material Icons';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================================================
+   Action Buttons (matching flowfile_frontend HeaderButtons.vue)
+   ========================================================================== */
+
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  height: 50px;
+  font-family: var(--font-family-base);
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1-5);
+  padding: var(--spacing-2) var(--spacing-3);
+  height: 34px;
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--border-radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-xs);
+}
+
+.action-btn:hover:not(:disabled) {
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-secondary);
+}
+
+.action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.action-btn.active {
+  background-color: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.action-btn.danger:hover:not(:disabled) {
+  background-color: var(--color-danger-light);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.action-btn .btn-icon {
+  font-size: 18px;
+  color: var(--color-text-secondary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.action-btn:hover:not(:disabled) .btn-icon {
+  color: var(--color-text-primary);
+}
+
+.action-btn.active .btn-icon {
+  color: var(--color-accent);
+}
+
+.action-btn.danger:hover:not(:disabled) .btn-icon {
+  color: var(--color-danger);
+}
+
+.btn-text {
+  white-space: nowrap;
+}
+
+/* Run button specific styling */
+.action-btn.run-btn {
+  background-color: var(--color-success);
+  border-color: var(--color-success);
+  color: white;
+}
+
+.action-btn.run-btn .btn-icon {
+  color: white;
+}
+
+.action-btn.run-btn:hover:not(:disabled) {
+  background-color: var(--color-success-hover);
+  border-color: var(--color-success-hover);
+}
+
+.action-btn.run-btn:disabled {
+  background-color: var(--color-success);
+  opacity: 0.7;
+}
+
+/* Toolbar divider */
+.toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border-primary);
+  margin: 0 var(--spacing-1);
+}
