@@ -1,45 +1,51 @@
 # Desktop App
 
-Run Flowfile as a native desktop application.
+The easiest way to get started with Flowfile.
 
 ## Download
 
 Download the latest release for your platform:
 
-- **macOS**: `.dmg` installer
-- **Windows**: `.exe` installer
-- **Linux**: `.AppImage`
-
-[Download from GitHub Releases →](https://github.com/edwardvaneechoud/Flowfile/releases)
+[**Download for macOS / Windows →**](https://github.com/edwardvaneechoud/Flowfile/releases)
 
 ## Installation
 
 ### macOS
 
-1. Open the `.dmg` file
-2. Drag Flowfile to Applications
-3. Open from Applications folder
+1. Download the `.dmg` file
+2. Open it and drag Flowfile to **Applications**
+3. Launch from Applications
+
+!!! note "First launch"
+    macOS may ask you to confirm opening an app from an unidentified developer. Go to **System Preferences → Security & Privacy** and click "Open Anyway".
 
 ### Windows
 
-1. Run the `.exe` installer
-2. Follow the installation wizard
-3. Launch from Start menu
+1. Download the `.exe` installer
+2. Run the installer and follow the wizard
+3. Launch from the Start menu
 
-### Linux
+## Why Desktop?
 
-1. Make the AppImage executable:
-   ```bash
-   chmod +x Flowfile-*.AppImage
-   ```
-2. Run it:
-   ```bash
-   ./Flowfile-*.AppImage
-   ```
+**Pros**
 
-## Features
-
-- No login required (single-user mode)
-- Master key auto-generated and stored securely
-- All data stored locally
+- Zero configuration - just download and run
+- No Docker, no terminal commands
 - Works offline
+- Data stays on your machine
+- Master key managed automatically
+
+**Cons**
+
+- Single user only (no team sharing)
+- No centralized secrets management
+- Flows stored locally (manual backup needed)
+
+## When to Use Docker Instead
+
+Consider [Docker deployment](docker.md) if you need:
+
+- Multiple users with separate accounts
+- Centralized flow storage
+- Team collaboration
+- Server/production deployment
