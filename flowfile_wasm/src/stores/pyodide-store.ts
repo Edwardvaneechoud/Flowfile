@@ -39,7 +39,7 @@ export const usePyodideStore = defineStore('pyodide', () => {
       })
 
       loadingStatus.value = 'Installing packages...'
-      await pyodide.value.loadPackage(['numpy', 'polars'])
+      await pyodide.value.loadPackage(['numpy', 'polars', 'pydantic'])
 
       loadingStatus.value = 'Setting up execution engine...'
       await setupExecutionEngine()
@@ -86,6 +86,87 @@ def clear_all():
     """Clear all data"""
     _dataframes.clear()
     _schemas.clear()
+
+# =============================================================================
+# Pydantic Schema Validation (matching flowfile_core/schemas/schemas.py)
+# =============================================================================
+from pydantic import BaseModel, Field
+from typing import Literal
+
+ExecutionModeLiteral = Literal["Development", "Performance"]
+ExecutionLocationsLiteral = Literal["local", "remote"]
+
+# Fields to exclude from setting_input when serializing
+SETTING_INPUT_EXCLUDE = {
+    "flow_id", "node_id", "pos_x", "pos_y", "is_setup",
+    "description", "user_id", "is_flow_output",
+    "is_user_defined", "depending_on_id", "depending_on_ids"
+}
+
+class FlowfileSettings(BaseModel):
+    """Settings for flowfile serialization (YAML/JSON)."""
+    description: Optional[str] = None
+    execution_mode: ExecutionModeLiteral = "Performance"
+    execution_location: ExecutionLocationsLiteral = "local"
+    auto_save: bool = False
+    show_detailed_progress: bool = True
+
+class FlowfileNode(BaseModel):
+    """Node representation for flowfile serialization."""
+    id: int
+    type: str
+    is_start_node: bool = False
+    description: Optional[str] = ""
+    x_position: Optional[int] = 0
+    y_position: Optional[int] = 0
+    left_input_id: Optional[int] = None
+    right_input_id: Optional[int] = None
+    input_ids: Optional[List[int]] = Field(default_factory=list)
+    outputs: Optional[List[int]] = Field(default_factory=list)
+    setting_input: Optional[Any] = None
+
+class FlowfileData(BaseModel):
+    """Root model for flowfile serialization (YAML/JSON)."""
+    flowfile_version: str
+    flowfile_id: int
+    flowfile_name: str
+    flowfile_settings: FlowfileSettings
+    nodes: List[FlowfileNode]
+
+def validate_flowfile_data(data: Dict) -> Dict:
+    """Validate flowfile data using Pydantic schemas.
+
+    Returns a dict with:
+    - success: bool
+    - data: validated data (if successful)
+    - error: error message (if failed)
+    """
+    try:
+        validated = FlowfileData.model_validate(data)
+        return {
+            "success": True,
+            "data": validated.model_dump(),
+            "error": None
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "data": None,
+            "error": str(e)
+        }
+
+def clean_setting_input(settings: Dict) -> Dict:
+    """Clean setting_input by removing excluded fields."""
+    if settings is None:
+        return None
+    return {k: v for k, v in settings.items() if k not in SETTING_INPUT_EXCLUDE}
+
+def prepare_node_for_export(node: Dict) -> Dict:
+    """Prepare a node for export by cleaning setting_input."""
+    result = dict(node)
+    if "setting_input" in result and result["setting_input"]:
+        result["setting_input"] = clean_setting_input(result["setting_input"])
+    return result
 
 def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> Dict:
     """Convert dataframe to preview format"""

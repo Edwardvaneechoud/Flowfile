@@ -968,6 +968,35 @@ result
   }
 
   /**
+   * Validate flowfile data using Pydantic schemas (via Pyodide)
+   * Returns validation result with any errors
+   */
+  async function validateFlowfileData(data: FlowfileData): Promise<{ success: boolean; error?: string }> {
+    if (!pyodideStore.isReady) {
+      // If Pyodide isn't ready, skip validation
+      return { success: true }
+    }
+
+    try {
+      const dataJson = JSON.stringify(data)
+      const result = await pyodideStore.runPythonWithResult(`
+import json
+data = json.loads('''${dataJson.replace(/'/g, "\\'")}''')
+result = validate_flowfile_data(data)
+result
+`)
+      return {
+        success: result.success,
+        error: result.error
+      }
+    } catch (error) {
+      console.error('Validation error:', error)
+      // If validation fails to run, don't block - just warn
+      return { success: true }
+    }
+  }
+
+  /**
    * Load a flowfile from a File object
    * Supports both JSON and YAML formats (auto-detected by extension or content)
    */
@@ -998,6 +1027,13 @@ result
 
       if (!data.flowfile_version || !data.nodes) {
         throw new Error('Invalid flowfile format')
+      }
+
+      // Optional: Validate using Pydantic schemas
+      const validation = await validateFlowfileData(data)
+      if (!validation.success) {
+        console.warn('Flowfile validation warning:', validation.error)
+        // Continue anyway - validation is advisory
       }
 
       return importFromFlowfile(data)
@@ -1052,6 +1088,7 @@ result
     exportToFlowfile,
     importFromFlowfile,
     downloadFlowfile,
-    loadFlowfile
+    loadFlowfile,
+    validateFlowfileData
   }
 })
