@@ -490,15 +490,10 @@ for nid in orphaned_ids:
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
-      console.error(`[FlowStore] executeNode: Node ${nodeId} not found`)
       return { success: false, error: 'Node not found' }
     }
 
-    console.log(`[FlowStore] executeNode: Starting node #${nodeId} (type: ${node.type})`)
-    console.log(`[FlowStore] executeNode: Node settings:`, JSON.stringify(node.settings, null, 2))
-    console.log(`[FlowStore] executeNode: Node inputs:`, { inputIds: node.inputIds, leftInputId: node.leftInputId, rightInputId: node.rightInputId })
-
-    const { runPythonWithResult } = pyodideStore
+    const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
 
     try {
       let result: NodeResult
@@ -509,11 +504,17 @@ for nid in orphaned_ids:
           if (!content) {
             return { success: false, error: 'No file loaded' }
           }
-          result = await runPythonWithResult(`
+          // Use globals to pass large file content efficiently
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
 import json
-result = execute_read_csv(${nodeId}, json.loads(${toPythonJson(content)}), json.loads(${toPythonJson(node.settings)}))
+result = execute_read_csv(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
           break
         }
 
@@ -522,11 +523,17 @@ result
           if (!content) {
             return { success: false, error: 'No data entered' }
           }
-          result = await runPythonWithResult(`
+          // Use globals to pass data content efficiently
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
 import json
-result = execute_manual_input(${nodeId}, json.loads(${toPythonJson(content)}), json.loads(${toPythonJson(node.settings)}))
+result = execute_manual_input(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
           break
         }
 
@@ -648,19 +655,13 @@ result
         }
 
         default:
-          console.error(`[FlowStore] executeNode: Unknown node type: ${node.type}`)
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
 
-      console.log(`[FlowStore] executeNode: Node #${nodeId} result:`, result)
-      if (!result.success) {
-        console.error(`[FlowStore] executeNode: Node #${nodeId} failed:`, result.error)
-      }
       nodeResults.value.set(nodeId, result)
       return result
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      console.error(`[FlowStore] executeNode: Node #${nodeId} threw exception:`, error)
       const errorResult: NodeResult = {
         success: false,
         error: errorMessage
