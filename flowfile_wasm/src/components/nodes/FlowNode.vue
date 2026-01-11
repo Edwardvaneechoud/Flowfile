@@ -348,10 +348,6 @@ onUnmounted(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 10;
 }
 
 .status-indicator.success::before {
@@ -363,11 +359,11 @@ onUnmounted(() => {
 }
 
 .status-indicator.warning::before {
-  background-color: #f09f5d;
+  background-color: #f09f5dd1;
 }
 
 .status-indicator.unknown::before {
-  background-color: var(--text-muted);
+  background-color: var(--color-text-muted);
 }
 
 .status-indicator.running::before {
@@ -375,6 +371,7 @@ onUnmounted(() => {
   animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   box-shadow: 0 0 10px #0909ca;
 }
+
 
 @keyframes pulse {
   0% {
@@ -502,7 +499,6 @@ onUnmounted(() => {
 :deep(.vue-flow__handle) {
   width: 10px;
   height: 10px;
-  background: var(--accent-color);
   border: 2px solid var(--bg-secondary);
 }
 

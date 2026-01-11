@@ -130,19 +130,24 @@ def format_error(node_type: str, node_id: int, error: Exception, df: Optional[pl
 
 # Node execution functions
 def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
-    """Execute read CSV node"""
+    """Execute read CSV node with proper nested settings access"""
     try:
         import io
+        # 1. Access the nested table settings to match core schema
+        table_settings = settings.get("received_table", {}).get("table_settings", {})
+        
+        # 2. Extract values using the correct keys (delimiter, starting_from_line)
         df = pl.read_csv(
             io.StringIO(file_content),
-            has_header=settings.get("has_headers", True),
-            separator=settings.get("delimiter", ","),
-            skip_rows=settings.get("skip_rows", 0)
+            has_header=table_settings.get("has_headers", True),
+            separator=table_settings.get("delimiter", ","),
+            skip_rows=table_settings.get("starting_from_line", 0)
         )
         store_dataframe(node_id, df)
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
         return {"success": False, "error": format_error("read_csv", node_id, e)}
+
 
 def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
     """Execute manual input node"""
@@ -357,7 +362,7 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
                 if exprs:
                     result = df.group_by(group_cols).agg(exprs)
                 else:
-                    result = df.group_by(group_cols).agg(pl.count())
+                    result = df.group_by(group_cols).agg(pl.count()).drop("count")
 
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
