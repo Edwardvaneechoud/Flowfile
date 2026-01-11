@@ -22,6 +22,10 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
+function toPythonJson(value: unknown): string {
+  return JSON.stringify(JSON.stringify(value))
+}
+
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
 
@@ -31,6 +35,7 @@ export const useFlowStore = defineStore('flow', () => {
   const nodeResults = ref<Map<number, NodeResult>>(new Map())
   const selectedNodeId = ref<number | null>(null)
   const isExecuting = ref(false)
+  const executionError = ref<string | null>(null)
   const nodeIdCounter = ref(0)
 
   // File content storage for CSV nodes
@@ -343,7 +348,115 @@ export const useFlowStore = defineStore('flow', () => {
     selectedNodeId.value = id
   }
 
+  /**
+   * Clean up orphaned Python dataframes for nodes that no longer exist in the flow.
+   * This helps prevent memory leaks when nodes are deleted.
+   */
+  async function cleanupOrphanedData() {
+    // Get current node IDs
+    const currentNodeIds = new Set(nodes.value.keys())
+
+    // Clean up file contents for removed nodes
+    for (const [nodeId] of fileContents.value) {
+      if (!currentNodeIds.has(nodeId)) {
+        fileContents.value.delete(nodeId)
+      }
+    }
+
+    // Clean up node results for removed nodes
+    for (const [nodeId] of nodeResults.value) {
+      if (!currentNodeIds.has(nodeId)) {
+        nodeResults.value.delete(nodeId)
+      }
+    }
+
+    // Clean up Python dataframes for removed nodes
+    if (pyodideStore.isReady) {
+      const nodeIdList = Array.from(currentNodeIds).join(',')
+      await pyodideStore.runPython(`
+# Clean up orphaned dataframes
+current_node_ids = {${nodeIdList}} if ${currentNodeIds.size} > 0 else set()
+orphaned_ids = [nid for nid in list(_dataframes.keys()) if nid not in current_node_ids]
+for nid in orphaned_ids:
+    clear_node(nid)
+`)
+    }
+  }
+
+  /**
+   * Detect cycles in the flow graph using DFS with a recursion stack.
+   * Returns null if no cycle, or an array of node IDs forming the cycle path.
+   */
+  function detectCycle(): number[] | null {
+    const visited = new Set<number>()
+    const recursionStack = new Set<number>()
+    const parent = new Map<number, number>()
+
+    function dfs(id: number): number | null {
+      visited.add(id)
+      recursionStack.add(id)
+
+      const node = nodes.value.get(id)
+      if (!node) {
+        recursionStack.delete(id)
+        return null
+      }
+
+      // Get all dependencies (nodes this node depends on)
+      const dependencies: number[] = [...node.inputIds]
+      if (node.leftInputId) dependencies.push(node.leftInputId)
+      if (node.rightInputId) dependencies.push(node.rightInputId)
+
+      for (const depId of dependencies) {
+        if (!visited.has(depId)) {
+          parent.set(depId, id)
+          const cycleStart = dfs(depId)
+          if (cycleStart !== null) return cycleStart
+        } else if (recursionStack.has(depId)) {
+          // Found a cycle - return the start of the cycle
+          parent.set(depId, id)
+          return depId
+        }
+      }
+
+      recursionStack.delete(id)
+      return null
+    }
+
+    // Check all nodes (handles disconnected components)
+    for (const [id] of nodes.value) {
+      if (!visited.has(id)) {
+        const cycleStart = dfs(id)
+        if (cycleStart !== null) {
+          // Reconstruct cycle path
+          const cyclePath: number[] = [cycleStart]
+          let current = parent.get(cycleStart)
+          while (current !== undefined && current !== cycleStart) {
+            cyclePath.push(current)
+            current = parent.get(current)
+          }
+          cyclePath.push(cycleStart) // Complete the cycle
+          return cyclePath
+        }
+      }
+    }
+
+    return null
+  }
+
   function getExecutionOrder(): number[] {
+    // Check for cycles first
+    const cycle = detectCycle()
+    if (cycle) {
+      const cycleDescription = cycle
+        .map(id => {
+          const node = nodes.value.get(id)
+          return node ? `${node.type} (#${id})` : `#${id}`
+        })
+        .join(' -> ')
+      throw new Error(`Circular dependency detected: ${cycleDescription}`)
+    }
+
     // Topological sort for execution order
     const visited = new Set<number>()
     const order: number[] = []
@@ -375,7 +488,7 @@ export const useFlowStore = defineStore('flow', () => {
       return { success: false, error: 'Node not found' }
     }
 
-    const { runPythonWithResult } = pyodideStore
+    const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
 
     try {
       let result: NodeResult
@@ -386,14 +499,16 @@ export const useFlowStore = defineStore('flow', () => {
           if (!content) {
             return { success: false, error: 'No file loaded' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          result = await runPythonWithResult(`
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
 import json
-result = execute_read_csv(${nodeId}, '''${escapedContent}''', json.loads('${escapedSettings}'))
+result = execute_read_csv(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
           break
         }
 
@@ -402,14 +517,16 @@ result
           if (!content) {
             return { success: false, error: 'No data entered' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          result = await runPythonWithResult(`
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
 import json
-result = execute_manual_input(${nodeId}, '''${escapedContent}''', json.loads('${escapedSettings}'))
+result = execute_manual_input(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
           break
         }
 
@@ -418,11 +535,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_filter(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_filter(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -433,11 +548,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_select(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_select(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -448,11 +561,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_group_by(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_group_by(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -464,11 +575,9 @@ result
           if (!leftId || !rightId) {
             return { success: false, error: 'Both left and right inputs required for join' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads('${escapedSettings}'))
+result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -479,11 +588,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_sort(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_sort(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -494,11 +601,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_polars_code(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_polars_code(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -509,11 +614,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_unique(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_unique(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -524,11 +627,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_head(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_head(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -569,19 +670,26 @@ result
     }
 
     isExecuting.value = true
+    executionError.value = null
     nodeResults.value.clear()
 
     try {
+      // Clean up orphaned data before execution
+      await cleanupOrphanedData()
+
       // Clear Python state
       await pyodideStore.runPython('clear_all()')
 
       // Get execution order and execute nodes
       const order = getExecutionOrder()
+
       for (const nodeId of order) {
         await executeNode(nodeId)
       }
     } catch (error) {
-      console.error('Flow execution error', error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      executionError.value = errorMessage
+      console.error('Flow execution error:', error)
     } finally {
       isExecuting.value = false
     }
@@ -897,6 +1005,7 @@ result
     nodeResults,
     selectedNodeId,
     isExecuting,
+    executionError,
     fileContents,
 
     // Getters
@@ -920,6 +1029,7 @@ result
     executeNode,
     executeFlow,
     clearFlow,
+    cleanupOrphanedData,
 
     // Import/Export (FlowfileData format)
     exportToFlowfile,

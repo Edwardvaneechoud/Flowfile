@@ -50,6 +50,7 @@
       />
     </div>
 
+    <div v-if="fileWarning" class="warning-message">{{ fileWarning }}</div>
     <div v-if="fileError" class="error-message">{{ fileError }}</div>
   </div>
 </template>
@@ -71,6 +72,13 @@ const emit = defineEmits<{
 const flowStore = useFlowStore()
 const fileName = ref('')
 const fileError = ref('')
+const fileWarning = ref('')
+
+// File size limits (in bytes)
+const FILE_SIZE_WARNING_MB = 100
+const FILE_SIZE_LIMIT_MB = 200
+const FILE_SIZE_WARNING = FILE_SIZE_WARNING_MB * 1024 * 1024  // 100MB
+const FILE_SIZE_LIMIT = FILE_SIZE_LIMIT_MB * 1024 * 1024      // 200MB
 
 // Support both new schema (NodeReadSettings) and legacy (ReadCsvSettings)
 const localSettings = ref<NodeReadSettings>({
@@ -148,7 +156,20 @@ async function handleFileSelect(event: Event) {
   if (!file) return
 
   fileError.value = ''
+  fileWarning.value = ''
   fileName.value = file.name
+
+  // Validate file size
+  if (file.size > FILE_SIZE_LIMIT) {
+    fileError.value = `File too large (${formatFileSize(file.size)}). Maximum size is ${FILE_SIZE_LIMIT_MB}MB. Large files can freeze your browser.`
+    // Reset input so user can select again
+    input.value = ''
+    return
+  }
+
+  if (file.size > FILE_SIZE_WARNING) {
+    fileWarning.value = `Large file (${formatFileSize(file.size)}). Files over ${FILE_SIZE_WARNING_MB}MB may cause slow performance.`
+  }
 
   try {
     const content = await file.text()
@@ -165,6 +186,12 @@ async function handleFileSelect(event: Event) {
     fileError.value = 'Failed to read file'
     console.error(err)
   }
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
 function updateTableSetting(key: string, value: any) {
@@ -256,6 +283,14 @@ function emitUpdate() {
 .input:focus, .select:focus {
   outline: none;
   border-color: var(--accent-color);
+}
+
+.warning-message {
+  color: #f57c00;
+  font-size: 12px;
+  padding: 8px;
+  background: rgba(255, 152, 0, 0.1);
+  border-radius: var(--radius-sm);
 }
 
 .error-message {
