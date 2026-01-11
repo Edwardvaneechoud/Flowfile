@@ -107,6 +107,12 @@
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-overlay-dark: rgba(0, 0, 0, 0.7);
 
+  /* Gradient colors for canvas background */
+  --color-gradient-canvas-1: #6f3381;
+  --color-gradient-canvas-2: #81c7d4;
+  --color-gradient-canvas-3: #fedfe1;
+  --color-gradient-canvas-4: #fffffb;
+
   /* Focus ring colors */
   --color-focus-ring: rgba(44, 116, 179, 0.1);
   --color-focus-ring-accent: rgba(8, 145, 178, 0.15);
@@ -293,6 +299,12 @@
 
   /* Loading overlay in dark mode */
   --loading-bg: rgba(26, 26, 46, 0.8);
+
+  /* Dark mode gradient (darker, more muted) */
+  --color-gradient-canvas-1: #2d1f3d;
+  --color-gradient-canvas-2: #1a3a4a;
+  --color-gradient-canvas-3: #2d2a3a;
+  --color-gradient-canvas-4: #1a1a2e;
 }
 
 /* Reset */
@@ -316,6 +328,43 @@ html, body, #app {
 .vue-flow__minimap {
   transform: scale(75%);
   transform-origin: bottom right;
+}
+
+/* Hide Vue Flow background pattern (dots) */
+.vue-flow__background {
+  display: none;
+}
+
+/* Invert edge colors for better visibility */
+.custom-node-flow .vue-flow__edges {
+  filter: invert(100%);
+}
+
+/* ==========================================================================
+   Animated Canvas Background (matching flowfile_frontend)
+   ========================================================================== */
+.animated-bg-gradient {
+  background: linear-gradient(
+    122deg,
+    var(--color-gradient-canvas-1),
+    var(--color-gradient-canvas-2),
+    var(--color-gradient-canvas-3),
+    var(--color-gradient-canvas-4)
+  );
+  background-size: 800% 800%;
+  animation: gradient 4s ease infinite;
+}
+
+@keyframes gradient {
+  0% {
+    background-position: 0% 22%;
+  }
+  50% {
+    background-position: 100% 79%;
+  }
+  100% {
+    background-position: 0% 22%;
+  }
 }
 
 /* ==========================================================================

@@ -95,7 +95,6 @@
         </template>
         <MiniMap />
         <Controls />
-        <Background />
       </VueFlow>
     </div>
 
@@ -164,7 +163,6 @@ import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
-import { Background } from '@vue-flow/background'
 import { useFlowStore } from '../stores/flow-store'
 import { storeToRefs } from 'pinia'
 import type { NodeSettings, FlowEdge } from '../types'
@@ -319,8 +317,7 @@ const vueEdges = computed<Edge[]>({
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.sourceHandle,
-      targetHandle: edge.targetHandle,
-      animated: true
+      targetHandle: edge.targetHandle
     }))
   },
   set() {}
@@ -574,11 +571,6 @@ function handleClearFlow() {
   flex: 1;
   height: 100%;
   overflow: hidden;
-}
-
-/* Canvas background */
-.animated-bg-gradient {
-  background: #f5f7fa;
 }
 
 /* Vue Flow customizations */
