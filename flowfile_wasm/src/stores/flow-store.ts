@@ -121,10 +121,11 @@ export const useFlowStore = defineStore('flow', () => {
           }
 
           // Restore node schemas for quick column access
+          // Note: success is false since data wasn't actually executed in this session
           if (state.nodeSchemas) {
             for (const [id, schema] of state.nodeSchemas) {
               if (schema && schema.length > 0) {
-                nodeResults.value.set(id, { success: true, schema })
+                nodeResults.value.set(id, { success: false, schema })
               }
             }
           }
@@ -482,9 +483,9 @@ export const useFlowStore = defineStore('flow', () => {
       // Infer schema from CSV content
       const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
       if (schema) {
-        // Set schema for source node
+        // Set schema for source node (success: false since not yet executed)
         nodeResults.value.set(nodeId, {
-          success: true,
+          success: false,
           schema
         })
 
@@ -501,8 +502,9 @@ export const useFlowStore = defineStore('flow', () => {
   function setSourceNodeSchema(nodeId: number, fields: { name: string; data_type: string }[]) {
     const schema = inferSchemaFromRawData(fields)
     if (schema) {
+      // Set schema for source node (success: false since not yet executed)
       nodeResults.value.set(nodeId, {
-        success: true,
+        success: false,
         schema
       })
 
@@ -842,8 +844,11 @@ for nid in orphaned_ids:
       // Update nodeResults with inferred schema
       if (inferredSchema) {
         const existingResult = nodeResults.value.get(nodeId)
+        // Only mark as success if there's actual executed data
+        // Schema inference alone doesn't mean the node was executed
+        const hasExecutedData = existingResult?.data?.data && existingResult.data.data.length >= 0
         nodeResults.value.set(nodeId, {
-          success: true,
+          success: hasExecutedData ? existingResult.success : false,
           schema: inferredSchema,
           // Preserve existing data if any (for display purposes)
           data: existingResult?.data,

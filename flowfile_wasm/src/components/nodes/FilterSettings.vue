@@ -1,82 +1,56 @@
 <template>
   <div class="listbox-wrapper">
-    <div class="switch-wrapper" style="margin-bottom: 12px;">
-      <label class="checkbox-label">
-        <input type="checkbox" :checked="isAdvanced" @change="toggleAdvanced" />
-        <span>Advanced filter options</span>
-      </label>
+    <div class="filter-section">
+      <div class="filter-row">
+        <!-- Column Selector -->
+        <div class="filter-field">
+          <label class="filter-label">Column</label>
+          <select :value="basicFilter.field" @change="updateField(($event.target as HTMLSelectElement).value)" class="select">
+            <option value="">Select column...</option>
+            <option v-for="col in columns" :key="col.name" :value="col.name">
+              {{ col.name }} ({{ col.data_type }})
+            </option>
+          </select>
+        </div>
+
+        <!-- Operator Selector -->
+        <div class="filter-field">
+          <label class="filter-label">Operator</label>
+          <select :value="basicFilter.operator" @change="updateOperator(($event.target as HTMLSelectElement).value as FilterOperator)" class="select">
+            <option v-for="op in operators" :key="op.value" :value="op.value">
+              {{ op.label }}
+            </option>
+          </select>
+        </div>
+
+        <!-- Value Input (shown for most operators) -->
+        <div v-if="showValueInput" class="filter-field">
+          <label class="filter-label">Value</label>
+          <input
+            type="text"
+            :value="basicFilter.value"
+            @input="updateValue(($event.target as HTMLInputElement).value)"
+            class="input"
+            :placeholder="valuePlaceholder"
+          />
+        </div>
+
+        <!-- Second Value Input (for BETWEEN) -->
+        <div v-if="showValue2Input" class="filter-field">
+          <label class="filter-label">And</label>
+          <input
+            type="text"
+            :value="basicFilter.value2"
+            @input="updateValue2(($event.target as HTMLInputElement).value)"
+            class="input"
+            placeholder="End value"
+          />
+        </div>
+      </div>
+
+      <!-- Help text for special operators -->
+      <div v-if="helpText" class="help-text" style="margin-top: 8px;">{{ helpText }}</div>
     </div>
-
-    <template v-if="!isAdvanced">
-      <div class="filter-section">
-        <div class="filter-row">
-          <!-- Column Selector -->
-          <div class="filter-field">
-            <label class="filter-label">Column</label>
-            <select :value="basicFilter.field" @change="updateField(($event.target as HTMLSelectElement).value)" class="select">
-              <option value="">Select column...</option>
-              <option v-for="col in columns" :key="col.name" :value="col.name">
-                {{ col.name }} ({{ col.data_type }})
-              </option>
-            </select>
-          </div>
-
-          <!-- Operator Selector -->
-          <div class="filter-field">
-            <label class="filter-label">Operator</label>
-            <select :value="basicFilter.operator" @change="updateOperator(($event.target as HTMLSelectElement).value as FilterOperator)" class="select">
-              <option v-for="op in operators" :key="op.value" :value="op.value">
-                {{ op.label }}
-              </option>
-            </select>
-          </div>
-
-          <!-- Value Input (shown for most operators) -->
-          <div v-if="showValueInput" class="filter-field">
-            <label class="filter-label">Value</label>
-            <input
-              type="text"
-              :value="basicFilter.value"
-              @input="updateValue(($event.target as HTMLInputElement).value)"
-              class="input"
-              :placeholder="valuePlaceholder"
-            />
-          </div>
-
-          <!-- Second Value Input (for BETWEEN) -->
-          <div v-if="showValue2Input" class="filter-field">
-            <label class="filter-label">And</label>
-            <input
-              type="text"
-              :value="basicFilter.value2"
-              @input="updateValue2(($event.target as HTMLInputElement).value)"
-              class="input"
-              placeholder="End value"
-            />
-          </div>
-        </div>
-
-        <!-- Help text for special operators -->
-        <div v-if="helpText" class="help-text" style="margin-top: 8px;">{{ helpText }}</div>
-      </div>
-    </template>
-
-    <template v-else>
-      <div class="listbox-subtitle">Advanced filter</div>
-      <div class="form-group">
-        <textarea
-          :value="advancedFilter"
-          @input="updateAdvancedFilter(($event.target as HTMLTextAreaElement).value)"
-          class="input"
-          rows="5"
-          placeholder="e.g., pl.col('age') > 30"
-          style="min-height: 120px; resize: vertical;"
-        ></textarea>
-        <div class="help-text">
-          Use Polars expressions like pl.col('column_name') > value
-        </div>
-      </div>
-    </template>
   </div>
 </template>
 
@@ -96,15 +70,13 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize directly from props - no watch needed
-const isAdvanced = ref(props.settings.filter_input?.mode === 'advanced')
+// Initialize directly from props - basic filter only in WASM version
 const basicFilter = ref({
   field: props.settings.filter_input?.basic_filter?.field || '',
   operator: (props.settings.filter_input?.basic_filter?.operator || 'equals') as FilterOperator,
   value: props.settings.filter_input?.basic_filter?.value || '',
   value2: props.settings.filter_input?.basic_filter?.value2 || ''
 })
-const advancedFilter = ref(props.settings.filter_input?.advanced_filter || '')
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
@@ -160,11 +132,6 @@ const helpText = computed(() => {
   }
 })
 
-function toggleAdvanced() {
-  isAdvanced.value = !isAdvanced.value
-  emitUpdate()
-}
-
 function updateField(value: string) {
   basicFilter.value.field = value
   emitUpdate()
@@ -185,19 +152,14 @@ function updateValue2(value: string) {
   emitUpdate()
 }
 
-function updateAdvancedFilter(value: string) {
-  advancedFilter.value = value
-  emitUpdate()
-}
-
 function emitUpdate() {
   const settings: FilterSettings = {
     ...props.settings,
     is_setup: true,
     filter_input: {
-      mode: isAdvanced.value ? 'advanced' : 'basic',
+      mode: 'basic',  // Always basic in WASM version
       basic_filter: { ...basicFilter.value },
-      advanced_filter: advancedFilter.value
+      advanced_filter: ''  // Keep schema compatible but don't use in WASM
     }
   }
   emit('update:settings', settings)
