@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
+import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
 import type {
   FlowNode,
   FlowEdge,
@@ -187,8 +188,37 @@ export const useFlowStore = defineStore('flow', () => {
 
   watch([nodes, edges, fileContents, nodeIdCounter], scheduleSave, { deep: true })
 
+  // Watch for edge changes to trigger schema propagation
+  watch(() => edges.value, () => {
+    debouncedPropagateSchemas()
+  }, { deep: true })
+
+  // Watch for node settings changes to trigger schema propagation
+  // We need to watch the settings of each node for changes
+  watch(
+    () => {
+      // Create a dependency on all node settings
+      const settingsSnapshot: Record<number, string> = {}
+      nodes.value.forEach((node, id) => {
+        // Stringify settings to detect deep changes
+        settingsSnapshot[id] = JSON.stringify(node.settings)
+      })
+      return settingsSnapshot
+    },
+    () => {
+      debouncedPropagateSchemas()
+    },
+    { deep: true }
+  )
+
   // Load on init
   loadFromStorage()
+
+  // Initial schema propagation after loading
+  // Use setTimeout to ensure nodeResults are populated from storage
+  setTimeout(() => {
+    propagateSchemas().catch(err => console.error('Initial schema propagation error:', err))
+  }, 0)
 
   // Getters
   const nodeList = computed(() => Array.from(nodes.value.values()))
@@ -320,6 +350,9 @@ export const useFlowStore = defineStore('flow', () => {
           targetNode.rightInputId = sourceId
         }
       }
+
+      // Trigger immediate schema propagation for new connection
+      debouncedPropagateSchemas()
     }
   }
 
@@ -334,14 +367,66 @@ export const useFlowStore = defineStore('flow', () => {
         targetNode.inputIds = targetNode.inputIds.filter(id => id !== sourceId)
         if (targetNode.leftInputId === sourceId) targetNode.leftInputId = undefined
         if (targetNode.rightInputId === sourceId) targetNode.rightInputId = undefined
+
+        // Clear inferred schema for disconnected node (unless it has execution data)
+        const existingResult = nodeResults.value.get(targetId)
+        if (existingResult && !existingResult.data) {
+          nodeResults.value.delete(targetId)
+        }
       }
 
       edges.value = edges.value.filter(e => e.id !== edgeId)
+
+      // Trigger schema propagation to update downstream nodes
+      debouncedPropagateSchemas()
     }
   }
 
   function setFileContent(nodeId: number, content: string) {
     fileContents.value.set(nodeId, content)
+
+    // Get node to check settings for CSV parsing options
+    const node = nodes.value.get(nodeId)
+    if (node && (node.type === 'read_csv' || node.type === 'manual_input')) {
+      let hasHeaders = true
+      let delimiter = ','
+
+      if (node.type === 'read_csv') {
+        const settings = node.settings as any
+        hasHeaders = settings?.received_table?.table_settings?.has_headers ?? true
+        delimiter = settings?.received_table?.table_settings?.delimiter ?? ','
+      }
+
+      // Infer schema from CSV content
+      const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
+      if (schema) {
+        // Set schema for source node
+        nodeResults.value.set(nodeId, {
+          success: true,
+          schema
+        })
+
+        // Trigger schema propagation to update downstream nodes
+        debouncedPropagateSchemas()
+      }
+    }
+  }
+
+  /**
+   * Set schema for a source node from raw data fields
+   * Used by manual input nodes when data structure changes
+   */
+  function setSourceNodeSchema(nodeId: number, fields: { name: string; data_type: string }[]) {
+    const schema = inferSchemaFromRawData(fields)
+    if (schema) {
+      nodeResults.value.set(nodeId, {
+        success: true,
+        schema
+      })
+
+      // Trigger schema propagation
+      debouncedPropagateSchemas()
+    }
   }
 
   function selectNode(id: number | null) {
@@ -480,6 +565,234 @@ for nid in orphaned_ids:
 
     nodes.value.forEach((_, id) => visit(id))
     return order
+  }
+
+  /**
+   * Sync a node's settings with its input schema
+   * This updates column-based settings (like select_input) when upstream schema changes
+   * Returns true if settings were modified (triggers re-set in nodes Map for reactivity)
+   */
+  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null): boolean {
+    const settings = node.settings as any
+    let modified = false
+
+    if (node.type === 'select') {
+      // Sync select_input with available columns
+      const currentSelectInput = settings.select_input || []
+      const existingColumns = new Map<string, any>(currentSelectInput.map((s: any) => [s.old_name, s]))
+      const inputColumnNames = new Set(inputSchema.map(c => c.name))
+
+      // Build new select_input array
+      const newSelectInput: any[] = []
+
+      // First, add all columns from input schema
+      inputSchema.forEach((col, index) => {
+        const existing = existingColumns.get(col.name)
+        if (existing) {
+          // Keep existing settings but update position and mark as available
+          newSelectInput.push({
+            ...existing,
+            data_type: col.data_type,
+            is_available: true,
+            position: (existing as any).position ?? index
+          })
+        } else {
+          // New column - add with defaults
+          newSelectInput.push({
+            old_name: col.name,
+            new_name: col.name,
+            data_type: col.data_type,
+            keep: true,
+            position: index,
+            is_available: true
+          })
+        }
+      })
+
+      // Mark columns that no longer exist in input as unavailable
+      currentSelectInput.forEach((s: any) => {
+        if (!inputColumnNames.has(s.old_name)) {
+          newSelectInput.push({
+            ...s,
+            is_available: false
+          })
+        }
+      })
+
+      // Sort by position
+      newSelectInput.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
+
+      // Update settings
+      settings.select_input = newSelectInput
+      node.settings = settings
+      modified = true
+    }
+
+    if (node.type === 'group_by') {
+      // Sync groupby agg_cols with available columns
+      const groupbyInput = settings.groupby_input || { agg_cols: [] }
+      const currentAggCols = groupbyInput.agg_cols || []
+      const inputColumnNames = new Set(inputSchema.map(c => c.name))
+
+      // Mark unavailable columns
+      const newAggCols = currentAggCols.map((col: any) => ({
+        ...col,
+        is_available: inputColumnNames.has(col.old_name)
+      }))
+
+      settings.groupby_input = { ...groupbyInput, agg_cols: newAggCols }
+      node.settings = settings
+      modified = true
+    }
+
+    if (node.type === 'join' && rightInputSchema) {
+      // Store available columns for join configuration UI
+      // The join settings UI can use getLeftInputSchema and getRightInputSchema
+      // but we can also store column availability here if needed
+    }
+
+    if (node.type === 'filter') {
+      // Check if the filtered field still exists
+      const filterInput = settings.filter_input
+      if (filterInput?.basic_filter?.field) {
+        const fieldExists = inputSchema.some(c => c.name === filterInput.basic_filter.field)
+        if (!fieldExists && filterInput.basic_filter.field !== '') {
+          // Field no longer exists - we could clear it or mark it
+          // For now, just leave it as is so user can see and fix
+        }
+      }
+    }
+
+    if (node.type === 'sort') {
+      // Check if sorted columns still exist
+      const sortInput = settings.sort_input
+      if (sortInput?.sort_cols) {
+        const inputColumnNames = new Set(inputSchema.map(c => c.name))
+        sortInput.sort_cols = sortInput.sort_cols.map((col: any) => ({
+          ...col,
+          is_available: inputColumnNames.has(col.column)
+        }))
+        settings.sort_input = sortInput
+        node.settings = settings
+        modified = true
+      }
+    }
+
+    return modified
+  }
+
+  /**
+   * Check if a node type requires lazy execution to determine its output schema
+   */
+  function requiresLazyExecution(nodeType: string): boolean {
+    return nodeType === 'polars_code' || nodeType === 'formula'
+  }
+
+  /**
+   * Propagate schemas through the flow graph
+   * This updates nodeResults with inferred schemas for all nodes that can be computed
+   * For polars_code/formula nodes, lazy execution is used when input data is available
+   */
+  async function propagateSchemas() {
+    const order = getExecutionOrder()
+
+    for (const nodeId of order) {
+      const node = nodes.value.get(nodeId)
+      if (!node) continue
+
+      // Skip source nodes - their schema comes from actual data
+      if (isSourceNode(node.type)) {
+        // Keep existing schema if present (from data load)
+        continue
+      }
+
+      // Get input schema from upstream node
+      let inputSchema: ColumnSchema[] | null = null
+      let rightInputSchema: ColumnSchema[] | null = null
+
+      // Get primary input schema and check if input has been executed
+      const primaryInputId = node.leftInputId || node.inputIds[0]
+      let inputHasData = false
+      if (primaryInputId) {
+        const inputResult = nodeResults.value.get(primaryInputId)
+        inputSchema = inputResult?.schema || null
+        inputHasData = !!(inputResult?.data)
+      }
+
+      // For join nodes, also get right input schema
+      if (node.type === 'join' && node.rightInputId) {
+        const rightResult = nodeResults.value.get(node.rightInputId)
+        rightInputSchema = rightResult?.schema || null
+      }
+
+      // Sync node settings with input schema (updates select_input, agg_cols, etc.)
+      if (inputSchema && inputSchema.length > 0) {
+        const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        // Trigger Vue reactivity by re-setting the node in the Map
+        if (modified) {
+          nodes.value.set(nodeId, { ...node })
+        }
+      }
+
+      // For polars_code/formula nodes, try lazy execution if input data is available
+      if (requiresLazyExecution(node.type) && inputHasData && pyodideStore.isReady) {
+        try {
+          // Execute the node to get its actual output schema
+          const result = await executeNode(nodeId)
+          if (result.success && result.schema) {
+            // Schema is already set by executeNode, continue to next node
+            continue
+          }
+        } catch (error) {
+          console.warn(`Lazy execution failed for node ${nodeId}:`, error)
+          // Fall through to keep existing result if any
+        }
+      }
+
+      // Infer output schema (for non-lazy nodes or when lazy execution isn't possible)
+      const inferredSchema = inferOutputSchema(
+        node.type,
+        inputSchema,
+        node.settings,
+        rightInputSchema
+      )
+
+      // Update nodeResults with inferred schema
+      if (inferredSchema) {
+        const existingResult = nodeResults.value.get(nodeId)
+        nodeResults.value.set(nodeId, {
+          success: true,
+          schema: inferredSchema,
+          // Preserve existing data if any (for display purposes)
+          data: existingResult?.data,
+          execution_time: existingResult?.execution_time
+        })
+      } else {
+        // inferOutputSchema returned null - this means:
+        // 1. For polars_code/formula: schema can only be known after execution (and input wasn't available)
+        // 2. For other nodes: input schema might be missing
+        //
+        // Keep any existing executed result (which has actual schema from Python)
+        // Only clear if there's no input AND no existing data
+        const existingResult = nodeResults.value.get(nodeId)
+        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data) {
+          nodeResults.value.delete(nodeId)
+        }
+        // If there's an existing result with actual data, keep it - the schema from
+        // execution is authoritative for nodes we can't infer (like polars_code)
+      }
+    }
+  }
+
+  // Debounced schema propagation to avoid excessive updates
+  // Using a wrapper to handle async
+  let propagateTimeout: ReturnType<typeof setTimeout> | null = null
+  function debouncedPropagateSchemas() {
+    if (propagateTimeout) clearTimeout(propagateTimeout)
+    propagateTimeout = setTimeout(() => {
+      propagateSchemas().catch(err => console.error('Schema propagation error:', err))
+      propagateTimeout = null
+    }, 50)
   }
 
   async function executeNode(nodeId: number): Promise<NodeResult> {
@@ -686,6 +999,9 @@ result
       for (const nodeId of order) {
         await executeNode(nodeId)
       }
+      // After execution, propagate schemas to update downstream node settings
+      // This syncs select_input, agg_cols, etc. with actual executed schemas
+      await propagateSchemas()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
@@ -943,6 +1259,12 @@ result
         edges.value.push(edge)
       }
 
+      // Trigger schema propagation after import
+      // Note: Source nodes will need data loaded before schemas propagate
+      setTimeout(() => {
+        propagateSchemas().catch(err => console.error('Import schema propagation error:', err))
+      }, 0)
+
       return true
     } catch (error) {
       console.error('Failed to import flow', error)
@@ -1030,6 +1352,8 @@ result
     executeFlow,
     clearFlow,
     cleanupOrphanedData,
+    propagateSchemas,
+    setSourceNodeSchema,
 
     // Import/Export (FlowfileData format)
     exportToFlowfile,
