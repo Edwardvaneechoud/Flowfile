@@ -18,20 +18,17 @@
         <span class="editor-title">Polars Code</span>
         <span class="editor-hint">Python/Polars expressions</span>
       </div>
-      <textarea
-        ref="editorRef"
-        :value="polarsCode"
-        @input="updateCode(($event.target as HTMLTextAreaElement).value)"
-        class="code-editor"
-        spellcheck="false"
-        placeholder="# Enter Polars code here...
-# Available variables:
-#   input_df - the input dataframe
-#   pl - polars module
-#
-# Example:
-input_df.filter(pl.col('column') > 0)"
-      ></textarea>
+      <codemirror
+        v-model="polarsCode"
+        placeholder="# Enter Polars code here..."
+        :style="{ height: '400px' }"
+        :autofocus="false"
+        :indent-with-tab="false"
+        :tab-size="4"
+        :extensions="extensions"
+        @ready="handleReady"
+        @update:model-value="handleCodeChange"
+      />
     </div>
 
     <div v-if="validationError" class="validation-error">
@@ -71,7 +68,14 @@ input_df.filter(pl.col('column') > 0)"
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, shallowRef } from 'vue'
+import { Codemirror } from 'vue-codemirror'
+import { python } from '@codemirror/lang-python'
+import { oneDark } from '@codemirror/theme-one-dark'
+import { EditorView, keymap } from '@codemirror/view'
+import { EditorState, Extension, Prec } from '@codemirror/state'
+import { autocompletion, CompletionSource, acceptCompletion } from '@codemirror/autocomplete'
+import { indentMore, indentLess } from '@codemirror/commands'
 import { useFlowStore } from '../../stores/flow-store'
 import type { PolarsCodeSettings, ColumnSchema } from '../../types'
 
@@ -85,7 +89,7 @@ const emit = defineEmits<{
 }>()
 
 const flowStore = useFlowStore()
-const editorRef = ref<HTMLTextAreaElement | null>(null)
+const view = shallowRef<EditorView | null>(null)
 const validationError = ref<string | null>(null)
 
 // Code snippets for quick reference
@@ -111,40 +115,124 @@ const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-function updateCode(value: string) {
-  polarsCode.value = value
+// Polars-specific autocompletions
+const polarsCompletions: CompletionSource = (context) => {
+  const word = context.matchBefore(/\w*/)
+  if (word?.from === word?.to && !context.explicit) {
+    return null
+  }
+
+  const completionOptions = [
+    { label: 'input_df', type: 'variable', detail: 'Input DataFrame' },
+    { label: 'pl', type: 'module', detail: 'Polars module' },
+    { label: 'pl.col', type: 'function', detail: 'Column expression' },
+    { label: 'pl.lit', type: 'function', detail: 'Literal value' },
+    { label: 'pl.when', type: 'function', detail: 'Conditional expression' },
+    { label: 'filter', type: 'method', detail: 'Filter rows' },
+    { label: 'select', type: 'method', detail: 'Select columns' },
+    { label: 'with_columns', type: 'method', detail: 'Add/modify columns' },
+    { label: 'group_by', type: 'method', detail: 'Group by columns' },
+    { label: 'agg', type: 'method', detail: 'Aggregate' },
+    { label: 'sort', type: 'method', detail: 'Sort rows' },
+    { label: 'head', type: 'method', detail: 'First n rows' },
+    { label: 'tail', type: 'method', detail: 'Last n rows' },
+    { label: 'unique', type: 'method', detail: 'Unique rows' },
+    { label: 'drop_nulls', type: 'method', detail: 'Drop null values' },
+    { label: 'fill_null', type: 'method', detail: 'Fill null values' },
+    { label: 'cast', type: 'method', detail: 'Cast to type' },
+    { label: 'alias', type: 'method', detail: 'Rename column' },
+    { label: 'sum', type: 'method', detail: 'Sum aggregation' },
+    { label: 'mean', type: 'method', detail: 'Mean aggregation' },
+    { label: 'count', type: 'method', detail: 'Count aggregation' },
+    { label: 'max', type: 'method', detail: 'Max aggregation' },
+    { label: 'min', type: 'method', detail: 'Min aggregation' },
+  ]
+
+  // Add column completions
+  columns.value.forEach(col => {
+    completionOptions.push({
+      label: `pl.col("${col.name}")`,
+      type: 'variable',
+      detail: `Column: ${col.data_type}`
+    })
+  })
+
+  return {
+    from: word?.from || context.pos,
+    options: completionOptions,
+  }
+}
+
+// Custom keymap for tab handling
+const tabKeymap = keymap.of([
+  {
+    key: 'Tab',
+    run: (view: EditorView): boolean => {
+      if (acceptCompletion(view)) {
+        return true
+      }
+      return indentMore(view)
+    },
+  },
+  {
+    key: 'Shift-Tab',
+    run: (view: EditorView): boolean => {
+      return indentLess(view)
+    },
+  },
+])
+
+// Extensions configuration
+const extensions: Extension[] = [
+  python(),
+  oneDark,
+  EditorState.tabSize.of(4),
+  autocompletion({
+    override: [polarsCompletions],
+    defaultKeymap: true,
+    closeOnBlur: false,
+  }),
+  Prec.highest(tabKeymap),
+]
+
+const handleReady = (payload: { view: EditorView }) => {
+  view.value = payload.view
+}
+
+function handleCodeChange(newCode: string) {
+  polarsCode.value = newCode
   validationError.value = null
   emitUpdate()
 }
 
 function insertColumn(name: string) {
-  const editor = editorRef.value
-  if (editor) {
-    const start = editor.selectionStart
-    const end = editor.selectionEnd
+  if (view.value) {
     const text = `pl.col("${name}")`
-    const newCode = polarsCode.value.substring(0, start) + text + polarsCode.value.substring(end)
-    polarsCode.value = newCode
+    view.value.dispatch({
+      changes: {
+        from: view.value.state.selection.main.head,
+        to: view.value.state.selection.main.head,
+        insert: text,
+      },
+    })
+    // Update the model
+    polarsCode.value = view.value.state.doc.toString()
     emitUpdate()
-    setTimeout(() => {
-      editor.focus()
-      editor.setSelectionRange(start + text.length, start + text.length)
-    }, 0)
   }
 }
 
 function insertSnippet(snippet: string) {
-  const editor = editorRef.value
-  if (editor) {
-    const start = editor.selectionStart
-    const end = editor.selectionEnd
-    const newCode = polarsCode.value.substring(0, start) + snippet + polarsCode.value.substring(end)
-    polarsCode.value = newCode
+  if (view.value) {
+    view.value.dispatch({
+      changes: {
+        from: view.value.state.selection.main.head,
+        to: view.value.state.selection.main.head,
+        insert: snippet,
+      },
+    })
+    // Update the model
+    polarsCode.value = view.value.state.doc.toString()
     emitUpdate()
-    setTimeout(() => {
-      editor.focus()
-      editor.setSelectionRange(start + snippet.length, start + snippet.length)
-    }, 0)
   }
 }
 
@@ -226,49 +314,6 @@ function emitUpdate() {
   color: #6272a4;
 }
 
-.code-editor {
-  width: 100%;
-  min-height: 400px;
-  height: 100%;
-  padding: 12px;
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  background: #282c34;
-  color: #abb2bf;
-  border: none;
-  resize: none;
-  tab-size: 4;
-  -moz-tab-size: 4;
-}
-
-.code-editor:focus {
-  outline: none;
-}
-
-.code-editor::placeholder {
-  color: #5c6370;
-}
-
-/* Scrollbar styling */
-.code-editor::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-.code-editor::-webkit-scrollbar-track {
-  background: #21252b;
-}
-
-.code-editor::-webkit-scrollbar-thumb {
-  background: #4b5263;
-  border-radius: 5px;
-}
-
-.code-editor::-webkit-scrollbar-thumb:hover {
-  background: #5c6370;
-}
-
 .validation-error {
   padding: 8px 12px;
   color: #ff5555;
@@ -325,5 +370,28 @@ function emitUpdate() {
 .help-item span {
   font-size: 9px;
   color: #6272a4;
+}
+
+/* CodeMirror customization */
+:deep(.cm-editor) {
+  height: 100%;
+  font-size: 13px;
+}
+
+:deep(.cm-scroller) {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+}
+
+:deep(.cm-gutters) {
+  background: #21252b;
+  border-right: 1px solid #181a1f;
+}
+
+:deep(.cm-activeLineGutter) {
+  background: #2c313a;
+}
+
+:deep(.cm-activeLine) {
+  background: rgba(255, 255, 255, 0.03);
 }
 </style>

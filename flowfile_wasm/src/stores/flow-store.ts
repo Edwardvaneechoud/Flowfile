@@ -90,6 +90,16 @@ export const useFlowStore = defineStore('flow', () => {
             fileContents.value = new Map(state.fileContents)
           }
 
+          // Restore node schemas for quick column access
+          if (state.nodeSchemas) {
+            for (const [id, schema] of state.nodeSchemas) {
+              if (schema && schema.length > 0) {
+                nodeResults.value.set(id, { success: true, schema })
+              }
+            }
+            log('Storage', `Restored schemas for ${state.nodeSchemas.length} nodes`)
+          }
+
           // Restore counter
           const maxId = Math.max(0, ...data.nodes.map(n => n.id))
           nodeIdCounter.value = state.nodeIdCounter ?? maxId
@@ -169,7 +179,9 @@ export const useFlowStore = defineStore('flow', () => {
         version: STORAGE_VERSION,
         flowfileData,
         fileContents: Array.from(fileContents.value.entries()),
-        nodeIdCounter: nodeIdCounter.value
+        nodeIdCounter: nodeIdCounter.value,
+        // Save schemas separately for quick reload
+        nodeSchemas: Array.from(nodeResults.value.entries()).map(([id, result]) => [id, result.schema])
       }
 
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
