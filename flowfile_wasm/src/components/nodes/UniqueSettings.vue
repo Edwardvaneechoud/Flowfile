@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { UniqueSettings, ColumnSchema } from '../../types'
 
@@ -132,6 +132,17 @@ function emitUpdate() {
   console.log('[UniqueSettings] Emitting unique_input:', settings.unique_input)
   emit('update:settings', settings)
 }
+
+// Lifecycle logging
+onMounted(() => {
+  console.log('[UniqueSettings] Component MOUNTED for nodeId:', props.nodeId)
+})
+
+onBeforeUnmount(() => {
+  console.log('[UniqueSettings] Component UNMOUNTING for nodeId:', props.nodeId)
+  console.log('[UniqueSettings] Current local state - subset:', [...subset.value], 'keep:', keep.value)
+  console.log('[UniqueSettings] Current props.settings:', JSON.stringify(props.settings, null, 2))
+})
 </script>
 
 <style scoped>
