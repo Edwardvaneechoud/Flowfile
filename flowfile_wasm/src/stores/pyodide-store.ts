@@ -113,6 +113,24 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
+    """Execute manual input node"""
+    try:
+        import io
+        manual_input = settings.get("manual_input", {})
+        has_headers = manual_input.get("has_headers", True)
+        delimiter = manual_input.get("delimiter", ",")
+
+        df = pl.read_csv(
+            io.StringIO(data_content),
+            has_header=has_headers,
+            separator=delimiter
+        )
+        store_dataframe(node_id, df)
+        return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute filter node"""
     try:

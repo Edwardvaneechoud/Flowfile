@@ -140,6 +140,7 @@ import type { NodeSettings, FlowEdge } from '../types'
 import DraggablePanel from './common/DraggablePanel.vue'
 import FlowNode from './nodes/FlowNode.vue'
 import ReadCsvSettings from './nodes/ReadCsvSettings.vue'
+import ManualInputSettings from './nodes/ManualInputSettings.vue'
 import FilterSettings from './nodes/FilterSettings.vue'
 import SelectSettings from './nodes/SelectSettings.vue'
 import GroupBySettings from './nodes/GroupBySettings.vue'
@@ -187,7 +188,8 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Input Sources',
     isOpen: true,
     nodes: [
-      { type: 'read_csv', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 }
+      { type: 'read_csv', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
+      { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 }
     ]
   },
   {
@@ -258,8 +260,8 @@ const vueNodes = computed<Node[]>({
           id: node.id,
           type: node.type,
           label: def?.name || node.type,
-          inputs: def?.inputs || 1,
-          outputs: def?.outputs || 1,
+          inputs: def?.inputs ?? 1,
+          outputs: def?.outputs ?? 1,
           result: nodeResults.value.get(node.id)
         }
       }
@@ -403,6 +405,7 @@ function updateSettings(settings: NodeSettings) {
 function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
     read_csv: ReadCsvSettings,
+    manual_input: ManualInputSettings,
     filter: FilterSettings,
     select: SelectSettings,
     group_by: GroupBySettings,
@@ -449,28 +452,9 @@ function formatCell(value: any): string {
   height: 100%;
 }
 
-/* Animated gradient background like flowfile */
+/* Canvas background */
 .animated-bg-gradient {
-  background: linear-gradient(
-    122deg,
-    rgba(214, 219, 220, 0.8),
-    rgba(255, 255, 255, 0.8),
-    rgba(214, 219, 220, 0.8)
-  );
-  background-size: 400% 400%;
-  animation: gradient 4s ease infinite;
-}
-
-@keyframes gradient {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
+  background: #f5f7fa;
 }
 
 /* Vue Flow customizations */

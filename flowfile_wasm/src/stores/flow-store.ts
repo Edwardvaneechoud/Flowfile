@@ -229,6 +229,21 @@ result
           break
         }
 
+        case 'manual_input': {
+          const content = fileContents.value.get(nodeId)
+          if (!content) {
+            return { success: false, error: 'No data entered' }
+          }
+          const settings = JSON.stringify(node.settings)
+          const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
+          result = await runPythonWithResult(`
+import json
+result = execute_manual_input(${nodeId}, '''${escapedContent}''', json.loads('${settings}'))
+result
+`)
+          break
+        }
+
         case 'filter': {
           const inputId = node.inputIds[0]
           if (!inputId) {
@@ -416,6 +431,17 @@ result
           has_headers: true,
           delimiter: ',',
           skip_rows: 0
+        }
+
+      case 'manual_input':
+        return {
+          ...base,
+          manual_input: {
+            data: '',
+            columns: [],
+            has_headers: true,
+            delimiter: ','
+          }
         }
 
       case 'filter':

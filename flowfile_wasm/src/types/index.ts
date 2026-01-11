@@ -26,6 +26,15 @@ export interface ReadCsvSettings extends BaseNodeSettings {
   skip_rows: number
 }
 
+export interface ManualInputSettings extends BaseNodeSettings {
+  manual_input: {
+    data: string
+    columns: string[]
+    has_headers: boolean
+    delimiter: string
+  }
+}
+
 export interface FilterSettings extends BaseNodeSettings {
   filter_input: {
     mode: 'basic' | 'advanced'
@@ -155,6 +164,7 @@ export interface HeadSettings extends BaseNodeSettings {
 
 export type NodeSettings =
   | ReadCsvSettings
+  | ManualInputSettings
   | FilterSettings
   | SelectSettings
   | GroupBySettings

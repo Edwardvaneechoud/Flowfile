@@ -86,6 +86,7 @@ import { useFlowStore } from '../../stores/flow-store'
 // Icon mapping to files
 const iconMap: Record<string, string> = {
   read_csv: 'input_data.png',
+  manual_input: 'manual_input.png',
   filter: 'filter.png',
   select: 'select.png',
   group_by: 'group_by.png',
