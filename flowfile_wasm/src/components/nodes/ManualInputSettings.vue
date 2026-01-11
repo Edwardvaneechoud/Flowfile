@@ -331,6 +331,9 @@ function saveData() {
   // Store CSV for execution
   flowStore.setFileContent(props.nodeId, csvData)
 
+  // Update source node schema for reactive schema propagation
+  flowStore.setSourceNodeSchema(props.nodeId, fields)
+
   // Update JSON display
   jsonInput.value = JSON.stringify(tableAsJson.value, null, 2)
 }

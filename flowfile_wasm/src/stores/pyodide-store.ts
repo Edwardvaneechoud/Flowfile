@@ -15,7 +15,9 @@ export const usePyodideStore = defineStore('pyodide', () => {
   const error = ref<string | null>(null)
 
   async function initialize() {
-    if (isReady.value || isLoading.value) return
+    if (isReady.value || isLoading.value) {
+      return
+    }
 
     isLoading.value = true
     error.value = null
@@ -177,6 +179,38 @@ def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> Dict:
         "total_rows": len(df)
     }
 
+def format_error(node_type: str, node_id: int, error: Exception, df: Optional[pl.DataFrame] = None, column: str = None) -> str:
+    """Format error message with context and suggestions"""
+    error_str = str(error)
+    msg_parts = [f"{node_type.replace('_', ' ').title()} error on node #{node_id}:"]
+
+    # Check for common column-related errors
+    column_keywords = ['column', 'ColumnNotFoundError', 'not found', 'SchemaError']
+    is_column_error = any(kw.lower() in error_str.lower() for kw in column_keywords)
+
+    if is_column_error and df is not None:
+        available_cols = df.columns
+        msg_parts.append(f"'{column or 'unknown'}' - {error_str}")
+        msg_parts.append(f"Available columns: {', '.join(available_cols)}")
+
+        # Try to suggest similar column names
+        if column:
+            similar = [c for c in available_cols if column.lower() in c.lower() or c.lower() in column.lower()]
+            if similar:
+                msg_parts.append(f"Did you mean: {', '.join(similar)}?")
+    else:
+        msg_parts.append(error_str)
+
+    # Add suggestions based on error type
+    if 'type' in error_str.lower() and 'cannot' in error_str.lower():
+        msg_parts.append("Suggestion: Check that the column data types match the operation.")
+    elif 'null' in error_str.lower() or 'none' in error_str.lower():
+        msg_parts.append("Suggestion: Consider filtering out null values first.")
+    elif 'parse' in error_str.lower() or 'csv' in error_str.lower():
+        msg_parts.append("Suggestion: Check your CSV delimiter and header settings.")
+
+    return " ".join(msg_parts)
+
 # Node execution functions
 def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
     """Execute read CSV node with proper nested settings access"""
@@ -195,7 +229,7 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
         store_dataframe(node_id, df)
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("read_csv", node_id, e)}
 
 
 def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
@@ -214,18 +248,19 @@ def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dic
         store_dataframe(node_id, df)
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("manual_input", node_id, e)}
 
 def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute filter node"""
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Filter error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    filter_input = settings.get("filter_input", {})
+    mode = filter_input.get("mode", "basic")
+    field = None
+
     try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
-
-        filter_input = settings.get("filter_input", {})
-        mode = filter_input.get("mode", "basic")
-
         if mode == "advanced":
             expr = filter_input.get("advanced_filter", "")
             if expr:
@@ -293,15 +328,15 @@ def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("filter", node_id, e, df, field)}
 
 def execute_select(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute select node"""
-    try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Select error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         select_input = settings.get("select_input", [])
 
         if not select_input:
@@ -329,15 +364,15 @@ def execute_select(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("select", node_id, e, df)}
 
 def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute group by node"""
-    try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Group By error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         groupby_input = settings.get("groupby_input", {})
         agg_cols = groupby_input.get("agg_cols", [])
 
@@ -415,19 +450,19 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("group_by", node_id, e, df)}
 
 def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> Dict:
     """Execute join node"""
+    left_df = get_dataframe(left_id)
+    right_df = get_dataframe(right_id)
+
+    if left_df is None:
+        return {"success": False, "error": f"Join error on node #{node_id}: No left input data from node #{left_id}. Make sure the upstream node executed successfully."}
+    if right_df is None:
+        return {"success": False, "error": f"Join error on node #{node_id}: No right input data from node #{right_id}. Make sure the upstream node executed successfully."}
+
     try:
-        left_df = get_dataframe(left_id)
-        right_df = get_dataframe(right_id)
-
-        if left_df is None:
-            return {"success": False, "error": f"No left input data from node {left_id}"}
-        if right_df is None:
-            return {"success": False, "error": f"No right input data from node {right_id}"}
-
         join_input = settings.get("join_input", {})
         join_type = join_input.get("join_type", "inner")
         mapping = join_input.get("join_mapping", [])
@@ -435,10 +470,18 @@ def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> D
         right_suffix = join_input.get("right_suffix", "_right")
 
         if not mapping:
-            return {"success": False, "error": "No join columns specified"}
+            return {"success": False, "error": f"Join error on node #{node_id}: No join columns specified. Configure the join mapping in the node settings."}
 
         left_on = [m.get("left_col") for m in mapping]
         right_on = [m.get("right_col") for m in mapping]
+
+        # Validate columns exist
+        missing_left = [c for c in left_on if c not in left_df.columns]
+        missing_right = [c for c in right_on if c not in right_df.columns]
+        if missing_left:
+            return {"success": False, "error": f"Join error on node #{node_id}: Left columns not found: {missing_left}. Available columns: {list(left_df.columns)}"}
+        if missing_right:
+            return {"success": False, "error": f"Join error on node #{node_id}: Right columns not found: {missing_right}. Available columns: {list(right_df.columns)}"}
 
         result = left_df.join(
             right_df,
@@ -451,15 +494,15 @@ def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> D
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("join", node_id, e, left_df)}
 
 def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute sort node"""
-    try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Sort error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         sort_input = settings.get("sort_input", {})
         sort_cols = sort_input.get("sort_cols", [])
 
@@ -473,15 +516,15 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("sort", node_id, e, df)}
 
 def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute polars code node - runs arbitrary Polars code"""
-    try:
-        input_df = get_dataframe(input_id)
-        if input_df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    input_df = get_dataframe(input_id)
+    if input_df is None:
+        return {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         polars_code_input = settings.get("polars_code_input", {})
         code = polars_code_input.get("polars_code", "input_df")
 
@@ -528,20 +571,20 @@ def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
 
             # Validate result
             if not isinstance(result, pl.DataFrame):
-                return {"success": False, "error": f"Code must produce a DataFrame, got {type(result).__name__}. Assign result to 'output_df', 'result', or 'df'."}
+                return {"success": False, "error": f"Polars Code error on node #{node_id}: Code must produce a DataFrame, got {type(result).__name__}. Assign result to 'output_df', 'result', or 'df'. Available columns in input: {list(input_df.columns)}"}
 
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("polars_code", node_id, e, input_df)}
 
 def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute unique node"""
-    try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Unique error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         unique_input = settings.get("unique_input", {})
         subset = unique_input.get("subset", [])
         keep = unique_input.get("keep", "first")
@@ -555,15 +598,15 @@ def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("unique", node_id, e, df)}
 
 def execute_head(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute head/limit node"""
-    try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Head error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         head_input = settings.get("head_input", {})
         n = head_input.get("n", 10)
 
@@ -572,19 +615,19 @@ def execute_head(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("head", node_id, e, df)}
 
 def execute_preview(node_id: int, input_id: int) -> Dict:
     """Execute preview node - just passes through data"""
-    try:
-        df = get_dataframe(input_id)
-        if df is None:
-            return {"success": False, "error": f"No input data from node {input_id}"}
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Preview error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    try:
         store_dataframe(node_id, df)
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": format_error("preview", node_id, e, df)}
 `)
   }
 
@@ -599,8 +642,23 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
     if (!isReady.value) {
       throw new Error('Pyodide is not ready')
     }
-    const result = await pyodide.value.runPythonAsync(code)
-    return result?.toJs ? result.toJs({ dict_converter: Object.fromEntries }) : result
+
+    const rawResult = await pyodide.value.runPythonAsync(code)
+    return rawResult?.toJs ? rawResult.toJs({ dict_converter: Object.fromEntries }) : rawResult
+  }
+
+  function setGlobal(name: string, value: unknown): void {
+    if (!isReady.value) {
+      throw new Error('Pyodide is not ready')
+    }
+    pyodide.value.globals.set(name, value)
+  }
+
+  function deleteGlobal(name: string): void {
+    if (!isReady.value) {
+      throw new Error('Pyodide is not ready')
+    }
+    pyodide.value.globals.delete(name)
   }
 
   return {
@@ -611,6 +669,8 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
     error,
     initialize,
     runPython,
-    runPythonWithResult
+    runPythonWithResult,
+    setGlobal,
+    deleteGlobal
   }
 })

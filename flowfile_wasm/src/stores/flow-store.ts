@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
+import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
 import type {
   FlowNode,
   FlowEdge,
@@ -52,6 +53,10 @@ function cleanSettingInput(settings: NodeSettings): any {
   return cleaned
 }
 
+function toPythonJson(value: unknown): string {
+  return JSON.stringify(JSON.stringify(value))
+}
+
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
 
@@ -61,6 +66,7 @@ export const useFlowStore = defineStore('flow', () => {
   const nodeResults = ref<Map<number, NodeResult>>(new Map())
   const selectedNodeId = ref<number | null>(null)
   const isExecuting = ref(false)
+  const executionError = ref<string | null>(null)
   const nodeIdCounter = ref(0)
 
   // File content storage for CSV nodes
@@ -264,8 +270,37 @@ export const useFlowStore = defineStore('flow', () => {
 
   watch([nodes, edges, fileContents, nodeIdCounter], scheduleSave, { deep: true })
 
+  // Watch for edge changes to trigger schema propagation
+  watch(() => edges.value, () => {
+    debouncedPropagateSchemas()
+  }, { deep: true })
+
+  // Watch for node settings changes to trigger schema propagation
+  // We need to watch the settings of each node for changes
+  watch(
+    () => {
+      // Create a dependency on all node settings
+      const settingsSnapshot: Record<number, string> = {}
+      nodes.value.forEach((node, id) => {
+        // Stringify settings to detect deep changes
+        settingsSnapshot[id] = JSON.stringify(node.settings)
+      })
+      return settingsSnapshot
+    },
+    () => {
+      debouncedPropagateSchemas()
+    },
+    { deep: true }
+  )
+
   // Load on init
   loadFromStorage()
+
+  // Initial schema propagation after loading
+  // Use setTimeout to ensure nodeResults are populated from storage
+  setTimeout(() => {
+    propagateSchemas().catch(err => console.error('Initial schema propagation error:', err))
+  }, 0)
 
   // Getters
   const nodeList = computed(() => Array.from(nodes.value.values()))
@@ -397,6 +432,9 @@ export const useFlowStore = defineStore('flow', () => {
           targetNode.rightInputId = sourceId
         }
       }
+
+      // Trigger immediate schema propagation for new connection
+      debouncedPropagateSchemas()
     }
   }
 
@@ -411,21 +449,181 @@ export const useFlowStore = defineStore('flow', () => {
         targetNode.inputIds = targetNode.inputIds.filter(id => id !== sourceId)
         if (targetNode.leftInputId === sourceId) targetNode.leftInputId = undefined
         if (targetNode.rightInputId === sourceId) targetNode.rightInputId = undefined
+
+        // Clear inferred schema for disconnected node (unless it has execution data)
+        const existingResult = nodeResults.value.get(targetId)
+        if (existingResult && !existingResult.data) {
+          nodeResults.value.delete(targetId)
+        }
       }
 
       edges.value = edges.value.filter(e => e.id !== edgeId)
+
+      // Trigger schema propagation to update downstream nodes
+      debouncedPropagateSchemas()
     }
   }
 
   function setFileContent(nodeId: number, content: string) {
     fileContents.value.set(nodeId, content)
+
+    // Get node to check settings for CSV parsing options
+    const node = nodes.value.get(nodeId)
+    if (node && (node.type === 'read_csv' || node.type === 'manual_input')) {
+      let hasHeaders = true
+      let delimiter = ','
+
+      if (node.type === 'read_csv') {
+        const settings = node.settings as any
+        hasHeaders = settings?.received_table?.table_settings?.has_headers ?? true
+        delimiter = settings?.received_table?.table_settings?.delimiter ?? ','
+      }
+
+      // Infer schema from CSV content
+      const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
+      if (schema) {
+        // Set schema for source node
+        nodeResults.value.set(nodeId, {
+          success: true,
+          schema
+        })
+
+        // Trigger schema propagation to update downstream nodes
+        debouncedPropagateSchemas()
+      }
+    }
+  }
+
+  /**
+   * Set schema for a source node from raw data fields
+   * Used by manual input nodes when data structure changes
+   */
+  function setSourceNodeSchema(nodeId: number, fields: { name: string; data_type: string }[]) {
+    const schema = inferSchemaFromRawData(fields)
+    if (schema) {
+      nodeResults.value.set(nodeId, {
+        success: true,
+        schema
+      })
+
+      // Trigger schema propagation
+      debouncedPropagateSchemas()
+    }
   }
 
   function selectNode(id: number | null) {
     selectedNodeId.value = id
   }
 
+  /**
+   * Clean up orphaned Python dataframes for nodes that no longer exist in the flow.
+   * This helps prevent memory leaks when nodes are deleted.
+   */
+  async function cleanupOrphanedData() {
+    // Get current node IDs
+    const currentNodeIds = new Set(nodes.value.keys())
+
+    // Clean up file contents for removed nodes
+    for (const [nodeId] of fileContents.value) {
+      if (!currentNodeIds.has(nodeId)) {
+        fileContents.value.delete(nodeId)
+      }
+    }
+
+    // Clean up node results for removed nodes
+    for (const [nodeId] of nodeResults.value) {
+      if (!currentNodeIds.has(nodeId)) {
+        nodeResults.value.delete(nodeId)
+      }
+    }
+
+    // Clean up Python dataframes for removed nodes
+    if (pyodideStore.isReady) {
+      const nodeIdList = Array.from(currentNodeIds).join(',')
+      await pyodideStore.runPython(`
+# Clean up orphaned dataframes
+current_node_ids = {${nodeIdList}} if ${currentNodeIds.size} > 0 else set()
+orphaned_ids = [nid for nid in list(_dataframes.keys()) if nid not in current_node_ids]
+for nid in orphaned_ids:
+    clear_node(nid)
+`)
+    }
+  }
+
+  /**
+   * Detect cycles in the flow graph using DFS with a recursion stack.
+   * Returns null if no cycle, or an array of node IDs forming the cycle path.
+   */
+  function detectCycle(): number[] | null {
+    const visited = new Set<number>()
+    const recursionStack = new Set<number>()
+    const parent = new Map<number, number>()
+
+    function dfs(id: number): number | null {
+      visited.add(id)
+      recursionStack.add(id)
+
+      const node = nodes.value.get(id)
+      if (!node) {
+        recursionStack.delete(id)
+        return null
+      }
+
+      // Get all dependencies (nodes this node depends on)
+      const dependencies: number[] = [...node.inputIds]
+      if (node.leftInputId) dependencies.push(node.leftInputId)
+      if (node.rightInputId) dependencies.push(node.rightInputId)
+
+      for (const depId of dependencies) {
+        if (!visited.has(depId)) {
+          parent.set(depId, id)
+          const cycleStart = dfs(depId)
+          if (cycleStart !== null) return cycleStart
+        } else if (recursionStack.has(depId)) {
+          // Found a cycle - return the start of the cycle
+          parent.set(depId, id)
+          return depId
+        }
+      }
+
+      recursionStack.delete(id)
+      return null
+    }
+
+    // Check all nodes (handles disconnected components)
+    for (const [id] of nodes.value) {
+      if (!visited.has(id)) {
+        const cycleStart = dfs(id)
+        if (cycleStart !== null) {
+          // Reconstruct cycle path
+          const cyclePath: number[] = [cycleStart]
+          let current = parent.get(cycleStart)
+          while (current !== undefined && current !== cycleStart) {
+            cyclePath.push(current)
+            current = parent.get(current)
+          }
+          cyclePath.push(cycleStart) // Complete the cycle
+          return cyclePath
+        }
+      }
+    }
+
+    return null
+  }
+
   function getExecutionOrder(): number[] {
+    // Check for cycles first
+    const cycle = detectCycle()
+    if (cycle) {
+      const cycleDescription = cycle
+        .map(id => {
+          const node = nodes.value.get(id)
+          return node ? `${node.type} (#${id})` : `#${id}`
+        })
+        .join(' -> ')
+      throw new Error(`Circular dependency detected: ${cycleDescription}`)
+    }
+
     // Topological sort for execution order
     const visited = new Set<number>()
     const order: number[] = []
@@ -451,13 +649,241 @@ export const useFlowStore = defineStore('flow', () => {
     return order
   }
 
+  /**
+   * Sync a node's settings with its input schema
+   * This updates column-based settings (like select_input) when upstream schema changes
+   * Returns true if settings were modified (triggers re-set in nodes Map for reactivity)
+   */
+  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null): boolean {
+    const settings = node.settings as any
+    let modified = false
+
+    if (node.type === 'select') {
+      // Sync select_input with available columns
+      const currentSelectInput = settings.select_input || []
+      const existingColumns = new Map<string, any>(currentSelectInput.map((s: any) => [s.old_name, s]))
+      const inputColumnNames = new Set(inputSchema.map(c => c.name))
+
+      // Build new select_input array
+      const newSelectInput: any[] = []
+
+      // First, add all columns from input schema
+      inputSchema.forEach((col, index) => {
+        const existing = existingColumns.get(col.name)
+        if (existing) {
+          // Keep existing settings but update position and mark as available
+          newSelectInput.push({
+            ...existing,
+            data_type: col.data_type,
+            is_available: true,
+            position: (existing as any).position ?? index
+          })
+        } else {
+          // New column - add with defaults
+          newSelectInput.push({
+            old_name: col.name,
+            new_name: col.name,
+            data_type: col.data_type,
+            keep: true,
+            position: index,
+            is_available: true
+          })
+        }
+      })
+
+      // Mark columns that no longer exist in input as unavailable
+      currentSelectInput.forEach((s: any) => {
+        if (!inputColumnNames.has(s.old_name)) {
+          newSelectInput.push({
+            ...s,
+            is_available: false
+          })
+        }
+      })
+
+      // Sort by position
+      newSelectInput.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
+
+      // Update settings
+      settings.select_input = newSelectInput
+      node.settings = settings
+      modified = true
+    }
+
+    if (node.type === 'group_by') {
+      // Sync groupby agg_cols with available columns
+      const groupbyInput = settings.groupby_input || { agg_cols: [] }
+      const currentAggCols = groupbyInput.agg_cols || []
+      const inputColumnNames = new Set(inputSchema.map(c => c.name))
+
+      // Mark unavailable columns
+      const newAggCols = currentAggCols.map((col: any) => ({
+        ...col,
+        is_available: inputColumnNames.has(col.old_name)
+      }))
+
+      settings.groupby_input = { ...groupbyInput, agg_cols: newAggCols }
+      node.settings = settings
+      modified = true
+    }
+
+    if (node.type === 'join' && rightInputSchema) {
+      // Store available columns for join configuration UI
+      // The join settings UI can use getLeftInputSchema and getRightInputSchema
+      // but we can also store column availability here if needed
+    }
+
+    if (node.type === 'filter') {
+      // Check if the filtered field still exists
+      const filterInput = settings.filter_input
+      if (filterInput?.basic_filter?.field) {
+        const fieldExists = inputSchema.some(c => c.name === filterInput.basic_filter.field)
+        if (!fieldExists && filterInput.basic_filter.field !== '') {
+          // Field no longer exists - we could clear it or mark it
+          // For now, just leave it as is so user can see and fix
+        }
+      }
+    }
+
+    if (node.type === 'sort') {
+      // Check if sorted columns still exist
+      const sortInput = settings.sort_input
+      if (sortInput?.sort_cols) {
+        const inputColumnNames = new Set(inputSchema.map(c => c.name))
+        sortInput.sort_cols = sortInput.sort_cols.map((col: any) => ({
+          ...col,
+          is_available: inputColumnNames.has(col.column)
+        }))
+        settings.sort_input = sortInput
+        node.settings = settings
+        modified = true
+      }
+    }
+
+    return modified
+  }
+
+  /**
+   * Check if a node type requires lazy execution to determine its output schema
+   */
+  function requiresLazyExecution(nodeType: string): boolean {
+    return nodeType === 'polars_code' || nodeType === 'formula'
+  }
+
+  /**
+   * Propagate schemas through the flow graph
+   * This updates nodeResults with inferred schemas for all nodes that can be computed
+   * For polars_code/formula nodes, lazy execution is used when input data is available
+   */
+  async function propagateSchemas() {
+    const order = getExecutionOrder()
+
+    for (const nodeId of order) {
+      const node = nodes.value.get(nodeId)
+      if (!node) continue
+
+      // Skip source nodes - their schema comes from actual data
+      if (isSourceNode(node.type)) {
+        // Keep existing schema if present (from data load)
+        continue
+      }
+
+      // Get input schema from upstream node
+      let inputSchema: ColumnSchema[] | null = null
+      let rightInputSchema: ColumnSchema[] | null = null
+
+      // Get primary input schema and check if input has been executed
+      const primaryInputId = node.leftInputId || node.inputIds[0]
+      let inputHasData = false
+      if (primaryInputId) {
+        const inputResult = nodeResults.value.get(primaryInputId)
+        inputSchema = inputResult?.schema || null
+        inputHasData = !!(inputResult?.data)
+      }
+
+      // For join nodes, also get right input schema
+      if (node.type === 'join' && node.rightInputId) {
+        const rightResult = nodeResults.value.get(node.rightInputId)
+        rightInputSchema = rightResult?.schema || null
+      }
+
+      // Sync node settings with input schema (updates select_input, agg_cols, etc.)
+      if (inputSchema && inputSchema.length > 0) {
+        const modified = syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
+        // Trigger Vue reactivity by re-setting the node in the Map
+        if (modified) {
+          nodes.value.set(nodeId, { ...node })
+        }
+      }
+
+      // For polars_code/formula nodes, try lazy execution if input data is available
+      if (requiresLazyExecution(node.type) && inputHasData && pyodideStore.isReady) {
+        try {
+          // Execute the node to get its actual output schema
+          const result = await executeNode(nodeId)
+          if (result.success && result.schema) {
+            // Schema is already set by executeNode, continue to next node
+            continue
+          }
+        } catch (error) {
+          console.warn(`Lazy execution failed for node ${nodeId}:`, error)
+          // Fall through to keep existing result if any
+        }
+      }
+
+      // Infer output schema (for non-lazy nodes or when lazy execution isn't possible)
+      const inferredSchema = inferOutputSchema(
+        node.type,
+        inputSchema,
+        node.settings,
+        rightInputSchema
+      )
+
+      // Update nodeResults with inferred schema
+      if (inferredSchema) {
+        const existingResult = nodeResults.value.get(nodeId)
+        nodeResults.value.set(nodeId, {
+          success: true,
+          schema: inferredSchema,
+          // Preserve existing data if any (for display purposes)
+          data: existingResult?.data,
+          execution_time: existingResult?.execution_time
+        })
+      } else {
+        // inferOutputSchema returned null - this means:
+        // 1. For polars_code/formula: schema can only be known after execution (and input wasn't available)
+        // 2. For other nodes: input schema might be missing
+        //
+        // Keep any existing executed result (which has actual schema from Python)
+        // Only clear if there's no input AND no existing data
+        const existingResult = nodeResults.value.get(nodeId)
+        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data) {
+          nodeResults.value.delete(nodeId)
+        }
+        // If there's an existing result with actual data, keep it - the schema from
+        // execution is authoritative for nodes we can't infer (like polars_code)
+      }
+    }
+  }
+
+  // Debounced schema propagation to avoid excessive updates
+  // Using a wrapper to handle async
+  let propagateTimeout: ReturnType<typeof setTimeout> | null = null
+  function debouncedPropagateSchemas() {
+    if (propagateTimeout) clearTimeout(propagateTimeout)
+    propagateTimeout = setTimeout(() => {
+      propagateSchemas().catch(err => console.error('Schema propagation error:', err))
+      propagateTimeout = null
+    }, 50)
+  }
+
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
       return { success: false, error: 'Node not found' }
     }
 
-    const { runPythonWithResult } = pyodideStore
+    const { runPythonWithResult, setGlobal, deleteGlobal } = pyodideStore
 
     try {
       let result: NodeResult
@@ -468,14 +894,16 @@ export const useFlowStore = defineStore('flow', () => {
           if (!content) {
             return { success: false, error: 'No file loaded' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          result = await runPythonWithResult(`
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
 import json
-result = execute_read_csv(${nodeId}, '''${escapedContent}''', json.loads('${escapedSettings}'))
+result = execute_read_csv(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
           break
         }
 
@@ -484,14 +912,16 @@ result
           if (!content) {
             return { success: false, error: 'No data entered' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
-          result = await runPythonWithResult(`
+          setGlobal('_temp_content', content)
+          try {
+            result = await runPythonWithResult(`
 import json
-result = execute_manual_input(${nodeId}, '''${escapedContent}''', json.loads('${escapedSettings}'))
+result = execute_manual_input(${nodeId}, _temp_content, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          } finally {
+            deleteGlobal('_temp_content')
+          }
           break
         }
 
@@ -500,11 +930,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_filter(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_filter(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -515,11 +943,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_select(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_select(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -530,11 +956,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_group_by(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_group_by(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -546,11 +970,9 @@ result
           if (!leftId || !rightId) {
             return { success: false, error: 'Both left and right inputs required for join' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads('${escapedSettings}'))
+result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -561,11 +983,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_sort(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_sort(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -576,11 +996,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_polars_code(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_polars_code(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -591,11 +1009,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_unique(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_unique(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -606,11 +1022,9 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          const settings = JSON.stringify(node.settings)
-          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_head(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
+result = execute_head(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
@@ -651,19 +1065,29 @@ result
     }
 
     isExecuting.value = true
+    executionError.value = null
     nodeResults.value.clear()
 
     try {
+      // Clean up orphaned data before execution
+      await cleanupOrphanedData()
+
       // Clear Python state
       await pyodideStore.runPython('clear_all()')
 
       // Get execution order and execute nodes
       const order = getExecutionOrder()
+
       for (const nodeId of order) {
         await executeNode(nodeId)
       }
+      // After execution, propagate schemas to update downstream node settings
+      // This syncs select_input, agg_cols, etc. with actual executed schemas
+      await propagateSchemas()
     } catch (error) {
-      console.error('Flow execution error', error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      executionError.value = errorMessage
+      console.error('Flow execution error:', error)
     } finally {
       isExecuting.value = false
     }
@@ -920,6 +1344,12 @@ result
         deriveEdgesFromNodes(data.nodes)
       }
 
+      // Trigger schema propagation after import
+      // Note: Source nodes will need data loaded before schemas propagate
+      setTimeout(() => {
+        propagateSchemas().catch(err => console.error('Import schema propagation error:', err))
+      }, 0)
+
       return true
     } catch (error) {
       console.error('Failed to import flow', error)
@@ -1060,6 +1490,7 @@ result
     nodeResults,
     selectedNodeId,
     isExecuting,
+    executionError,
     fileContents,
 
     // Getters
@@ -1083,6 +1514,9 @@ result
     executeNode,
     executeFlow,
     clearFlow,
+    cleanupOrphanedData,
+    propagateSchemas,
+    setSourceNodeSchema,
 
     // Import/Export (FlowfileData format)
     exportToFlowfile,
