@@ -2,17 +2,6 @@
   <div class="app-container">
     <header class="app-header">
       <div class="header-left">
-        <div class="action-buttons">
-          <button class="action-btn" :disabled="!pyodideReady || isRunning" @click="runFlow" title="Run Flow">
-            <span v-if="isRunning" class="spinner small"></span>
-            <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="btn-icon">
-              <path d="M8 5v14l11-7z"/>
-            </svg>
-            <span class="btn-text">{{ isRunning ? 'Running...' : 'Run' }}</span>
-          </button>
-        </div>
-      </div>
-      <div class="header-center">
         <img src="/flowfile.png" alt="Flowfile" class="app-logo" />
         <h1 class="app-title">Flowfile</h1>
         <span class="app-subtitle">Browser-Based Data Designer</span>
@@ -55,20 +44,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import Canvas from './components/Canvas.vue'
 import { usePyodideStore } from './stores/pyodide-store'
-import { useFlowStore } from './stores/flow-store'
 import { useThemeStore } from './stores/theme-store'
 import { useTheme } from './composables/useTheme'
 import { storeToRefs } from 'pinia'
 
 const pyodideStore = usePyodideStore()
-const flowStore = useFlowStore()
 const themeStore = useThemeStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
-const isRunning = ref(false)
 
 onMounted(async () => {
   // Initialize theme
@@ -77,16 +63,6 @@ onMounted(async () => {
   // Initialize Pyodide
   await pyodideStore.initialize()
 })
-
-const runFlow = async () => {
-  if (!pyodideReady.value) return
-  isRunning.value = true
-  try {
-    await flowStore.executeFlow()
-  } finally {
-    isRunning.value = false
-  }
-}
 </script>
 
 <style scoped>
@@ -111,12 +87,6 @@ const runFlow = async () => {
 .header-left {
   display: flex;
   align-items: center;
-  min-width: 200px;
-}
-
-.header-center {
-  display: flex;
-  align-items: center;
   gap: 10px;
 }
 
@@ -124,62 +94,6 @@ const runFlow = async () => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 200px;
-}
-
-/* Action buttons - matching flowfile_frontend HeaderButtons.vue */
-.action-buttons {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-2);
-  height: 50px;
-  font-family: var(--font-family-base);
-}
-
-.action-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-1-5);
-  padding: var(--spacing-2) var(--spacing-3);
-  height: 34px;
-  background-color: var(--color-background-primary);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--border-radius-lg);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  box-shadow: var(--shadow-xs);
-}
-
-.action-btn:hover:not(:disabled) {
-  background-color: var(--color-background-tertiary);
-  border-color: var(--color-border-secondary);
-}
-
-.action-btn:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: none;
-}
-
-.action-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.action-btn .btn-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--color-text-secondary);
-}
-
-.action-btn:hover:not(:disabled) .btn-icon {
-  color: var(--color-text-primary);
-}
-
-.btn-text {
-  white-space: nowrap;
 }
 
 .app-logo {
@@ -224,12 +138,6 @@ const runFlow = async () => {
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-}
-
-.spinner.small {
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
 }
 
 @keyframes spin {

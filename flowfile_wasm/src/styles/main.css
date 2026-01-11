@@ -107,11 +107,8 @@
   --color-overlay: rgba(0, 0, 0, 0.5);
   --color-overlay-dark: rgba(0, 0, 0, 0.7);
 
-  /* Gradient colors for canvas background */
-  --color-gradient-canvas-1: #6f3381;
-  --color-gradient-canvas-2: #81c7d4;
-  --color-gradient-canvas-3: #fedfe1;
-  --color-gradient-canvas-4: #fffffb;
+  /* Canvas background color */
+  --color-canvas-background: #f0f4f8;
 
   /* Focus ring colors */
   --color-focus-ring: rgba(44, 116, 179, 0.1);
@@ -300,11 +297,8 @@
   /* Loading overlay in dark mode */
   --loading-bg: rgba(26, 26, 46, 0.8);
 
-  /* Dark mode gradient (darker, more muted) */
-  --color-gradient-canvas-1: #2d1f3d;
-  --color-gradient-canvas-2: #1a3a4a;
-  --color-gradient-canvas-3: #2d2a3a;
-  --color-gradient-canvas-4: #1a1a2e;
+  /* Dark mode canvas background */
+  --color-canvas-background: #1e2530;
 }
 
 /* Reset */
@@ -341,16 +335,10 @@ html, body, #app {
 }
 
 /* ==========================================================================
-   Static Canvas Background (matching flowfile_frontend colors)
+   Canvas Background
    ========================================================================== */
 .animated-bg-gradient {
-  background: linear-gradient(
-    122deg,
-    var(--color-gradient-canvas-1),
-    var(--color-gradient-canvas-2),
-    var(--color-gradient-canvas-3),
-    var(--color-gradient-canvas-4)
-  );
+  background: var(--color-canvas-background);
 }
 
 /* ==========================================================================
