@@ -341,7 +341,7 @@ html, body, #app {
 }
 
 /* ==========================================================================
-   Animated Canvas Background (matching flowfile_frontend)
+   Static Canvas Background (matching flowfile_frontend colors)
    ========================================================================== */
 .animated-bg-gradient {
   background: linear-gradient(
@@ -351,20 +351,6 @@ html, body, #app {
     var(--color-gradient-canvas-3),
     var(--color-gradient-canvas-4)
   );
-  background-size: 800% 800%;
-  animation: gradient 4s ease infinite;
-}
-
-@keyframes gradient {
-  0% {
-    background-position: 0% 22%;
-  }
-  50% {
-    background-position: 100% 79%;
-  }
-  100% {
-    background-position: 0% 22%;
-  }
 }
 
 /* ==========================================================================
