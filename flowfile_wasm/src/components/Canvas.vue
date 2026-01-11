@@ -114,6 +114,7 @@
       />
       <component
         :is="getSettingsComponent(selectedNode.type)"
+        :key="selectedNode.id"
         :node-id="selectedNode.id"
         :settings="selectedNode.settings"
         @update:settings="updateSettings"
