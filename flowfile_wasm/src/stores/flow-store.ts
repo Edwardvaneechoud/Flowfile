@@ -402,9 +402,10 @@ export const useFlowStore = defineStore('flow', () => {
           }
           const settings = JSON.stringify(node.settings)
           const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_read_csv(${nodeId}, '''${escapedContent}''', json.loads('${settings}'))
+result = execute_read_csv(${nodeId}, '''${escapedContent}''', json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -417,9 +418,10 @@ result
           }
           const settings = JSON.stringify(node.settings)
           const escapedContent = content.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_manual_input(${nodeId}, '''${escapedContent}''', json.loads('${settings}'))
+result = execute_manual_input(${nodeId}, '''${escapedContent}''', json.loads('${escapedSettings}'))
 result
 `)
           break
