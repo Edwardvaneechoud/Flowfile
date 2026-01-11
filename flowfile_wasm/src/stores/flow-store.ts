@@ -580,6 +580,113 @@ for nid in orphaned_ids:
   }
 
   /**
+   * Sync a node's settings with its input schema
+   * This updates column-based settings (like select_input) when upstream schema changes
+   */
+  function syncNodeSettingsWithSchema(node: FlowNode, inputSchema: ColumnSchema[], rightInputSchema?: ColumnSchema[] | null) {
+    const settings = node.settings as any
+
+    if (node.type === 'select') {
+      // Sync select_input with available columns
+      const currentSelectInput = settings.select_input || []
+      const existingColumns = new Map<string, any>(currentSelectInput.map((s: any) => [s.old_name, s]))
+      const inputColumnNames = new Set(inputSchema.map(c => c.name))
+
+      // Build new select_input array
+      const newSelectInput: any[] = []
+
+      // First, add all columns from input schema
+      inputSchema.forEach((col, index) => {
+        const existing = existingColumns.get(col.name)
+        if (existing) {
+          // Keep existing settings but update position and mark as available
+          newSelectInput.push({
+            ...existing,
+            data_type: col.data_type,
+            is_available: true,
+            position: (existing as any).position ?? index
+          })
+        } else {
+          // New column - add with defaults
+          newSelectInput.push({
+            old_name: col.name,
+            new_name: col.name,
+            data_type: col.data_type,
+            keep: true,
+            position: index,
+            is_available: true
+          })
+        }
+      })
+
+      // Mark columns that no longer exist in input as unavailable
+      currentSelectInput.forEach((s: any) => {
+        if (!inputColumnNames.has(s.old_name)) {
+          newSelectInput.push({
+            ...s,
+            is_available: false
+          })
+        }
+      })
+
+      // Sort by position
+      newSelectInput.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
+
+      // Update settings
+      settings.select_input = newSelectInput
+      node.settings = settings
+    }
+
+    if (node.type === 'group_by') {
+      // Sync groupby agg_cols with available columns
+      const groupbyInput = settings.groupby_input || { agg_cols: [] }
+      const currentAggCols = groupbyInput.agg_cols || []
+      const inputColumnNames = new Set(inputSchema.map(c => c.name))
+
+      // Mark unavailable columns
+      const newAggCols = currentAggCols.map((col: any) => ({
+        ...col,
+        is_available: inputColumnNames.has(col.old_name)
+      }))
+
+      settings.groupby_input = { ...groupbyInput, agg_cols: newAggCols }
+      node.settings = settings
+    }
+
+    if (node.type === 'join' && rightInputSchema) {
+      // Store available columns for join configuration UI
+      // The join settings UI can use getLeftInputSchema and getRightInputSchema
+      // but we can also store column availability here if needed
+    }
+
+    if (node.type === 'filter') {
+      // Check if the filtered field still exists
+      const filterInput = settings.filter_input
+      if (filterInput?.basic_filter?.field) {
+        const fieldExists = inputSchema.some(c => c.name === filterInput.basic_filter.field)
+        if (!fieldExists && filterInput.basic_filter.field !== '') {
+          // Field no longer exists - we could clear it or mark it
+          // For now, just leave it as is so user can see and fix
+        }
+      }
+    }
+
+    if (node.type === 'sort') {
+      // Check if sorted columns still exist
+      const sortInput = settings.sort_input
+      if (sortInput?.sort_cols) {
+        const inputColumnNames = new Set(inputSchema.map(c => c.name))
+        sortInput.sort_cols = sortInput.sort_cols.map((col: any) => ({
+          ...col,
+          is_available: inputColumnNames.has(col.column)
+        }))
+        settings.sort_input = sortInput
+        node.settings = settings
+      }
+    }
+  }
+
+  /**
    * Propagate schemas through the flow graph
    * This updates nodeResults with inferred schemas for all nodes that can be computed
    * without actually executing the flow
@@ -612,6 +719,11 @@ for nid in orphaned_ids:
       if (node.type === 'join' && node.rightInputId) {
         const rightResult = nodeResults.value.get(node.rightInputId)
         rightInputSchema = rightResult?.schema || null
+      }
+
+      // Sync node settings with input schema (updates select_input, agg_cols, etc.)
+      if (inputSchema && inputSchema.length > 0) {
+        syncNodeSettingsWithSchema(node, inputSchema, rightInputSchema)
       }
 
       // Infer output schema
