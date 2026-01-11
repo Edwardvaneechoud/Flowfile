@@ -14,7 +14,7 @@
         >
           <label class="checkbox-label" style="width: 100%; justify-content: space-between;">
             <span style="display: flex; align-items: center; gap: 8px;">
-              <input type="checkbox" :checked="col.isSelected" @click.stop />
+              <input type="checkbox" :checked="col.isSelected" @change="toggleColumn(col.name)" @click.stop />
               <span>{{ col.name }}</span>
             </span>
             <span class="column-type">{{ col.data_type }}</span>
@@ -53,7 +53,6 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize directly from props - no watch needed
 const subset = ref<string[]>(
   props.settings.unique_input?.subset ||
   props.settings.unique_input?.columns ||
