@@ -101,16 +101,19 @@ const columnsWithSelection = computed(() => {
 })
 
 function toggleColumn(name: string) {
+  console.log('[UniqueSettings] toggleColumn called with:', name)
   const idx = subset.value.indexOf(name)
   if (idx === -1) {
     subset.value.push(name)
   } else {
     subset.value.splice(idx, 1)
   }
+  console.log('[UniqueSettings] subset is now:', [...subset.value])
   emitUpdate()
 }
 
 function updateKeep(value: 'first' | 'last' | 'any' | 'none') {
+  console.log('[UniqueSettings] updateKeep called with:', value)
   keep.value = value
   emitUpdate()
 }
