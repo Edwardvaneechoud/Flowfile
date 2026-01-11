@@ -61,6 +61,7 @@ export const useFlowStore = defineStore('flow', () => {
 
           // Import from FlowfileData
           for (const flowfileNode of data.nodes) {
+            log('Storage', `Loading node ${flowfileNode.id}: type=${flowfileNode.type}, left_input_id=${flowfileNode.left_input_id}, right_input_id=${flowfileNode.right_input_id}`)
             const node: FlowNode = {
               id: flowfileNode.id,
               type: flowfileNode.type,
@@ -73,6 +74,7 @@ export const useFlowStore = defineStore('flow', () => {
               description: flowfileNode.description
             }
             nodes.value.set(flowfileNode.id, node)
+            log('Storage', `Node ${flowfileNode.id} stored with leftInputId=${node.leftInputId}, rightInputId=${node.rightInputId}`)
           }
 
           for (const conn of data.connections) {
@@ -92,12 +94,15 @@ export const useFlowStore = defineStore('flow', () => {
 
           // Restore node schemas for quick column access
           if (state.nodeSchemas) {
+            log('Storage', `Found ${state.nodeSchemas.length} node schemas to restore`)
             for (const [id, schema] of state.nodeSchemas) {
+              log('Storage', `Schema entry: id=${id} (type=${typeof id}), schema=${schema ? `${schema.length} cols` : 'null'}`)
               if (schema && schema.length > 0) {
                 nodeResults.value.set(id, { success: true, schema })
+                log('Storage', `Set nodeResults for id=${id}`)
               }
             }
-            log('Storage', `Restored schemas for ${state.nodeSchemas.length} nodes`)
+            log('Storage', `nodeResults keys after restore: ${Array.from(nodeResults.value.keys())}`)
           }
 
           // Restore counter
@@ -234,15 +239,26 @@ export const useFlowStore = defineStore('flow', () => {
 
   const getLeftInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
-    if (!node?.leftInputId) return []
+    log('Schema', `getLeftInputSchema(${nodeId}): leftInputId=${node?.leftInputId}, rightInputId=${node?.rightInputId}`)
+    if (!node?.leftInputId) {
+      log('Schema', `getLeftInputSchema(${nodeId}): no leftInputId - returning empty`)
+      return []
+    }
     const result = nodeResults.value.get(node.leftInputId)
+    log('Schema', `getLeftInputSchema(${nodeId}): result for ${node.leftInputId}=${result ? `found (${result.schema?.length || 0} cols)` : 'NOT FOUND'}`)
+    log('Schema', `getLeftInputSchema(${nodeId}): nodeResults keys=${Array.from(nodeResults.value.keys())}`)
     return result?.schema || []
   }
 
   const getRightInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
-    if (!node?.rightInputId) return []
+    log('Schema', `getRightInputSchema(${nodeId}): leftInputId=${node?.leftInputId}, rightInputId=${node?.rightInputId}`)
+    if (!node?.rightInputId) {
+      log('Schema', `getRightInputSchema(${nodeId}): no rightInputId - returning empty`)
+      return []
+    }
     const result = nodeResults.value.get(node.rightInputId)
+    log('Schema', `getRightInputSchema(${nodeId}): result for ${node.rightInputId}=${result ? `found (${result.schema?.length || 0} cols)` : 'NOT FOUND'}`)
     return result?.schema || []
   }
 

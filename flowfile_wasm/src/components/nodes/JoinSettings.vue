@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { JoinSettings, JoinType, JoinMapping, ColumnSchema } from '../../types'
 
@@ -95,6 +95,18 @@ const emit = defineEmits<{
 }>()
 
 const flowStore = useFlowStore()
+
+// Debug logging on mount
+onMounted(() => {
+  const node = flowStore.getNode(props.nodeId)
+  console.log('[JoinSettings] Node:', props.nodeId)
+  console.log('[JoinSettings] Node data:', node)
+  console.log('[JoinSettings] leftInputId:', node?.leftInputId)
+  console.log('[JoinSettings] rightInputId:', node?.rightInputId)
+  console.log('[JoinSettings] inputIds:', node?.inputIds)
+  console.log('[JoinSettings] Left schema:', flowStore.getLeftInputSchema(props.nodeId))
+  console.log('[JoinSettings] Right schema:', flowStore.getRightInputSchema(props.nodeId))
+})
 
 // Initialize directly from props - no watch needed
 const joinType = ref<JoinType>(props.settings.join_input?.join_type || props.settings.join_input?.how || 'inner')
