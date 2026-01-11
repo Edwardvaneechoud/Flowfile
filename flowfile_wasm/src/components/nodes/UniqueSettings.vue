@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { UniqueSettings, ColumnSchema } from '../../types'
 
@@ -53,7 +53,7 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize directly from props - no watch needed
+// Initialize from props
 const subset = ref<string[]>(
   props.settings.unique_input?.subset ||
   props.settings.unique_input?.columns ||
@@ -65,6 +65,17 @@ const keep = ref<'first' | 'last' | 'any' | 'none'>(
   'any'
 )
 const maintainOrder = ref(props.settings.unique_input?.maintain_order ?? true)
+
+// Watch for node changes to update local state when switching between unique nodes
+watch(() => props.nodeId, () => {
+  subset.value = props.settings.unique_input?.subset ||
+    props.settings.unique_input?.columns ||
+    []
+  keep.value = props.settings.unique_input?.keep ||
+    props.settings.unique_input?.strategy ||
+    'any'
+  maintainOrder.value = props.settings.unique_input?.maintain_order ?? true
+})
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
