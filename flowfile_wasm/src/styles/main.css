@@ -4,37 +4,84 @@
 @import '@vue-flow/minimap/dist/style.css';
 @import '@vue-flow/controls/dist/style.css';
 
-/* CSS Variables */
+/* CSS Variables - matching flowfile_frontend design tokens */
 :root {
+  /* Typography */
+  --font-family-base: "Roboto", "Source Sans Pro", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-base: 14px;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+
+  /* Background colors */
   --bg-primary: #f8f9fa;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #e9ecef;
-  --bg-hover: #f1f3f5;
+  --bg-tertiary: #f1f3f5;
+  --bg-hover: #f0f7ff;
+  --bg-muted: #fafafa;
+  --bg-selected: #e7f3ff;
 
-  --text-primary: #212529;
-  --text-secondary: #6c757d;
-  --text-muted: #adb5bd;
+  /* Text colors */
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a5568;
+  --text-tertiary: #718096;
+  --text-muted: #a0aec0;
+  --text-selected: #0c254a;
 
-  --border-color: #dee2e6;
-  --border-light: #e9ecef;
+  /* Border colors */
+  --border-color: #e2e8f0;
+  --border-light: #edf2f7;
+  --border-secondary: #cbd5e0;
 
-  --accent-color: #4a90d9;
-  --accent-hover: #3b7bc4;
-  --accent-light: rgba(74, 144, 217, 0.1);
+  /* Accent colors */
+  --accent-color: #0891b2;
+  --accent-hover: #0e7490;
+  --accent-light: #ecfeff;
 
-  --success-color: #4caf50;
-  --warning-color: #ff9800;
-  --error-color: #f44336;
+  /* Status colors */
+  --success-color: #10b981;
+  --success-light: #d1fae5;
+  --warning-color: #f59e0b;
+  --warning-light: #fef3c7;
+  --error-color: #ef4444;
+  --error-light: #fee2e2;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  /* Shadows */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
 
+  /* Border radius */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+  --radius-full: 9999px;
 
-  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Spacing */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 20px;
+  --spacing-6: 24px;
+
+  /* Transitions */
+  --transition-fast: 100ms;
+  --transition-base: 150ms;
+
+  /* Z-index */
+  --z-index-dropdown: 1000;
+  --z-index-modal: 1050;
+  --z-index-context-menu: 10000;
+
+  /* Table */
+  --table-header-bg: var(--bg-muted);
+  --table-row-hover: var(--bg-tertiary);
+  --table-border: var(--border-light);
 }
 
 /* Reset */
@@ -47,8 +94,8 @@
 html, body, #app {
   height: 100%;
   margin: 0;
-  font-family: var(--font-family);
-  font-size: 14px;
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
   color: var(--text-primary);
   background: var(--bg-primary);
 }
@@ -59,19 +106,275 @@ html, body, #app {
   transform-origin: bottom right;
 }
 
-/* Common Components */
+/* ==========================================================================
+   LISTBOX STYLES (from flowfile_frontend)
+   ========================================================================== */
+
+.listbox-wrapper {
+  position: relative;
+  overflow: visible;
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-lg);
+  margin: var(--spacing-1);
+  background-color: var(--bg-secondary);
+  padding: var(--spacing-2);
+  z-index: 1;
+}
+
+.listbox-subtitle {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-1) var(--spacing-4);
+  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  background-color: var(--bg-muted);
+  border-bottom: 1px solid var(--border-light);
+  width: 100%;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+  height: 32px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listbox {
+  border: none;
+  padding: 0;
+  margin: 0;
+  list-style-type: none;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  overflow-y: auto;
+  box-shadow: var(--shadow-sm);
+  max-height: 300px;
+  background-color: var(--bg-secondary);
+}
+
+.listbox li {
+  padding: var(--spacing-2) var(--spacing-4);
+  cursor: pointer;
+  background-color: var(--bg-secondary);
+  user-select: none;
+  border-bottom: 1px solid var(--border-light);
+  transition: background-color var(--transition-fast);
+  font-size: var(--font-size-sm);
+}
+
+.listbox li:last-child {
+  border-bottom: none;
+}
+
+.listbox li:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.listbox li.is-selected {
+  background-color: var(--bg-selected);
+  color: var(--text-selected);
+}
+
+/* Listbox scrollbar */
+.listbox::-webkit-scrollbar {
+  width: 6px;
+}
+
+.listbox::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.listbox::-webkit-scrollbar-thumb {
+  background-color: var(--border-color);
+  border-radius: var(--radius-full);
+}
+
+.listbox::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
+}
+
+/* ==========================================================================
+   STYLED TABLE (from flowfile_frontend)
+   ========================================================================== */
+
+.styled-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  line-height: 1.5;
+}
+
+.styled-table th,
+.styled-table td {
+  text-align: left;
+  padding: var(--spacing-1) var(--spacing-4);
+  border-bottom: 1px solid var(--table-border);
+  background-color: var(--bg-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  height: 32px;
+  vertical-align: middle;
+}
+
+.styled-table th:first-child,
+.styled-table td:first-child {
+  width: 35%;
+}
+
+.styled-table th:nth-child(2),
+.styled-table td:nth-child(2) {
+  width: 30%;
+}
+
+.styled-table th:last-child,
+.styled-table td:last-child {
+  width: 35%;
+  border-right: none;
+}
+
+.styled-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: var(--shadow-xs);
+  background-color: var(--table-header-bg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  height: 40px;
+  padding: var(--spacing-2) var(--spacing-4);
+}
+
+.styled-table td:not(:last-child) {
+  border-right: 1px solid var(--border-light);
+}
+
+.styled-table tr {
+  height: 32px;
+  transition: background-color var(--transition-fast);
+}
+
+.styled-table tbody tr:hover {
+  background-color: var(--table-row-hover);
+}
+
+.styled-table tbody tr:hover td {
+  background-color: transparent;
+}
+
+.table-wrapper {
+  max-height: 300px;
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-lg);
+  overflow: auto;
+  margin: var(--spacing-1);
+}
+
+/* ==========================================================================
+   CONTEXT MENU (from flowfile_frontend)
+   ========================================================================== */
+
+.context-menu {
+  position: fixed;
+  min-width: 120px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-index-context-menu);
+  overflow: hidden;
+  user-select: none;
+}
+
+.context-menu-header {
+  padding: var(--spacing-2) var(--spacing-3);
+  font-weight: var(--font-weight-semibold);
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.context-menu ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.context-menu li {
+  padding: var(--spacing-2) var(--spacing-4);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu li:hover:not(.disabled) {
+  background-color: var(--bg-tertiary);
+}
+
+.context-menu button {
+  display: block;
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu button:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-2) var(--spacing-3);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  transition: background-color var(--transition-fast);
+}
+
+.context-menu-item:hover {
+  background-color: var(--bg-tertiary);
+}
+
+.context-menu-divider {
+  height: 1px;
+  margin: var(--spacing-1) 0;
+  background-color: var(--border-color);
+}
+
+.context-menu-item.danger {
+  color: var(--error-color);
+}
+
+.context-menu-item.danger:hover {
+  background-color: var(--error-light);
+}
+
+/* ==========================================================================
+   COMMON COMPONENTS
+   ========================================================================== */
+
+/* Buttons */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 8px 16px;
-  font-size: 13px;
-  font-weight: 500;
+  padding: var(--spacing-2) var(--spacing-4);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-base);
 }
 
 .btn-primary {
@@ -92,37 +395,83 @@ html, body, #app {
   background: var(--border-color);
 }
 
+.btn-small {
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-size-xs);
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
+/* Action buttons (for tables, lists) */
+.action-button {
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-base);
+  transition: all var(--transition-base);
+}
+
+.action-button.add-button {
+  color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.action-button.add-button:hover {
+  background-color: var(--success-color);
+  color: white;
+}
+
+.action-button.remove-button {
+  color: var(--error-color);
+  border-color: var(--error-color);
+}
+
+.action-button.remove-button:hover {
+  background-color: var(--error-color);
+  color: white;
+}
+
 /* Input styles */
 .input {
   width: 100%;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-md);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  transition: border-color 0.2s;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
 }
 
 .input:focus {
   outline: none;
   border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.1);
 }
 
 .input::placeholder {
   color: var(--text-muted);
 }
 
+.input-sm {
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-size-sm);
+}
+
 /* Select styles */
 .select {
   width: 100%;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-md);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
@@ -133,6 +482,63 @@ html, body, #app {
 .select:focus {
   outline: none;
   border-color: var(--accent-color);
+}
+
+.select-sm {
+  padding: var(--spacing-1) var(--spacing-2);
+  font-size: var(--font-size-sm);
+}
+
+/* Form groups */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-1);
+}
+
+.form-group label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
+  align-items: flex-end;
+}
+
+.form-field {
+  flex: 1;
+  min-width: 150px;
+  max-width: 250px;
+}
+
+/* Filter section styles */
+.filter-section {
+  padding: var(--spacing-2) 0;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
+  align-items: flex-end;
+}
+
+.filter-field {
+  flex: 1;
+  min-width: 150px;
+  max-width: 250px;
+}
+
+.filter-label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-1);
 }
 
 /* Card styles */
@@ -155,69 +561,150 @@ html, body, #app {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: var(--spacing-3) var(--spacing-4);
   border-bottom: 1px solid var(--border-light);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .panel-body {
-  padding: 16px;
+  padding: var(--spacing-4);
 }
 
-/* Table styles */
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
+/* Help text */
+.help-text {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
-.table th,
-.table td {
-  padding: 8px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--border-light);
+/* Settings form container */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
 }
 
-.table th {
+/* No data states */
+.no-columns,
+.no-data,
+.no-aggs {
+  padding: var(--spacing-4);
+  text-align: center;
+  color: var(--text-secondary);
   background: var(--bg-tertiary);
-  font-weight: 500;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+}
+
+/* Column list for selectors */
+.column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 250px;
+  overflow-y: auto;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.column-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.column-item:hover {
+  background-color: var(--bg-hover);
+}
+
+.column-item.selected,
+.column-item.is-selected {
+  background-color: var(--bg-selected);
+  color: var(--text-selected);
+}
+
+.column-name {
+  flex: 1;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+}
+
+.column-type {
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
-.table tr:hover td {
-  background: var(--bg-hover);
-}
-
-/* Context menu */
-.context-menu {
-  position: fixed;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  min-width: 150px;
-  z-index: 10000;
-  overflow: hidden;
-}
-
-.context-menu-item {
+/* Checkbox label */
+.checkbox-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
+  gap: var(--spacing-2);
   cursor: pointer;
-  transition: background 0.15s;
 }
 
-.context-menu-item:hover {
-  background: var(--bg-hover);
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-color);
 }
 
-.context-menu-divider {
-  height: 1px;
-  background: var(--border-light);
-  margin: 4px 0;
+/* Switch (toggle) */
+.switch-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+/* Join specific styles */
+.join-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-4);
+}
+
+.join-type-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+.join-type-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
+  min-width: 70px;
+}
+
+.selectors-header {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--spacing-2) var(--spacing-4);
+  background-color: var(--bg-muted);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.selectors-title {
+  flex: 1;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.selectors-container {
+  padding: var(--spacing-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.selectors-row {
+  display: flex;
+  gap: var(--spacing-3);
+  align-items: center;
 }
 
 /* Scrollbar */
@@ -232,7 +719,7 @@ html, body, #app {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -256,7 +743,7 @@ html, body, #app {
 /* Animation classes */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s;
+  transition: opacity var(--transition-base);
 }
 
 .fade-enter-from,
@@ -266,7 +753,7 @@ html, body, #app {
 
 .slide-enter-active,
 .slide-leave-active {
-  transition: transform 0.2s;
+  transition: transform var(--transition-base);
 }
 
 .slide-enter-from,

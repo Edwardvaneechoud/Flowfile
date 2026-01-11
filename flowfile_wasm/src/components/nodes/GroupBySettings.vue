@@ -1,80 +1,80 @@
 <template>
-  <div class="settings-form">
-    <div class="form-group">
-      <label>Available Columns</label>
-      <div class="help-text">Right-click to add aggregations</div>
-    </div>
+  <div class="listbox-wrapper">
+    <div class="listbox-subtitle">Available Columns</div>
 
     <div v-if="columns.length === 0" class="no-columns">
       No input columns available. Connect an input node first.
     </div>
 
-    <div v-else class="column-list">
-      <div
+    <ul v-else class="listbox">
+      <li
         v-for="col in columns"
         :key="col.name"
-        class="column-item"
-        :class="{ selected: selectedColumns.includes(col.name) }"
+        :class="{ 'is-selected': selectedColumns.includes(col.name) }"
         @click="toggleColumn(col.name)"
         @contextmenu.prevent="showContextMenu($event, col.name)"
       >
-        <span class="column-name">{{ col.name }}</span>
-        <span class="column-type">{{ col.data_type }}</span>
-      </div>
-    </div>
+        {{ col.name }} ({{ col.data_type }})
+      </li>
+    </ul>
 
-    <div class="form-group">
-      <label>Aggregations</label>
-    </div>
+    <div class="listbox-subtitle" style="margin-top: 12px;">Settings</div>
 
     <div v-if="aggCols.length === 0" class="no-aggs">
       No aggregations defined. Right-click on columns above to add.
     </div>
 
-    <table v-else class="agg-table">
-      <thead>
-        <tr>
-          <th>Column</th>
-          <th>Aggregation</th>
-          <th>Output Name</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(agg, idx) in aggCols" :key="idx">
-          <td>{{ agg.old_name }}</td>
-          <td>
-            <select v-model="agg.agg" @change="emitUpdate" class="select-sm">
-              <option v-for="opt in aggOptions" :key="opt" :value="opt">{{ opt }}</option>
-            </select>
-          </td>
-          <td>
-            <input type="text" v-model="agg.new_name" @input="emitUpdate" class="input-sm" />
-          </td>
-          <td>
-            <button class="remove-btn" @click="removeAgg(idx)">×</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-else class="table-wrapper">
+      <table class="styled-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Action</th>
+            <th>Output Field Name</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(agg, idx) in aggCols" :key="idx" @contextmenu.prevent="openRowContextMenu($event, idx)">
+            <td>{{ agg.old_name }}</td>
+            <td>
+              <select v-model="agg.agg" @change="emitUpdate" class="select-sm">
+                <option v-for="opt in aggOptions" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </td>
+            <td>
+              <input type="text" v-model="agg.new_name" @input="emitUpdate" class="input-sm" />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-    <!-- Context Menu -->
+    <!-- Context Menu for columns -->
     <div
       v-if="contextMenu.show"
       class="context-menu"
       :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
     >
-      <div class="context-menu-item" @click="addAgg('groupby')">Group By</div>
-      <div class="context-menu-divider"></div>
-      <div class="context-menu-item" @click="addAgg('sum')">Sum</div>
-      <div class="context-menu-item" @click="addAgg('count')">Count</div>
-      <div class="context-menu-item" @click="addAgg('mean')">Mean</div>
-      <div class="context-menu-item" @click="addAgg('min')">Min</div>
-      <div class="context-menu-item" @click="addAgg('max')">Max</div>
-      <div class="context-menu-item" @click="addAgg('median')">Median</div>
-      <div class="context-menu-item" @click="addAgg('first')">First</div>
-      <div class="context-menu-item" @click="addAgg('last')">Last</div>
-      <div class="context-menu-item" @click="addAgg('n_unique')">N Unique</div>
+      <button @click="addAgg('groupby')">Group by</button>
+      <button @click="addAgg('sum')">Sum</button>
+      <button @click="addAgg('count')">Count</button>
+      <button @click="addAgg('mean')">Mean</button>
+      <button @click="addAgg('min')">Min</button>
+      <button @click="addAgg('max')">Max</button>
+      <button @click="addAgg('median')">Median</button>
+      <button @click="addAgg('first')">First</button>
+      <button @click="addAgg('last')">Last</button>
+      <button @click="addAgg('n_unique')">N Unique</button>
+      <button @click="addAgg('concat')">Concat</button>
+    </div>
+
+    <!-- Context Menu for rows -->
+    <div
+      v-if="showContextMenuRemove"
+      class="context-menu"
+      :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
+    >
+      <button @click="removeRow">Remove</button>
     </div>
   </div>
 </template>
@@ -98,6 +98,9 @@ const flowStore = useFlowStore()
 const selectedColumns = ref<string[]>([])
 const aggCols = ref<AggColumn[]>(props.settings.groupby_input?.agg_cols || [])
 const contextMenu = ref({ show: false, x: 0, y: 0, column: '' })
+const showContextMenuRemove = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuRowIndex = ref<number | null>(null)
 
 const aggOptions: AggType[] = ['groupby', 'sum', 'count', 'mean', 'min', 'max', 'median', 'first', 'last', 'n_unique', 'concat']
 
@@ -131,6 +134,23 @@ function showContextMenu(event: MouseEvent, column: string) {
 
 function hideContextMenu() {
   contextMenu.value.show = false
+  showContextMenuRemove.value = false
+}
+
+function openRowContextMenu(event: MouseEvent, index: number) {
+  event.preventDefault()
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+  contextMenuRowIndex.value = index
+  showContextMenuRemove.value = true
+}
+
+function removeRow() {
+  if (contextMenuRowIndex.value !== null) {
+    aggCols.value.splice(contextMenuRowIndex.value, 1)
+    emitUpdate()
+  }
+  showContextMenuRemove.value = false
+  contextMenuRowIndex.value = null
 }
 
 function addAgg(aggType: AggType) {
@@ -144,11 +164,6 @@ function addAgg(aggType: AggType) {
   })
 
   hideContextMenu()
-  emitUpdate()
-}
-
-function removeAgg(index: number) {
-  aggCols.value.splice(index, 1)
   emitUpdate()
 }
 
@@ -173,135 +188,5 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.form-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.help-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.no-columns, .no-aggs {
-  padding: 16px;
-  text-align: center;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  font-size: 13px;
-}
-
-.column-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 200px;
-  overflow-y: auto;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-}
-
-.column-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.column-item:hover {
-  background: var(--bg-hover);
-}
-
-.column-item.selected {
-  background: var(--accent-light);
-}
-
-.column-name {
-  font-size: 13px;
-}
-
-.column-type {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.agg-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.agg-table th,
-.agg-table td {
-  padding: 8px;
-  text-align: left;
-  border-bottom: 1px solid var(--border-light);
-}
-
-.agg-table th {
-  background: var(--bg-tertiary);
-  font-weight: 500;
-}
-
-.select-sm, .input-sm {
-  padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-}
-
-.input-sm {
-  width: 100%;
-}
-
-.remove-btn {
-  background: none;
-  border: none;
-  color: var(--error-color);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.remove-btn:hover {
-  opacity: 0.8;
-}
-
-.context-menu {
-  position: fixed;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  min-width: 120px;
-  z-index: 1000;
-  overflow: hidden;
-}
-
-.context-menu-item {
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.context-menu-item:hover {
-  background: var(--bg-hover);
-}
-
-.context-menu-divider {
-  height: 1px;
-  background: var(--border-light);
-  margin: 4px 0;
-}
+/* Component uses global styles from main.css */
 </style>

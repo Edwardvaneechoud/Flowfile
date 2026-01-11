@@ -1,66 +1,76 @@
 <template>
-  <div class="settings-form">
-    <div class="form-group">
+  <div class="listbox-wrapper">
+    <div class="switch-wrapper" style="margin-bottom: 12px;">
       <label class="checkbox-label">
         <input type="checkbox" v-model="isAdvanced" @change="handleModeChange" />
-        <span>Advanced Filter</span>
+        <span>Advanced filter options</span>
       </label>
     </div>
 
     <template v-if="!isAdvanced">
-      <div class="form-group">
-        <label>Column</label>
-        <select v-model="basicFilter.field" @change="emitUpdate" class="select">
-          <option value="">Select column...</option>
-          <option v-for="col in columns" :key="col.name" :value="col.name">
-            {{ col.name }} ({{ col.data_type }})
-          </option>
-        </select>
-      </div>
+      <div class="filter-section">
+        <div class="filter-row">
+          <!-- Column Selector -->
+          <div class="filter-field">
+            <label class="filter-label">Column</label>
+            <select v-model="basicFilter.field" @change="emitUpdate" class="select">
+              <option value="">Select column...</option>
+              <option v-for="col in columns" :key="col.name" :value="col.name">
+                {{ col.name }} ({{ col.data_type }})
+              </option>
+            </select>
+          </div>
 
-      <div class="form-group">
-        <label>Operator</label>
-        <select v-model="basicFilter.operator" @change="emitUpdate" class="select">
-          <option v-for="op in operators" :key="op.value" :value="op.value">
-            {{ op.label }}
-          </option>
-        </select>
-      </div>
+          <!-- Operator Selector -->
+          <div class="filter-field">
+            <label class="filter-label">Operator</label>
+            <select v-model="basicFilter.operator" @change="emitUpdate" class="select">
+              <option v-for="op in operators" :key="op.value" :value="op.value">
+                {{ op.label }}
+              </option>
+            </select>
+          </div>
 
-      <div v-if="showValueInput" class="form-group">
-        <label>Value</label>
-        <input
-          type="text"
-          v-model="basicFilter.value"
-          @input="emitUpdate"
-          class="input"
-          :placeholder="valuePlaceholder"
-        />
-      </div>
+          <!-- Value Input (shown for most operators) -->
+          <div v-if="showValueInput" class="filter-field">
+            <label class="filter-label">Value</label>
+            <input
+              type="text"
+              v-model="basicFilter.value"
+              @input="emitUpdate"
+              class="input"
+              :placeholder="valuePlaceholder"
+            />
+          </div>
 
-      <div v-if="showValue2Input" class="form-group">
-        <label>And</label>
-        <input
-          type="text"
-          v-model="basicFilter.value2"
-          @input="emitUpdate"
-          class="input"
-          placeholder="End value"
-        />
-      </div>
+          <!-- Second Value Input (for BETWEEN) -->
+          <div v-if="showValue2Input" class="filter-field">
+            <label class="filter-label">And</label>
+            <input
+              type="text"
+              v-model="basicFilter.value2"
+              @input="emitUpdate"
+              class="input"
+              placeholder="End value"
+            />
+          </div>
+        </div>
 
-      <div v-if="helpText" class="help-text">{{ helpText }}</div>
+        <!-- Help text for special operators -->
+        <div v-if="helpText" class="help-text" style="margin-top: 8px;">{{ helpText }}</div>
+      </div>
     </template>
 
     <template v-else>
+      <div class="listbox-subtitle">Advanced filter</div>
       <div class="form-group">
-        <label>Polars Expression</label>
         <textarea
           v-model="advancedFilter"
           @input="emitUpdate"
-          class="textarea"
+          class="input"
           rows="5"
           placeholder="e.g., pl.col('age') > 30"
+          style="min-height: 120px; resize: vertical;"
         ></textarea>
         <div class="help-text">
           Use Polars expressions like pl.col('column_name') > value
@@ -179,59 +189,5 @@ function emitUpdate() {
 </script>
 
 <style scoped>
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.checkbox-label input {
-  width: 16px;
-  height: 16px;
-}
-
-.input, .select, .textarea {
-  width: 100%;
-  padding: 8px 12px;
-  font-size: 13px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  font-family: inherit;
-}
-
-.input:focus, .select:focus, .textarea:focus {
-  outline: none;
-  border-color: var(--accent-color);
-}
-
-.textarea {
-  resize: vertical;
-  min-height: 80px;
-}
-
-.help-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
+/* Component uses global styles from main.css */
 </style>

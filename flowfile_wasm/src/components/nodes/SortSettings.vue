@@ -1,56 +1,78 @@
 <template>
-  <div class="settings-form">
-    <div class="form-group">
-      <label>Sort Columns</label>
-      <div class="help-text">Click columns to add sort order</div>
-    </div>
+  <div class="listbox-wrapper">
+    <div class="listbox-subtitle">Columns</div>
 
     <div v-if="columns.length === 0" class="no-columns">
       No input columns available. Connect an input node first.
     </div>
 
-    <div v-else class="column-list">
-      <div
+    <ul v-else class="listbox">
+      <li
         v-for="col in columns"
         :key="col.name"
-        class="column-item"
-        @click="addSortColumn(col.name)"
+        :class="{ 'is-selected': selectedColumns.includes(col.name) }"
+        @click="handleItemClick(col.name)"
+        @contextmenu.prevent="openContextMenu($event, col.name)"
       >
-        <span class="column-name">{{ col.name }}</span>
-        <span class="column-type">{{ col.data_type }}</span>
-      </div>
+        {{ col.name }} ({{ col.data_type }})
+      </li>
+    </ul>
+
+    <div class="listbox-subtitle" style="margin-top: 12px;">Settings</div>
+
+    <div v-if="sortCols.length === 0" class="no-data">
+      No sort columns selected. Click or right-click on columns above to add.
     </div>
 
-    <div v-if="sortCols.length > 0" class="sort-list">
-      <div class="form-group">
-        <label>Sort Order</label>
-      </div>
-      <div
-        v-for="(sort, idx) in sortCols"
-        :key="idx"
-        class="sort-item"
-        draggable="true"
-        @dragstart="onDragStart(idx)"
-        @dragover.prevent
-        @drop="onDrop(idx)"
-      >
-        <div class="drag-handle">⋮⋮</div>
-        <span class="sort-column">{{ sort.column }}</span>
-        <button
-          class="sort-direction"
-          :class="{ desc: sort.descending }"
-          @click="toggleDirection(idx)"
-        >
-          {{ sort.descending ? '↓ DESC' : '↑ ASC' }}
-        </button>
-        <button class="remove-btn" @click="removeSortColumn(idx)">×</button>
-      </div>
+    <div v-else class="table-wrapper">
+      <table class="styled-table">
+        <thead>
+          <tr>
+            <th>Field</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="(sort, idx) in sortCols"
+            :key="idx"
+            @contextmenu.prevent="openRowContextMenu($event, idx)"
+          >
+            <td>{{ sort.column }}</td>
+            <td>
+              <select v-model="sort.descending" @change="emitUpdate" class="select-sm">
+                <option :value="false">Ascending</option>
+                <option :value="true">Descending</option>
+              </select>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Context Menu for columns -->
+    <div
+      v-if="showContextMenu"
+      class="context-menu"
+      :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
+    >
+      <button @click="setSortSettings(false)">Ascending</button>
+      <button @click="setSortSettings(true)">Descending</button>
+    </div>
+
+    <!-- Context Menu for rows -->
+    <div
+      v-if="showContextMenuRemove"
+      class="context-menu"
+      :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
+    >
+      <button @click="removeRow">Remove</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { SortSettings, SortColumn, ColumnSchema } from '../../types'
 
@@ -65,50 +87,76 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-const sortCols = ref<SortColumn[]>(props.settings.sort_input?.sort_cols || [])
-const dragIndex = ref<number | null>(null)
+const sortCols = ref<SortColumn[]>([])
+const selectedColumns = ref<string[]>([])
+const showContextMenu = ref(false)
+const showContextMenuRemove = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const contextMenuColumn = ref<string | null>(null)
+const contextMenuRowIndex = ref<number | null>(null)
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-watch(() => props.settings.sort_input?.sort_cols, (newCols) => {
-  if (newCols) {
-    sortCols.value = [...newCols]
+// Initialize from props
+watch(() => props.settings.sort_input, (newInput) => {
+  if (newInput && newInput.sort_cols) {
+    sortCols.value = newInput.sort_cols.map(s => ({
+      column: s.column,
+      descending: s.descending
+    }))
   }
-}, { deep: true })
+}, { deep: true, immediate: true })
 
-function addSortColumn(name: string) {
-  if (sortCols.value.some(s => s.column === name)) return
-
-  sortCols.value.push({
-    column: name,
-    descending: false
-  })
-  emitUpdate()
+function handleItemClick(columnName: string) {
+  const idx = selectedColumns.value.indexOf(columnName)
+  if (idx === -1) {
+    selectedColumns.value = [columnName]
+  } else {
+    selectedColumns.value = []
+  }
 }
 
-function toggleDirection(index: number) {
-  sortCols.value[index].descending = !sortCols.value[index].descending
-  emitUpdate()
+function openContextMenu(event: MouseEvent, columnName: string) {
+  event.preventDefault()
+  if (!selectedColumns.value.includes(columnName)) {
+    selectedColumns.value = [columnName]
+  }
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+  contextMenuColumn.value = columnName
+  showContextMenu.value = true
 }
 
-function removeSortColumn(index: number) {
-  sortCols.value.splice(index, 1)
-  emitUpdate()
+function openRowContextMenu(event: MouseEvent, index: number) {
+  event.preventDefault()
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+  contextMenuRowIndex.value = index
+  showContextMenuRemove.value = true
 }
 
-function onDragStart(index: number) {
-  dragIndex.value = index
+function hideContextMenu() {
+  showContextMenu.value = false
+  showContextMenuRemove.value = false
+  contextMenuColumn.value = null
 }
 
-function onDrop(targetIndex: number) {
-  if (dragIndex.value === null || dragIndex.value === targetIndex) return
+function setSortSettings(descending: boolean) {
+  const column = contextMenuColumn.value
+  if (column) {
+    sortCols.value.push({ column, descending })
+    emitUpdate()
+  }
+  hideContextMenu()
+}
 
-  const item = sortCols.value.splice(dragIndex.value, 1)[0]
-  sortCols.value.splice(targetIndex, 0, item)
-  dragIndex.value = null
-  emitUpdate()
+function removeRow() {
+  if (contextMenuRowIndex.value !== null) {
+    sortCols.value.splice(contextMenuRowIndex.value, 1)
+    emitUpdate()
+  }
+  showContextMenuRemove.value = false
+  contextMenuRowIndex.value = null
 }
 
 function emitUpdate() {
@@ -116,123 +164,24 @@ function emitUpdate() {
     ...props.settings,
     is_setup: sortCols.value.length > 0,
     sort_input: {
-      sort_cols: [...sortCols.value]
+      sort_cols: sortCols.value.map(s => ({
+        column: s.column,
+        descending: s.descending
+      }))
     }
   }
   emit('update:settings', settings)
 }
+
+onMounted(() => {
+  document.addEventListener('click', hideContextMenu)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', hideContextMenu)
+})
 </script>
 
 <style scoped>
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.form-group label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.help-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.no-columns {
-  padding: 16px;
-  text-align: center;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-}
-
-.column-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 200px;
-  overflow-y: auto;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-}
-
-.column-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.column-item:hover {
-  background: var(--bg-hover);
-}
-
-.column-name {
-  font-size: 13px;
-}
-
-.column-type {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.sort-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sort-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
-  cursor: grab;
-}
-
-.drag-handle {
-  color: var(--text-muted);
-  cursor: grab;
-}
-
-.sort-column {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.sort-direction {
-  padding: 4px 8px;
-  font-size: 11px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.sort-direction:hover {
-  border-color: var(--accent-color);
-}
-
-.sort-direction.desc {
-  background: var(--accent-color);
-  color: white;
-  border-color: var(--accent-color);
-}
-
-.remove-btn {
-  background: none;
-  border: none;
-  color: var(--error-color);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0 4px;
-}
+/* Component uses global styles from main.css */
 </style>
