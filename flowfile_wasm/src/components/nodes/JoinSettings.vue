@@ -62,17 +62,6 @@
         + Add join condition
       </button>
     </div>
-
-    <div class="settings-section" style="margin-top: 12px;">
-      <div class="settings-row">
-        <span class="settings-label">Left Suffix</span>
-        <input type="text" :value="leftSuffix" @input="updateLeftSuffix(($event.target as HTMLInputElement).value)" class="input settings-input" />
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">Right Suffix</span>
-        <input type="text" :value="rightSuffix" @input="updateRightSuffix(($event.target as HTMLInputElement).value)" class="input settings-input" />
-      </div>
-    </div>
   </div>
 </template>
 
@@ -99,8 +88,6 @@ const joinMapping = ref<JoinMapping[]>(
     ? props.settings.join_input.join_mapping.map(m => ({ left_col: m.left_col, right_col: m.right_col }))
     : [{ left_col: '', right_col: '' }] // Start with one empty row
 )
-const leftSuffix = ref(props.settings.join_input?.left_suffix || '_left')
-const rightSuffix = ref(props.settings.join_input?.right_suffix || '_right')
 
 const leftColumns = computed<ColumnSchema[]>(() => {
   return flowStore.getLeftInputSchema(props.nodeId)
@@ -132,16 +119,6 @@ function updateRightCol(index: number, value: string) {
   emitUpdate()
 }
 
-function updateLeftSuffix(value: string) {
-  leftSuffix.value = value
-  emitUpdate()
-}
-
-function updateRightSuffix(value: string) {
-  rightSuffix.value = value
-  emitUpdate()
-}
-
 function addJoinCondition() {
   joinMapping.value.push({
     left_col: '',
@@ -166,8 +143,8 @@ function emitUpdate() {
       join_type: joinType.value,
       how: joinType.value,
       join_mapping: joinMapping.value.map(m => ({ left_col: m.left_col, right_col: m.right_col })),
-      left_suffix: leftSuffix.value,
-      right_suffix: rightSuffix.value
+      left_suffix: '',
+      right_suffix: '_right'
     }
   }
   emit('update:settings', settings)
@@ -190,11 +167,6 @@ function emitUpdate() {
   font-size: 12px;
   color: var(--text-secondary);
   min-width: 80px;
-}
-
-.settings-input {
-  flex: 1;
-  max-width: 120px;
 }
 
 .help-text {

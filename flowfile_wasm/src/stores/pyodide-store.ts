@@ -405,17 +405,47 @@ def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
         if not code or not code.strip():
             result = input_df
         else:
-            # Execute the code with input_df and pl available
-            local_vars = {"input_df": input_df, "pl": pl}
-            exec_result = eval(code.strip(), {"pl": pl}, local_vars)
+            code = code.strip()
+            # Set up execution environment
+            local_vars = {"input_df": input_df, "pl": pl, "output_df": None}
+            global_vars = {"pl": pl}
 
-            # The result should be a DataFrame
-            if isinstance(exec_result, pl.DataFrame):
-                result = exec_result
-            elif exec_result is None:
-                result = input_df
-            else:
-                return {"success": False, "error": f"Code must return a DataFrame, got {type(exec_result).__name__}"}
+            # Try exec first (handles assignments like output_df = ...)
+            try:
+                exec(code, global_vars, local_vars)
+                # Check if output_df was set
+                if local_vars.get("output_df") is not None and isinstance(local_vars["output_df"], pl.DataFrame):
+                    result = local_vars["output_df"]
+                # Check if result was set
+                elif local_vars.get("result") is not None and isinstance(local_vars["result"], pl.DataFrame):
+                    result = local_vars["result"]
+                # Check if df was set
+                elif local_vars.get("df") is not None and isinstance(local_vars["df"], pl.DataFrame):
+                    result = local_vars["df"]
+                else:
+                    # Try to find any DataFrame that was created
+                    found_df = None
+                    for var_name, var_val in local_vars.items():
+                        if isinstance(var_val, pl.DataFrame) and var_name not in ["input_df"]:
+                            found_df = var_val
+                            break
+                    if found_df is not None:
+                        result = found_df
+                    else:
+                        # Fallback: try eval on last line
+                        lines = code.split('\\n')
+                        last_line = lines[-1].strip()
+                        if last_line and not last_line.startswith('#') and '=' not in last_line:
+                            result = eval(last_line, global_vars, local_vars)
+                        else:
+                            result = input_df
+            except SyntaxError:
+                # If exec fails with syntax error, try eval (for simple expressions)
+                result = eval(code, global_vars, local_vars)
+
+            # Validate result
+            if not isinstance(result, pl.DataFrame):
+                return {"success": False, "error": f"Code must produce a DataFrame, got {type(result).__name__}. Assign result to 'output_df', 'result', or 'df'."}
 
         store_dataframe(node_id, result)
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
