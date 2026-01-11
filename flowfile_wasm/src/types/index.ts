@@ -73,7 +73,7 @@ export interface BasicFilter {
 
 export interface FilterInput {
   mode: 'basic' | 'advanced'
-  basic_filter: BasicFilter
+  basic_filter?: BasicFilter  // Optional - can be None in flowfile_core
   advanced_filter: string  // Polars expression
 }
 
@@ -157,7 +157,7 @@ export interface JoinInput {
 // =============================================================================
 
 export interface UniqueInput {
-  columns: string[]
+  columns?: string[]  // Optional - can be None in flowfile_core (all columns)
   strategy: 'first' | 'last' | 'any' | 'none'
 }
 
@@ -171,7 +171,7 @@ export interface FieldInput {
 }
 
 export interface FunctionInput {
-  field_input: FieldInput
+  field: FieldInput  // Changed from 'field_input' to match flowfile_core
   function: string  // Polars expression
 }
 
@@ -266,7 +266,7 @@ export interface NodeUniqueSettings extends NodeSingleInput {
 }
 
 export interface NodeFormulaSettings extends NodeSingleInput {
-  function_input: FunctionInput[]
+  function?: FunctionInput  // Changed from 'function_input: FunctionInput[]' to match flowfile_core
 }
 
 export interface NodeSampleSettings extends NodeSingleInput {

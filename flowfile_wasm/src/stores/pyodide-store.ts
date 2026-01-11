@@ -610,8 +610,9 @@ def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
 
     try:
         unique_input = settings.get("unique_input", {})
-        subset = unique_input.get("subset", [])
-        keep = unique_input.get("keep", "first")
+        # Support both flowfile_core format (columns/strategy) and component format (subset/keep)
+        subset = unique_input.get("subset") or unique_input.get("columns") or []
+        keep = unique_input.get("keep") or unique_input.get("strategy") or "first"
         maintain_order = unique_input.get("maintain_order", True)
 
         if subset:
