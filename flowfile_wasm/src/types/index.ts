@@ -374,7 +374,7 @@ export interface DataPreview {
 }
 
 export interface NodeResult {
-  success: boolean
+  success?: boolean  // undefined = not executed yet (shows grey), true = success (green), false = error (red)
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]

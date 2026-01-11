@@ -121,11 +121,11 @@ export const useFlowStore = defineStore('flow', () => {
           }
 
           // Restore node schemas for quick column access
-          // Note: success is false since data wasn't actually executed in this session
+          // Note: success is undefined since data wasn't actually executed in this session
           if (state.nodeSchemas) {
             for (const [id, schema] of state.nodeSchemas) {
               if (schema && schema.length > 0) {
-                nodeResults.value.set(id, { success: false, schema })
+                nodeResults.value.set(id, { schema })
               }
             }
           }
@@ -483,11 +483,8 @@ export const useFlowStore = defineStore('flow', () => {
       // Infer schema from CSV content
       const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
       if (schema) {
-        // Set schema for source node (success: false since not yet executed)
-        nodeResults.value.set(nodeId, {
-          success: false,
-          schema
-        })
+        // Set schema for source node (success undefined = not yet executed, shows grey)
+        nodeResults.value.set(nodeId, { schema })
 
         // Trigger schema propagation to update downstream nodes
         debouncedPropagateSchemas()
@@ -502,11 +499,8 @@ export const useFlowStore = defineStore('flow', () => {
   function setSourceNodeSchema(nodeId: number, fields: { name: string; data_type: string }[]) {
     const schema = inferSchemaFromRawData(fields)
     if (schema) {
-      // Set schema for source node (success: false since not yet executed)
-      nodeResults.value.set(nodeId, {
-        success: false,
-        schema
-      })
+      // Set schema for source node (success undefined = not yet executed, shows grey)
+      nodeResults.value.set(nodeId, { schema })
 
       // Trigger schema propagation
       debouncedPropagateSchemas()
@@ -844,11 +838,11 @@ for nid in orphaned_ids:
       // Update nodeResults with inferred schema
       if (inferredSchema) {
         const existingResult = nodeResults.value.get(nodeId)
-        // Only mark as success if there's actual executed data
-        // Schema inference alone doesn't mean the node was executed
+        // Only preserve success if there's actual executed data
+        // Schema inference alone doesn't mean the node was executed (success stays undefined = grey)
         const hasExecutedData = existingResult?.data?.data && existingResult.data.data.length >= 0
         nodeResults.value.set(nodeId, {
-          success: hasExecutedData ? existingResult.success : false,
+          success: hasExecutedData ? existingResult.success : undefined,
           schema: inferredSchema,
           // Preserve existing data if any (for display purposes)
           data: existingResult?.data,
