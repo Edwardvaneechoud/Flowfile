@@ -34,7 +34,7 @@ On first start without a master key, Flowfile shows a setup screen:
 3. Add to your `.env` file: `FLOWFILE_MASTER_KEY=<your-key>`
 4. Restart the containers
 
-![Setup Wizard](../../assets/images/guides/docker-deployment/setup_wizard.png)
+![Setup Wizard](../assets/images/guides/docker-deployment/setup_wizard.png)
 
 !!! danger "Protect your master key"
     - Back up your `.env` file securely
@@ -49,7 +49,7 @@ On first start without a master key, Flowfile shows a setup screen:
 4. Enter value
 5. Save
 
-![Secrets Panel](../../assets/images/guides/secrets/secrets_panel.png)
+![Secrets Panel](../assets/images/guides/secrets/secrets_panel.png)
 
 ## Using Secrets
 

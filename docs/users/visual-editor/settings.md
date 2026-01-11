@@ -60,5 +60,5 @@ Flow definitions are preserved.
 
 ## Related
 
-- [Secrets](secrets.md) - Encrypted credential storage
-- [Docker Reference](tutorials/docker-deployment.md) - Docker configuration
+- [Secrets](../secrets.md) - Encrypted credential storage
+- [Docker](../deployment/docker.md) - Docker deployment

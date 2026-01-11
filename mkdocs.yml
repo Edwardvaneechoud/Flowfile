@@ -97,8 +97,6 @@ nav:
         - Manage Cloud Storage: users/visual-editor/tutorials/cloud-connections.md
         - Export to Python: users/visual-editor/tutorials/code-generator.md
       - Node Designer: users/visual-editor/node-designer.md
-      - Docker Reference: users/visual-editor/tutorials/docker-deployment.md
-      - Secrets: users/visual-editor/secrets.md
       - Settings: users/visual-editor/settings.md
 
     - Python API:
@@ -122,11 +120,15 @@ nav:
         - Overview: users/python-api/tutorials/index.md
         - Building Flows with Code: users/python-api/tutorials/flowfile_frame_api.md
 
+    - Secrets: users/secrets.md
+
+  - Deployment:
+    - Docker: users/deployment/docker.md
+
   - For Developers:
     - Introduction: for-developers/index.md
     - Design Philosophy: for-developers/design-philosophy.md
     - Architecture: for-developers/architecture.md
-    - Docker Deployment: for-developers/docker-deployment.md
     - Core Internals: for-developers/flowfile-core.md
     - Internal API Reference: for-developers/python-api-reference.md
     - Create Custom Nodes: for-developers/creating-custom-nodes.md

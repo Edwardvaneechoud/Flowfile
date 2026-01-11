@@ -19,6 +19,6 @@ Convert visual pipelines into executable Python code.
 
 ## Reference Documentation
 
-- [Docker Reference](docker-deployment.md) - Environment variables, volumes, health checks
-- [Secrets](../secrets.md) - Encrypted credential storage
+- [Docker](../../deployment/docker.md) - Docker deployment
+- [Secrets](../../secrets.md) - Encrypted credential storage
 - [Settings](../settings.md) - Theme and user management
