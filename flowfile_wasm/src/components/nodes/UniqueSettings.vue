@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { UniqueSettings, ColumnSchema } from '../../types'
 
@@ -53,12 +53,6 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// DEBUG: Log component initialization
-console.log('[UniqueSettings] Component INIT for nodeId:', props.nodeId)
-console.log('[UniqueSettings] Received settings:', JSON.stringify(props.settings, null, 2))
-console.log('[UniqueSettings] unique_input:', props.settings.unique_input)
-
-// Initialize from props
 const subset = ref<string[]>(
   props.settings.unique_input?.subset ||
   props.settings.unique_input?.columns ||
@@ -70,23 +64,6 @@ const keep = ref<'first' | 'last' | 'any' | 'none'>(
   'any'
 )
 const maintainOrder = ref(props.settings.unique_input?.maintain_order ?? true)
-
-console.log('[UniqueSettings] Initialized subset:', subset.value)
-console.log('[UniqueSettings] Initialized keep:', keep.value)
-
-// Watch for node changes to update local state when switching between unique nodes
-watch(() => props.nodeId, (newId, oldId) => {
-  console.log('[UniqueSettings] Watch triggered: nodeId changed from', oldId, 'to', newId)
-  console.log('[UniqueSettings] Current props.settings:', JSON.stringify(props.settings, null, 2))
-  subset.value = props.settings.unique_input?.subset ||
-    props.settings.unique_input?.columns ||
-    []
-  keep.value = props.settings.unique_input?.keep ||
-    props.settings.unique_input?.strategy ||
-    'any'
-  maintainOrder.value = props.settings.unique_input?.maintain_order ?? true
-  console.log('[UniqueSettings] After watch - subset:', subset.value, 'keep:', keep.value)
-})
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
@@ -101,19 +78,16 @@ const columnsWithSelection = computed(() => {
 })
 
 function toggleColumn(name: string) {
-  console.log('[UniqueSettings] toggleColumn called with:', name)
   const idx = subset.value.indexOf(name)
   if (idx === -1) {
     subset.value.push(name)
   } else {
     subset.value.splice(idx, 1)
   }
-  console.log('[UniqueSettings] subset is now:', [...subset.value])
   emitUpdate()
 }
 
 function updateKeep(value: 'first' | 'last' | 'any' | 'none') {
-  console.log('[UniqueSettings] updateKeep called with:', value)
   keep.value = value
   emitUpdate()
 }
@@ -128,21 +102,8 @@ function emitUpdate() {
       maintain_order: maintainOrder.value
     }
   }
-  console.log('[UniqueSettings] Emitting settings update for nodeId:', props.nodeId)
-  console.log('[UniqueSettings] Emitting unique_input:', settings.unique_input)
   emit('update:settings', settings)
 }
-
-// Lifecycle logging
-onMounted(() => {
-  console.log('[UniqueSettings] Component MOUNTED for nodeId:', props.nodeId)
-})
-
-onBeforeUnmount(() => {
-  console.log('[UniqueSettings] Component UNMOUNTING for nodeId:', props.nodeId)
-  console.log('[UniqueSettings] Current local state - subset:', [...subset.value], 'keep:', keep.value)
-  console.log('[UniqueSettings] Current props.settings:', JSON.stringify(props.settings, null, 2))
-})
 </script>
 
 <style scoped>
