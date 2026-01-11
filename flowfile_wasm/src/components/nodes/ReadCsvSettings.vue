@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { ReadCsvSettings } from '../../types'
 
@@ -65,8 +65,20 @@ const fileName = ref('')
 const fileError = ref('')
 const localSettings = ref<ReadCsvSettings>({ ...props.settings })
 
+// Load initial file name from settings
+onMounted(() => {
+  if (props.settings?.file_name) {
+    fileName.value = props.settings.file_name
+    console.log('[ReadCsvSettings] Loaded file name from settings:', fileName.value)
+  }
+})
+
 watch(() => props.settings, (newSettings) => {
   localSettings.value = { ...newSettings }
+  // Also update fileName when settings change
+  if (newSettings?.file_name) {
+    fileName.value = newSettings.file_name
+  }
 }, { deep: true })
 
 async function handleFileSelect(event: Event) {

@@ -1,7 +1,20 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import type { FlowNode, FlowEdge, NodeResult, NodeSettings, ColumnSchema } from '../types'
+
+// Logger utility
+const log = (category: string, message: string, data?: any) => {
+  const timestamp = new Date().toISOString().split('T')[1].slice(0, 12)
+  if (data !== undefined) {
+    console.log(`[${timestamp}] [FlowStore:${category}] ${message}`, data)
+  } else {
+    console.log(`[${timestamp}] [FlowStore:${category}] ${message}`)
+  }
+}
+
+// Session storage keys
+const STORAGE_KEY = 'flowfile_wasm_state'
 
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
@@ -16,6 +29,74 @@ export const useFlowStore = defineStore('flow', () => {
 
   // File content storage for CSV nodes
   const fileContents = ref<Map<number, string>>(new Map())
+
+  // Load state from session storage on init
+  function loadFromStorage() {
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const state = JSON.parse(saved)
+        log('Storage', 'Loading state from session storage')
+
+        // Restore nodes
+        if (state.nodes) {
+          nodes.value = new Map(state.nodes)
+          log('Storage', `Loaded ${state.nodes.length} nodes`)
+        }
+
+        // Restore edges
+        if (state.edges) {
+          edges.value = state.edges
+          log('Storage', `Loaded ${state.edges.length} edges`)
+        }
+
+        // Restore file contents
+        if (state.fileContents) {
+          fileContents.value = new Map(state.fileContents)
+          log('Storage', `Loaded ${state.fileContents.length} file contents`)
+        }
+
+        // Restore counter
+        if (state.nodeIdCounter !== undefined) {
+          nodeIdCounter.value = state.nodeIdCounter
+        }
+      } else {
+        log('Storage', 'No saved state found')
+      }
+    } catch (err) {
+      log('Storage', 'Failed to load state from session storage', err)
+    }
+  }
+
+  // Save state to session storage
+  function saveToStorage() {
+    try {
+      const state = {
+        nodes: Array.from(nodes.value.entries()),
+        edges: edges.value,
+        fileContents: Array.from(fileContents.value.entries()),
+        nodeIdCounter: nodeIdCounter.value
+      }
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    } catch (err) {
+      log('Storage', 'Failed to save state to session storage', err)
+    }
+  }
+
+  // Watch for changes and save (debounced via microtask)
+  let saveTimeout: number | null = null
+  function scheduleSave() {
+    if (saveTimeout) return
+    saveTimeout = window.setTimeout(() => {
+      saveToStorage()
+      saveTimeout = null
+    }, 100)
+  }
+
+  watch([nodes, edges, fileContents, nodeIdCounter], scheduleSave, { deep: true })
+
+  // Load on init
+  loadFromStorage()
 
   // Getters
   const nodeList = computed(() => Array.from(nodes.value.values()))
@@ -80,6 +161,7 @@ export const useFlowStore = defineStore('flow', () => {
     }
 
     nodes.value.set(id, node)
+    log('Node', `Added node ${id} of type '${type}' at (${x}, ${y})`)
     return id
   }
 
@@ -95,6 +177,7 @@ export const useFlowStore = defineStore('flow', () => {
     if (node) {
       node.settings = settings
       nodes.value.set(id, node)
+      log('Settings', `Updated settings for node ${id}`, settings)
     }
   }
 
@@ -170,6 +253,7 @@ export const useFlowStore = defineStore('flow', () => {
 
   function setFileContent(nodeId: number, content: string) {
     fileContents.value.set(nodeId, content)
+    log('File', `Set file content for node ${nodeId} (${content.length} chars)`)
   }
 
   function selectNode(id: number | null) {
@@ -205,9 +289,11 @@ export const useFlowStore = defineStore('flow', () => {
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
     if (!node) {
+      log('Exec', `Node ${nodeId} not found`)
       return { success: false, error: 'Node not found' }
     }
 
+    log('Exec', `Executing node ${nodeId} (type: ${node.type})`)
     const { runPythonWithResult } = pyodideStore
 
     try {
@@ -374,11 +460,18 @@ result
       }
 
       nodeResults.value.set(nodeId, result)
+      if (result.success) {
+        log('Exec', `Node ${nodeId} completed successfully`, { rows: result.data?.total_rows })
+      } else {
+        log('Exec', `Node ${nodeId} failed`, { error: result.error })
+      }
       return result
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      log('Exec', `Node ${nodeId} threw exception`, { error: errorMessage })
       const errorResult: NodeResult = {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage
       }
       nodeResults.value.set(nodeId, errorResult)
       return errorResult
@@ -387,30 +480,37 @@ result
 
   async function executeFlow() {
     if (!pyodideStore.isReady) {
-      console.error('Pyodide not ready')
+      log('Flow', 'Cannot execute - Pyodide not ready')
       return
     }
 
+    log('Flow', 'Starting flow execution')
     isExecuting.value = true
     nodeResults.value.clear()
 
     try {
       // Clear Python state
+      log('Flow', 'Clearing Python state')
       await pyodideStore.runPython('clear_all()')
 
       // Get execution order
       const order = getExecutionOrder()
+      log('Flow', `Execution order: ${order.join(' -> ')}`)
 
       // Execute nodes in order
+      let successCount = 0
+      let failCount = 0
       for (const nodeId of order) {
         const result = await executeNode(nodeId)
-        if (!result.success) {
-          console.error(`Node ${nodeId} failed:`, result.error)
-          // Continue execution even if a node fails
+        if (result.success) {
+          successCount++
+        } else {
+          failCount++
         }
       }
+      log('Flow', `Execution complete: ${successCount} succeeded, ${failCount} failed`)
     } catch (error) {
-      console.error('Flow execution error:', error)
+      log('Flow', 'Flow execution error', error)
     } finally {
       isExecuting.value = false
     }
@@ -525,12 +625,14 @@ result
   }
 
   function clearFlow() {
+    log('Flow', 'Clearing flow')
     nodes.value.clear()
     edges.value = []
     nodeResults.value.clear()
     fileContents.value.clear()
     selectedNodeId.value = null
     nodeIdCounter.value = 0
+    sessionStorage.removeItem(STORAGE_KEY)
   }
 
   return {

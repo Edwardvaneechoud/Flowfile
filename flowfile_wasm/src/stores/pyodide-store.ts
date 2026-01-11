@@ -38,9 +38,11 @@ export const usePyodideStore = defineStore('pyodide', () => {
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/'
       })
 
-      loadingStatus.value = 'Installing Polars...'
-      // In Pyodide 0.27, polars is a pre-built package that can be loaded directly
-      await pyodide.value.loadPackage('polars')
+      loadingStatus.value = 'Installing packages...'
+      // In Pyodide 0.27, polars and numpy are pre-built packages
+      console.log('[Pyodide] Loading numpy and polars packages...')
+      await pyodide.value.loadPackage(['numpy', 'polars'])
+      console.log('[Pyodide] Packages loaded successfully')
 
       loadingStatus.value = 'Setting up execution engine...'
       await setupExecutionEngine()
