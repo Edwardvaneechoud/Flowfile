@@ -23,12 +23,13 @@ const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
 /**
- * Safely encode a value for passing to Python via JSON.
- * Uses JSON.stringify which properly handles all escape sequences,
- * eliminating the need for manual string escaping.
+ * Safely encode a value for passing to Python via json.loads().
+ * Double-stringifies to produce a Python string literal containing JSON.
+ * e.g., {a: true} becomes '"{\"a\":true}"' which Python parses as a string.
  */
 function toPythonJson(value: unknown): string {
-  return JSON.stringify(value)
+  // Double stringify: inner converts to JSON, outer makes it a valid Python string literal
+  return JSON.stringify(JSON.stringify(value))
 }
 
 export const useFlowStore = defineStore('flow', () => {
