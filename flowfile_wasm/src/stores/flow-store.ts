@@ -259,10 +259,15 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function updateNodeSettings(id: number, settings: NodeSettings) {
+    console.log('[FlowStore] updateNodeSettings called for nodeId:', id)
+    console.log('[FlowStore] New settings:', JSON.stringify(settings, null, 2))
     const node = nodes.value.get(id)
     if (node) {
       node.settings = settings
       nodes.value.set(id, node)
+      console.log('[FlowStore] Settings saved. Node now:', JSON.stringify(node.settings, null, 2))
+    } else {
+      console.log('[FlowStore] WARNING: Node not found for id:', id)
     }
   }
 

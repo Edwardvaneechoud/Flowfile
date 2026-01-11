@@ -53,6 +53,11 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
+// DEBUG: Log component initialization
+console.log('[UniqueSettings] Component INIT for nodeId:', props.nodeId)
+console.log('[UniqueSettings] Received settings:', JSON.stringify(props.settings, null, 2))
+console.log('[UniqueSettings] unique_input:', props.settings.unique_input)
+
 // Initialize from props
 const subset = ref<string[]>(
   props.settings.unique_input?.subset ||
@@ -66,8 +71,13 @@ const keep = ref<'first' | 'last' | 'any' | 'none'>(
 )
 const maintainOrder = ref(props.settings.unique_input?.maintain_order ?? true)
 
+console.log('[UniqueSettings] Initialized subset:', subset.value)
+console.log('[UniqueSettings] Initialized keep:', keep.value)
+
 // Watch for node changes to update local state when switching between unique nodes
-watch(() => props.nodeId, () => {
+watch(() => props.nodeId, (newId, oldId) => {
+  console.log('[UniqueSettings] Watch triggered: nodeId changed from', oldId, 'to', newId)
+  console.log('[UniqueSettings] Current props.settings:', JSON.stringify(props.settings, null, 2))
   subset.value = props.settings.unique_input?.subset ||
     props.settings.unique_input?.columns ||
     []
@@ -75,6 +85,7 @@ watch(() => props.nodeId, () => {
     props.settings.unique_input?.strategy ||
     'any'
   maintainOrder.value = props.settings.unique_input?.maintain_order ?? true
+  console.log('[UniqueSettings] After watch - subset:', subset.value, 'keep:', keep.value)
 })
 
 const columns = computed<ColumnSchema[]>(() => {
@@ -114,6 +125,8 @@ function emitUpdate() {
       maintain_order: maintainOrder.value
     }
   }
+  console.log('[UniqueSettings] Emitting settings update for nodeId:', props.nodeId)
+  console.log('[UniqueSettings] Emitting unique_input:', settings.unique_input)
   emit('update:settings', settings)
 }
 </script>

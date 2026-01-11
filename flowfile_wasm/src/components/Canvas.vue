@@ -433,8 +433,13 @@ async function handleRunNode(nodeId: number) {
 
 // Update settings
 function updateSettings(settings: NodeSettings) {
+  console.log('[Canvas] updateSettings called')
+  console.log('[Canvas] selectedNodeId:', selectedNodeId.value)
+  console.log('[Canvas] settings:', JSON.stringify(settings, null, 2))
   if (selectedNodeId.value !== null) {
     flowStore.updateNodeSettings(selectedNodeId.value, settings)
+  } else {
+    console.log('[Canvas] WARNING: selectedNodeId is null, not saving!')
   }
 }
 
