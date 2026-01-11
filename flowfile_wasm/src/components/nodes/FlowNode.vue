@@ -372,6 +372,7 @@ onUnmounted(() => {
   box-shadow: 0 0 10px #0909ca;
 }
 
+
 @keyframes pulse {
   0% {
     transform: scale(1);
@@ -498,7 +499,6 @@ onUnmounted(() => {
 :deep(.vue-flow__handle) {
   width: 10px;
   height: 10px;
-  background: var(--accent-color);
   border: 2px solid var(--bg-secondary);
 }
 
