@@ -19,18 +19,6 @@ import type {
   NodeGroupBySettings
 } from '../types'
 
-// Simple debounce utility
-function debounce<T extends (...args: any[]) => any>(fn: T, delay: number): T {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null
-  return ((...args: Parameters<T>) => {
-    if (timeoutId) clearTimeout(timeoutId)
-    timeoutId = setTimeout(() => {
-      fn(...args)
-      timeoutId = null
-    }, delay)
-  }) as T
-}
-
 // Session storage keys
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
@@ -229,7 +217,7 @@ export const useFlowStore = defineStore('flow', () => {
   // Initial schema propagation after loading
   // Use setTimeout to ensure nodeResults are populated from storage
   setTimeout(() => {
-    propagateSchemas()
+    propagateSchemas().catch(err => console.error('Initial schema propagation error:', err))
   }, 0)
 
   // Getters
@@ -694,11 +682,18 @@ for nid in orphaned_ids:
   }
 
   /**
+   * Check if a node type requires lazy execution to determine its output schema
+   */
+  function requiresLazyExecution(nodeType: string): boolean {
+    return nodeType === 'polars_code' || nodeType === 'formula'
+  }
+
+  /**
    * Propagate schemas through the flow graph
    * This updates nodeResults with inferred schemas for all nodes that can be computed
-   * without actually executing the flow
+   * For polars_code/formula nodes, lazy execution is used when input data is available
    */
-  function propagateSchemas() {
+  async function propagateSchemas() {
     const order = getExecutionOrder()
 
     for (const nodeId of order) {
@@ -715,11 +710,13 @@ for nid in orphaned_ids:
       let inputSchema: ColumnSchema[] | null = null
       let rightInputSchema: ColumnSchema[] | null = null
 
-      // Get primary input schema
+      // Get primary input schema and check if input has been executed
       const primaryInputId = node.leftInputId || node.inputIds[0]
+      let inputHasData = false
       if (primaryInputId) {
         const inputResult = nodeResults.value.get(primaryInputId)
         inputSchema = inputResult?.schema || null
+        inputHasData = !!(inputResult?.data)
       }
 
       // For join nodes, also get right input schema
@@ -737,7 +734,22 @@ for nid in orphaned_ids:
         }
       }
 
-      // Infer output schema
+      // For polars_code/formula nodes, try lazy execution if input data is available
+      if (requiresLazyExecution(node.type) && inputHasData && pyodideStore.isReady) {
+        try {
+          // Execute the node to get its actual output schema
+          const result = await executeNode(nodeId)
+          if (result.success && result.schema) {
+            // Schema is already set by executeNode, continue to next node
+            continue
+          }
+        } catch (error) {
+          console.warn(`Lazy execution failed for node ${nodeId}:`, error)
+          // Fall through to keep existing result if any
+        }
+      }
+
+      // Infer output schema (for non-lazy nodes or when lazy execution isn't possible)
       const inferredSchema = inferOutputSchema(
         node.type,
         inputSchema,
@@ -757,7 +769,7 @@ for nid in orphaned_ids:
         })
       } else {
         // inferOutputSchema returned null - this means:
-        // 1. For polars_code/formula: schema can only be known after execution
+        // 1. For polars_code/formula: schema can only be known after execution (and input wasn't available)
         // 2. For other nodes: input schema might be missing
         //
         // Keep any existing executed result (which has actual schema from Python)
@@ -773,7 +785,15 @@ for nid in orphaned_ids:
   }
 
   // Debounced schema propagation to avoid excessive updates
-  const debouncedPropagateSchemas = debounce(propagateSchemas, 50)
+  // Using a wrapper to handle async
+  let propagateTimeout: ReturnType<typeof setTimeout> | null = null
+  function debouncedPropagateSchemas() {
+    if (propagateTimeout) clearTimeout(propagateTimeout)
+    propagateTimeout = setTimeout(() => {
+      propagateSchemas().catch(err => console.error('Schema propagation error:', err))
+      propagateTimeout = null
+    }, 50)
+  }
 
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
@@ -981,7 +1001,7 @@ result
       }
       // After execution, propagate schemas to update downstream node settings
       // This syncs select_input, agg_cols, etc. with actual executed schemas
-      propagateSchemas()
+      await propagateSchemas()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
@@ -1241,7 +1261,9 @@ result
 
       // Trigger schema propagation after import
       // Note: Source nodes will need data loaded before schemas propagate
-      setTimeout(() => propagateSchemas(), 0)
+      setTimeout(() => {
+        propagateSchemas().catch(err => console.error('Import schema propagation error:', err))
+      }, 0)
 
       return true
     } catch (error) {
