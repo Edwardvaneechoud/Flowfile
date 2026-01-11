@@ -18,7 +18,7 @@
         <tbody>
           <tr
             v-for="(col, index) in localColumns"
-            :key="col.old_name"
+            :key="col.old_name + '-' + index"
             :class="{ 'row-disabled': !col.keep }"
             draggable="true"
             @dragstart="onDragStart(index)"
@@ -26,14 +26,14 @@
             @drop="onDrop(index)"
           >
             <td style="width: 30px; text-align: center;">
-              <input type="checkbox" v-model="col.keep" @change="emitUpdate" />
+              <input type="checkbox" :checked="col.keep" @change="toggleKeep(index)" />
             </td>
             <td>{{ col.old_name }}</td>
             <td>
               <input
                 type="text"
-                v-model="col.new_name"
-                @input="emitUpdate"
+                :value="col.new_name"
+                @input="updateNewName(index, ($event.target as HTMLInputElement).value)"
                 class="input-sm"
               />
             </td>
@@ -50,9 +50,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
-import type { SelectSettings, SelectColumn, ColumnSchema } from '../../types'
+import type { SelectSettings, ColumnSchema } from '../../types'
 
 const props = defineProps<{
   nodeId: number
@@ -65,7 +65,7 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-interface LocalColumn extends SelectColumn {
+interface LocalColumn {
   old_name: string
   new_name: string
   keep: boolean
@@ -75,30 +75,56 @@ interface LocalColumn extends SelectColumn {
 
 const localColumns = ref<LocalColumn[]>([])
 const dragIndex = ref<number | null>(null)
+const initialized = ref(false)
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-watch(columns, (newColumns) => {
-  if (newColumns.length > 0 && localColumns.value.length === 0) {
-    initializeColumns()
-  }
-}, { immediate: true })
-
-watch(() => props.settings.select_input, (newInput) => {
-  if (newInput && newInput.length > 0) {
-    localColumns.value = newInput.map((col, idx) => ({
+// Initialize on mount from existing settings or wait for columns
+onMounted(() => {
+  if (props.settings.select_input && props.settings.select_input.length > 0) {
+    // Load from existing settings
+    localColumns.value = props.settings.select_input.map((col, idx) => ({
       old_name: col.old_name,
       new_name: col.new_name,
       keep: col.keep,
       position: col.position ?? idx,
       data_type: col.data_type || 'unknown'
     }))
+    initialized.value = true
+  } else if (columns.value.length > 0) {
+    // Initialize from input schema
+    initializeFromColumns()
   }
-}, { deep: true })
+})
 
-function initializeColumns() {
+// Watch for input columns becoming available (e.g., when upstream node executes)
+watch(columns, (newColumns) => {
+  if (newColumns.length > 0 && !initialized.value) {
+    initializeFromColumns()
+  } else if (newColumns.length > 0 && initialized.value) {
+    // Check if we need to add new columns that appeared
+    const existingNames = new Set(localColumns.value.map(c => c.old_name))
+    const newCols = newColumns.filter(c => !existingNames.has(c.name))
+    if (newCols.length > 0) {
+      // Add new columns at the end
+      const startPos = localColumns.value.length
+      newCols.forEach((col, idx) => {
+        localColumns.value.push({
+          old_name: col.name,
+          new_name: col.name,
+          keep: true,
+          position: startPos + idx,
+          data_type: col.data_type
+        })
+      })
+      emitUpdate()
+    }
+  }
+}, { immediate: true })
+
+function initializeFromColumns() {
   localColumns.value = columns.value.map((col, idx) => ({
     old_name: col.name,
     new_name: col.name,
@@ -106,6 +132,17 @@ function initializeColumns() {
     position: idx,
     data_type: col.data_type
   }))
+  initialized.value = true
+  emitUpdate()
+}
+
+function toggleKeep(index: number) {
+  localColumns.value[index].keep = !localColumns.value[index].keep
+  emitUpdate()
+}
+
+function updateNewName(index: number, value: string) {
+  localColumns.value[index].new_name = value
   emitUpdate()
 }
 
@@ -153,7 +190,7 @@ function emitUpdate() {
       position: idx,
       data_type: col.data_type
     })),
-    keep_missing: props.settings.keep_missing
+    keep_missing: props.settings.keep_missing ?? false
   }
   emit('update:settings', settings)
 }

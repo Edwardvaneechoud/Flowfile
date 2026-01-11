@@ -40,7 +40,7 @@
           >
             <td>{{ sort.column }}</td>
             <td>
-              <select v-model="sort.descending" @change="emitUpdate" class="select-sm">
+              <select :value="sort.descending" @change="updateDescending(idx, ($event.target as HTMLSelectElement).value === 'true')" class="select-sm">
                 <option :value="false">Ascending</option>
                 <option :value="true">Descending</option>
               </select>
@@ -72,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { SortSettings, SortColumn, ColumnSchema } from '../../types'
 
@@ -87,7 +87,12 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-const sortCols = ref<SortColumn[]>([])
+// Initialize directly from props - no watch needed
+const sortCols = ref<SortColumn[]>(
+  props.settings.sort_input?.sort_cols
+    ? props.settings.sort_input.sort_cols.map(s => ({ column: s.column, descending: s.descending }))
+    : []
+)
 const selectedColumns = ref<string[]>([])
 const showContextMenu = ref(false)
 const showContextMenuRemove = ref(false)
@@ -98,16 +103,6 @@ const contextMenuRowIndex = ref<number | null>(null)
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
-
-// Initialize from props
-watch(() => props.settings.sort_input, (newInput) => {
-  if (newInput && newInput.sort_cols) {
-    sortCols.value = newInput.sort_cols.map(s => ({
-      column: s.column,
-      descending: s.descending
-    }))
-  }
-}, { deep: true, immediate: true })
 
 function handleItemClick(columnName: string) {
   const idx = selectedColumns.value.indexOf(columnName)
@@ -148,6 +143,11 @@ function setSortSettings(descending: boolean) {
     emitUpdate()
   }
   hideContextMenu()
+}
+
+function updateDescending(index: number, descending: boolean) {
+  sortCols.value[index].descending = descending
+  emitUpdate()
 }
 
 function removeRow() {

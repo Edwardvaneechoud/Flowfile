@@ -37,12 +37,12 @@
           <tr v-for="(agg, idx) in aggCols" :key="idx" @contextmenu.prevent="openRowContextMenu($event, idx)">
             <td>{{ agg.old_name }}</td>
             <td>
-              <select v-model="agg.agg" @change="emitUpdate" class="select-sm">
+              <select :value="agg.agg" @change="updateAggType(idx, ($event.target as HTMLSelectElement).value as AggType)" class="select-sm">
                 <option v-for="opt in aggOptions" :key="opt" :value="opt">{{ opt }}</option>
               </select>
             </td>
             <td>
-              <input type="text" v-model="agg.new_name" @input="emitUpdate" class="input-sm" />
+              <input type="text" :value="agg.new_name" @input="updateNewName(idx, ($event.target as HTMLInputElement).value)" class="input-sm" />
             </td>
           </tr>
         </tbody>
@@ -80,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { GroupBySettings, AggColumn, AggType, ColumnSchema } from '../../types'
 
@@ -96,7 +96,12 @@ const emit = defineEmits<{
 const flowStore = useFlowStore()
 
 const selectedColumns = ref<string[]>([])
-const aggCols = ref<AggColumn[]>(props.settings.groupby_input?.agg_cols || [])
+// Initialize directly from props - no watch needed
+const aggCols = ref<AggColumn[]>(
+  props.settings.groupby_input?.agg_cols
+    ? [...props.settings.groupby_input.agg_cols]
+    : []
+)
 const contextMenu = ref({ show: false, x: 0, y: 0, column: '' })
 const showContextMenuRemove = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
@@ -107,12 +112,6 @@ const aggOptions: AggType[] = ['groupby', 'sum', 'count', 'mean', 'min', 'max', 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
-
-watch(() => props.settings.groupby_input?.agg_cols, (newAggs) => {
-  if (newAggs) {
-    aggCols.value = [...newAggs]
-  }
-}, { deep: true })
 
 function toggleColumn(name: string) {
   const idx = selectedColumns.value.indexOf(name)
@@ -167,12 +166,26 @@ function addAgg(aggType: AggType) {
   emitUpdate()
 }
 
+function updateAggType(index: number, value: AggType) {
+  aggCols.value[index].agg = value
+  emitUpdate()
+}
+
+function updateNewName(index: number, value: string) {
+  aggCols.value[index].new_name = value
+  emitUpdate()
+}
+
 function emitUpdate() {
   const settings: GroupBySettings = {
     ...props.settings,
-    is_setup: true,
+    is_setup: aggCols.value.length > 0,
     groupby_input: {
-      agg_cols: [...aggCols.value]
+      agg_cols: aggCols.value.map(agg => ({
+        old_name: agg.old_name,
+        new_name: agg.new_name,
+        agg: agg.agg
+      }))
     }
   }
   emit('update:settings', settings)

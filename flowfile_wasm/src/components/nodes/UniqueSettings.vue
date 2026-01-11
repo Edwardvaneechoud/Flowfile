@@ -26,7 +26,7 @@
     <div style="margin-top: 12px;">
       <div class="form-group">
         <label>Keep Strategy</label>
-        <select v-model="keep" @change="emitUpdate" class="select">
+        <select :value="keep" @change="updateKeep(($event.target as HTMLSelectElement).value as 'first' | 'last' | 'any' | 'none')" class="select">
           <option value="first">First occurrence</option>
           <option value="last">Last occurrence</option>
           <option value="any">Any occurrence</option>
@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { UniqueSettings, ColumnSchema } from '../../types'
 
@@ -53,7 +53,7 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize from settings - support both old (subset) and new (columns) property names
+// Initialize directly from props - no watch needed
 const subset = ref<string[]>(
   props.settings.unique_input?.subset ||
   props.settings.unique_input?.columns ||
@@ -78,14 +78,6 @@ const columnsWithSelection = computed(() => {
   }))
 })
 
-watch(() => props.settings.unique_input, (newInput) => {
-  if (newInput) {
-    subset.value = [...(newInput.subset || newInput.columns || [])]
-    keep.value = newInput.keep || newInput.strategy || 'any'
-    maintainOrder.value = newInput.maintain_order ?? true
-  }
-}, { deep: true })
-
 function toggleColumn(name: string) {
   const idx = subset.value.indexOf(name)
   if (idx === -1) {
@@ -93,6 +85,11 @@ function toggleColumn(name: string) {
   } else {
     subset.value.splice(idx, 1)
   }
+  emitUpdate()
+}
+
+function updateKeep(value: 'first' | 'last' | 'any' | 'none') {
+  keep.value = value
   emitUpdate()
 }
 

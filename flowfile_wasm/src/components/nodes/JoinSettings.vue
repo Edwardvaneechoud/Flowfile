@@ -4,7 +4,7 @@
 
     <div class="join-type-selector">
       <label class="join-type-label">Join Type:</label>
-      <select v-model="joinType" @change="emitUpdate" class="select" style="flex: 1;">
+      <select :value="joinType" @change="updateJoinType(($event.target as HTMLSelectElement).value as JoinType)" class="select" style="flex: 1;">
         <option value="inner">inner</option>
         <option value="left">left</option>
         <option value="right">right</option>
@@ -27,13 +27,13 @@
           :key="index"
           class="selectors-row"
         >
-          <select v-model="mapping.left_col" @change="emitUpdate" class="select" style="flex: 1;">
+          <select :value="mapping.left_col" @change="updateLeftCol(index, ($event.target as HTMLSelectElement).value)" class="select" style="flex: 1;">
             <option value="">Select column...</option>
             <option v-for="col in leftColumns" :key="col.name" :value="col.name">
               {{ col.name }}
             </option>
           </select>
-          <select v-model="mapping.right_col" @change="emitUpdate" class="select" style="flex: 1;">
+          <select :value="mapping.right_col" @change="updateRightCol(index, ($event.target as HTMLSelectElement).value)" class="select" style="flex: 1;">
             <option value="">Select column...</option>
             <option v-for="col in rightColumns" :key="col.name" :value="col.name">
               {{ col.name }}
@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { JoinSettings, JoinType, JoinMapping, ColumnSchema } from '../../types'
 
@@ -96,8 +96,13 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
+// Initialize directly from props - no watch needed
 const joinType = ref<JoinType>(props.settings.join_input?.join_type || props.settings.join_input?.how || 'inner')
-const joinMapping = ref<JoinMapping[]>(props.settings.join_input?.join_mapping || [])
+const joinMapping = ref<JoinMapping[]>(
+  props.settings.join_input?.join_mapping
+    ? props.settings.join_input.join_mapping.map(m => ({ left_col: m.left_col, right_col: m.right_col }))
+    : []
+)
 const leftSuffix = ref(props.settings.join_input?.left_suffix || '_left')
 const rightSuffix = ref(props.settings.join_input?.right_suffix || '_right')
 
@@ -115,14 +120,20 @@ const rightColumns = computed<ColumnSchema[]>(() => {
   return flowStore.getRightInputSchema(props.nodeId)
 })
 
-watch(() => props.settings.join_input, (newInput) => {
-  if (newInput) {
-    joinType.value = newInput.join_type || newInput.how || 'inner'
-    joinMapping.value = [...(newInput.join_mapping || [])]
-    leftSuffix.value = newInput.left_suffix || '_left'
-    rightSuffix.value = newInput.right_suffix || '_right'
-  }
-}, { deep: true })
+function updateJoinType(value: JoinType) {
+  joinType.value = value
+  emitUpdate()
+}
+
+function updateLeftCol(index: number, value: string) {
+  joinMapping.value[index].left_col = value
+  emitUpdate()
+}
+
+function updateRightCol(index: number, value: string) {
+  joinMapping.value[index].right_col = value
+  emitUpdate()
+}
 
 function addJoinCondition() {
   joinMapping.value.push({
@@ -143,7 +154,7 @@ function emitUpdate() {
     join_input: {
       join_type: joinType.value,
       how: joinType.value,
-      join_mapping: [...joinMapping.value],
+      join_mapping: joinMapping.value.map(m => ({ left_col: m.left_col, right_col: m.right_col })),
       left_suffix: leftSuffix.value,
       right_suffix: rightSuffix.value
     }

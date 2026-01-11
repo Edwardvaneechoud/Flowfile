@@ -433,9 +433,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_filter(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_filter(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -447,9 +448,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_select(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_select(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -461,9 +463,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_group_by(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_group_by(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -476,9 +479,10 @@ result
             return { success: false, error: 'Both left and right inputs required for join' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads('${settings}'))
+result = execute_join(${nodeId}, ${leftId}, ${rightId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -490,9 +494,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_sort(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_sort(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -504,9 +509,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_with_columns(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_with_columns(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -518,9 +524,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_unique(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_unique(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break
@@ -532,9 +539,10 @@ result
             return { success: false, error: 'No input connected' }
           }
           const settings = JSON.stringify(node.settings)
+          const escapedSettings = settings.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')
           result = await runPythonWithResult(`
 import json
-result = execute_head(${nodeId}, ${inputId}, json.loads('${settings}'))
+result = execute_head(${nodeId}, ${inputId}, json.loads('${escapedSettings}'))
 result
 `)
           break

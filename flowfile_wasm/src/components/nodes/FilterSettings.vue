@@ -2,7 +2,7 @@
   <div class="listbox-wrapper">
     <div class="switch-wrapper" style="margin-bottom: 12px;">
       <label class="checkbox-label">
-        <input type="checkbox" v-model="isAdvanced" @change="handleModeChange" />
+        <input type="checkbox" :checked="isAdvanced" @change="toggleAdvanced" />
         <span>Advanced filter options</span>
       </label>
     </div>
@@ -13,7 +13,7 @@
           <!-- Column Selector -->
           <div class="filter-field">
             <label class="filter-label">Column</label>
-            <select v-model="basicFilter.field" @change="emitUpdate" class="select">
+            <select :value="basicFilter.field" @change="updateField(($event.target as HTMLSelectElement).value)" class="select">
               <option value="">Select column...</option>
               <option v-for="col in columns" :key="col.name" :value="col.name">
                 {{ col.name }} ({{ col.data_type }})
@@ -24,7 +24,7 @@
           <!-- Operator Selector -->
           <div class="filter-field">
             <label class="filter-label">Operator</label>
-            <select v-model="basicFilter.operator" @change="emitUpdate" class="select">
+            <select :value="basicFilter.operator" @change="updateOperator(($event.target as HTMLSelectElement).value as FilterOperator)" class="select">
               <option v-for="op in operators" :key="op.value" :value="op.value">
                 {{ op.label }}
               </option>
@@ -36,8 +36,8 @@
             <label class="filter-label">Value</label>
             <input
               type="text"
-              v-model="basicFilter.value"
-              @input="emitUpdate"
+              :value="basicFilter.value"
+              @input="updateValue(($event.target as HTMLInputElement).value)"
               class="input"
               :placeholder="valuePlaceholder"
             />
@@ -48,8 +48,8 @@
             <label class="filter-label">And</label>
             <input
               type="text"
-              v-model="basicFilter.value2"
-              @input="emitUpdate"
+              :value="basicFilter.value2"
+              @input="updateValue2(($event.target as HTMLInputElement).value)"
               class="input"
               placeholder="End value"
             />
@@ -65,8 +65,8 @@
       <div class="listbox-subtitle">Advanced filter</div>
       <div class="form-group">
         <textarea
-          v-model="advancedFilter"
-          @input="emitUpdate"
+          :value="advancedFilter"
+          @input="updateAdvancedFilter(($event.target as HTMLTextAreaElement).value)"
           class="input"
           rows="5"
           placeholder="e.g., pl.col('age') > 30"
@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { FilterSettings, FilterOperator, ColumnSchema } from '../../types'
 
@@ -96,6 +96,7 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
+// Initialize directly from props - no watch needed
 const isAdvanced = ref(props.settings.filter_input?.mode === 'advanced')
 const basicFilter = ref({
   field: props.settings.filter_input?.basic_filter?.field || '',
@@ -159,18 +160,33 @@ const helpText = computed(() => {
   }
 })
 
-watch(() => props.settings, (newSettings) => {
-  isAdvanced.value = newSettings.filter_input?.mode === 'advanced'
-  basicFilter.value = {
-    field: newSettings.filter_input?.basic_filter?.field || '',
-    operator: (newSettings.filter_input?.basic_filter?.operator || 'equals') as FilterOperator,
-    value: newSettings.filter_input?.basic_filter?.value || '',
-    value2: newSettings.filter_input?.basic_filter?.value2 || ''
-  }
-  advancedFilter.value = newSettings.filter_input?.advanced_filter || ''
-}, { deep: true })
+function toggleAdvanced() {
+  isAdvanced.value = !isAdvanced.value
+  emitUpdate()
+}
 
-function handleModeChange() {
+function updateField(value: string) {
+  basicFilter.value.field = value
+  emitUpdate()
+}
+
+function updateOperator(value: FilterOperator) {
+  basicFilter.value.operator = value
+  emitUpdate()
+}
+
+function updateValue(value: string) {
+  basicFilter.value.value = value
+  emitUpdate()
+}
+
+function updateValue2(value: string) {
+  basicFilter.value.value2 = value
+  emitUpdate()
+}
+
+function updateAdvancedFilter(value: string) {
+  advancedFilter.value = value
   emitUpdate()
 }
 
