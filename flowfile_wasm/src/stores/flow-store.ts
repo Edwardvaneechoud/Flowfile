@@ -9,7 +9,6 @@ import type {
   ColumnSchema,
   FlowfileData,
   FlowfileNode,
-  NodeConnection,
   NodeBase,
   NodeReadSettings,
   NodeManualInputSettings,
@@ -21,6 +20,36 @@ import type {
 // Session storage keys
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
+
+// Fields to exclude from setting_input when exporting (matches flowfile_core)
+const SETTING_INPUT_EXCLUDE = new Set([
+  'flow_id',
+  'node_id',
+  'pos_x',
+  'pos_y',
+  'is_setup',
+  'description',
+  'user_id',
+  'is_flow_output',
+  'is_user_defined',
+  'depending_on_id',
+  'depending_on_ids',
+])
+
+/**
+ * Clean setting_input by removing fields that are excluded during export
+ * This matches the behavior of flowfile_core's FlowfileNode serializer
+ */
+function cleanSettingInput(settings: NodeSettings): any {
+  if (!settings) return null
+  const cleaned: Record<string, any> = {}
+  for (const [key, value] of Object.entries(settings)) {
+    if (!SETTING_INPUT_EXCLUDE.has(key)) {
+      cleaned[key] = value
+    }
+  }
+  return cleaned
+}
 
 export const useFlowStore = defineStore('flow', () => {
   const pyodideStore = usePyodideStore()
@@ -62,14 +91,21 @@ export const useFlowStore = defineStore('flow', () => {
             nodes.value.set(flowfileNode.id, node)
           }
 
-          for (const conn of data.connections) {
-            edges.value.push({
-              id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
-              source: String(conn.from_node),
-              target: String(conn.to_node),
-              sourceHandle: conn.from_handle,
-              targetHandle: conn.to_handle
-            })
+          // Import connections - support both explicit connections array and implicit derivation
+          if (data.connections && data.connections.length > 0) {
+            // Explicit connections array (WASM format)
+            for (const conn of data.connections) {
+              edges.value.push({
+                id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
+                source: String(conn.from_node),
+                target: String(conn.to_node),
+                sourceHandle: conn.from_handle,
+                targetHandle: conn.to_handle
+              })
+            }
+          } else {
+            // Derive edges from node relationships (flowfile_core format)
+            deriveEdgesFromNodes(data.nodes)
           }
 
           // Restore file contents separately (not part of FlowfileData)
@@ -103,12 +139,66 @@ export const useFlowStore = defineStore('flow', () => {
     }
   }
 
-  // Save state to session storage using FlowfileData format
+  /**
+   * Derive edges from node relationships (flowfile_core format)
+   * This handles imports from flowfile_core which doesn't have explicit connections
+   */
+  function deriveEdgesFromNodes(flowfileNodes: FlowfileNode[]) {
+    // Build a map of node id -> node for quick lookups
+    const nodeMap = new Map<number, FlowfileNode>()
+    for (const node of flowfileNodes) {
+      nodeMap.set(node.id, node)
+    }
+
+    // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
+    for (const targetNode of flowfileNodes) {
+      // Handle left_input_id (for join nodes)
+      if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
+        const sourceId = targetNode.left_input_id
+        edges.value.push({
+          id: `e${sourceId}-${targetNode.id}-output-input-0`,
+          source: String(sourceId),
+          target: String(targetNode.id),
+          sourceHandle: 'output',
+          targetHandle: 'input-0'
+        })
+      }
+
+      // Handle right_input_id (for join nodes)
+      if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
+        const sourceId = targetNode.right_input_id
+        edges.value.push({
+          id: `e${sourceId}-${targetNode.id}-output-input-1`,
+          source: String(sourceId),
+          target: String(targetNode.id),
+          sourceHandle: 'output',
+          targetHandle: 'input-1'
+        })
+      }
+
+      // Handle input_ids for non-join nodes (nodes without left/right inputs)
+      if (targetNode.input_ids && targetNode.input_ids.length > 0) {
+        // Skip if this node has left/right inputs (join node) - those are handled above
+        if (!targetNode.left_input_id && !targetNode.right_input_id) {
+          for (const sourceId of targetNode.input_ids) {
+            edges.value.push({
+              id: `e${sourceId}-${targetNode.id}-output-input-0`,
+              source: String(sourceId),
+              target: String(targetNode.id),
+              sourceHandle: 'output',
+              targetHandle: 'input-0'
+            })
+          }
+        }
+      }
+    }
+  }
+
+  // Save state to session storage using FlowfileData format (flowfile_core compatible)
   function saveToStorage() {
     try {
-      // Build FlowfileData structure
+      // Build FlowfileData structure (without connections - flowfile_core format)
       const flowfileNodes: FlowfileNode[] = []
-      const flowfileConnections: NodeConnection[] = []
 
       nodes.value.forEach((node, id) => {
         const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
@@ -127,21 +217,13 @@ export const useFlowStore = defineStore('flow', () => {
           right_input_id: node.rightInputId,
           input_ids: node.inputIds,
           outputs,
-          setting_input: node.settings
+          setting_input: cleanSettingInput(node.settings)
         })
       })
 
-      edges.value.forEach(edge => {
-        flowfileConnections.push({
-          from_node: parseInt(edge.source),
-          to_node: parseInt(edge.target),
-          from_handle: edge.sourceHandle,
-          to_handle: edge.targetHandle
-        })
-      })
-
+      // No connections array - flowfile_core derives connections from node relationships
       const flowfileData: FlowfileData = {
-        flowfile_version: '1.0.0-wasm',
+        flowfile_version: '1.0.0',
         flowfile_id: Date.now(),
         flowfile_name: 'Session Flow',
         flowfile_settings: {
@@ -151,8 +233,7 @@ export const useFlowStore = defineStore('flow', () => {
           auto_save: true,
           show_detailed_progress: false
         },
-        nodes: flowfileNodes,
-        connections: flowfileConnections
+        nodes: flowfileNodes
       }
 
       const state = {
@@ -723,18 +804,22 @@ result
   /**
    * Export the current flow state to FlowfileData format
    * This produces a JSON structure compatible with flowfile_core
+   *
+   * Key compatibility features:
+   * - No connections array (flowfile_core derives connections from node relationships)
+   * - Cleaned setting_input (excludes flow_id, node_id, pos_x, pos_y, etc.)
+   * - Description at node level
+   * - Uses version '1.0.0' for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
-
     const flowfileNodes: FlowfileNode[] = []
-    const flowfileConnections: NodeConnection[] = []
 
     // Convert nodes
     nodes.value.forEach((node, id) => {
       // Determine if this is a start node (no inputs)
       const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
 
-      // Get output nodes
+      // Get output nodes from edges
       const outputs = edges.value
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
@@ -750,25 +835,15 @@ result
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: node.settings
+        setting_input: cleanSettingInput(node.settings)
       }
 
       flowfileNodes.push(flowfileNode)
     })
 
-    // Convert edges to connections
-    edges.value.forEach(edge => {
-      const connection: NodeConnection = {
-        from_node: parseInt(edge.source),
-        to_node: parseInt(edge.target),
-        from_handle: edge.sourceHandle,
-        to_handle: edge.targetHandle
-      }
-      flowfileConnections.push(connection)
-    })
-
+    // No connections array - flowfile_core derives connections from node relationships
     const flowfileData: FlowfileData = {
-      flowfile_version: '1.0.0-wasm',
+      flowfile_version: '1.0.0',
       flowfile_id: Date.now(),
       flowfile_name: name,
       flowfile_settings: {
@@ -778,8 +853,7 @@ result
         auto_save: true,
         show_detailed_progress: false
       },
-      nodes: flowfileNodes,
-      connections: flowfileConnections
+      nodes: flowfileNodes
     }
 
     return flowfileData
@@ -788,6 +862,10 @@ result
   /**
    * Import a FlowfileData structure into the current state
    * This loads a flow file that was created in flowfile_core or this WASM app
+   *
+   * Supports two formats:
+   * 1. WASM format with explicit connections array
+   * 2. flowfile_core format with implicit connections (derived from node relationships)
    */
   function importFromFlowfile(data: FlowfileData): boolean {
 
@@ -809,8 +887,8 @@ result
         const node: FlowNode = {
           id: flowfileNode.id,
           type: flowfileNode.type,
-          x: flowfileNode.x_position,
-          y: flowfileNode.y_position,
+          x: flowfileNode.x_position ?? 0,
+          y: flowfileNode.y_position ?? 0,
           settings: flowfileNode.setting_input as NodeSettings,
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
@@ -823,16 +901,22 @@ result
 
       nodeIdCounter.value = maxId
 
-      // Import connections as edges
-      for (const conn of data.connections) {
-        const edge: FlowEdge = {
-          id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
-          source: String(conn.from_node),
-          target: String(conn.to_node),
-          sourceHandle: conn.from_handle,
-          targetHandle: conn.to_handle
+      // Import connections - support both explicit connections array and implicit derivation
+      if (data.connections && data.connections.length > 0) {
+        // Explicit connections array (WASM format)
+        for (const conn of data.connections) {
+          const edge: FlowEdge = {
+            id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
+            source: String(conn.from_node),
+            target: String(conn.to_node),
+            sourceHandle: conn.from_handle,
+            targetHandle: conn.to_handle
+          }
+          edges.value.push(edge)
         }
-        edges.value.push(edge)
+      } else {
+        // Derive edges from node relationships (flowfile_core format)
+        deriveEdgesFromNodes(data.nodes)
       }
 
       return true

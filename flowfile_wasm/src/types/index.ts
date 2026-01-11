@@ -330,7 +330,7 @@ export interface FlowfileData {
   flowfile_name: string
   flowfile_settings: FlowfileSettings
   nodes: FlowfileNode[]
-  connections: NodeConnection[]
+  connections?: NodeConnection[]  // Optional - flowfile_core derives connections from node relationships
 }
 
 // =============================================================================
