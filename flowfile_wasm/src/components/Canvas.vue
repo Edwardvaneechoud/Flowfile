@@ -69,6 +69,11 @@
           style="display: none"
         />
         <div class="toolbar-divider"></div>
+        <button class="action-btn" @click="showCodeGenerator = true" title="Generate Python Code">
+          <span class="material-icons btn-icon">code</span>
+          <span class="btn-text">Generate Code</span>
+        </button>
+        <div class="toolbar-divider"></div>
         <button class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
           <span class="material-icons btn-icon">delete</span>
           <span class="btn-text">Clear</span>
@@ -162,6 +167,12 @@
         No data available. Run the flow to see results.
       </div>
     </DraggablePanel>
+
+    <!-- Code Generator Modal -->
+    <CodeGenerator
+      :is-visible="showCodeGenerator"
+      @close="showCodeGenerator = false"
+    />
   </div>
 </template>
 
@@ -190,6 +201,7 @@ import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
+import CodeGenerator from './CodeGenerator.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 
 const flowStore = useFlowStore()
@@ -199,6 +211,7 @@ const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const { screenToFlowCoordinate, removeNodes } = useVueFlow()
 const searchQuery = ref('')
+const showCodeGenerator = ref(false)
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
