@@ -68,6 +68,15 @@
           @change="handleLoadFlow"
           style="display: none"
         />
+        <button
+          class="action-btn"
+          :class="{ active: showCodeGenerator }"
+          title="Generate Python Code"
+          @click="showCodeGenerator = true"
+        >
+          <span class="material-icons btn-icon">code</span>
+          <span class="btn-text">Generate code</span>
+        </button>
         <div class="toolbar-divider"></div>
         <button class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
           <span class="material-icons btn-icon">delete</span>
@@ -162,6 +171,12 @@
         No data available. Run the flow to see results.
       </div>
     </DraggablePanel>
+
+    <!-- Code Generator Modal -->
+    <CodeGenerator
+      :is-visible="showCodeGenerator"
+      @close="showCodeGenerator = false"
+    />
   </div>
 </template>
 
@@ -190,6 +205,7 @@ import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
+import CodeGenerator from './CodeGenerator.vue'
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
@@ -203,6 +219,7 @@ const toolbarRef = ref<HTMLElement | null>(null)
 const toolbarHeight = ref(52)
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
+const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 
 
