@@ -274,6 +274,7 @@ onUnmounted(() => {
   gap: 8px;
   font-size: 13px;
   cursor: pointer;
+  color: var(--text-primary);
 }
 
 .config-section {
@@ -291,12 +292,12 @@ onUnmounted(() => {
 .config-row label {
   font-weight: 500;
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .help-text {
   font-size: 11px;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .chip-list {
@@ -305,9 +306,9 @@ onUnmounted(() => {
   gap: 4px;
   min-height: 28px;
   padding: 4px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: #fafafa;
+  background: var(--bg-tertiary);
 }
 
 .chip {
@@ -320,12 +321,12 @@ onUnmounted(() => {
 }
 
 .chip-index {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--accent-light);
+  color: var(--accent-color);
 }
 
 .chip-value {
-  background: #fff3e0;
+  background: rgba(245, 124, 0, 0.15);
   color: #f57c00;
 }
 
@@ -335,15 +336,15 @@ onUnmounted(() => {
   cursor: pointer;
   padding: 0 2px;
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .chip-remove:hover {
-  color: #f44336;
+  color: var(--error-color);
 }
 
 .placeholder {
-  color: #999;
+  color: var(--text-muted);
   font-size: 12px;
   font-style: italic;
 }
@@ -351,7 +352,7 @@ onUnmounted(() => {
 .output-preview {
   margin-top: 8px;
   padding: 8px;
-  background: #f5f5f5;
+  background: var(--bg-tertiary);
   border-radius: 4px;
 }
 
@@ -359,6 +360,7 @@ onUnmounted(() => {
   margin: 0;
   padding: 0 0 0 16px;
   font-size: 12px;
+  color: var(--text-primary);
 }
 
 .output-list li {
@@ -370,7 +372,7 @@ onUnmounted(() => {
 }
 
 .col-type {
-  color: #888;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -383,13 +385,28 @@ onUnmounted(() => {
 }
 
 .is-index .col-role {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--accent-light);
+  color: var(--accent-color);
 }
 
 .is-value .col-role {
-  background: #fff3e0;
+  background: rgba(245, 124, 0, 0.15);
   color: #f57c00;
+}
+
+/* Override select styling */
+.select-sm {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.select-sm:focus {
+  outline: none;
+  border-color: var(--accent-color);
 }
 
 .listbox li {

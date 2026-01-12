@@ -271,12 +271,12 @@ onUnmounted(() => {
 .config-row label {
   font-weight: 500;
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .help-text {
   font-size: 11px;
-  color: #999;
+  color: var(--text-muted);
 }
 
 .chip-list {
@@ -285,9 +285,9 @@ onUnmounted(() => {
   gap: 4px;
   min-height: 28px;
   padding: 4px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  background: #fafafa;
+  background: var(--bg-tertiary);
 }
 
 .chip {
@@ -295,9 +295,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background: #e3f2fd;
+  background: var(--accent-light);
   border-radius: 12px;
   font-size: 12px;
+  color: var(--text-primary);
 }
 
 .chip-remove {
@@ -306,15 +307,15 @@ onUnmounted(() => {
   cursor: pointer;
   padding: 0 2px;
   font-size: 14px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .chip-remove:hover {
-  color: #f44336;
+  color: var(--error-color);
 }
 
 .placeholder {
-  color: #999;
+  color: var(--text-muted);
   font-size: 12px;
   font-style: italic;
 }
@@ -332,6 +333,7 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: normal;
   cursor: pointer;
+  color: var(--text-primary);
 }
 
 .col-name {
@@ -339,7 +341,7 @@ onUnmounted(() => {
 }
 
 .col-type {
-  color: #888;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -352,17 +354,17 @@ onUnmounted(() => {
 }
 
 .is-index .col-role {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--accent-light);
+  color: var(--accent-color);
 }
 
 .is-pivot .col-role {
-  background: #fff3e0;
+  background: rgba(245, 124, 0, 0.15);
   color: #f57c00;
 }
 
 .is-value .col-role {
-  background: #e8f5e9;
+  background: rgba(56, 142, 60, 0.15);
   color: #388e3c;
 }
 
@@ -370,5 +372,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Override select styling */
+.select-sm {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.select-sm:focus {
+  outline: none;
+  border-color: var(--accent-color);
 }
 </style>
