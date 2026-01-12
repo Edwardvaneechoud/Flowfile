@@ -790,7 +790,7 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute output node - prepares data for download in WASM environment.
 
     Returns the serialized data content that can be downloaded by the browser.
-    Supports CSV, Excel (as CSV fallback), and Parquet formats.
+    Supports CSV and Parquet formats.
     """
     df = get_dataframe(input_id)
     if df is None:
@@ -798,6 +798,7 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
 
     try:
         import io
+        import base64
         output_settings = settings.get("output_settings", {})
         file_type = output_settings.get("file_type", "csv")
         file_name = output_settings.get("name", "output.csv")
@@ -812,8 +813,6 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
             buffer = io.BytesIO()
             df.write_parquet(buffer)
             content = buffer.getvalue()
-            # Convert bytes to base64 for JSON transport
-            import base64
             content = base64.b64encode(content).decode('utf-8')
             mime_type = "application/octet-stream"
 

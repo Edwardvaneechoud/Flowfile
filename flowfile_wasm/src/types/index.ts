@@ -441,12 +441,21 @@ export interface DataPreview {
   total_rows: number
 }
 
+export interface DownloadInfo {
+  content: string
+  file_name: string
+  file_type: string
+  mime_type: string
+  row_count: number
+}
+
 export interface NodeResult {
   success?: boolean  // undefined = not executed yet (shows grey), true = success (green), false = error (red)
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]
   execution_time?: number
+  download?: DownloadInfo  // For output nodes - contains downloadable file data
 }
 
 export interface FlowState {
