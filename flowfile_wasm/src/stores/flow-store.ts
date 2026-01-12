@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
 import yaml from 'js-yaml'
 import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
+import { fileStorage } from './file-storage'
 import type {
   FlowNode,
   FlowEdge,
@@ -73,7 +74,7 @@ export const useFlowStore = defineStore('flow', () => {
   const fileContents = ref<Map<number, string>>(new Map())
 
   // Load state from session storage on init
-  function loadFromStorage() {
+  async function loadFromStorage() {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY)
       if (saved) {
@@ -115,9 +116,26 @@ export const useFlowStore = defineStore('flow', () => {
             deriveEdgesFromNodes(data.nodes)
           }
 
-          // Restore file contents separately (not part of FlowfileData)
+          // Restore file contents from sessionStorage (small files)
           if (state.fileContents) {
             fileContents.value = new Map(state.fileContents)
+          }
+
+          // Restore large file contents from IndexedDB
+          if (state.largeFileNodeIds && Array.isArray(state.largeFileNodeIds)) {
+            // Load large files asynchronously from IndexedDB
+            await Promise.all(
+              state.largeFileNodeIds.map(async (nodeId: number) => {
+                try {
+                  const content = await fileStorage.getFileContent(nodeId)
+                  if (content) {
+                    fileContents.value.set(nodeId, content)
+                  }
+                } catch (err) {
+                  console.error(`Failed to load large file for node ${nodeId} from IndexedDB:`, err)
+                }
+              })
+            )
           }
 
           // Restore node schemas for quick column access
@@ -203,51 +221,70 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
-  function saveToStorage() {
-    try {
-      // Build FlowfileData structure (without connections - flowfile_core format)
-      const flowfileNodes: FlowfileNode[] = []
+  async function saveToStorage() {
+    // Build FlowfileData structure (without connections - flowfile_core format)
+    const flowfileNodes: FlowfileNode[] = []
 
-      nodes.value.forEach((node, id) => {
-        const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
-        const outputs = edges.value
-          .filter(e => e.source === String(id))
-          .map(e => parseInt(e.target))
+    nodes.value.forEach((node, id) => {
+      const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
+      const outputs = edges.value
+        .filter(e => e.source === String(id))
+        .map(e => parseInt(e.target))
 
-        flowfileNodes.push({
-          id: node.id,
-          type: node.type,
-          is_start_node: isStartNode,
-          description: (node.settings as NodeBase).description || '',
-          x_position: node.x,
-          y_position: node.y,
-          left_input_id: node.leftInputId,
-          right_input_id: node.rightInputId,
-          input_ids: node.inputIds,
-          outputs,
-          setting_input: cleanSettingInput(node.settings)
-        })
+      flowfileNodes.push({
+        id: node.id,
+        type: node.type,
+        is_start_node: isStartNode,
+        description: (node.settings as NodeBase).description || '',
+        x_position: node.x,
+        y_position: node.y,
+        left_input_id: node.leftInputId,
+        right_input_id: node.rightInputId,
+        input_ids: node.inputIds,
+        outputs,
+        setting_input: cleanSettingInput(node.settings)
       })
+    })
 
-      // No connections array - flowfile_core derives connections from node relationships
-      const flowfileData: FlowfileData = {
-        flowfile_version: '1.0.0',
-        flowfile_id: Date.now(),
-        flowfile_name: 'Session Flow',
-        flowfile_settings: {
-          description: '',
-          execution_mode: 'Development',
-          execution_location: 'local',
-          auto_save: true,
-          show_detailed_progress: false
-        },
-        nodes: flowfileNodes
+    // No connections array - flowfile_core derives connections from node relationships
+    const flowfileData: FlowfileData = {
+      flowfile_version: '1.0.0',
+      flowfile_id: Date.now(),
+      flowfile_name: 'Session Flow',
+      flowfile_settings: {
+        description: '',
+        execution_mode: 'Development',
+        execution_location: 'local',
+        auto_save: true,
+        show_detailed_progress: false
+      },
+      nodes: flowfileNodes
+    }
+
+    // Separate small and large files for hybrid storage
+    const smallFiles: Array<[number, string]> = []
+    const largeFileNodeIds: number[] = []
+
+    for (const [nodeId, content] of fileContents.value.entries()) {
+      if (fileStorage.shouldUseIndexedDB(content)) {
+        // Large file: save to IndexedDB
+        largeFileNodeIds.push(nodeId)
+        // Save asynchronously (don't await to avoid blocking)
+        fileStorage.setFileContent(nodeId, content).catch(err => {
+          console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
+        })
+      } else {
+        // Small file: save to sessionStorage
+        smallFiles.push([nodeId, content])
       }
+    }
 
+    try {
       const state = {
         version: STORAGE_VERSION,
         flowfileData,
-        fileContents: Array.from(fileContents.value.entries()),
+        fileContents: smallFiles,
+        largeFileNodeIds,
         nodeIdCounter: nodeIdCounter.value,
         // Save schemas separately for quick reload
         nodeSchemas: Array.from(nodeResults.value.entries()).map(([id, result]) => [id, result.schema])
@@ -256,6 +293,36 @@ export const useFlowStore = defineStore('flow', () => {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
     } catch (err) {
       console.error('Failed to save state to session storage', err)
+
+      // If quota exceeded, try saving minimal state without schemas
+      if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+        try {
+          const minimalState = {
+            version: STORAGE_VERSION,
+            flowfileData: {
+              ...flowfileData,
+              nodes: flowfileData.nodes.map((n: FlowfileNode) => ({
+                ...n,
+                setting_input: {} // Clear settings to save space
+              }))
+            },
+            fileContents: [], // No files in fallback
+            largeFileNodeIds,
+            nodeIdCounter: nodeIdCounter.value,
+            nodeSchemas: [] // No schemas in fallback
+          }
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(minimalState))
+          console.warn('Saved minimal state due to quota limits. Large files are in IndexedDB.')
+        } catch (fallbackErr) {
+          console.error('Failed to save even minimal state:', fallbackErr)
+          // Clear session storage if it's completely full
+          try {
+            sessionStorage.removeItem(STORAGE_KEY)
+          } catch (clearErr) {
+            console.error('Could not clear session storage:', clearErr)
+          }
+        }
+      }
     }
   }
 
@@ -294,14 +361,14 @@ export const useFlowStore = defineStore('flow', () => {
     { deep: true }
   )
 
-  // Load on init
+  // Load on init (async)
   loadFromStorage()
-
-  // Initial schema propagation after loading
-  // Use setTimeout to ensure nodeResults are populated from storage
-  setTimeout(() => {
-    propagateSchemas().catch(err => console.error('Initial schema propagation error:', err))
-  }, 0)
+    .then(() => {
+      // Initial schema propagation after loading
+      // Ensure nodeResults are populated from storage before propagating
+      return propagateSchemas()
+    })
+    .catch(err => console.error('Failed to initialize from storage:', err))
 
   // Getters
   const nodeList = computed(() => Array.from(nodes.value.values()))
@@ -389,6 +456,14 @@ export const useFlowStore = defineStore('flow', () => {
     nodeResults.value.delete(id)
     fileContents.value.delete(id)
 
+    // Delete file from IndexedDB if it exists there
+    fileStorage.deleteFileContent(id).catch(err => {
+      // Silently ignore if file doesn't exist in IndexedDB
+      if (err && err.name !== 'NotFoundError') {
+        console.error(`Failed to delete file for node ${id} from IndexedDB:`, err)
+      }
+    })
+
     // Remove related edges
     edges.value = edges.value.filter(
       e => e.source !== String(id) && e.target !== String(id)
@@ -467,6 +542,13 @@ export const useFlowStore = defineStore('flow', () => {
 
   function setFileContent(nodeId: number, content: string) {
     fileContents.value.set(nodeId, content)
+
+    // If file is large, immediately save to IndexedDB for performance
+    if (fileStorage.shouldUseIndexedDB(content)) {
+      fileStorage.setFileContent(nodeId, content).catch(err => {
+        console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
+      })
+    }
 
     // Get node to check settings for CSV parsing options
     const node = nodes.value.get(nodeId)
@@ -1378,6 +1460,11 @@ result
       fileContents.value.clear()
       selectedNodeId.value = null
 
+      // Clear IndexedDB file storage
+      fileStorage.clearAll().catch(err => {
+        console.error('Failed to clear IndexedDB:', err)
+      })
+
       // Find max node id for counter
       let maxId = 0
 
@@ -1557,6 +1644,11 @@ result
     selectedNodeId.value = null
     nodeIdCounter.value = 0
     sessionStorage.removeItem(STORAGE_KEY)
+
+    // Clear IndexedDB file storage
+    fileStorage.clearAll().catch(err => {
+      console.error('Failed to clear IndexedDB:', err)
+    })
   }
 
   return {

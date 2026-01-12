@@ -5,7 +5,7 @@
       title="Data Actions"
       initial-position="left"
       :initial-width="200"
-      :initial-top="70"
+      :initial-top="toolbarHeight"
     >
       <div class="nodes-wrapper">
         <input
@@ -41,7 +41,7 @@
     </DraggablePanel>
 
     <!-- Toolbar -->
-    <div class="toolbar">
+    <div ref="toolbarRef" class="toolbar">
       <div class="action-buttons">
         <button
           class="action-btn run-btn"
@@ -68,6 +68,15 @@
           @change="handleLoadFlow"
           style="display: none"
         />
+        <button
+          class="action-btn"
+          :class="{ active: showCodeGenerator }"
+          title="Generate Python Code"
+          @click="showCodeGenerator = true"
+        >
+          <span class="material-icons btn-icon">code</span>
+          <span class="btn-text">Generate code</span>
+        </button>
         <div class="toolbar-divider"></div>
         <button class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
           <span class="material-icons btn-icon">delete</span>
@@ -83,7 +92,7 @@
         v-model:nodes="vueNodes"
         v-model:edges="vueEdges"
         :node-types="nodeTypes"
-        :default-viewport="{ zoom: 1, x: 0, y: 0 }"
+        :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
         class="custom-node-flow"
         fit-view-on-init
@@ -111,7 +120,7 @@
       :title="getNodeDescription(selectedNode.type).title"
       initial-position="right"
       :initial-width="450"
-      :initial-top="70"
+      :initial-top="toolbarHeight"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -162,11 +171,17 @@
         No data available. Run the flow to see results.
       </div>
     </DraggablePanel>
+
+    <!-- Code Generator Modal -->
+    <CodeGenerator
+      :is-visible="showCodeGenerator"
+      @close="showCodeGenerator = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -190,6 +205,7 @@ import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
+import CodeGenerator from './CodeGenerator.vue'
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
@@ -200,9 +216,13 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const toolbarRef = ref<HTMLElement | null>(null)
+const toolbarHeight = ref(52)
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
+const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
+
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -542,8 +562,16 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 // Register keyboard shortcuts
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
+
+  // Wait for DOM to be fully rendered
+  await nextTick()
+  // Calculate toolbar bottom position for panel positioning
+  if (toolbarRef.value) {
+    const rect = toolbarRef.value.getBoundingClientRect()
+    toolbarHeight.value = rect.bottom
+  }
 })
 
 onUnmounted(() => {
@@ -626,7 +654,6 @@ onUnmounted(() => {
   background: var(--bg-tertiary);
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s;
 }
 
 .category-header:hover {

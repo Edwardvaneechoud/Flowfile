@@ -1,0 +1,41 @@
+name: Flowfile WASM Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flowfile_wasm/**'
+      - '.github/workflows/flowfile-wasm-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'flowfile_wasm/**'
+      - '.github/workflows/flowfile-wasm-build.yml'
+  workflow_dispatch:
+
+# Explicit permissions for security
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: flowfile_wasm/package-lock.json
+
+      - name: Install dependencies
+        working-directory: flowfile_wasm
+        run: npm ci
+
+      - name: Build
+        working-directory: flowfile_wasm
+        run: npm run build
