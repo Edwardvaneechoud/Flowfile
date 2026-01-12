@@ -653,6 +653,138 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
         return {"success": False, "error": format_error("preview", node_id, e, df)}
+
+def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute pivot node - converts data from long to wide format"""
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Pivot error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    try:
+        pivot_input = settings.get("pivot_input", {})
+        index_columns = pivot_input.get("index_columns", [])
+        pivot_column = pivot_input.get("pivot_column", "")
+        value_col = pivot_input.get("value_col", "")
+        aggregations = pivot_input.get("aggregations", ["sum"])
+
+        if not pivot_column:
+            return {"success": False, "error": f"Pivot error on node #{node_id}: No pivot column specified. Please select a column whose values will become new columns."}
+        if not value_col:
+            return {"success": False, "error": f"Pivot error on node #{node_id}: No value column specified. Please select a column containing values to aggregate."}
+        if pivot_column not in df.columns:
+            return {"success": False, "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' not found. Available columns: {list(df.columns)}"}
+        if value_col not in df.columns:
+            return {"success": False, "error": f"Pivot error on node #{node_id}: Value column '{value_col}' not found. Available columns: {list(df.columns)}"}
+
+        # Get unique values for the pivot column (limit to prevent too many columns)
+        max_unique = 200
+        unique_values = df.select(pl.col(pivot_column).cast(pl.String)).unique().sort(pivot_column).limit(max_unique).to_series().to_list()
+
+        if len(unique_values) >= max_unique:
+            return {"success": False, "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' has too many unique values (>={max_unique}). Please use a column with fewer unique values."}
+
+        # Determine group columns (index + pivot)
+        group_cols = index_columns + [pivot_column] if index_columns else [pivot_column]
+
+        # Build aggregation expressions
+        agg_map = {
+            "sum": lambda c: pl.col(c).sum(),
+            "mean": lambda c: pl.col(c).mean(),
+            "min": lambda c: pl.col(c).min(),
+            "max": lambda c: pl.col(c).max(),
+            "count": lambda c: pl.col(c).count(),
+            "first": lambda c: pl.col(c).first(),
+            "last": lambda c: pl.col(c).last(),
+            "median": lambda c: pl.col(c).median(),
+        }
+
+        # First aggregate the data
+        agg_exprs = []
+        for agg in aggregations:
+            if agg in agg_map:
+                agg_exprs.append(agg_map[agg](value_col).alias(agg))
+            else:
+                agg_exprs.append(pl.col(value_col).sum().alias(agg))
+
+        if not agg_exprs:
+            agg_exprs = [pl.col(value_col).sum().alias("sum")]
+
+        grouped = df.group_by(group_cols).agg(agg_exprs)
+
+        # Now pivot the data
+        # Build the pivot manually by filtering for each unique value
+        if index_columns:
+            index_exprs = [pl.col(c) for c in index_columns]
+        else:
+            # No index columns - add a temporary constant column
+            grouped = grouped.with_columns(pl.lit(1).alias("__temp_idx__"))
+            index_columns = ["__temp_idx__"]
+            index_exprs = [pl.col("__temp_idx__")]
+
+        # Group by index columns and create struct for each pivot value
+        pivot_exprs = []
+        for unique_val in unique_values:
+            for agg in aggregations:
+                col_name = f"{unique_val}_{agg}" if len(aggregations) > 1 else str(unique_val)
+                pivot_exprs.append(
+                    pl.col(agg).filter(pl.col(pivot_column) == unique_val).first().alias(col_name)
+                )
+
+        result = grouped.group_by(index_exprs).agg(pivot_exprs)
+
+        # Remove temp column if added
+        if "__temp_idx__" in result.columns:
+            result = result.drop("__temp_idx__")
+
+        store_dataframe(node_id, result)
+        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+    except Exception as e:
+        return {"success": False, "error": format_error("pivot", node_id, e, df)}
+
+def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute unpivot node - converts data from wide to long format"""
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Unpivot error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    try:
+        unpivot_input = settings.get("unpivot_input", {})
+        index_columns = unpivot_input.get("index_columns", [])
+        value_columns = unpivot_input.get("value_columns", [])
+        data_type_selector = unpivot_input.get("data_type_selector")
+        selector_mode = unpivot_input.get("data_type_selector_mode", "column")
+
+        # Determine which columns to unpivot
+        if selector_mode == "data_type" and data_type_selector:
+            # Select columns by data type
+            import polars.selectors as cs
+            selector_map = {
+                "float": cs.float,
+                "numeric": cs.numeric,
+                "string": cs.string,
+                "date": cs.temporal,
+                "all": cs.all,
+            }
+            if data_type_selector in selector_map:
+                on_selector = selector_map[data_type_selector]()
+            else:
+                on_selector = cs.all()
+            result = df.unpivot(on=on_selector, index=index_columns if index_columns else None)
+        elif value_columns:
+            # Explicit column list
+            # Validate columns exist
+            missing = [c for c in value_columns if c not in df.columns]
+            if missing:
+                return {"success": False, "error": f"Unpivot error on node #{node_id}: Columns not found: {missing}. Available columns: {list(df.columns)}"}
+            result = df.unpivot(on=value_columns, index=index_columns if index_columns else None)
+        else:
+            # No columns specified - unpivot all non-index columns
+            result = df.unpivot(index=index_columns if index_columns else None)
+
+        store_dataframe(node_id, result)
+        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+    except Exception as e:
+        return {"success": False, "error": format_error("unpivot", node_id, e, df)}
 `)
   }
 

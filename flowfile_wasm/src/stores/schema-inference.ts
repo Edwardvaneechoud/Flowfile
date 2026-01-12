@@ -9,6 +9,8 @@ import type {
   NodeSelectSettings,
   NodeGroupBySettings,
   NodeJoinSettings,
+  NodePivotSettings,
+  NodeUnpivotSettings,
   AggType,
   SelectInput,
   AggCol,
@@ -194,6 +196,56 @@ function inferJoinSchema(
 }
 
 /**
+ * Infer output schema for an UNPIVOT node
+ * Unpivot always produces: index columns + 'variable' (string) + 'value' (varies)
+ */
+function inferUnpivotSchema(
+  inputSchema: ColumnSchema[],
+  settings: NodeUnpivotSettings
+): ColumnSchema[] | null {
+  const unpivotInput = settings.unpivot_input
+  if (!unpivotInput) {
+    return null
+  }
+
+  const result: ColumnSchema[] = []
+
+  // Add index columns (these are preserved as-is)
+  const indexColumns = unpivotInput.index_columns || []
+  for (const colName of indexColumns) {
+    const col = findColumn(inputSchema, colName)
+    if (col) {
+      result.push({ name: col.name, data_type: col.data_type })
+    }
+  }
+
+  // Add the 'variable' column (contains original column names)
+  result.push({ name: 'variable', data_type: 'String' })
+
+  // Add the 'value' column (type depends on unpivoted columns)
+  // For simplicity, we'll use String as a safe default
+  // since the actual type depends on the columns being unpivoted
+  result.push({ name: 'value', data_type: 'String' })
+
+  return result.length > 0 ? result : null
+}
+
+/**
+ * Infer output schema for a PIVOT node
+ * Pivot output depends on unique values in the pivot column, which we can't know without execution
+ * We return null to indicate that lazy execution is needed
+ */
+function inferPivotSchema(
+  _inputSchema: ColumnSchema[],
+  _settings: NodePivotSettings
+): ColumnSchema[] | null {
+  // Pivot creates columns based on unique values in the pivot column
+  // We can't infer these without executing the query
+  // Return null to signal that lazy execution is needed
+  return null
+}
+
+/**
  * Main schema inference function
  * Computes output schema from input schema + node settings
  *
@@ -251,6 +303,14 @@ export function inferOutputSchema(
         return null
       }
       return inferJoinSchema(inputSchema, rightInputSchema, settings as NodeJoinSettings)
+
+    // Pivot - can't infer without execution (depends on unique values)
+    case 'pivot':
+      return inferPivotSchema(inputSchema, settings as NodePivotSettings)
+
+    // Unpivot - always produces index columns + variable + value
+    case 'unpivot':
+      return inferUnpivotSchema(inputSchema, settings as NodeUnpivotSettings)
 
     default:
       // Unknown node type - return input schema as fallback

@@ -1041,6 +1041,32 @@ result
           break
         }
 
+        case 'pivot': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_pivot(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
+        case 'unpivot': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_unpivot(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
         default:
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
@@ -1212,6 +1238,28 @@ result
           sample_size: 10,
           head_input: {
             n: 10
+          }
+        } as any
+
+      case 'pivot':
+        return {
+          ...base,
+          pivot_input: {
+            index_columns: [],
+            pivot_column: '',
+            value_col: '',
+            aggregations: ['sum']
+          }
+        } as any
+
+      case 'unpivot':
+        return {
+          ...base,
+          unpivot_input: {
+            index_columns: [],
+            value_columns: [],
+            data_type_selector: undefined,
+            data_type_selector_mode: 'column'
           }
         } as any
 
