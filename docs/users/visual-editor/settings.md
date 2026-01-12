@@ -1,26 +1,64 @@
 # Settings
 
-Configure Flowfile's appearance and behavior through the settings interface.
+Configure Flowfile's appearance and behavior.
 
-## Theme Selection
+## Theme
 
-The theme toggle is located in the top navigation bar. Click the theme icon to cycle through available modes.
-
-### Available Themes
+Click the theme icon in the top navigation bar to switch between:
 
 | Mode | Description |
 |------|-------------|
-| **Light** | Standard light theme with white backgrounds |
-| **Dark** | Dark theme with reduced brightness for low-light environments |
-| **System** | Automatically follows your operating system's preference |
+| **Light** | White backgrounds |
+| **Dark** | Reduced brightness for low-light |
+| **System** | Follows OS preference |
 
-### Persistence
+Your preference persists across sessions.
 
-Your theme preference is saved locally and persists across sessions. When you reopen Flowfile, it remembers your last selected theme.
+## User Management
 
-## Changing the Theme
+*Available in Docker mode only.*
 
-1. Locate the theme toggle icon in the top navigation bar
-2. Click the icon to switch to the next theme mode
-3. The interface updates immediately
-4. Your preference is saved automatically
+Manage team access through the Admin panel. Click your username → **Admin**.
+
+<!-- IMAGE: user_management.png - Admin panel showing user list -->
+![User Management](../../assets/images/guides/settings/user_management.png)
+
+### Creating Users
+
+1. Click **Add User**
+2. Enter username, email, full name
+3. Set temporary password
+4. Optionally grant admin privileges
+5. Click **Create**
+
+New users must change their password on first login.
+
+### Password Requirements
+
+- Minimum 8 characters
+- At least one uppercase letter
+- At least one lowercase letter
+- At least one number
+
+### Admin Privileges
+
+Admins can:
+
+- Create, modify, and delete users
+- View all users in the system
+- Grant/revoke admin status
+
+### Deleting Users
+
+Deleting a user removes their:
+
+- Account and login access
+- Stored secrets
+- Saved connections
+
+Flow definitions are preserved.
+
+## Related
+
+- [Secrets](../secrets.md) - Encrypted credential storage
+- [Docker](../deployment/docker.md) - Docker deployment

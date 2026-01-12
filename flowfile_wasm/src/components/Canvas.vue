@@ -5,7 +5,7 @@
       title="Data Actions"
       initial-position="left"
       :initial-width="200"
-      :initial-top="50"
+      :initial-top="70"
     >
       <div class="nodes-wrapper">
         <input
@@ -120,7 +120,7 @@
       :title="getNodeDescription(selectedNode.type).title"
       initial-position="right"
       :initial-width="450"
-      :initial-top="50"
+      :initial-top="70"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -206,6 +206,8 @@ import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
 import CodeGenerator from './CodeGenerator.vue'
+import PivotSettings from './nodes/PivotSettings.vue'
+import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 
 const flowStore = useFlowStore()
@@ -213,9 +215,10 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const { screenToFlowCoordinate, removeNodes } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
 const showCodeGenerator = ref(false)
+const pendingNodeAdjustment = ref<number | null>(null)
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -274,7 +277,9 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Aggregations',
     isOpen: true,
     nodes: [
-      { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1 }
+      { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1 },
+      { type: 'pivot', name: 'Pivot', icon: 'pivot.png', inputs: 1, outputs: 1 },
+      { type: 'unpivot', name: 'Unpivot', icon: 'unpivot.png', inputs: 1, outputs: 1 }
     ]
   },
   {
@@ -390,6 +395,7 @@ function onDrop(event: DragEvent) {
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
   flowStore.selectNode(nodeId)
 
+  pendingNodeAdjustment.value = nodeId
   draggedNodeDef = null
 }
 
@@ -437,6 +443,19 @@ function onNodesChange(changes: NodeChange[]) {
         x: change.position.x,
         y: change.position.y
       })
+    } else if (change.type === 'dimensions' && pendingNodeAdjustment.value === parseInt(change.id)) {
+      const nodeId = change.id
+      updateNode(nodeId, (node) => {
+        const width = node.dimensions?.width || 0
+        const height = node.dimensions?.height || 0
+        return {
+          position: {
+            x: node.position.x - width / 55,
+            y: node.position.y - height / 55
+          }
+        }
+      })
+      pendingNodeAdjustment.value = null
     }
   })
 }
@@ -472,7 +491,9 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     unique: UniqueSettings,
     head: HeadSettings,
-    preview: PreviewSettings
+    preview: PreviewSettings,
+    pivot: PivotSettings,
+    unpivot: UnpivotSettings
   }
   return components[type] || null
 }

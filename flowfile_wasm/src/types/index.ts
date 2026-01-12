@@ -162,6 +162,31 @@ export interface UniqueInput {
 }
 
 // =============================================================================
+// PIVOT SCHEMAS (matches flowfile_core/schemas/transform_schema.py)
+// =============================================================================
+
+export interface PivotInput {
+  index_columns: string[]    // Columns to keep stable (row identifiers)
+  pivot_column: string       // Column whose values become new column names
+  value_col: string          // Column containing values to aggregate
+  aggregations: string[]     // Aggregation functions: 'sum', 'mean', 'count', 'min', 'max', etc.
+}
+
+// =============================================================================
+// UNPIVOT SCHEMAS (matches flowfile_core/schemas/transform_schema.py)
+// =============================================================================
+
+export type UnpivotDataTypeSelector = 'float' | 'all' | 'date' | 'numeric' | 'string'
+export type UnpivotSelectorMode = 'data_type' | 'column'
+
+export interface UnpivotInput {
+  index_columns: string[]                          // Columns to keep as identifiers
+  value_columns: string[]                          // Columns to unpivot (melt)
+  data_type_selector?: UnpivotDataTypeSelector     // Select columns by data type
+  data_type_selector_mode: UnpivotSelectorMode     // How to select columns: by type or explicit list
+}
+
+// =============================================================================
 // FORMULA / WITH COLUMNS SCHEMAS
 // =============================================================================
 
@@ -277,6 +302,14 @@ export interface NodePreviewSettings extends NodeSingleInput {
   // No additional settings needed
 }
 
+export interface NodePivotSettings extends NodeSingleInput {
+  pivot_input: PivotInput
+}
+
+export interface NodeUnpivotSettings extends NodeSingleInput {
+  unpivot_input: UnpivotInput
+}
+
 // Union type for all node settings
 export type NodeSettings =
   | NodeReadSettings
@@ -290,6 +323,8 @@ export type NodeSettings =
   | NodeFormulaSettings
   | NodeSampleSettings
   | NodePreviewSettings
+  | NodePivotSettings
+  | NodeUnpivotSettings
 
 // =============================================================================
 // FLOWFILE DATA STRUCTURE (for save/load - matches flowfile_core/schemas/schemas.py)
@@ -405,6 +440,10 @@ export const NODE_TYPES = {
   formula: 'formula',
   sample: 'sample',
 
+  // Aggregate/reshape nodes
+  pivot: 'pivot',
+  unpivot: 'unpivot',
+
   // Combine nodes
   join: 'join',
 
@@ -512,6 +551,16 @@ export interface PolarsCodeSettings extends NodeBase {
 }
 
 export interface PreviewSettings extends NodeBase {
+  depending_on_id?: number
+}
+
+export interface PivotSettings extends NodeBase {
+  pivot_input: PivotInput
+  depending_on_id?: number
+}
+
+export interface UnpivotSettings extends NodeBase {
+  unpivot_input: UnpivotInput
   depending_on_id?: number
 }
 

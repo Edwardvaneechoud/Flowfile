@@ -95,7 +95,9 @@ const iconMap: Record<string, string> = {
   polars_code: 'polars_code.png',
   unique: 'unique.png',
   head: 'sample.png',
-  preview: 'view.png'
+  preview: 'view.png',
+  pivot: 'pivot.png',
+  unpivot: 'unpivot.png'
 }
 
 interface NodeData {
