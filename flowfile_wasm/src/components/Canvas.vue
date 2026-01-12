@@ -190,6 +190,8 @@ import PolarsCodeSettings from './nodes/PolarsCodeSettings.vue'
 import UniqueSettings from './nodes/UniqueSettings.vue'
 import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
+import PivotSettings from './nodes/PivotSettings.vue'
+import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 
 const flowStore = useFlowStore()
@@ -257,7 +259,9 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Aggregations',
     isOpen: true,
     nodes: [
-      { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1 }
+      { type: 'group_by', name: 'Group By', icon: 'group_by.png', inputs: 1, outputs: 1 },
+      { type: 'pivot', name: 'Pivot', icon: 'pivot.png', inputs: 1, outputs: 1 },
+      { type: 'unpivot', name: 'Unpivot', icon: 'unpivot.png', inputs: 1, outputs: 1 }
     ]
   },
   {
@@ -455,7 +459,9 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     unique: UniqueSettings,
     head: HeadSettings,
-    preview: PreviewSettings
+    preview: PreviewSettings,
+    pivot: PivotSettings,
+    unpivot: UnpivotSettings
   }
   return components[type] || null
 }
