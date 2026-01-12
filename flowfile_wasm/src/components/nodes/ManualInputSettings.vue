@@ -522,8 +522,8 @@ watch(() => props.settings, (newSettings, oldSettings) => {
 }
 
 .btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent-color);
+  border-color: var(--border-color);
+  opacity: 0.8;
 }
 
 .btn-primary {
@@ -533,7 +533,7 @@ watch(() => props.settings, (newSettings, oldSettings) => {
 }
 
 .btn-primary:hover {
-  background: var(--accent-hover);
+  opacity: 0.9;
 }
 
 .btn-sm {
@@ -642,8 +642,6 @@ watch(() => props.settings, (newSettings, oldSettings) => {
 
 .delete-btn:hover {
   opacity: 1;
-  color: var(--error-color);
-  background: rgba(244, 67, 54, 0.1);
 }
 
 .type-select {
@@ -667,9 +665,6 @@ watch(() => props.settings, (newSettings, oldSettings) => {
 }
 
 /* Data rows */
-.data-row:hover {
-  background: var(--bg-hover);
-}
 
 .row-number {
   width: 32px;
@@ -703,7 +698,6 @@ watch(() => props.settings, (newSettings, oldSettings) => {
 .input-cell:focus {
   outline: none;
   background: var(--bg-primary);
-  box-shadow: inset 0 0 0 2px var(--accent-color);
 }
 
 .row-actions {
@@ -763,7 +757,6 @@ watch(() => props.settings, (newSettings, oldSettings) => {
 
 .json-textarea:focus {
   outline: none;
-  border-color: var(--accent-color);
 }
 
 .json-actions {
