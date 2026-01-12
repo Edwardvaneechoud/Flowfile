@@ -548,14 +548,9 @@ onMounted(async () => {
   await nextTick()
 
   // Calculate toolbar bottom position for panel positioning
-  console.log('[Canvas] Toolbar ref:', toolbarRef.value)
   if (toolbarRef.value) {
     const rect = toolbarRef.value.getBoundingClientRect()
     toolbarHeight.value = rect.bottom
-    console.log('[Canvas] Toolbar bottom position (from viewport top):', toolbarHeight.value)
-    console.log('[Canvas] Toolbar rect:', { top: rect.top, height: rect.height, bottom: rect.bottom })
-  } else {
-    console.log('[Canvas] Toolbar ref is null')
   }
 })
 

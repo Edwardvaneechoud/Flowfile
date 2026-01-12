@@ -76,8 +76,6 @@ onMounted(() => {
   const vh = window.innerHeight
   const vw = window.innerWidth
 
-  console.log('[DraggablePanel] Mounted with initialTop:', props.initialTop, 'title:', props.title)
-
   switch (props.initialPosition) {
     case 'right':
       left.value = vw - width.value
@@ -100,13 +98,10 @@ onMounted(() => {
       width.value = vw - props.initialLeft
       break
   }
-
-  console.log('[DraggablePanel] Final position - top:', top.value, 'left:', left.value)
 })
 
 // Watch for changes to initialTop and update position
 watch(() => props.initialTop, (newTop) => {
-  console.log('[DraggablePanel] initialTop changed to:', newTop, 'for panel:', props.title)
   const vh = window.innerHeight
   top.value = newTop
 
