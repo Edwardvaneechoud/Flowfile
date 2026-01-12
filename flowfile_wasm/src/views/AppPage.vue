@@ -46,9 +46,7 @@
       <Canvas />
     </main>
 
-    <!-- Theme Toggle - Bottom Left Corner -->
     <button class="theme-toggle-floating" @click="toggleTheme" :title="isDark ? 'Switch to light mode' : 'Switch to dark mode'">
-      <!-- Sun icon for dark mode (click to go light) -->
       <svg v-if="isDark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="5"/>
         <line x1="12" y1="1" x2="12" y2="3"/>
@@ -60,13 +58,11 @@
         <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
         <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
       </svg>
-      <!-- Moon icon for light mode (click to go dark) -->
       <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
       </svg>
     </button>
 
-    <!-- Docs Modal -->
     <DocsModal :is-open="isDocsOpen" @close="isDocsOpen = false" />
   </div>
 </template>
@@ -88,10 +84,7 @@ const { isDark, toggleTheme } = useTheme()
 const isDocsOpen = ref(false)
 
 onMounted(async () => {
-  // Initialize theme
   themeStore.initialize()
-
-  // Initialize Pyodide
   await pyodideStore.initialize()
 })
 </script>
@@ -220,7 +213,6 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-/* Floating Theme Toggle - Bottom Left Corner */
 .theme-toggle-floating {
   position: fixed;
   bottom: 20px;
@@ -251,7 +243,6 @@ onMounted(async () => {
   height: 20px;
 }
 
-/* Responsive */
 @media (max-width: 768px) {
   .header-btn span {
     display: none;
