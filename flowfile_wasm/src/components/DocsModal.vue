@@ -245,7 +245,7 @@
             <section class="section links-section">
               <h2 class="section-title">Learn More</h2>
               <div class="links-grid">
-                <a href="https://flowfile.github.io/Flowfile/" target="_blank" rel="noopener" class="link-card">
+                <a href="https://edwardvaneechoud.github.io/Flowfile/" target="_blank" rel="noopener" class="link-card">
                   <div class="link-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -272,23 +272,6 @@
                   <div class="link-content">
                     <h4>GitHub Repository</h4>
                     <p>View the source code, report issues, and contribute to the project</p>
-                  </div>
-                  <svg class="link-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="5" y1="12" x2="19" y2="12"/>
-                    <polyline points="12 5 19 12 12 19"/>
-                  </svg>
-                </a>
-                <a href="https://github.com/Edwardvaneechoud/Flowfile" target="_blank" rel="noopener" class="link-card highlight">
-                  <div class="link-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                      <line x1="8" y1="21" x2="16" y2="21"/>
-                      <line x1="12" y1="17" x2="12" y2="21"/>
-                    </svg>
-                  </div>
-                  <div class="link-content">
-                    <h4>Full Desktop Application</h4>
-                    <p>Get the complete experience with database connections, more nodes, and advanced features</p>
                   </div>
                   <svg class="link-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="5" y1="12" x2="19" y2="12"/>
