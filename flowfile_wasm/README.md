@@ -85,3 +85,30 @@ The editor includes autocompletion for Polars functions and your DataFrame colum
 - File size limited by browser memory
 - Session storage persistence only (cleared when browser tab is closed)
 - Limited to the 11 essential nodes (compared to the full Flowfile editor)
+
+## Adding New Nodes (AI Context Prompt)
+
+Use this prompt when requesting AI assistance to implement a new node:
+
+```
+Flowfile has two implementations that must stay synchronized:
+
+1. **flowfile_core** (Python/Pydantic) - Server-side engine:
+   - `flowfile_core/schemas/input_schema.py` - Node settings (NodeBase → NodeSingleInput/NodeMultiInput)
+   - `flowfile_core/schemas/transform_schema.py` - Transform models (FilterInput, SelectInput, etc.)
+   - `flowfile_core/configs/node_store/nodes.py` - Node registration
+
+2. **flowfile_wasm** (TypeScript/Vue) - Browser-based lite version:
+   - `flowfile_wasm/src/types/index.ts` - TypeScript interfaces mirroring core schemas
+   - `flowfile_wasm/src/components/nodes/` - Vue settings components
+   - `flowfile_wasm/src/stores/flow-store.ts` - Execution logic using Pyodide
+
+**Critical Requirements:**
+- Schemas must be identical between core (Pydantic) and WASM (TypeScript)
+- Field names, types, and defaults must match exactly
+- Calculations must produce identical results
+- Follow the existing code style and layout patterns in each codebase unless technically impossible
+- Reference existing nodes (FilterInput, SelectInput, JoinInput) as implementation patterns
+
+Provide: node type identifier, settings schema for both implementations, transform logic, and Vue settings component.
+```

@@ -71,7 +71,6 @@ print(results_df)
 - **[Technical Architecture](architecture.md)**: An overview of the system design, including the three-service architecture and performance optimizations.
 - **[Python API Reference](python-api-reference.md)**: The complete, auto-generated API reference for all core classes and methods.
 - **[Visual UI Integration](../users/python-api/reference/visual-ui.md)**: Learn how to launch and control the visual editor from Python.
-- **[WASM Node Implementation](wasm-node-implementation.md)**: Guidelines for implementing nodes across flowfile_core and flowfile_wasm with schema parity.
 ---
 ## Contributing to Flowfile
 
