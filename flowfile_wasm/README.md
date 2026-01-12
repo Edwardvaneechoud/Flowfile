@@ -96,7 +96,7 @@ Flowfile has two implementations that must stay synchronized:
 1. **flowfile_core** (Python/Pydantic) - Server-side engine:
    - `flowfile_core/schemas/input_schema.py` - Node settings (NodeBase → NodeSingleInput/NodeMultiInput)
    - `flowfile_core/schemas/transform_schema.py` - Transform models (FilterInput, SelectInput, etc.)
-   - `flowfile_core/configs/node_store/nodes.py` - Node registration
+   - `flowfile_core/configs/node_store/nodes.py` - Node registration, naming, and descriptions (WASM must follow these)
 
 2. **flowfile_wasm** (TypeScript/Vue) - Browser-based lite version:
    - `flowfile_wasm/src/types/index.ts` - TypeScript interfaces mirroring core schemas
