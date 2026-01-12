@@ -163,6 +163,9 @@ const hasInputConnection = computed(() => {
 // Get download info from node result
 const downloadInfo = computed(() => {
   const result = flowStore.getNodeResult(props.nodeId)
+  console.log('[OutputSettings] Getting download info for node', props.nodeId)
+  console.log('[OutputSettings] Node result:', result)
+  console.log('[OutputSettings] Download info:', result?.download)
   return result?.download
 })
 

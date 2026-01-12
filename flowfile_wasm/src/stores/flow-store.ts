@@ -1158,22 +1158,37 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
+          console.log('[Output Node] Executing output node', nodeId, 'with input', inputId)
+          console.log('[Output Node] Settings:', JSON.stringify(node.settings))
           const outputResult = await runPythonWithResult(`
 import json
 result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          console.log('[Output Node] Python result:', outputResult)
+          console.log('[Output Node] Result type:', typeof outputResult)
+          console.log('[Output Node] Has success?', outputResult?.success)
+          console.log('[Output Node] Has download?', outputResult?.download)
+          if (outputResult?.download) {
+            console.log('[Output Node] Download keys:', Object.keys(outputResult.download))
+          }
           // Store download content separately in IndexedDB (not in nodeResults)
           if (outputResult?.success && outputResult?.download) {
             const { content, file_name, file_type, mime_type, row_count } = outputResult.download
-            await fileStorage.setDownloadContent(
-              nodeId,
-              content,
-              file_name,
-              file_type,
-              mime_type,
-              row_count
-            )
+            console.log('[Output Node] Storing to IndexedDB:', { file_name, file_type, mime_type, row_count, contentLength: content?.length })
+            try {
+              await fileStorage.setDownloadContent(
+                nodeId,
+                content,
+                file_name,
+                file_type,
+                mime_type,
+                row_count
+              )
+              console.log('[Output Node] IndexedDB storage successful')
+            } catch (storageErr) {
+              console.error('[Output Node] IndexedDB storage failed:', storageErr)
+            }
             // Create result without content - just metadata
             result = {
               success: outputResult.success,
@@ -1188,7 +1203,9 @@ result
                 content: '' // Empty placeholder for type compatibility
               }
             }
+            console.log('[Output Node] Final result to store in nodeResults:', result)
           } else {
+            console.log('[Output Node] No download in result, using raw result')
             result = outputResult
           }
           break
