@@ -1067,6 +1067,19 @@ result
           break
         }
 
+        case 'output': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          result = await runPythonWithResult(`
+import json
+result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          break
+        }
+
         default:
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
@@ -1267,6 +1280,22 @@ result
         return {
           ...base
         } as NodeSettings
+
+      case 'output':
+        return {
+          ...base,
+          output_settings: {
+            name: 'output.csv',
+            directory: '.',
+            file_type: 'csv',
+            write_mode: 'overwrite',
+            table_settings: {
+              file_type: 'csv',
+              delimiter: ',',
+              encoding: 'utf-8'
+            }
+          }
+        } as any
 
       default:
         return base as NodeSettings

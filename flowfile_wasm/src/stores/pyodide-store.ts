@@ -785,6 +785,79 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
         return {"success": False, "error": format_error("unpivot", node_id, e, df)}
+
+def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute output node - prepares data for download in WASM environment.
+
+    Returns the serialized data content that can be downloaded by the browser.
+    Supports CSV, Excel (as CSV fallback), and Parquet formats.
+    """
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Output error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    try:
+        import io
+        output_settings = settings.get("output_settings", {})
+        file_type = output_settings.get("file_type", "csv")
+        file_name = output_settings.get("name", "output.csv")
+        table_settings = output_settings.get("table_settings", {})
+
+        # Store dataframe for preview
+        store_dataframe(node_id, df)
+
+        # Prepare download content based on file type
+        if file_type == "csv":
+            delimiter = table_settings.get("delimiter", ",")
+            # Handle tab delimiter
+            if delimiter == "tab":
+                delimiter = "\\t"
+
+            # Write CSV to string buffer
+            buffer = io.StringIO()
+            df.write_csv(buffer, separator=delimiter)
+            content = buffer.getvalue()
+            mime_type = "text/csv"
+
+        elif file_type == "excel":
+            # Polars can write Excel but in WASM we'll use CSV format for Excel
+            # with proper extension handling in the component
+            buffer = io.StringIO()
+            df.write_csv(buffer, separator=",")
+            content = buffer.getvalue()
+            mime_type = "text/csv"  # Will be converted to xlsx by component if needed
+
+        elif file_type == "parquet":
+            # Write parquet to bytes buffer
+            buffer = io.BytesIO()
+            df.write_parquet(buffer)
+            content = buffer.getvalue()
+            # Convert bytes to base64 for JSON transport
+            import base64
+            content = base64.b64encode(content).decode('utf-8')
+            mime_type = "application/octet-stream"
+
+        else:
+            # Default to CSV
+            buffer = io.StringIO()
+            df.write_csv(buffer)
+            content = buffer.getvalue()
+            mime_type = "text/csv"
+
+        return {
+            "success": True,
+            "data": df_to_preview(df),
+            "schema": get_schema(node_id),
+            "download": {
+                "content": content,
+                "file_name": file_name,
+                "file_type": file_type,
+                "mime_type": mime_type,
+                "row_count": len(df)
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": format_error("output", node_id, e, df)}
 `)
   }
 

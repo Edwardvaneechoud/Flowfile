@@ -192,6 +192,7 @@ import HeadSettings from './nodes/HeadSettings.vue'
 import PreviewSettings from './nodes/PreviewSettings.vue'
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
+import OutputSettings from './nodes/OutputSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 
 const flowStore = useFlowStore()
@@ -269,7 +270,8 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Output Operations',
     isOpen: true,
     nodes: [
-      { type: 'preview', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 }
+      { type: 'preview', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 },
+      { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 }
     ]
   }
 ])
@@ -476,7 +478,8 @@ function getSettingsComponent(type: string) {
     head: HeadSettings,
     preview: PreviewSettings,
     pivot: PivotSettings,
-    unpivot: UnpivotSettings
+    unpivot: UnpivotSettings,
+    output: OutputSettings
   }
   return components[type] || null
 }
