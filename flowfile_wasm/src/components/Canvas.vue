@@ -83,7 +83,7 @@
         v-model:nodes="vueNodes"
         v-model:edges="vueEdges"
         :node-types="nodeTypes"
-        :default-viewport="{ zoom: 1, x: 0, y: 0 }"
+        :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
         class="custom-node-flow"
         fit-view-on-init
@@ -200,10 +200,11 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
-const toolbarHeight = ref(52) // Bottom position of toolbar from viewport top, will be calculated after mount
+const toolbarHeight = ref(52)
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
 const pendingNodeAdjustment = ref<number | null>(null)
+
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -546,7 +547,6 @@ onMounted(async () => {
 
   // Wait for DOM to be fully rendered
   await nextTick()
-
   // Calculate toolbar bottom position for panel positioning
   if (toolbarRef.value) {
     const rect = toolbarRef.value.getBoundingClientRect()
@@ -634,7 +634,6 @@ onUnmounted(() => {
   background: var(--bg-tertiary);
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s;
 }
 
 .category-header:hover {
