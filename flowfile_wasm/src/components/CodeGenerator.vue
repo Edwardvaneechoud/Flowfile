@@ -170,7 +170,7 @@ watch(() => props.isVisible, (isVisible) => {
 }
 
 .code-generator-panel {
-  background: var(--color-bg-primary, #1e1e1e);
+  background: var(--color-background-primary);
   border-radius: 8px;
   width: 90%;
   max-width: 1200px;
@@ -186,15 +186,15 @@ watch(() => props.isVisible, (isVisible) => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--color-border, #333);
-  background: var(--color-bg-secondary, #252525);
+  border-bottom: 1px solid var(--color-border-primary);
+  background: var(--color-background-secondary);
 }
 
 .code-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: var(--color-text-primary, #e0e0e0);
+  color: var(--color-text-primary);
 }
 
 .header-actions {
@@ -209,17 +209,17 @@ watch(() => props.isVisible, (isVisible) => {
   justify-content: center;
   width: 36px;
   height: 36px;
-  background: var(--color-bg-tertiary, #2d2d2d);
-  color: var(--color-text-primary, #e0e0e0);
-  border: 1px solid var(--color-border, #404040);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-primary);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .icon-button:hover:not(:disabled) {
-  background: var(--color-accent, #0066cc);
-  border-color: var(--color-accent, #0066cc);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 
 .icon-button:disabled {
@@ -228,8 +228,8 @@ watch(() => props.isVisible, (isVisible) => {
 }
 
 .close-button:hover {
-  background: #dc3545 !important;
-  border-color: #dc3545 !important;
+  background: var(--color-danger) !important;
+  border-color: var(--color-danger) !important;
 }
 
 .error-message {
@@ -237,9 +237,9 @@ watch(() => props.isVisible, (isVisible) => {
   align-items: center;
   gap: 12px;
   padding: 12px 20px;
-  background: rgba(220, 53, 69, 0.1);
-  border-bottom: 1px solid rgba(220, 53, 69, 0.3);
-  color: #ff6b6b;
+  background: var(--color-danger-light);
+  border-bottom: 1px solid var(--color-danger);
+  color: var(--color-danger);
   font-size: 14px;
 }
 
@@ -250,7 +250,7 @@ watch(() => props.isVisible, (isVisible) => {
 .code-editor-container {
   flex: 1;
   overflow: hidden;
-  background: #1e1e1e;
+  background: var(--color-code-bg);
 }
 
 .spinner {
@@ -267,15 +267,5 @@ watch(() => props.isVisible, (isVisible) => {
   to {
     transform: rotate(360deg);
   }
-}
-
-/* Dark theme overrides */
-:root {
-  --color-bg-primary: #1e1e1e;
-  --color-bg-secondary: #252525;
-  --color-bg-tertiary: #2d2d2d;
-  --color-border: #404040;
-  --color-text-primary: #e0e0e0;
-  --color-accent: #0066cc;
 }
 </style>
