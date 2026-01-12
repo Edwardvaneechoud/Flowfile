@@ -5,7 +5,7 @@
       title="Data Actions"
       initial-position="left"
       :initial-width="200"
-      :initial-top="50"
+      :initial-top="70"
     >
       <div class="nodes-wrapper">
         <input
@@ -111,7 +111,7 @@
       :title="getNodeDescription(selectedNode.type).title"
       initial-position="right"
       :initial-width="450"
-      :initial-top="50"
+      :initial-top="70"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
