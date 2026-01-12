@@ -68,10 +68,14 @@
           @change="handleLoadFlow"
           style="display: none"
         />
-        <div class="toolbar-divider"></div>
-        <button class="action-btn" @click="showCodeGenerator = true" title="Generate Python Code">
+        <button
+          class="action-btn"
+          :class="{ active: showCodeGenerator }"
+          title="Generate Python Code"
+          @click="showCodeGenerator = true"
+        >
           <span class="material-icons btn-icon">code</span>
-          <span class="btn-text">Generate Code</span>
+          <span class="btn-text">Generate code</span>
         </button>
         <div class="toolbar-divider"></div>
         <button class="action-btn danger" @click="handleClearFlow" title="Clear Flow">
