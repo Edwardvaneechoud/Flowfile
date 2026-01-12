@@ -1,6 +1,6 @@
 # Docker Deployment Guide
 
-This guide covers deploying Flowfile using Docker Compose for production and development environments.
+Deploy Flowfile using Docker Compose for development and production environments.
 
 ## Prerequisites
 
@@ -9,126 +9,86 @@ This guide covers deploying Flowfile using Docker Compose for production and dev
 
 ## Quick Start
 
-### Option A: Interactive Setup (Recommended for First-Time Users)
+### Option A: Interactive Setup (Recommended)
 
-The easiest way to get started:
-
-1. **Start the services without a master key:**
+1. **Start the services:**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
 
-2. **Open Flowfile in your browser:** http://localhost:8080
+2. **Open Flowfile:** http://localhost:8080
 
 3. **Follow the Setup Wizard:**
-   - You'll see a setup screen prompting you to generate a master key
    - Click "Generate Master Key"
    - Copy the generated key
-   - Add it to your `.env` file as `FLOWFILE_MASTER_KEY=<your-key>`
-   - Restart the containers: `docker-compose restart`
+   - Add to your `.env` file: `FLOWFILE_MASTER_KEY=<your-key>`
+   - Restart: `docker compose restart`
 
-4. **Log in** with the default credentials (or your configured ones)
+4. **Log in** with default credentials (`admin` / `changeme`)
 
 ### Option B: Pre-configured Setup
 
-For automated deployments or if you prefer to configure everything upfront:
+For automated deployments:
 
 #### Step 1: Generate the Master Key
 
-The master key encrypts all user secrets stored in the database. Generate it once and protect it carefully:
-
 ```bash
-# Using the Makefile (recommended)
-make generate_key
-
-# Or manually with Python
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" > master_key.txt
-chmod 600 master_key.txt
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-**Security Warning:**
-- Never commit `master_key.txt` to version control
-- Back up this file securely - losing it means losing access to all encrypted secrets
-- Use different keys for development and production environments
+Copy the output for the next step.
 
-#### Step 2: Configure Environment Variables
-
-Copy the example environment file and customize it:
+#### Step 2: Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your settings:
+Edit `.env`:
 
 ```bash
-# Master key for encrypting secrets (required)
-# Can also use master_key.txt file as Docker secret instead
 FLOWFILE_MASTER_KEY=<your-generated-key>
-
-# Admin credentials for the default user
 FLOWFILE_ADMIN_USER=admin
 FLOWFILE_ADMIN_PASSWORD=YourSecurePassword123!
-
-# JWT secret for session tokens (min 32 characters)
-# Generate with: openssl rand -hex 32
-JWT_SECRET_KEY=your-secure-jwt-secret-key-at-least-32-chars
+JWT_SECRET_KEY=your-secure-jwt-secret-at-least-32-chars
 ```
 
-#### Step 3: Start the Services
+#### Step 3: Start Services
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-Access Flowfile at: http://localhost:8080
+Access at: http://localhost:8080
 
-## Master Key Configuration Options
+## Security Architecture
 
-You have two ways to provide the master key:
-
-| Method | How to Use | Best For |
-|--------|-----------|----------|
-| **Environment Variable** | Set `FLOWFILE_MASTER_KEY` in `.env` | Simple deployments, Kubernetes |
-| **Docker Secret File** | Create `master_key.txt` in project root | Enhanced security, Docker Swarm |
-
-If both are configured, the environment variable takes precedence.
-
-## Understanding the Security Architecture
-
-Flowfile uses a layered security approach:
-
-| Component | Purpose | Storage |
-|-----------|---------|---------|
-| **Master Key** | Encrypts all user secrets at rest | Docker secret (`/run/secrets/flowfile_master_key`) |
-| **User Secrets** | API keys, passwords, tokens created by users | Encrypted in database using master key |
-| **JWT Secret** | Signs authentication tokens | Environment variable |
+| Component | Purpose | Configuration |
+|-----------|---------|---------------|
+| **Master Key** | Encrypts user secrets at rest | `FLOWFILE_MASTER_KEY` env var |
+| **User Secrets** | API keys, passwords, tokens | Encrypted in database |
+| **JWT Secret** | Signs authentication tokens | `JWT_SECRET_KEY` env var |
 | **User Password** | Authenticates users | Hashed in database |
 
 ### How They Work Together
 
 1. User logs in with username/password
-2. Server issues a JWT token (signed with JWT_SECRET_KEY)
+2. Server issues a JWT token (signed with `JWT_SECRET_KEY`)
 3. User creates secrets (e.g., "my_api_key" = "sk-xxx")
 4. Secret value is encrypted using the master key before storage
 5. At runtime, secrets are decrypted with the master key for use in flows
 
 ## Production Checklist
 
-Before deploying to production:
-
-- [ ] Generate a unique master key (not the one from development)
+- [ ] Generate a unique `FLOWFILE_MASTER_KEY`
 - [ ] Set a strong `FLOWFILE_ADMIN_PASSWORD`
-- [ ] Generate a secure `JWT_SECRET_KEY` with `openssl rand -hex 32`
-- [ ] Ensure `master_key.txt` is not in version control
-- [ ] Back up `master_key.txt` securely (losing it = losing all encrypted secrets)
-- [ ] Consider using Docker secrets or a secrets manager for `.env` values
+- [ ] Generate secure `JWT_SECRET_KEY` with `openssl rand -hex 32`
+- [ ] Never commit `.env` to version control
+- [ ] Back up `.env` securely (losing master key = losing all encrypted secrets)
 - [ ] Set up HTTPS (reverse proxy with nginx/traefik)
-- [ ] Configure firewall rules to restrict access
+- [ ] Configure firewall rules
 
-## Docker Compose Configuration
-
-The `docker-compose.yml` deploys three services:
+## Docker Compose Services
 
 ```yaml
 services:
@@ -138,44 +98,36 @@ services:
 ```
 
 All services share:
-- The master key via Docker secrets
+- The master key via `FLOWFILE_MASTER_KEY` environment variable
 - User data volume (`./flowfile_data`)
 - Internal network for communication
 
 ## Troubleshooting
 
-### "Docker secret 'flowfile_master_key' is not mounted"
+### Setup wizard keeps appearing
 
-The master key file is missing or not properly configured:
+The master key is not configured. Add `FLOWFILE_MASTER_KEY` to your `.env` file and restart.
 
-```bash
-# Check if file exists
-ls -la master_key.txt
+### Invalid master key format
 
-# Generate if missing
-make generate_key
-```
-
-### "Invalid master key format"
-
-The master key must be a valid Fernet key (base64-encoded, 32 bytes). Regenerate it:
+The master key must be a valid Fernet key. Generate a new one:
 
 ```bash
-make force_key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-**Warning:** Regenerating the key will make existing encrypted secrets unreadable.
+**Warning:** Changing the key makes existing encrypted secrets unreadable.
 
 ### Container fails to start
 
 Check the logs:
 
 ```bash
-docker-compose logs flowfile-core
-docker-compose logs flowfile-worker
+docker compose logs flowfile-core
+docker compose logs flowfile-worker
 ```
 
-## Volumes and Data Persistence
+## Volumes
 
 | Volume | Purpose |
 |--------|---------|
