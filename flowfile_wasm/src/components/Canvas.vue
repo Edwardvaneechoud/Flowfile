@@ -5,7 +5,7 @@
       title="Data Actions"
       initial-position="left"
       :initial-width="200"
-      :initial-top="70"
+      :initial-top="toolbarHeight"
     >
       <div class="nodes-wrapper">
         <input
@@ -41,7 +41,7 @@
     </DraggablePanel>
 
     <!-- Toolbar -->
-    <div class="toolbar">
+    <div ref="toolbarRef" class="toolbar">
       <div class="action-buttons">
         <button
           class="action-btn run-btn"
@@ -92,7 +92,7 @@
         v-model:nodes="vueNodes"
         v-model:edges="vueEdges"
         :node-types="nodeTypes"
-        :default-viewport="{ zoom: 1, x: 0, y: 0 }"
+        :default-viewport="{ zoom: 0.5 }"
         :connection-mode="ConnectionMode.Strict"
         class="custom-node-flow"
         fit-view-on-init
@@ -120,7 +120,7 @@
       :title="getNodeDescription(selectedNode.type).title"
       initial-position="right"
       :initial-width="450"
-      :initial-top="70"
+      :initial-top="toolbarHeight"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -181,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -215,10 +215,13 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const toolbarRef = ref<HTMLElement | null>(null)
+const toolbarHeight = ref(52)
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
 const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
+
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -556,8 +559,16 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 // Register keyboard shortcuts
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
+
+  // Wait for DOM to be fully rendered
+  await nextTick()
+  // Calculate toolbar bottom position for panel positioning
+  if (toolbarRef.value) {
+    const rect = toolbarRef.value.getBoundingClientRect()
+    toolbarHeight.value = rect.bottom
+  }
 })
 
 onUnmounted(() => {
@@ -640,7 +651,6 @@ onUnmounted(() => {
   background: var(--bg-tertiary);
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s;
 }
 
 .category-header:hover {

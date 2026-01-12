@@ -23,7 +23,7 @@ function getSavedTheme(): ThemeMode {
       return saved;
     }
   }
-  return "light";
+  return "dark";
 }
 
 export const useThemeStore = defineStore("theme", {
