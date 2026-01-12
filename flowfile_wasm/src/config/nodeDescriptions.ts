@@ -56,6 +56,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   unpivot: {
     title: 'Unpivot',
     intro: 'Transform data from wide to long format. Multiple columns are melted into variable/value pairs (also known as melt or gather).'
+  },
+  output: {
+    title: 'Write Data',
+    intro: 'Export your data as CSV or Parquet. Run the flow to prepare the data, then download the file to your computer.'
   }
 }
 

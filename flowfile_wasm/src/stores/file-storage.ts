@@ -5,18 +5,31 @@
  * - Small files (< 5MB): sessionStorage (fast, synchronous)
  * - Large files (>= 5MB): IndexedDB (no size limit, async)
  *
+ * Also handles download content storage for output nodes.
+ *
  * This design optimizes for performance while avoiding sessionStorage limits.
  */
 
 const DB_NAME = 'flowfile_wasm_files';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bumped for new store
 const STORE_NAME = 'fileContents';
+const DOWNLOAD_STORE_NAME = 'downloadContents';
 const SIZE_THRESHOLD = 5 * 1024 * 1024; // 5MB in bytes
 
 interface FileEntry {
   nodeId: number;
   content: string;
   size: number;
+  timestamp: number;
+}
+
+interface DownloadEntry {
+  nodeId: number;
+  content: string;
+  fileName: string;
+  fileType: string;
+  mimeType: string;
+  rowCount: number;
   timestamp: number;
 }
 
@@ -50,11 +63,17 @@ class FileStorageManager {
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
 
-        // Create object store if it doesn't exist
+        // Create file contents store if it doesn't exist
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'nodeId' });
           objectStore.createIndex('timestamp', 'timestamp', { unique: false });
           objectStore.createIndex('size', 'size', { unique: false });
+        }
+
+        // Create download contents store if it doesn't exist
+        if (!db.objectStoreNames.contains(DOWNLOAD_STORE_NAME)) {
+          const downloadStore = db.createObjectStore(DOWNLOAD_STORE_NAME, { keyPath: 'nodeId' });
+          downloadStore.createIndex('timestamp', 'timestamp', { unique: false });
         }
       };
     });
@@ -244,8 +263,130 @@ class FileStorageManager {
     const size = new Blob([content]).size;
     return size >= SIZE_THRESHOLD;
   }
+
+  // ============================================================================
+  // Download Content Storage (for output nodes)
+  // ============================================================================
+
+  /**
+   * Store download content for an output node
+   */
+  async setDownloadContent(
+    nodeId: number,
+    content: string,
+    fileName: string,
+    fileType: string,
+    mimeType: string,
+    rowCount: number
+  ): Promise<void> {
+    await this.init();
+
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+
+      const transaction = this.db.transaction([DOWNLOAD_STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(DOWNLOAD_STORE_NAME);
+
+      const entry: DownloadEntry = {
+        nodeId,
+        content,
+        fileName,
+        fileType,
+        mimeType,
+        rowCount,
+        timestamp: Date.now()
+      };
+
+      const request = store.put(entry);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => {
+        console.error('Failed to store download content in IndexedDB:', request.error);
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Retrieve download content for an output node
+   */
+  async getDownloadContent(nodeId: number): Promise<DownloadEntry | null> {
+    await this.init();
+
+    return new Promise<DownloadEntry | null>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+
+      const transaction = this.db.transaction([DOWNLOAD_STORE_NAME], 'readonly');
+      const store = transaction.objectStore(DOWNLOAD_STORE_NAME);
+      const request = store.get(nodeId);
+
+      request.onsuccess = () => {
+        resolve(request.result as DownloadEntry | null);
+      };
+
+      request.onerror = () => {
+        console.error('Failed to retrieve download content from IndexedDB:', request.error);
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Delete download content for an output node
+   */
+  async deleteDownloadContent(nodeId: number): Promise<void> {
+    await this.init();
+
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+
+      const transaction = this.db.transaction([DOWNLOAD_STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(DOWNLOAD_STORE_NAME);
+      const request = store.delete(nodeId);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => {
+        console.error('Failed to delete download content from IndexedDB:', request.error);
+        reject(request.error);
+      };
+    });
+  }
+
+  /**
+   * Clear all download contents
+   */
+  async clearAllDownloads(): Promise<void> {
+    await this.init();
+
+    return new Promise<void>((resolve, reject) => {
+      if (!this.db) {
+        reject(new Error('IndexedDB not initialized'));
+        return;
+      }
+
+      const transaction = this.db.transaction([DOWNLOAD_STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(DOWNLOAD_STORE_NAME);
+      const request = store.clear();
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => {
+        console.error('Failed to clear download contents from IndexedDB:', request.error);
+        reject(request.error);
+      };
+    });
+  }
 }
 
 // Export singleton instance
 export const fileStorage = new FileStorageManager();
 export { SIZE_THRESHOLD };
+export type { DownloadEntry };

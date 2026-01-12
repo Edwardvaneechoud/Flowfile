@@ -377,6 +377,10 @@ export const useFlowStore = defineStore('flow', () => {
 
   const getNodeResult = (id: number) => nodeResults.value.get(id)
 
+  const getDownloadContent = async (nodeId: number) => {
+    return await fileStorage.getDownloadContent(nodeId)
+  }
+
   const getNodeInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
     if (!node) return []
@@ -928,7 +932,9 @@ for nid in orphaned_ids:
           schema: inferredSchema,
           // Preserve existing data if any (for display purposes)
           data: existingResult?.data,
-          execution_time: existingResult?.execution_time
+          execution_time: existingResult?.execution_time,
+          // Preserve download info for output nodes
+          download: existingResult?.download
         })
       } else {
         // inferOutputSchema returned null - this means:
@@ -1149,6 +1155,47 @@ result
           break
         }
 
+        case 'output': {
+          const inputId = node.inputIds[0]
+          if (!inputId) {
+            return { success: false, error: 'No input connected' }
+          }
+          const outputResult = await runPythonWithResult(`
+import json
+result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result
+`)
+          // Store download content separately in IndexedDB (not in nodeResults)
+          if (outputResult?.success && outputResult?.download) {
+            const { content, file_name, file_type, mime_type, row_count } = outputResult.download
+            await fileStorage.setDownloadContent(
+              nodeId,
+              content,
+              file_name,
+              file_type,
+              mime_type,
+              row_count
+            )
+            // Create result without content - just metadata
+            result = {
+              success: outputResult.success,
+              data: outputResult.data,
+              schema: outputResult.schema,
+              download: {
+                file_name,
+                file_type,
+                mime_type,
+                row_count,
+                // content is NOT included - it's in IndexedDB
+                content: ''
+              }
+            }
+          } else {
+            result = outputResult
+          }
+          break
+        }
+
         default:
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
@@ -1349,6 +1396,22 @@ result
         return {
           ...base
         } as NodeSettings
+
+      case 'output':
+        return {
+          ...base,
+          output_settings: {
+            name: 'output.csv',
+            directory: '.',
+            file_type: 'csv',
+            write_mode: 'overwrite',
+            table_settings: {
+              file_type: 'csv',
+              delimiter: ',',
+              encoding: 'utf-8'
+            }
+          }
+        } as any
 
       default:
         return base as NodeSettings
@@ -1636,6 +1699,7 @@ result
     nodeList,
     getNode,
     getNodeResult,
+    getDownloadContent,
     getNodeInputSchema,
     getLeftInputSchema,
     getRightInputSchema,

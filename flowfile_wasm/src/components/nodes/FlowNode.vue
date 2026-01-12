@@ -97,7 +97,8 @@ const iconMap: Record<string, string> = {
   head: 'sample.png',
   preview: 'view.png',
   pivot: 'pivot.png',
-  unpivot: 'unpivot.png'
+  unpivot: 'unpivot.png',
+  output: 'output.png'
 }
 
 interface NodeData {

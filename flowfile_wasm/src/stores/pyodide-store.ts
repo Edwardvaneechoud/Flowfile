@@ -785,6 +785,62 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
     except Exception as e:
         return {"success": False, "error": format_error("unpivot", node_id, e, df)}
+
+def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute output node - prepares data for download in WASM environment.
+
+    Returns the serialized data content that can be downloaded by the browser.
+    Supports CSV and Parquet formats.
+    """
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Output error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    try:
+        import io
+        import base64
+        output_settings = settings.get("output_settings", {})
+        file_type = output_settings.get("file_type", "csv")
+        file_name = output_settings.get("name", "output.csv")
+        table_settings = output_settings.get("table_settings", {})
+
+        # Store dataframe for preview
+        store_dataframe(node_id, df)
+
+        # Prepare download content based on file type
+        if file_type == "parquet":
+            # Write parquet to bytes buffer
+            buffer = io.BytesIO()
+            df.write_parquet(buffer)
+            content = buffer.getvalue()
+            content = base64.b64encode(content).decode('utf-8')
+            mime_type = "application/octet-stream"
+        else:
+            # Default to CSV
+            delimiter = table_settings.get("delimiter", ",")
+            # Handle tab delimiter
+            if delimiter == "tab":
+                delimiter = "\\t"
+
+            buffer = io.StringIO()
+            df.write_csv(buffer, separator=delimiter)
+            content = buffer.getvalue()
+            mime_type = "text/csv"
+
+        return {
+            "success": True,
+            "data": df_to_preview(df),
+            "schema": get_schema(node_id),
+            "download": {
+                "content": content,
+                "file_name": file_name,
+                "file_type": file_type,
+                "mime_type": mime_type,
+                "row_count": len(df)
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": format_error("output", node_id, e, df)}
 `)
   }
 
@@ -801,7 +857,36 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     }
 
     const rawResult = await pyodide.value.runPythonAsync(code)
-    return rawResult?.toJs ? rawResult.toJs({ dict_converter: Object.fromEntries }) : rawResult
+    if (!rawResult?.toJs) {
+      return rawResult
+    }
+
+    // Convert Python result to JavaScript with deep conversion
+    const jsResult = rawResult.toJs({ dict_converter: Object.fromEntries })
+
+    // Recursively convert any remaining Map objects to plain objects
+    function deepConvert(obj: any): any {
+      if (obj instanceof Map) {
+        const result: Record<string, any> = {}
+        obj.forEach((value: any, key: string) => {
+          result[key] = deepConvert(value)
+        })
+        return result
+      }
+      if (Array.isArray(obj)) {
+        return obj.map(deepConvert)
+      }
+      if (obj && typeof obj === 'object' && obj.constructor === Object) {
+        const result: Record<string, any> = {}
+        for (const [key, value] of Object.entries(obj)) {
+          result[key] = deepConvert(value)
+        }
+        return result
+      }
+      return obj
+    }
+
+    return deepConvert(jsResult)
   }
 
   function setGlobal(name: string, value: unknown): void {

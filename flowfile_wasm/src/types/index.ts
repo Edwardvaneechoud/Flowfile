@@ -187,6 +187,34 @@ export interface UnpivotInput {
 }
 
 // =============================================================================
+// OUTPUT SCHEMAS (matches flowfile_core/schemas/input_schema.py)
+// =============================================================================
+
+export type OutputFileType = 'csv' | 'parquet'
+export type OutputWriteMode = 'overwrite' | 'new file' | 'append'
+
+export interface OutputCsvTable {
+  file_type: 'csv'
+  delimiter: string
+  encoding: string
+}
+
+export interface OutputParquetTable {
+  file_type: 'parquet'
+}
+
+export type OutputTableSettings = OutputCsvTable | OutputParquetTable
+
+export interface OutputSettings {
+  name: string                     // Filename (e.g., "output.csv")
+  directory: string                // Target directory (not used in WASM, kept for compatibility)
+  file_type: OutputFileType
+  fields?: string[]
+  write_mode: OutputWriteMode
+  table_settings: OutputTableSettings
+}
+
+// =============================================================================
 // FORMULA / WITH COLUMNS SCHEMAS
 // =============================================================================
 
@@ -310,6 +338,10 @@ export interface NodeUnpivotSettings extends NodeSingleInput {
   unpivot_input: UnpivotInput
 }
 
+export interface NodeOutputSettings extends NodeSingleInput {
+  output_settings: OutputSettings
+}
+
 // Union type for all node settings
 export type NodeSettings =
   | NodeReadSettings
@@ -325,6 +357,7 @@ export type NodeSettings =
   | NodePreviewSettings
   | NodePivotSettings
   | NodeUnpivotSettings
+  | NodeOutputSettings
 
 // =============================================================================
 // FLOWFILE DATA STRUCTURE (for save/load - matches flowfile_core/schemas/schemas.py)
@@ -408,12 +441,21 @@ export interface DataPreview {
   total_rows: number
 }
 
+export interface DownloadInfo {
+  content: string
+  file_name: string
+  file_type: string
+  mime_type: string
+  row_count: number
+}
+
 export interface NodeResult {
   success?: boolean  // undefined = not executed yet (shows grey), true = success (green), false = error (red)
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]
   execution_time?: number
+  download?: DownloadInfo  // For output nodes - contains downloadable file data
 }
 
 export interface FlowState {
@@ -449,6 +491,7 @@ export const NODE_TYPES = {
 
   // Output nodes
   preview: 'preview',
+  output: 'output',
 } as const
 
 export type NodeType = typeof NODE_TYPES[keyof typeof NODE_TYPES]
@@ -561,6 +604,11 @@ export interface PivotSettings extends NodeBase {
 
 export interface UnpivotSettings extends NodeBase {
   unpivot_input: UnpivotInput
+  depending_on_id?: number
+}
+
+export interface OutputNodeSettings extends NodeBase {
+  output_settings: OutputSettings
   depending_on_id?: number
 }
 
