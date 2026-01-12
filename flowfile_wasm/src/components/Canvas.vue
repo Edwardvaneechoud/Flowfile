@@ -374,9 +374,7 @@ function onDrop(event: DragEvent) {
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
   flowStore.selectNode(nodeId)
 
-  // Track this node for position adjustment after initialization
   pendingNodeAdjustment.value = nodeId
-
   draggedNodeDef = null
 }
 
@@ -425,7 +423,6 @@ function onNodesChange(changes: NodeChange[]) {
         y: change.position.y
       })
     } else if (change.type === 'dimensions' && pendingNodeAdjustment.value === parseInt(change.id)) {
-      // Apply position adjustment after node dimensions are initialized (matching frontend behavior)
       const nodeId = change.id
       updateNode(nodeId, (node) => {
         const width = node.dimensions?.width || 0
