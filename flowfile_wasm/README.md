@@ -100,7 +100,7 @@ Flowfile has two implementations that must stay synchronized:
 
 2. **flowfile_wasm** (TypeScript/Vue) - Browser-based lite version:
    - `flowfile_wasm/src/types/index.ts` - TypeScript interfaces mirroring core schemas
-   - `flowfile_wasm/src/components/nodes/` - Vue settings components
+   - `flowfile_wasm/src/components/nodes/` - Vue settings components (same as `flowfile_frontend/src/renderer/app/components/nodes/`)
    - `flowfile_wasm/src/stores/flow-store.ts` - Execution logic using Pyodide
 
 **Critical Requirements:**
