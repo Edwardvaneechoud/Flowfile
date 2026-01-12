@@ -197,8 +197,9 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const { screenToFlowCoordinate, removeNodes } = useVueFlow()
+const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
+const pendingNodeAdjustment = ref<number | null>(null)
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -373,6 +374,9 @@ function onDrop(event: DragEvent) {
   const nodeId = flowStore.addNode(draggedNodeDef.type, position.x, position.y)
   flowStore.selectNode(nodeId)
 
+  // Track this node for position adjustment after initialization
+  pendingNodeAdjustment.value = nodeId
+
   draggedNodeDef = null
 }
 
@@ -420,6 +424,20 @@ function onNodesChange(changes: NodeChange[]) {
         x: change.position.x,
         y: change.position.y
       })
+    } else if (change.type === 'dimensions' && pendingNodeAdjustment.value === parseInt(change.id)) {
+      // Apply position adjustment after node dimensions are initialized (matching frontend behavior)
+      const nodeId = change.id
+      updateNode(nodeId, (node) => {
+        const width = node.dimensions?.width || 0
+        const height = node.dimensions?.height || 0
+        return {
+          position: {
+            x: node.position.x - width / 55,
+            y: node.position.y - height / 55
+          }
+        }
+      })
+      pendingNodeAdjustment.value = null
     }
   })
 }
