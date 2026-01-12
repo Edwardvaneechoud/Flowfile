@@ -858,7 +858,36 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
     }
 
     const rawResult = await pyodide.value.runPythonAsync(code)
-    return rawResult?.toJs ? rawResult.toJs({ dict_converter: Object.fromEntries }) : rawResult
+    if (!rawResult?.toJs) {
+      return rawResult
+    }
+
+    // Convert Python result to JavaScript with deep conversion
+    const jsResult = rawResult.toJs({ dict_converter: Object.fromEntries })
+
+    // Recursively convert any remaining Map objects to plain objects
+    function deepConvert(obj: any): any {
+      if (obj instanceof Map) {
+        const result: Record<string, any> = {}
+        obj.forEach((value: any, key: string) => {
+          result[key] = deepConvert(value)
+        })
+        return result
+      }
+      if (Array.isArray(obj)) {
+        return obj.map(deepConvert)
+      }
+      if (obj && typeof obj === 'object' && obj.constructor === Object) {
+        const result: Record<string, any> = {}
+        for (const [key, value] of Object.entries(obj)) {
+          result[key] = deepConvert(value)
+        }
+        return result
+      }
+      return obj
+    }
+
+    return deepConvert(jsResult)
   }
 
   function setGlobal(name: string, value: unknown): void {
