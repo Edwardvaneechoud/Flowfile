@@ -166,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -200,7 +200,7 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
-const toolbarHeight = ref(0)
+const toolbarHeight = ref(52) // Default height based on CSS, will be updated after mount
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
 const pendingNodeAdjustment = ref<number | null>(null)
@@ -541,12 +541,19 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 // Register keyboard shortcuts
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
 
+  // Wait for DOM to be fully rendered
+  await nextTick()
+
   // Calculate toolbar height for panel positioning
+  console.log('[Canvas] Toolbar ref:', toolbarRef.value)
   if (toolbarRef.value) {
     toolbarHeight.value = toolbarRef.value.offsetHeight
+    console.log('[Canvas] Toolbar height calculated:', toolbarHeight.value)
+  } else {
+    console.log('[Canvas] Toolbar ref is null')
   }
 })
 

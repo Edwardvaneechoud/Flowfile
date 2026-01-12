@@ -76,6 +76,8 @@ onMounted(() => {
   const vh = window.innerHeight
   const vw = window.innerWidth
 
+  console.log('[DraggablePanel] Mounted with initialTop:', props.initialTop, 'title:', props.title)
+
   switch (props.initialPosition) {
     case 'right':
       left.value = vw - width.value
@@ -98,6 +100,8 @@ onMounted(() => {
       width.value = vw - props.initialLeft
       break
   }
+
+  console.log('[DraggablePanel] Final position - top:', top.value, 'left:', left.value)
 })
 
 const panelStyle = computed(() => ({
