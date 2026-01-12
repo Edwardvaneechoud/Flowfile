@@ -792,14 +792,9 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
     Returns the serialized data content that can be downloaded by the browser.
     Supports CSV and Parquet formats.
     """
-    print(f"[Python execute_output] Starting for node {node_id} with input {input_id}")
-    print(f"[Python execute_output] Settings: {settings}")
     df = get_dataframe(input_id)
     if df is None:
-        print(f"[Python execute_output] ERROR: No input data from node {input_id}")
         return {"success": False, "error": f"Output error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
-
-    print(f"[Python execute_output] Got dataframe with {len(df)} rows")
 
     try:
         import io
@@ -808,8 +803,6 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
         file_type = output_settings.get("file_type", "csv")
         file_name = output_settings.get("name", "output.csv")
         table_settings = output_settings.get("table_settings", {})
-
-        print(f"[Python execute_output] File type: {file_type}, File name: {file_name}")
 
         # Store dataframe for preview
         store_dataframe(node_id, df)
@@ -822,8 +815,6 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
             content = buffer.getvalue()
             content = base64.b64encode(content).decode('utf-8')
             mime_type = "application/octet-stream"
-            print(f"[Python execute_output] Parquet content length: {len(content)}")
-
         else:
             # Default to CSV
             delimiter = table_settings.get("delimiter", ",")
@@ -835,9 +826,8 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
             df.write_csv(buffer, separator=delimiter)
             content = buffer.getvalue()
             mime_type = "text/csv"
-            print(f"[Python execute_output] CSV content length: {len(content)}")
 
-        result = {
+        return {
             "success": True,
             "data": df_to_preview(df),
             "schema": get_schema(node_id),
@@ -849,11 +839,7 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
                 "row_count": len(df)
             }
         }
-        print(f"[Python execute_output] Returning result with download. Keys: {result.keys()}")
-        print(f"[Python execute_output] Download keys: {result['download'].keys()}")
-        return result
     except Exception as e:
-        print(f"[Python execute_output] ERROR: {e}")
         return {"success": False, "error": format_error("output", node_id, e, df)}
 `)
   }
@@ -871,20 +857,12 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
     }
 
     const rawResult = await pyodide.value.runPythonAsync(code)
-    console.log('[runPythonWithResult] Raw result:', rawResult)
-    console.log('[runPythonWithResult] Has toJs?', !!rawResult?.toJs)
     if (!rawResult?.toJs) {
       return rawResult
     }
 
     // Convert Python result to JavaScript with deep conversion
     const jsResult = rawResult.toJs({ dict_converter: Object.fromEntries })
-    console.log('[runPythonWithResult] After toJs:', jsResult)
-    console.log('[runPythonWithResult] jsResult type:', typeof jsResult)
-    console.log('[runPythonWithResult] jsResult is Map?', jsResult instanceof Map)
-    if (jsResult && typeof jsResult === 'object') {
-      console.log('[runPythonWithResult] jsResult keys:', jsResult instanceof Map ? Array.from(jsResult.keys()) : Object.keys(jsResult))
-    }
 
     // Recursively convert any remaining Map objects to plain objects
     function deepConvert(obj: any): any {
@@ -908,9 +886,7 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
       return obj
     }
 
-    const finalResult = deepConvert(jsResult)
-    console.log('[runPythonWithResult] After deepConvert:', finalResult)
-    return finalResult
+    return deepConvert(jsResult)
   }
 
   function setGlobal(name: string, value: unknown): void {
