@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { usePyodideStore } from './pyodide-store'
+import yaml from 'js-yaml'
 import { inferOutputSchema, isSourceNode, inferSchemaFromCsv, inferSchemaFromRawData } from './schema-inference'
 import type {
   FlowNode,
@@ -10,7 +11,6 @@ import type {
   ColumnSchema,
   FlowfileData,
   FlowfileNode,
-  NodeConnection,
   NodeBase,
   NodeReadSettings,
   NodeManualInputSettings,
@@ -22,6 +22,36 @@ import type {
 // Session storage keys
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
+
+// Fields to exclude from setting_input when exporting (matches flowfile_core)
+const SETTING_INPUT_EXCLUDE = new Set([
+  'flow_id',
+  'node_id',
+  'pos_x',
+  'pos_y',
+  'is_setup',
+  'description',
+  'user_id',
+  'is_flow_output',
+  'is_user_defined',
+  'depending_on_id',
+  'depending_on_ids',
+])
+
+/**
+ * Clean setting_input by removing fields that are excluded during export
+ * This matches the behavior of flowfile_core's FlowfileNode serializer
+ */
+function cleanSettingInput(settings: NodeSettings): any {
+  if (!settings) return null
+  const cleaned: Record<string, any> = {}
+  for (const [key, value] of Object.entries(settings)) {
+    if (!SETTING_INPUT_EXCLUDE.has(key)) {
+      cleaned[key] = value
+    }
+  }
+  return cleaned
+}
 
 function toPythonJson(value: unknown): string {
   return JSON.stringify(JSON.stringify(value))
@@ -68,14 +98,21 @@ export const useFlowStore = defineStore('flow', () => {
             nodes.value.set(flowfileNode.id, node)
           }
 
-          for (const conn of data.connections) {
-            edges.value.push({
-              id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
-              source: String(conn.from_node),
-              target: String(conn.to_node),
-              sourceHandle: conn.from_handle,
-              targetHandle: conn.to_handle
-            })
+          // Import connections - support both explicit connections array and implicit derivation
+          if (data.connections && data.connections.length > 0) {
+            // Explicit connections array (WASM format)
+            for (const conn of data.connections) {
+              edges.value.push({
+                id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
+                source: String(conn.from_node),
+                target: String(conn.to_node),
+                sourceHandle: conn.from_handle,
+                targetHandle: conn.to_handle
+              })
+            }
+          } else {
+            // Derive edges from node relationships (flowfile_core format)
+            deriveEdgesFromNodes(data.nodes)
           }
 
           // Restore file contents separately (not part of FlowfileData)
@@ -84,10 +121,11 @@ export const useFlowStore = defineStore('flow', () => {
           }
 
           // Restore node schemas for quick column access
+          // Note: success is undefined since data wasn't actually executed in this session
           if (state.nodeSchemas) {
             for (const [id, schema] of state.nodeSchemas) {
               if (schema && schema.length > 0) {
-                nodeResults.value.set(id, { success: true, schema })
+                nodeResults.value.set(id, { schema })
               }
             }
           }
@@ -109,12 +147,66 @@ export const useFlowStore = defineStore('flow', () => {
     }
   }
 
-  // Save state to session storage using FlowfileData format
+  /**
+   * Derive edges from node relationships (flowfile_core format)
+   * This handles imports from flowfile_core which doesn't have explicit connections
+   */
+  function deriveEdgesFromNodes(flowfileNodes: FlowfileNode[]) {
+    // Build a map of node id -> node for quick lookups
+    const nodeMap = new Map<number, FlowfileNode>()
+    for (const node of flowfileNodes) {
+      nodeMap.set(node.id, node)
+    }
+
+    // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
+    for (const targetNode of flowfileNodes) {
+      // Handle left_input_id (for join nodes - first input)
+      if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
+        const sourceId = targetNode.left_input_id
+        edges.value.push({
+          id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
+          source: String(sourceId),
+          target: String(targetNode.id),
+          sourceHandle: 'output-0',
+          targetHandle: 'input-0'
+        })
+      }
+
+      // Handle right_input_id (for join nodes - second input)
+      if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
+        const sourceId = targetNode.right_input_id
+        edges.value.push({
+          id: `e${sourceId}-${targetNode.id}-output-0-input-1`,
+          source: String(sourceId),
+          target: String(targetNode.id),
+          sourceHandle: 'output-0',
+          targetHandle: 'input-1'
+        })
+      }
+
+      // Handle input_ids for non-join nodes (nodes without left/right inputs)
+      if (targetNode.input_ids && targetNode.input_ids.length > 0) {
+        // Skip if this node has left/right inputs (join node) - those are handled above
+        if (!targetNode.left_input_id && !targetNode.right_input_id) {
+          for (const sourceId of targetNode.input_ids) {
+            edges.value.push({
+              id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
+              source: String(sourceId),
+              target: String(targetNode.id),
+              sourceHandle: 'output-0',
+              targetHandle: 'input-0'
+            })
+          }
+        }
+      }
+    }
+  }
+
+  // Save state to session storage using FlowfileData format (flowfile_core compatible)
   function saveToStorage() {
     try {
-      // Build FlowfileData structure
+      // Build FlowfileData structure (without connections - flowfile_core format)
       const flowfileNodes: FlowfileNode[] = []
-      const flowfileConnections: NodeConnection[] = []
 
       nodes.value.forEach((node, id) => {
         const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
@@ -133,21 +225,13 @@ export const useFlowStore = defineStore('flow', () => {
           right_input_id: node.rightInputId,
           input_ids: node.inputIds,
           outputs,
-          setting_input: node.settings
+          setting_input: cleanSettingInput(node.settings)
         })
       })
 
-      edges.value.forEach(edge => {
-        flowfileConnections.push({
-          from_node: parseInt(edge.source),
-          to_node: parseInt(edge.target),
-          from_handle: edge.sourceHandle,
-          to_handle: edge.targetHandle
-        })
-      })
-
+      // No connections array - flowfile_core derives connections from node relationships
       const flowfileData: FlowfileData = {
-        flowfile_version: '1.0.0-wasm',
+        flowfile_version: '1.0.0',
         flowfile_id: Date.now(),
         flowfile_name: 'Session Flow',
         flowfile_settings: {
@@ -157,8 +241,7 @@ export const useFlowStore = defineStore('flow', () => {
           auto_save: true,
           show_detailed_progress: false
         },
-        nodes: flowfileNodes,
-        connections: flowfileConnections
+        nodes: flowfileNodes
       }
 
       const state = {
@@ -400,11 +483,8 @@ export const useFlowStore = defineStore('flow', () => {
       // Infer schema from CSV content
       const schema = inferSchemaFromCsv(content, hasHeaders, delimiter)
       if (schema) {
-        // Set schema for source node
-        nodeResults.value.set(nodeId, {
-          success: true,
-          schema
-        })
+        // Set schema for source node (success undefined = not yet executed, shows grey)
+        nodeResults.value.set(nodeId, { schema })
 
         // Trigger schema propagation to update downstream nodes
         debouncedPropagateSchemas()
@@ -419,10 +499,8 @@ export const useFlowStore = defineStore('flow', () => {
   function setSourceNodeSchema(nodeId: number, fields: { name: string; data_type: string }[]) {
     const schema = inferSchemaFromRawData(fields)
     if (schema) {
-      nodeResults.value.set(nodeId, {
-        success: true,
-        schema
-      })
+      // Set schema for source node (success undefined = not yet executed, shows grey)
+      nodeResults.value.set(nodeId, { schema })
 
       // Trigger schema propagation
       debouncedPropagateSchemas()
@@ -760,8 +838,11 @@ for nid in orphaned_ids:
       // Update nodeResults with inferred schema
       if (inferredSchema) {
         const existingResult = nodeResults.value.get(nodeId)
+        // Only preserve success if there's actual executed data
+        // Schema inference alone doesn't mean the node was executed (success stays undefined = grey)
+        const hasExecutedData = existingResult?.data?.data && existingResult.data.data.length >= 0
         nodeResults.value.set(nodeId, {
-          success: true,
+          success: hasExecutedData ? existingResult.success : undefined,
           schema: inferredSchema,
           // Preserve existing data if any (for display purposes)
           data: existingResult?.data,
@@ -1046,8 +1127,8 @@ result
       case 'manual_input':
         return {
           ...base,
-          raw_data: {
-            fields: [],
+          raw_data_format: {
+            columns: [],
             data: []
           }
         } as NodeManualInputSettings
@@ -1147,18 +1228,22 @@ result
   /**
    * Export the current flow state to FlowfileData format
    * This produces a JSON structure compatible with flowfile_core
+   *
+   * Key compatibility features:
+   * - No connections array (flowfile_core derives connections from node relationships)
+   * - Cleaned setting_input (excludes flow_id, node_id, pos_x, pos_y, etc.)
+   * - Description at node level
+   * - Uses version '1.0.0' for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
-
     const flowfileNodes: FlowfileNode[] = []
-    const flowfileConnections: NodeConnection[] = []
 
     // Convert nodes
     nodes.value.forEach((node, id) => {
       // Determine if this is a start node (no inputs)
       const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
 
-      // Get output nodes
+      // Get output nodes from edges
       const outputs = edges.value
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
@@ -1174,25 +1259,15 @@ result
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: node.settings
+        setting_input: cleanSettingInput(node.settings)
       }
 
       flowfileNodes.push(flowfileNode)
     })
 
-    // Convert edges to connections
-    edges.value.forEach(edge => {
-      const connection: NodeConnection = {
-        from_node: parseInt(edge.source),
-        to_node: parseInt(edge.target),
-        from_handle: edge.sourceHandle,
-        to_handle: edge.targetHandle
-      }
-      flowfileConnections.push(connection)
-    })
-
+    // No connections array - flowfile_core derives connections from node relationships
     const flowfileData: FlowfileData = {
-      flowfile_version: '1.0.0-wasm',
+      flowfile_version: '1.0.0',
       flowfile_id: Date.now(),
       flowfile_name: name,
       flowfile_settings: {
@@ -1202,8 +1277,7 @@ result
         auto_save: true,
         show_detailed_progress: false
       },
-      nodes: flowfileNodes,
-      connections: flowfileConnections
+      nodes: flowfileNodes
     }
 
     return flowfileData
@@ -1212,6 +1286,10 @@ result
   /**
    * Import a FlowfileData structure into the current state
    * This loads a flow file that was created in flowfile_core or this WASM app
+   *
+   * Supports two formats:
+   * 1. WASM format with explicit connections array
+   * 2. flowfile_core format with implicit connections (derived from node relationships)
    */
   function importFromFlowfile(data: FlowfileData): boolean {
 
@@ -1233,8 +1311,8 @@ result
         const node: FlowNode = {
           id: flowfileNode.id,
           type: flowfileNode.type,
-          x: flowfileNode.x_position,
-          y: flowfileNode.y_position,
+          x: flowfileNode.x_position ?? 0,
+          y: flowfileNode.y_position ?? 0,
           settings: flowfileNode.setting_input as NodeSettings,
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
@@ -1247,16 +1325,22 @@ result
 
       nodeIdCounter.value = maxId
 
-      // Import connections as edges
-      for (const conn of data.connections) {
-        const edge: FlowEdge = {
-          id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
-          source: String(conn.from_node),
-          target: String(conn.to_node),
-          sourceHandle: conn.from_handle,
-          targetHandle: conn.to_handle
+      // Import connections - support both explicit connections array and implicit derivation
+      if (data.connections && data.connections.length > 0) {
+        // Explicit connections array (WASM format)
+        for (const conn of data.connections) {
+          const edge: FlowEdge = {
+            id: `e${conn.from_node}-${conn.to_node}-${conn.from_handle}-${conn.to_handle}`,
+            source: String(conn.from_node),
+            target: String(conn.to_node),
+            sourceHandle: conn.from_handle,
+            targetHandle: conn.to_handle
+          }
+          edges.value.push(edge)
         }
-        edges.value.push(edge)
+      } else {
+        // Derive edges from node relationships (flowfile_core format)
+        deriveEdgesFromNodes(data.nodes)
       }
 
       // Trigger schema propagation after import
@@ -1273,18 +1357,39 @@ result
   }
 
   /**
-   * Download the current flow as a .flowfile JSON file
+   * Download the current flow as a file
+   * @param name - Optional name for the flow
+   * @param format - 'yaml' or 'json' (default: 'yaml' for flowfile_core compatibility)
    */
-  function downloadFlowfile(name?: string) {
+  function downloadFlowfile(name?: string, format: 'yaml' | 'json' = 'yaml') {
     const flowName = name || `flow_${new Date().toISOString().slice(0, 10)}`
     const data = exportToFlowfile(flowName)
-    const json = JSON.stringify(data, null, 2)
-    const blob = new Blob([json], { type: 'application/json' })
+
+    let content: string
+    let mimeType: string
+    let extension: string
+
+    if (format === 'yaml') {
+      content = yaml.dump(data, {
+        indent: 2,
+        lineWidth: -1,  // No line wrapping
+        noRefs: true,   // Don't use YAML references
+        sortKeys: false // Preserve key order
+      })
+      mimeType = 'application/x-yaml'
+      extension = 'yaml'
+    } else {
+      content = JSON.stringify(data, null, 2)
+      mimeType = 'application/json'
+      extension = 'json'
+    }
+
+    const blob = new Blob([content], { type: mimeType })
     const url = URL.createObjectURL(blob)
 
     const a = document.createElement('a')
     a.href = url
-    a.download = `${flowName}.flowfile`
+    a.download = `${flowName}.${extension}`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1292,15 +1397,72 @@ result
   }
 
   /**
-   * Load a .flowfile from a File object
+   * Validate flowfile data using Pydantic schemas (via Pyodide)
+   * Returns validation result with any errors
+   */
+  async function validateFlowfileData(data: FlowfileData): Promise<{ success: boolean; error?: string }> {
+    if (!pyodideStore.isReady) {
+      // If Pyodide isn't ready, skip validation
+      return { success: true }
+    }
+
+    try {
+      const dataJson = JSON.stringify(data)
+      const result = await pyodideStore.runPythonWithResult(`
+import json
+data = json.loads('''${dataJson.replace(/'/g, "\\'")}''')
+result = validate_flowfile_data(data)
+result
+`)
+      return {
+        success: result.success,
+        error: result.error
+      }
+    } catch (error) {
+      console.error('Validation error:', error)
+      // If validation fails to run, don't block - just warn
+      return { success: true }
+    }
+  }
+
+  /**
+   * Load a flowfile from a File object
+   * Supports both JSON and YAML formats (auto-detected by extension or content)
    */
   async function loadFlowfile(file: File): Promise<boolean> {
     try {
       const text = await file.text()
-      const data = JSON.parse(text) as FlowfileData
+      const fileName = file.name.toLowerCase()
+
+      let data: FlowfileData
+
+      // Detect format by extension or content
+      if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) {
+        // Parse as YAML
+        data = yaml.load(text) as FlowfileData
+      } else if (fileName.endsWith('.json') || fileName.endsWith('.flowfile')) {
+        // Parse as JSON
+        data = JSON.parse(text) as FlowfileData
+      } else {
+        // Try to auto-detect: if it starts with '{', it's probably JSON
+        const trimmed = text.trim()
+        if (trimmed.startsWith('{')) {
+          data = JSON.parse(text) as FlowfileData
+        } else {
+          // Assume YAML
+          data = yaml.load(text) as FlowfileData
+        }
+      }
 
       if (!data.flowfile_version || !data.nodes) {
         throw new Error('Invalid flowfile format')
+      }
+
+      // Optional: Validate using Pydantic schemas
+      const validation = await validateFlowfileData(data)
+      if (!validation.success) {
+        console.warn('Flowfile validation warning:', validation.error)
+        // Continue anyway - validation is advisory
       }
 
       return importFromFlowfile(data)
@@ -1359,6 +1521,7 @@ result
     exportToFlowfile,
     importFromFlowfile,
     downloadFlowfile,
-    loadFlowfile
+    loadFlowfile,
+    validateFlowfileData
   }
 })
