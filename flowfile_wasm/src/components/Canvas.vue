@@ -5,7 +5,7 @@
       title="Data Actions"
       initial-position="left"
       :initial-width="200"
-      :initial-top="70"
+      :initial-top="toolbarHeight"
     >
       <div class="nodes-wrapper">
         <input
@@ -41,7 +41,7 @@
     </DraggablePanel>
 
     <!-- Toolbar -->
-    <div class="toolbar">
+    <div ref="toolbarRef" class="toolbar">
       <div class="action-buttons">
         <button
           class="action-btn run-btn"
@@ -111,7 +111,7 @@
       :title="getNodeDescription(selectedNode.type).title"
       initial-position="right"
       :initial-width="450"
-      :initial-top="70"
+      :initial-top="toolbarHeight"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -199,6 +199,8 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 
 const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const toolbarRef = ref<HTMLElement | null>(null)
+const toolbarHeight = ref(0)
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
 const pendingNodeAdjustment = ref<number | null>(null)
@@ -541,6 +543,11 @@ function handleKeyDown(event: KeyboardEvent) {
 // Register keyboard shortcuts
 onMounted(() => {
   window.addEventListener('keydown', handleKeyDown)
+
+  // Calculate toolbar height for panel positioning
+  if (toolbarRef.value) {
+    toolbarHeight.value = toolbarRef.value.offsetHeight
+  }
 })
 
 onUnmounted(() => {
