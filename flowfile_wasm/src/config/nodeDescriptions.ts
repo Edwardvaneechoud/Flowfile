@@ -59,7 +59,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   },
   output: {
     title: 'Write Data',
-    intro: 'Export your data as CSV, Excel, or Parquet. Run the flow to prepare the data, then download the file to your computer.'
+    intro: 'Export your data as CSV or Parquet. Run the flow to prepare the data, then download the file to your computer.'
   }
 }
 

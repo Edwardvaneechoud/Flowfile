@@ -807,27 +807,7 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_dataframe(node_id, df)
 
         # Prepare download content based on file type
-        if file_type == "csv":
-            delimiter = table_settings.get("delimiter", ",")
-            # Handle tab delimiter
-            if delimiter == "tab":
-                delimiter = "\\t"
-
-            # Write CSV to string buffer
-            buffer = io.StringIO()
-            df.write_csv(buffer, separator=delimiter)
-            content = buffer.getvalue()
-            mime_type = "text/csv"
-
-        elif file_type == "excel":
-            # Polars can write Excel but in WASM we'll use CSV format for Excel
-            # with proper extension handling in the component
-            buffer = io.StringIO()
-            df.write_csv(buffer, separator=",")
-            content = buffer.getvalue()
-            mime_type = "text/csv"  # Will be converted to xlsx by component if needed
-
-        elif file_type == "parquet":
+        if file_type == "parquet":
             # Write parquet to bytes buffer
             buffer = io.BytesIO()
             df.write_parquet(buffer)
@@ -839,8 +819,13 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         else:
             # Default to CSV
+            delimiter = table_settings.get("delimiter", ",")
+            # Handle tab delimiter
+            if delimiter == "tab":
+                delimiter = "\\t"
+
             buffer = io.StringIO()
-            df.write_csv(buffer)
+            df.write_csv(buffer, separator=delimiter)
             content = buffer.getvalue()
             mime_type = "text/csv"
 

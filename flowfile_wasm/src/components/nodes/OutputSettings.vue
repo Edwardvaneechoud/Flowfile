@@ -62,23 +62,6 @@
         </div>
       </div>
 
-      <!-- Excel Options -->
-      <div v-if="outputSettings.file_type === 'excel'" class="format-options">
-        <div class="form-group">
-          <label class="filter-label">Sheet Name</label>
-          <input
-            type="text"
-            :value="excelSettings.sheet_name"
-            @input="updateSheetName(($event.target as HTMLInputElement).value)"
-            class="input"
-            placeholder="Sheet1"
-          />
-        </div>
-        <div class="help-text">
-          Note: In the browser version, Excel files are exported as CSV format.
-        </div>
-      </div>
-
       <!-- Parquet Info -->
       <div v-if="outputSettings.file_type === 'parquet'" class="format-options">
         <div class="help-text">
@@ -120,7 +103,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
-import type { OutputNodeSettings, OutputFileType, OutputCsvTable, OutputExcelTable, OutputSettings } from '../../types'
+import type { OutputNodeSettings, OutputFileType, OutputCsvTable, OutputSettings } from '../../types'
 
 const props = defineProps<{
   nodeId: number
@@ -133,10 +116,9 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// File type options
+// File type options (CSV and Parquet only)
 const fileTypes = [
   { value: 'csv', label: 'CSV (.csv)' },
-  { value: 'excel', label: 'Excel (.xlsx)' },
   { value: 'parquet', label: 'Parquet (.parquet)' }
 ]
 
@@ -171,13 +153,6 @@ const csvSettings = computed(() => {
   return { file_type: 'csv' as const, delimiter: ',', encoding: 'utf-8' }
 })
 
-const excelSettings = computed(() => {
-  if (outputSettings.value.table_settings.file_type === 'excel') {
-    return outputSettings.value.table_settings as OutputExcelTable
-  }
-  return { file_type: 'excel' as const, sheet_name: 'Sheet1' }
-})
-
 // Check if this node has an input connection
 const hasInputConnection = computed(() => {
   const node = flowStore.getNode(props.nodeId)
@@ -207,8 +182,6 @@ function updateFileName(value: string) {
   if (extension) {
     const extMap: Record<string, OutputFileType> = {
       'csv': 'csv',
-      'xlsx': 'excel',
-      'xls': 'excel',
       'parquet': 'parquet'
     }
     if (extMap[extension] && extMap[extension] !== outputSettings.value.file_type) {
@@ -232,12 +205,6 @@ function updateFileType(value: OutputFileType) {
         encoding: 'utf-8'
       }
       break
-    case 'excel':
-      outputSettings.value.table_settings = {
-        file_type: 'excel',
-        sheet_name: 'Sheet1'
-      }
-      break
     case 'parquet':
       outputSettings.value.table_settings = {
         file_type: 'parquet'
@@ -249,7 +216,6 @@ function updateFileType(value: OutputFileType) {
   const baseName = outputSettings.value.name.split('.')[0]
   const extMap: Record<OutputFileType, string> = {
     'csv': '.csv',
-    'excel': '.xlsx',
     'parquet': '.parquet'
   }
   outputSettings.value.name = baseName + extMap[value]
@@ -267,13 +233,6 @@ function updateDelimiter(value: string) {
 function updateEncoding(value: string) {
   if (outputSettings.value.table_settings.file_type === 'csv') {
     (outputSettings.value.table_settings as OutputCsvTable).encoding = value
-    emitUpdate()
-  }
-}
-
-function updateSheetName(value: string) {
-  if (outputSettings.value.table_settings.file_type === 'excel') {
-    (outputSettings.value.table_settings as OutputExcelTable).sheet_name = value
     emitUpdate()
   }
 }
@@ -303,7 +262,7 @@ function triggerDownload() {
     }
     blob = new Blob([bytes], { type: mime_type })
   } else {
-    // Text content for CSV/Excel
+    // Text content for CSV
     blob = new Blob([content], { type: mime_type })
   }
 

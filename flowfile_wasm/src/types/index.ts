@@ -190,7 +190,7 @@ export interface UnpivotInput {
 // OUTPUT SCHEMAS (matches flowfile_core/schemas/input_schema.py)
 // =============================================================================
 
-export type OutputFileType = 'csv' | 'excel' | 'parquet'
+export type OutputFileType = 'csv' | 'parquet'
 export type OutputWriteMode = 'overwrite' | 'new file' | 'append'
 
 export interface OutputCsvTable {
@@ -199,16 +199,11 @@ export interface OutputCsvTable {
   encoding: string
 }
 
-export interface OutputExcelTable {
-  file_type: 'excel'
-  sheet_name: string
-}
-
 export interface OutputParquetTable {
   file_type: 'parquet'
 }
 
-export type OutputTableSettings = OutputCsvTable | OutputExcelTable | OutputParquetTable
+export type OutputTableSettings = OutputCsvTable | OutputParquetTable
 
 export interface OutputSettings {
   name: string                     // Filename (e.g., "output.csv")
