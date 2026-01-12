@@ -653,6 +653,90 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
         return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
     except Exception as e:
         return {"success": False, "error": format_error("preview", node_id, e, df)}
+
+# Global storage for output files
+_output_files: Dict[int, Dict[str, Any]] = {}
+
+def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
+    """Execute output/write data node - stores data for download"""
+    df = get_dataframe(input_id)
+    if df is None:
+        return {"success": False, "error": f"Output error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    try:
+        import io
+
+        output_settings = settings.get("output_settings", {})
+        file_type = output_settings.get("file_type", "csv")
+        file_name = output_settings.get("name", "output")
+        fields = output_settings.get("fields")
+        table_settings = output_settings.get("table_settings", {})
+
+        # Select specific columns if specified
+        output_df = df.select(fields) if fields and len(fields) > 0 else df
+
+        # Generate file content based on file type
+        if file_type == "csv":
+            buffer = io.StringIO()
+            delimiter = table_settings.get("delimiter", ",")
+            encoding = table_settings.get("encoding", "utf-8")
+            output_df.write_csv(buffer, separator=delimiter)
+            content = buffer.getvalue()
+            mime_type = "text/csv"
+            extension = "csv"
+
+        elif file_type == "parquet":
+            buffer = io.BytesIO()
+            output_df.write_parquet(buffer)
+            content = buffer.getvalue()
+            mime_type = "application/x-parquet"
+            extension = "parquet"
+
+        elif file_type == "excel":
+            buffer = io.BytesIO()
+            sheet_name = table_settings.get("sheet_name", "Sheet1")
+            output_df.write_excel(buffer, worksheet=sheet_name)
+            content = buffer.getvalue()
+            mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            extension = "xlsx"
+        else:
+            return {"success": False, "error": f"Output error on node #{node_id}: Unsupported file type '{file_type}'"}
+
+        # Store the output file for download
+        _output_files[node_id] = {
+            "name": file_name,
+            "content": content,
+            "mime_type": mime_type,
+            "extension": extension,
+            "file_type": file_type,
+            "row_count": len(output_df)
+        }
+
+        # Store dataframe (pass through like preview)
+        store_dataframe(node_id, df)
+
+        return {
+            "success": True,
+            "data": df_to_preview(df),
+            "schema": get_schema(node_id),
+            "output_ready": True,
+            "output_info": {
+                "file_name": f"{file_name}.{extension}",
+                "file_type": file_type,
+                "row_count": len(output_df),
+                "column_count": len(output_df.columns)
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": format_error("output", node_id, e, df)}
+
+def get_output_file(node_id: int) -> Optional[Dict[str, Any]]:
+    """Get stored output file for a node"""
+    return _output_files.get(node_id)
+
+def clear_output_file(node_id: int):
+    """Clear output file for a node"""
+    _output_files.pop(node_id, None)
 `)
   }
 

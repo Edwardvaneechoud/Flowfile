@@ -48,6 +48,10 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   preview: {
     title: 'Preview',
     intro: 'Preview your data at this point in the flow. Does not modify the data.'
+  },
+  output: {
+    title: 'Write Data',
+    intro: 'Write your data to a file. Supports CSV, Excel, and Parquet formats. Data is prepared for download in the browser.'
   }
 }
 

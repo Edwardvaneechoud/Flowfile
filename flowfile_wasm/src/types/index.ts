@@ -225,6 +225,35 @@ export interface ReceivedTable {
 }
 
 // =============================================================================
+// OUTPUT TABLE SCHEMAS (for writing data)
+// =============================================================================
+
+export interface OutputCsvTable {
+  file_type: 'csv'
+  delimiter: string
+  encoding: string
+}
+
+export interface OutputParquetTable {
+  file_type: 'parquet'
+}
+
+export interface OutputExcelTable {
+  file_type: 'excel'
+  sheet_name: string
+}
+
+export type OutputTableSettings = OutputCsvTable | OutputParquetTable | OutputExcelTable
+
+export interface OutputSettings {
+  name: string
+  file_type: 'csv' | 'excel' | 'parquet'
+  fields?: string[]  // Optional - selected columns to write
+  write_mode: 'overwrite' | 'create' | 'append'
+  table_settings: OutputTableSettings
+}
+
+// =============================================================================
 // NODE SETTING TYPES (matches flowfile_core node structures)
 // =============================================================================
 
@@ -277,6 +306,10 @@ export interface NodePreviewSettings extends NodeSingleInput {
   // No additional settings needed
 }
 
+export interface NodeOutputSettings extends NodeSingleInput {
+  output_settings: OutputSettings
+}
+
 // Union type for all node settings
 export type NodeSettings =
   | NodeReadSettings
@@ -290,6 +323,7 @@ export type NodeSettings =
   | NodeFormulaSettings
   | NodeSampleSettings
   | NodePreviewSettings
+  | NodeOutputSettings
 
 // =============================================================================
 // FLOWFILE DATA STRUCTURE (for save/load - matches flowfile_core/schemas/schemas.py)
@@ -410,6 +444,7 @@ export const NODE_TYPES = {
 
   // Output nodes
   preview: 'preview',
+  output: 'output',
 } as const
 
 export type NodeType = typeof NODE_TYPES[keyof typeof NODE_TYPES]
@@ -512,6 +547,11 @@ export interface PolarsCodeSettings extends NodeBase {
 }
 
 export interface PreviewSettings extends NodeBase {
+  depending_on_id?: number
+}
+
+export interface OutputNodeSettings extends NodeBase {
+  output_settings: OutputSettings
   depending_on_id?: number
 }
 
