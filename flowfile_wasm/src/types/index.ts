@@ -73,7 +73,7 @@ export interface BasicFilter {
 
 export interface FilterInput {
   mode: 'basic' | 'advanced'
-  basic_filter: BasicFilter
+  basic_filter?: BasicFilter  // Optional - can be None in flowfile_core
   advanced_filter: string  // Polars expression
 }
 
@@ -157,7 +157,7 @@ export interface JoinInput {
 // =============================================================================
 
 export interface UniqueInput {
-  columns: string[]
+  columns?: string[]  // Optional - can be None in flowfile_core (all columns)
   strategy: 'first' | 'last' | 'any' | 'none'
 }
 
@@ -171,7 +171,7 @@ export interface FieldInput {
 }
 
 export interface FunctionInput {
-  field_input: FieldInput
+  field: FieldInput  // Changed from 'field_input' to match flowfile_core
   function: string  // Polars expression
 }
 
@@ -184,7 +184,7 @@ export interface SampleInput {
 }
 
 // =============================================================================
-// MANUAL INPUT / RAW DATA SCHEMAS
+// MANUAL INPUT / RAW DATA SCHEMAS (matches flowfile_core/schemas/input_schema.py)
 // =============================================================================
 
 export interface MinimalFieldInfo {
@@ -193,7 +193,7 @@ export interface MinimalFieldInfo {
 }
 
 export interface RawData {
-  fields: MinimalFieldInfo[]
+  columns: MinimalFieldInfo[]  // Changed from 'fields' to match flowfile_core
   data: any[][]
 }
 
@@ -235,7 +235,7 @@ export interface NodeReadSettings extends NodeBase {
 }
 
 export interface NodeManualInputSettings extends NodeBase {
-  raw_data?: RawData
+  raw_data_format?: RawData  // Changed from 'raw_data' to match flowfile_core
 }
 
 export interface NodeFilterSettings extends NodeSingleInput {
@@ -266,7 +266,7 @@ export interface NodeUniqueSettings extends NodeSingleInput {
 }
 
 export interface NodeFormulaSettings extends NodeSingleInput {
-  function_input: FunctionInput[]
+  function?: FunctionInput  // Changed from 'function_input: FunctionInput[]' to match flowfile_core
 }
 
 export interface NodeSampleSettings extends NodeSingleInput {
@@ -330,7 +330,7 @@ export interface FlowfileData {
   flowfile_name: string
   flowfile_settings: FlowfileSettings
   nodes: FlowfileNode[]
-  connections: NodeConnection[]
+  connections?: NodeConnection[]  // Optional - flowfile_core derives connections from node relationships
 }
 
 // =============================================================================
@@ -374,7 +374,7 @@ export interface DataPreview {
 }
 
 export interface NodeResult {
-  success: boolean
+  success?: boolean  // undefined = not executed yet (shows grey), true = success (green), false = error (red)
   error?: string
   data?: DataPreview
   schema?: ColumnSchema[]
