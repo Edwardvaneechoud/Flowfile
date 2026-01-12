@@ -222,64 +222,64 @@ export const useFlowStore = defineStore('flow', () => {
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
   async function saveToStorage() {
-    try {
-      // Build FlowfileData structure (without connections - flowfile_core format)
-      const flowfileNodes: FlowfileNode[] = []
+    // Build FlowfileData structure (without connections - flowfile_core format)
+    const flowfileNodes: FlowfileNode[] = []
 
-      nodes.value.forEach((node, id) => {
-        const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
-        const outputs = edges.value
-          .filter(e => e.source === String(id))
-          .map(e => parseInt(e.target))
+    nodes.value.forEach((node, id) => {
+      const isStartNode = node.inputIds.length === 0 && !node.leftInputId && !node.rightInputId
+      const outputs = edges.value
+        .filter(e => e.source === String(id))
+        .map(e => parseInt(e.target))
 
-        flowfileNodes.push({
-          id: node.id,
-          type: node.type,
-          is_start_node: isStartNode,
-          description: (node.settings as NodeBase).description || '',
-          x_position: node.x,
-          y_position: node.y,
-          left_input_id: node.leftInputId,
-          right_input_id: node.rightInputId,
-          input_ids: node.inputIds,
-          outputs,
-          setting_input: cleanSettingInput(node.settings)
-        })
+      flowfileNodes.push({
+        id: node.id,
+        type: node.type,
+        is_start_node: isStartNode,
+        description: (node.settings as NodeBase).description || '',
+        x_position: node.x,
+        y_position: node.y,
+        left_input_id: node.leftInputId,
+        right_input_id: node.rightInputId,
+        input_ids: node.inputIds,
+        outputs,
+        setting_input: cleanSettingInput(node.settings)
       })
+    })
 
-      // No connections array - flowfile_core derives connections from node relationships
-      const flowfileData: FlowfileData = {
-        flowfile_version: '1.0.0',
-        flowfile_id: Date.now(),
-        flowfile_name: 'Session Flow',
-        flowfile_settings: {
-          description: '',
-          execution_mode: 'Development',
-          execution_location: 'local',
-          auto_save: true,
-          show_detailed_progress: false
-        },
-        nodes: flowfileNodes
+    // No connections array - flowfile_core derives connections from node relationships
+    const flowfileData: FlowfileData = {
+      flowfile_version: '1.0.0',
+      flowfile_id: Date.now(),
+      flowfile_name: 'Session Flow',
+      flowfile_settings: {
+        description: '',
+        execution_mode: 'Development',
+        execution_location: 'local',
+        auto_save: true,
+        show_detailed_progress: false
+      },
+      nodes: flowfileNodes
+    }
+
+    // Separate small and large files for hybrid storage
+    const smallFiles: Array<[number, string]> = []
+    const largeFileNodeIds: number[] = []
+
+    for (const [nodeId, content] of fileContents.value.entries()) {
+      if (fileStorage.shouldUseIndexedDB(content)) {
+        // Large file: save to IndexedDB
+        largeFileNodeIds.push(nodeId)
+        // Save asynchronously (don't await to avoid blocking)
+        fileStorage.setFileContent(nodeId, content).catch(err => {
+          console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
+        })
+      } else {
+        // Small file: save to sessionStorage
+        smallFiles.push([nodeId, content])
       }
+    }
 
-      // Separate small and large files for hybrid storage
-      const smallFiles: Array<[number, string]> = []
-      const largeFileNodeIds: number[] = []
-
-      for (const [nodeId, content] of fileContents.value.entries()) {
-        if (fileStorage.shouldUseIndexedDB(content)) {
-          // Large file: save to IndexedDB
-          largeFileNodeIds.push(nodeId)
-          // Save asynchronously (don't await to avoid blocking)
-          fileStorage.setFileContent(nodeId, content).catch(err => {
-            console.error(`Failed to save large file for node ${nodeId} to IndexedDB:`, err)
-          })
-        } else {
-          // Small file: save to sessionStorage
-          smallFiles.push([nodeId, content])
-        }
-      }
-
+    try {
       const state = {
         version: STORAGE_VERSION,
         flowfileData,
@@ -293,6 +293,36 @@ export const useFlowStore = defineStore('flow', () => {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state))
     } catch (err) {
       console.error('Failed to save state to session storage', err)
+
+      // If quota exceeded, try saving minimal state without schemas
+      if (err instanceof DOMException && err.name === 'QuotaExceededError') {
+        try {
+          const minimalState = {
+            version: STORAGE_VERSION,
+            flowfileData: {
+              ...flowfileData,
+              nodes: flowfileData.nodes.map((n: FlowfileNode) => ({
+                ...n,
+                setting_input: {} // Clear settings to save space
+              }))
+            },
+            fileContents: [], // No files in fallback
+            largeFileNodeIds,
+            nodeIdCounter: nodeIdCounter.value,
+            nodeSchemas: [] // No schemas in fallback
+          }
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(minimalState))
+          console.warn('Saved minimal state due to quota limits. Large files are in IndexedDB.')
+        } catch (fallbackErr) {
+          console.error('Failed to save even minimal state:', fallbackErr)
+          // Clear session storage if it's completely full
+          try {
+            sessionStorage.removeItem(STORAGE_KEY)
+          } catch (clearErr) {
+            console.error('Could not clear session storage:', clearErr)
+          }
+        }
+      }
     }
   }
 
