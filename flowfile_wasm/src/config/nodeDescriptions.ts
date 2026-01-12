@@ -48,6 +48,14 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   preview: {
     title: 'Preview',
     intro: 'Preview your data at this point in the flow. Does not modify the data.'
+  },
+  pivot: {
+    title: 'Pivot',
+    intro: 'Transform data from long to wide format. Values in the pivot column become new column headers, with aggregated values.'
+  },
+  unpivot: {
+    title: 'Unpivot',
+    intro: 'Transform data from wide to long format. Multiple columns are melted into variable/value pairs (also known as melt or gather).'
   }
 }
 
