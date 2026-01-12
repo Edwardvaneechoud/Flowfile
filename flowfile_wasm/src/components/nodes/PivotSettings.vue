@@ -1,100 +1,97 @@
 <template>
   <div class="listbox-wrapper">
-    <div class="listbox-subtitle">Available Columns</div>
+    <!-- Column List -->
+    <ul class="listbox">
+      <li
+        v-for="col in columns"
+        :key="col.name"
+        :class="{ 'is-selected': isColumnAssigned(col.name) }"
+        draggable="true"
+        @click="handleItemClick(col.name)"
+        @contextmenu.prevent="openContextMenu(col.name, $event)"
+        @dragstart="onDragStart(col.name, $event)"
+      >
+        {{ col.name }} ({{ col.data_type }})
+      </li>
+    </ul>
 
     <div v-if="columns.length === 0" class="no-columns">
       No input columns available. Connect an input node first.
     </div>
 
-    <ul v-else class="listbox">
-      <li
-        v-for="col in columns"
-        :key="col.name"
-        :class="{
-          'is-selected': isColumnUsed(col.name),
-          'is-index': indexColumns.includes(col.name),
-          'is-pivot': pivotColumn === col.name,
-          'is-value': valueColumn === col.name
-        }"
-        @contextmenu.prevent="showContextMenu($event, col.name)"
-      >
-        <span class="col-name">{{ col.name }}</span>
-        <span class="col-type">({{ col.data_type }})</span>
-        <span v-if="indexColumns.includes(col.name)" class="col-role">Index</span>
-        <span v-if="pivotColumn === col.name" class="col-role">Pivot</span>
-        <span v-if="valueColumn === col.name" class="col-role">Value</span>
-      </li>
-    </ul>
+    <!-- Context Menu -->
+    <ContextMenu
+      v-if="showContextMenu"
+      :position="contextMenuPosition"
+      :options="contextMenuOptions"
+      @select="handleContextMenuSelect"
+      @close="closeContextMenu"
+    />
 
-    <div class="listbox-subtitle" style="margin-top: 12px;">Pivot Configuration</div>
+    <!-- Index Keys Section -->
+    <SettingsSection
+      title="Index Keys"
+      :items="indexColumns"
+      :droppable="true"
+      placeholder="Drag columns here or right-click to add"
+      @remove-item="removeColumn('index', $event)"
+      @drop="onDropInSection('index')"
+    />
 
-    <div class="config-section">
-      <div class="config-row">
-        <label>Index Columns</label>
-        <div class="chip-list">
-          <span v-for="col in indexColumns" :key="col" class="chip">
-            {{ col }}
-            <button class="chip-remove" @click="removeIndexColumn(col)">&times;</button>
-          </span>
-          <span v-if="indexColumns.length === 0" class="placeholder">Right-click columns to add as index</span>
-        </div>
-      </div>
+    <!-- Pivot Column Section -->
+    <SettingsSection
+      title="Pivot Column"
+      :items="pivotColumn ? [pivotColumn] : []"
+      :droppable="true"
+      placeholder="Drag a column here (values become new column names)"
+      @remove-item="removeColumn('pivot', $event)"
+      @drop="onDropInSection('pivot')"
+    />
 
-      <div class="config-row">
-        <label>Pivot Column</label>
-        <select v-model="pivotColumn" @change="emitUpdate" class="select-sm">
-          <option value="">Select column...</option>
-          <option v-for="col in availableForPivot" :key="col.name" :value="col.name">
-            {{ col.name }}
-          </option>
-        </select>
-        <span class="help-text">Values become new column names</span>
-      </div>
+    <!-- Value Column Section -->
+    <SettingsSection
+      title="Value Column"
+      :items="valueColumn ? [valueColumn] : []"
+      :droppable="true"
+      placeholder="Drag a column here (values to aggregate)"
+      @remove-item="removeColumn('value', $event)"
+      @drop="onDropInSection('value')"
+    />
 
-      <div class="config-row">
-        <label>Value Column</label>
-        <select v-model="valueColumn" @change="emitUpdate" class="select-sm">
-          <option value="">Select column...</option>
-          <option v-for="col in availableForValue" :key="col.name" :value="col.name">
-            {{ col.name }}
-          </option>
-        </select>
-        <span class="help-text">Values to aggregate</span>
-      </div>
-
-      <div class="config-row">
-        <label>Aggregation</label>
-        <div class="checkbox-group">
-          <label v-for="agg in availableAggregations" :key="agg" class="checkbox-label">
-            <input
-              type="checkbox"
-              :checked="aggregations.includes(agg)"
-              @change="toggleAggregation(agg)"
-            />
-            {{ agg }}
-          </label>
-        </div>
+    <!-- Aggregations Section -->
+    <div class="listbox-wrapper">
+      <div class="listbox-subtitle">Select aggregations</div>
+      <div class="aggregations-container">
+        <label
+          v-for="agg in availableAggregations"
+          :key="agg"
+          class="checkbox-label"
+        >
+          <input
+            type="checkbox"
+            :checked="aggregations.includes(agg)"
+            @change="toggleAggregation(agg)"
+          />
+          {{ agg }}
+        </label>
       </div>
     </div>
 
-    <!-- Context Menu for columns -->
-    <div
-      v-if="contextMenu.show"
-      class="context-menu"
-      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
-    >
-      <button @click="setAsIndex">Add as Index Column</button>
-      <button @click="setAsPivot">Set as Pivot Column</button>
-      <button @click="setAsValue">Set as Value Column</button>
-      <button v-if="indexColumns.includes(contextMenu.column)" @click="removeFromIndex">Remove from Index</button>
+    <!-- Validation -->
+    <div v-if="!isConfigured" class="validation-message">
+      <span class="validation-icon">!</span>
+      <span>Please select a pivot column, value column, and at least one aggregation</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { PivotSettings, ColumnSchema } from '../../types'
+import ContextMenu from '../common/ContextMenu.vue'
+import type { ContextMenuOption } from '../common/ContextMenu.vue'
+import SettingsSection from '../common/SettingsSection.vue'
 
 const props = defineProps<{
   nodeId: number
@@ -121,98 +118,97 @@ const aggregations = ref<string[]>(
     : ['sum']
 )
 
-const contextMenu = ref({ show: false, x: 0, y: 0, column: '' })
+// Context menu state
+const showContextMenu = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const selectedColumn = ref<string>('')
+const contextMenuOptions = ref<ContextMenuOption[]>([])
 
-const availableAggregations = ['sum', 'mean', 'min', 'max', 'count', 'first', 'last', 'median']
+// Drag and drop state
+const draggedColumnName = ref<string | null>(null)
+
+const availableAggregations = ['sum', 'count', 'min', 'max', 'n_unique', 'mean', 'median', 'first', 'last', 'concat']
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-const availableForPivot = computed(() => {
-  // Pivot column should not be an index column
-  return columns.value.filter(c => !indexColumns.value.includes(c.name))
+const isConfigured = computed(() => {
+  return pivotColumn.value !== '' && valueColumn.value !== '' && aggregations.value.length > 0
 })
 
-const availableForValue = computed(() => {
-  // Value column should not be an index column or the pivot column
-  return columns.value.filter(c =>
-    !indexColumns.value.includes(c.name) && c.name !== pivotColumn.value
-  )
-})
-
-function isColumnUsed(name: string): boolean {
+function isColumnAssigned(name: string): boolean {
   return indexColumns.value.includes(name) ||
     pivotColumn.value === name ||
     valueColumn.value === name
 }
 
-function showContextMenu(event: MouseEvent, column: string) {
-  contextMenu.value = {
-    show: true,
-    x: event.clientX,
-    y: event.clientY,
-    column
-  }
+function handleItemClick(columnName: string) {
+  selectedColumn.value = columnName
 }
 
-function hideContextMenu() {
-  contextMenu.value.show = false
+function openContextMenu(columnName: string, event: MouseEvent) {
+  selectedColumn.value = columnName
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+
+  contextMenuOptions.value = [
+    {
+      label: 'Add to Index',
+      action: 'index',
+      disabled: isColumnAssigned(columnName)
+    },
+    {
+      label: 'Set as Pivot',
+      action: 'pivot',
+      disabled: isColumnAssigned(columnName)
+    },
+    {
+      label: 'Set as Value',
+      action: 'value',
+      disabled: isColumnAssigned(columnName)
+    }
+  ]
+
+  showContextMenu.value = true
 }
 
-function setAsIndex() {
-  const column = contextMenu.value.column
-  if (!indexColumns.value.includes(column)) {
-    // Remove from other roles if set
-    if (pivotColumn.value === column) pivotColumn.value = ''
-    if (valueColumn.value === column) valueColumn.value = ''
-
+function handleContextMenuSelect(action: string) {
+  const column = selectedColumn.value
+  if (action === 'index' && !indexColumns.value.includes(column)) {
+    removeColumnIfExists(column)
     indexColumns.value.push(column)
     emitUpdate()
+  } else if (action === 'pivot') {
+    removeColumnIfExists(column)
+    pivotColumn.value = column
+    emitUpdate()
+  } else if (action === 'value') {
+    removeColumnIfExists(column)
+    valueColumn.value = column
+    emitUpdate()
   }
-  hideContextMenu()
+  closeContextMenu()
 }
 
-function setAsPivot() {
-  const column = contextMenu.value.column
-  // Remove from index if it's there
-  const idx = indexColumns.value.indexOf(column)
-  if (idx !== -1) indexColumns.value.splice(idx, 1)
-  if (valueColumn.value === column) valueColumn.value = ''
-
-  pivotColumn.value = column
-  emitUpdate()
-  hideContextMenu()
+function closeContextMenu() {
+  showContextMenu.value = false
 }
 
-function setAsValue() {
-  const column = contextMenu.value.column
-  // Remove from index if it's there
-  const idx = indexColumns.value.indexOf(column)
-  if (idx !== -1) indexColumns.value.splice(idx, 1)
+function removeColumnIfExists(column: string) {
+  indexColumns.value = indexColumns.value.filter(col => col !== column)
   if (pivotColumn.value === column) pivotColumn.value = ''
+  if (valueColumn.value === column) valueColumn.value = ''
+}
 
-  valueColumn.value = column
+function removeColumn(type: 'index' | 'pivot' | 'value', column: string) {
+  if (type === 'index') {
+    indexColumns.value = indexColumns.value.filter(col => col !== column)
+  } else if (type === 'pivot') {
+    pivotColumn.value = ''
+  } else if (type === 'value') {
+    valueColumn.value = ''
+  }
   emitUpdate()
-  hideContextMenu()
-}
-
-function removeFromIndex() {
-  const column = contextMenu.value.column
-  const idx = indexColumns.value.indexOf(column)
-  if (idx !== -1) {
-    indexColumns.value.splice(idx, 1)
-    emitUpdate()
-  }
-  hideContextMenu()
-}
-
-function removeIndexColumn(column: string) {
-  const idx = indexColumns.value.indexOf(column)
-  if (idx !== -1) {
-    indexColumns.value.splice(idx, 1)
-    emitUpdate()
-  }
 }
 
 function toggleAggregation(agg: string) {
@@ -228,12 +224,33 @@ function toggleAggregation(agg: string) {
   emitUpdate()
 }
 
-function emitUpdate() {
-  const isConfigured = pivotColumn.value !== '' && valueColumn.value !== '' && aggregations.value.length > 0
+// Drag and drop handlers
+function onDragStart(columnName: string, event: DragEvent) {
+  draggedColumnName.value = columnName
+  event.dataTransfer?.setData('text/plain', columnName)
+}
 
+function onDropInSection(section: 'index' | 'pivot' | 'value') {
+  if (draggedColumnName.value) {
+    removeColumnIfExists(draggedColumnName.value)
+
+    if (section === 'index' && !indexColumns.value.includes(draggedColumnName.value)) {
+      indexColumns.value.push(draggedColumnName.value)
+    } else if (section === 'pivot') {
+      pivotColumn.value = draggedColumnName.value
+    } else if (section === 'value') {
+      valueColumn.value = draggedColumnName.value
+    }
+
+    draggedColumnName.value = null
+    emitUpdate()
+  }
+}
+
+function emitUpdate() {
   const settings: PivotSettings = {
     ...props.settings,
-    is_setup: isConfigured,
+    is_setup: isConfigured.value,
     pivot_input: {
       index_columns: [...indexColumns.value],
       pivot_column: pivotColumn.value,
@@ -243,149 +260,69 @@ function emitUpdate() {
   }
   emit('update:settings', settings)
 }
-
-onMounted(() => {
-  document.addEventListener('click', hideContextMenu)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', hideContextMenu)
-})
 </script>
 
 <style scoped>
-/* Component uses global styles from main.css */
-
-.config-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.config-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.config-row label {
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.help-text {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.chip-list {
+.aggregations-container {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  min-height: 28px;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  background: var(--accent-light);
-  border-radius: 12px;
-  font-size: 12px;
-  color: var(--text-primary);
-}
-
-.chip-remove {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 2px;
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-
-.chip-remove:hover {
-  color: var(--error-color);
-}
-
-.placeholder {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-style: italic;
-}
-
-.checkbox-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2);
 }
 
 .checkbox-label {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: normal;
+  gap: var(--spacing-1);
+  font-size: var(--font-size-sm);
   cursor: pointer;
-  color: var(--text-primary);
+  color: var(--color-text-primary);
+  padding: var(--spacing-1) var(--spacing-2);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
 }
 
-.col-name {
-  font-weight: 500;
+.checkbox-label:hover {
+  background-color: var(--color-background-tertiary);
 }
 
-.col-type {
-  color: var(--text-muted);
-  font-size: 11px;
+.checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-accent);
 }
 
-.col-role {
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 600;
+.validation-message {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-3);
+  margin-top: var(--spacing-2);
+  background-color: var(--color-warning-light);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-warning-darker);
 }
 
-.is-index .col-role {
-  background: var(--accent-light);
-  color: var(--accent-color);
-}
-
-.is-pivot .col-role {
-  background: rgba(245, 124, 0, 0.15);
-  color: #f57c00;
-}
-
-.is-value .col-role {
-  background: rgba(56, 142, 60, 0.15);
-  color: #388e3c;
+.validation-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background-color: var(--color-warning);
+  color: white;
+  border-radius: 50%;
+  font-weight: bold;
+  font-size: var(--font-size-xs);
 }
 
 .listbox li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  cursor: grab;
 }
 
-/* Override select styling */
-.select-sm {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-size: 13px;
-}
-
-.select-sm:focus {
-  outline: none;
-  border-color: var(--accent-color);
+.listbox li:active {
+  cursor: grabbing;
 }
 </style>

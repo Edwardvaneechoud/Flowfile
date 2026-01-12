@@ -1,120 +1,95 @@
 <template>
   <div class="listbox-wrapper">
-    <div class="listbox-subtitle">Selection Mode</div>
-
-    <div class="mode-toggle">
-      <label class="radio-label">
-        <input
-          type="radio"
-          value="column"
-          v-model="selectorMode"
-          @change="emitUpdate"
-        />
-        Select columns manually
-      </label>
-      <label class="radio-label">
-        <input
-          type="radio"
-          value="data_type"
-          v-model="selectorMode"
-          @change="emitUpdate"
-        />
-        Select by data type
-      </label>
-    </div>
-
-    <!-- Data Type Selector -->
-    <div v-if="selectorMode === 'data_type'" class="config-section">
-      <div class="config-row">
-        <label>Data Type to Unpivot</label>
-        <select v-model="dataTypeSelector" @change="emitUpdate" class="select-sm">
-          <option value="numeric">Numeric (Int, Float)</option>
-          <option value="float">Float only</option>
-          <option value="string">String</option>
-          <option value="date">Date/Time</option>
-          <option value="all">All columns</option>
-        </select>
-        <span class="help-text">All columns of this type will be unpivoted</span>
-      </div>
-    </div>
-
-    <div class="listbox-subtitle" style="margin-top: 12px;">Available Columns</div>
+    <!-- Column List -->
+    <ul class="listbox">
+      <li
+        v-for="col in columns"
+        :key="col.name"
+        :class="{ 'is-selected': isColumnAssigned(col.name) }"
+        draggable="true"
+        @click="handleItemClick(col.name)"
+        @contextmenu.prevent="openContextMenu(col.name, $event)"
+        @dragstart="onDragStart(col.name, $event)"
+      >
+        {{ col.name }} ({{ col.data_type }})
+      </li>
+    </ul>
 
     <div v-if="columns.length === 0" class="no-columns">
       No input columns available. Connect an input node first.
     </div>
 
-    <ul v-else class="listbox">
-      <li
-        v-for="col in columns"
-        :key="col.name"
-        :class="{
-          'is-selected': isColumnUsed(col.name),
-          'is-index': indexColumns.includes(col.name),
-          'is-value': valueColumns.includes(col.name)
-        }"
-        @contextmenu.prevent="showContextMenu($event, col.name)"
-      >
-        <span class="col-name">{{ col.name }}</span>
-        <span class="col-type">({{ col.data_type }})</span>
-        <span v-if="indexColumns.includes(col.name)" class="col-role">Index</span>
-        <span v-if="valueColumns.includes(col.name)" class="col-role">Unpivot</span>
-      </li>
-    </ul>
+    <!-- Context Menu -->
+    <ContextMenu
+      v-if="showContextMenu"
+      :position="contextMenuPosition"
+      :options="contextMenuOptions"
+      @select="handleContextMenuSelect"
+      @close="closeContextMenu"
+    />
 
-    <div class="listbox-subtitle" style="margin-top: 12px;">Unpivot Configuration</div>
+    <!-- Index Keys Section -->
+    <SettingsSection
+      title="Index Keys"
+      :items="indexColumns"
+      :droppable="true"
+      placeholder="Drag columns here or right-click to add"
+      @remove-item="removeColumn('index', $event)"
+      @drop="onDropInSection('index')"
+    />
 
-    <div class="config-section">
-      <div class="config-row">
-        <label>Index Columns (kept as identifiers)</label>
-        <div class="chip-list">
-          <span v-for="col in indexColumns" :key="col" class="chip chip-index">
-            {{ col }}
-            <button class="chip-remove" @click="removeIndexColumn(col)">&times;</button>
-          </span>
-          <span v-if="indexColumns.length === 0" class="placeholder">Right-click columns to add as index</span>
+    <!-- Value Selector Mode Toggle -->
+    <div class="listbox-wrapper">
+      <div class="switch-container">
+        <span>Value selector</span>
+        <div class="toggle-switch">
+          <button
+            :class="{ active: selectorMode === 'column' }"
+            @click="setSelectorMode('column')"
+          >
+            Column
+          </button>
+          <button
+            :class="{ active: selectorMode === 'data_type' }"
+            @click="setSelectorMode('data_type')"
+          >
+            Data Type
+          </button>
         </div>
       </div>
 
-      <div v-if="selectorMode === 'column'" class="config-row">
-        <label>Columns to Unpivot</label>
-        <div class="chip-list">
-          <span v-for="col in valueColumns" :key="col" class="chip chip-value">
-            {{ col }}
-            <button class="chip-remove" @click="removeValueColumn(col)">&times;</button>
-          </span>
-          <span v-if="valueColumns.length === 0" class="placeholder">Right-click columns to add to unpivot</span>
-        </div>
-      </div>
+      <!-- Columns to unpivot (when in column mode) -->
+      <SettingsSection
+        v-if="selectorMode === 'column'"
+        title="Columns to unpivot"
+        :items="valueColumns"
+        :droppable="true"
+        placeholder="Drag columns here or right-click to add"
+        @remove-item="removeColumn('value', $event)"
+        @drop="onDropInSection('value')"
+      />
 
-      <div class="output-preview">
-        <div class="listbox-subtitle">Output Columns</div>
-        <ul class="output-list">
-          <li v-for="col in indexColumns" :key="col">{{ col }} (from index)</li>
-          <li><strong>variable</strong> - column names</li>
-          <li><strong>value</strong> - column values</li>
-        </ul>
+      <!-- Data type selector (when in data_type mode) -->
+      <div v-else class="listbox-wrapper">
+        <div class="listbox-subtitle">Dynamic data type selector</div>
+        <select v-model="dataTypeSelector" @change="emitUpdate" class="select">
+          <option value="">Select data type...</option>
+          <option v-for="item in dataTypeSelectorOptions" :key="item" :value="item">
+            {{ item }}
+          </option>
+        </select>
       </div>
-    </div>
-
-    <!-- Context Menu for columns -->
-    <div
-      v-if="contextMenu.show"
-      class="context-menu"
-      :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }"
-    >
-      <button @click="setAsIndex">Add as Index Column</button>
-      <button v-if="selectorMode === 'column'" @click="setAsValue">Add to Unpivot</button>
-      <button v-if="indexColumns.includes(contextMenu.column)" @click="removeFromIndex">Remove from Index</button>
-      <button v-if="valueColumns.includes(contextMenu.column)" @click="removeFromValue">Remove from Unpivot</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { UnpivotSettings, ColumnSchema, UnpivotDataTypeSelector, UnpivotSelectorMode } from '../../types'
+import ContextMenu from '../common/ContextMenu.vue'
+import type { ContextMenuOption } from '../common/ContextMenu.vue'
+import SettingsSection from '../common/SettingsSection.vue'
 
 const props = defineProps<{
   nodeId: number
@@ -145,87 +120,103 @@ const dataTypeSelector = ref<UnpivotDataTypeSelector | undefined>(
   props.settings.unpivot_input?.data_type_selector
 )
 
-const contextMenu = ref({ show: false, x: 0, y: 0, column: '' })
+// Context menu state
+const showContextMenu = ref(false)
+const contextMenuPosition = ref({ x: 0, y: 0 })
+const selectedColumn = ref<string>('')
+const contextMenuOptions = ref<ContextMenuOption[]>([])
+
+// Drag and drop state
+const draggedColumnName = ref<string | null>(null)
+
+const dataTypeSelectorOptions: UnpivotDataTypeSelector[] = ['all', 'numeric', 'string', 'date', 'float']
 
 const columns = computed<ColumnSchema[]>(() => {
   return flowStore.getNodeInputSchema(props.nodeId)
 })
 
-function isColumnUsed(name: string): boolean {
+function isColumnAssigned(name: string): boolean {
   return indexColumns.value.includes(name) || valueColumns.value.includes(name)
 }
 
-function showContextMenu(event: MouseEvent, column: string) {
-  contextMenu.value = {
-    show: true,
-    x: event.clientX,
-    y: event.clientY,
-    column
-  }
+function handleItemClick(columnName: string) {
+  selectedColumn.value = columnName
 }
 
-function hideContextMenu() {
-  contextMenu.value.show = false
+function openContextMenu(columnName: string, event: MouseEvent) {
+  selectedColumn.value = columnName
+  contextMenuPosition.value = { x: event.clientX, y: event.clientY }
+
+  contextMenuOptions.value = [
+    {
+      label: 'Add to Index',
+      action: 'index',
+      disabled: isColumnAssigned(columnName)
+    },
+    {
+      label: 'Add to Value',
+      action: 'value',
+      disabled: isColumnAssigned(columnName) || selectorMode.value !== 'column'
+    }
+  ]
+
+  showContextMenu.value = true
 }
 
-function setAsIndex() {
-  const column = contextMenu.value.column
-  if (!indexColumns.value.includes(column)) {
-    // Remove from value columns if there
-    const valueIdx = valueColumns.value.indexOf(column)
-    if (valueIdx !== -1) valueColumns.value.splice(valueIdx, 1)
-
+function handleContextMenuSelect(action: string) {
+  const column = selectedColumn.value
+  if (action === 'index' && !indexColumns.value.includes(column)) {
+    removeColumnIfExists(column)
     indexColumns.value.push(column)
     emitUpdate()
-  }
-  hideContextMenu()
-}
-
-function setAsValue() {
-  const column = contextMenu.value.column
-  if (!valueColumns.value.includes(column)) {
-    // Remove from index columns if there
-    const indexIdx = indexColumns.value.indexOf(column)
-    if (indexIdx !== -1) indexColumns.value.splice(indexIdx, 1)
-
+  } else if (action === 'value' && !valueColumns.value.includes(column)) {
+    removeColumnIfExists(column)
     valueColumns.value.push(column)
     emitUpdate()
   }
-  hideContextMenu()
+  closeContextMenu()
 }
 
-function removeFromIndex() {
-  const column = contextMenu.value.column
-  const idx = indexColumns.value.indexOf(column)
-  if (idx !== -1) {
-    indexColumns.value.splice(idx, 1)
-    emitUpdate()
+function closeContextMenu() {
+  showContextMenu.value = false
+}
+
+function removeColumnIfExists(column: string) {
+  indexColumns.value = indexColumns.value.filter(col => col !== column)
+  valueColumns.value = valueColumns.value.filter(col => col !== column)
+}
+
+function removeColumn(type: 'index' | 'value', column: string) {
+  if (type === 'index') {
+    indexColumns.value = indexColumns.value.filter(col => col !== column)
+  } else if (type === 'value') {
+    valueColumns.value = valueColumns.value.filter(col => col !== column)
   }
-  hideContextMenu()
+  emitUpdate()
 }
 
-function removeFromValue() {
-  const column = contextMenu.value.column
-  const idx = valueColumns.value.indexOf(column)
-  if (idx !== -1) {
-    valueColumns.value.splice(idx, 1)
-    emitUpdate()
-  }
-  hideContextMenu()
+function setSelectorMode(mode: UnpivotSelectorMode) {
+  selectorMode.value = mode
+  emitUpdate()
 }
 
-function removeIndexColumn(column: string) {
-  const idx = indexColumns.value.indexOf(column)
-  if (idx !== -1) {
-    indexColumns.value.splice(idx, 1)
-    emitUpdate()
-  }
+// Drag and drop handlers
+function onDragStart(columnName: string, event: DragEvent) {
+  draggedColumnName.value = columnName
+  event.dataTransfer?.setData('text/plain', columnName)
 }
 
-function removeValueColumn(column: string) {
-  const idx = valueColumns.value.indexOf(column)
-  if (idx !== -1) {
-    valueColumns.value.splice(idx, 1)
+function onDropInSection(section: 'index' | 'value') {
+  if (draggedColumnName.value) {
+    removeColumnIfExists(draggedColumnName.value)
+
+    if (section === 'index' && !indexColumns.value.includes(draggedColumnName.value)) {
+      indexColumns.value.push(draggedColumnName.value)
+    } else if (section === 'value' && !valueColumns.value.includes(draggedColumnName.value)) {
+      valueColumns.value.push(draggedColumnName.value)
+    }
+
+    draggedColumnName.value = null
     emitUpdate()
   }
 }
@@ -248,170 +239,73 @@ function emitUpdate() {
   }
   emit('update:settings', settings)
 }
-
-onMounted(() => {
-  document.addEventListener('click', hideContextMenu)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', hideContextMenu)
-})
 </script>
 
 <style scoped>
-/* Component uses global styles from main.css */
-
-.mode-toggle {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.radio-label {
+.switch-container {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  cursor: pointer;
-  color: var(--text-primary);
+  gap: var(--spacing-3);
+  margin: var(--spacing-3) 0;
 }
 
-.config-section {
+.switch-container span {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.toggle-switch {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
 }
 
-.config-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.config-row label {
-  font-weight: 500;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.help-text {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-.chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  min-height: 28px;
-  padding: 4px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
-}
-
-.chip-index {
-  background: var(--accent-light);
-  color: var(--accent-color);
-}
-
-.chip-value {
-  background: rgba(245, 124, 0, 0.15);
-  color: #f57c00;
-}
-
-.chip-remove {
-  background: none;
+.toggle-switch button {
+  padding: var(--spacing-1) var(--spacing-3);
   border: none;
+  background: var(--color-background-primary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
   cursor: pointer;
-  padding: 0 2px;
-  font-size: 14px;
-  color: var(--text-secondary);
+  transition: all var(--transition-fast);
 }
 
-.chip-remove:hover {
-  color: var(--error-color);
+.toggle-switch button:not(:last-child) {
+  border-right: 1px solid var(--color-border-primary);
 }
 
-.placeholder {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-style: italic;
+.toggle-switch button.active {
+  background: var(--color-accent);
+  color: white;
 }
 
-.output-preview {
-  margin-top: 8px;
-  padding: 8px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
+.toggle-switch button:hover:not(.active) {
+  background: var(--color-background-tertiary);
 }
 
-.output-list {
-  margin: 0;
-  padding: 0 0 0 16px;
-  font-size: 12px;
-  color: var(--text-primary);
+.select {
+  width: 100%;
+  padding: var(--spacing-2) var(--spacing-3);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  cursor: pointer;
 }
 
-.output-list li {
-  padding: 2px 0;
-}
-
-.col-name {
-  font-weight: 500;
-}
-
-.col-type {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.col-role {
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.is-index .col-role {
-  background: var(--accent-light);
-  color: var(--accent-color);
-}
-
-.is-value .col-role {
-  background: rgba(245, 124, 0, 0.15);
-  color: #f57c00;
-}
-
-/* Override select styling */
-.select-sm {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-size: 13px;
-}
-
-.select-sm:focus {
+.select:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--color-accent);
 }
 
 .listbox li {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  cursor: grab;
+}
+
+.listbox li:active {
+  cursor: grabbing;
 }
 </style>
