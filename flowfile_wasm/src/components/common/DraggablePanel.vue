@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 // Global z-index counter shared across all DraggablePanel instances
 let globalMaxZIndex = 100
@@ -102,6 +102,18 @@ onMounted(() => {
   }
 
   console.log('[DraggablePanel] Final position - top:', top.value, 'left:', left.value)
+})
+
+// Watch for changes to initialTop and update position
+watch(() => props.initialTop, (newTop) => {
+  console.log('[DraggablePanel] initialTop changed to:', newTop, 'for panel:', props.title)
+  const vh = window.innerHeight
+  top.value = newTop
+
+  // Adjust height for left/right panels
+  if (props.initialPosition === 'left' || props.initialPosition === 'right') {
+    height.value = vh - newTop
+  }
 })
 
 const panelStyle = computed(() => ({
