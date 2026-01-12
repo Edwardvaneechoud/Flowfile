@@ -246,28 +246,35 @@ function emitUpdate() {
   emit('update:settings', settings)
 }
 
-function triggerDownload() {
+async function triggerDownload() {
   if (!downloadInfo.value) return
 
-  const { content, file_name, file_type, mime_type } = downloadInfo.value
+  // Retrieve content from IndexedDB
+  const downloadEntry = await flowStore.getDownloadContent(props.nodeId)
+  if (!downloadEntry) {
+    console.error('Download content not found in storage')
+    return
+  }
+
+  const { content, fileType, mimeType, fileName } = downloadEntry
 
   let blob: Blob
 
-  if (file_type === 'parquet') {
+  if (fileType === 'parquet') {
     // Decode base64 content for parquet
     const binaryString = atob(content)
     const bytes = new Uint8Array(binaryString.length)
     for (let i = 0; i < binaryString.length; i++) {
       bytes[i] = binaryString.charCodeAt(i)
     }
-    blob = new Blob([bytes], { type: mime_type })
+    blob = new Blob([bytes], { type: mimeType })
   } else {
     // Text content for CSV
-    blob = new Blob([content], { type: mime_type })
+    blob = new Blob([content], { type: mimeType })
   }
 
-  // Use the current file name from settings
-  const finalFileName = outputSettings.value.name || file_name
+  // Use the current file name from settings (user may have changed it)
+  const finalFileName = outputSettings.value.name || fileName
 
   // Create download link
   const url = URL.createObjectURL(blob)

@@ -377,6 +377,10 @@ export const useFlowStore = defineStore('flow', () => {
 
   const getNodeResult = (id: number) => nodeResults.value.get(id)
 
+  const getDownloadContent = async (nodeId: number) => {
+    return await fileStorage.getDownloadContent(nodeId)
+  }
+
   const getNodeInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
     if (!node) return []
@@ -1154,11 +1158,39 @@ result
           if (!inputId) {
             return { success: false, error: 'No input connected' }
           }
-          result = await runPythonWithResult(`
+          const outputResult = await runPythonWithResult(`
 import json
 result = execute_output(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
 result
 `)
+          // Store download content separately in IndexedDB (not in nodeResults)
+          if (outputResult?.success && outputResult?.download) {
+            const { content, file_name, file_type, mime_type, row_count } = outputResult.download
+            await fileStorage.setDownloadContent(
+              nodeId,
+              content,
+              file_name,
+              file_type,
+              mime_type,
+              row_count
+            )
+            // Create result without content - just metadata
+            result = {
+              success: outputResult.success,
+              data: outputResult.data,
+              schema: outputResult.schema,
+              download: {
+                file_name,
+                file_type,
+                mime_type,
+                row_count,
+                // content is NOT included - it's in IndexedDB
+                content: '' // Empty placeholder for type compatibility
+              }
+            }
+          } else {
+            result = outputResult
+          }
           break
         }
 
@@ -1665,6 +1697,7 @@ result
     nodeList,
     getNode,
     getNodeResult,
+    getDownloadContent,
     getNodeInputSchema,
     getLeftInputSchema,
     getRightInputSchema,
