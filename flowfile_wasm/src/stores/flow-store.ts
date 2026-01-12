@@ -928,9 +928,7 @@ for nid in orphaned_ids:
           schema: inferredSchema,
           // Preserve existing data if any (for display purposes)
           data: existingResult?.data,
-          execution_time: existingResult?.execution_time,
-          // Preserve download info for output nodes
-          download: existingResult?.download
+          execution_time: existingResult?.execution_time
         })
       } else {
         // inferOutputSchema returned null - this means:
