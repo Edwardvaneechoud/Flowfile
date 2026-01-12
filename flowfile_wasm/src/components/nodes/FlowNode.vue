@@ -139,7 +139,9 @@ const iconUrl = computed(() => {
 
 const statusClass = computed(() => {
   if (!props.data.result) return 'unknown'
-  return props.data.result.success ? 'success' : 'failure'
+  if (props.data.result.success === true) return 'success'
+  if (props.data.result.success === false) return 'failure'
+  return 'unknown'  // undefined = not executed yet
 })
 
 const statusTooltip = computed(() => {
