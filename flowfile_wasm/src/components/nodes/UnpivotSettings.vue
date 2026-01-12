@@ -278,7 +278,7 @@ function emitUpdate() {
 
 .toggle-switch button.active {
   background: var(--color-accent);
-  color: white;
+  color: var(--color-text-inverse);
 }
 
 .toggle-switch button:hover:not(.active) {

@@ -298,11 +298,11 @@ function emitUpdate() {
   gap: var(--spacing-2);
   padding: var(--spacing-2) var(--spacing-3);
   margin-top: var(--spacing-2);
-  background-color: var(--color-warning-light);
+  background-color: var(--color-background-tertiary);
   border: 1px solid var(--color-warning);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
-  color: var(--color-warning-darker);
+  color: var(--color-text-primary);
 }
 
 .validation-icon {
@@ -312,7 +312,7 @@ function emitUpdate() {
   width: 18px;
   height: 18px;
   background-color: var(--color-warning);
-  color: white;
+  color: var(--color-text-inverse);
   border-radius: 50%;
   font-weight: bold;
   font-size: var(--font-size-xs);

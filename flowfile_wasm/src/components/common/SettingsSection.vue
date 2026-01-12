@@ -85,7 +85,7 @@ const onDrop = (event: DragEvent) => {
 
 .items-container.droppable:hover {
   border-color: var(--color-accent);
-  background-color: var(--color-accent-subtle);
+  background-color: var(--color-background-hover);
 }
 
 .item-box {
