@@ -4,6 +4,7 @@
     :class="{ minimized: isMinimized, resizing: isResizing }"
     :style="panelStyle"
     ref="panelRef"
+    @mousedown="bringToFront"
   >
     <div class="panel-header" @mousedown="startMove">
       <button class="header-btn" @click.stop="toggleMinimize" :title="isMinimized ? 'Expand' : 'Minimize'">
@@ -27,6 +28,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+
+// Global z-index counter shared across all DraggablePanel instances
+let globalMaxZIndex = 100
 
 interface Props {
   title: string
@@ -56,6 +60,7 @@ const top = ref(props.initialTop)
 const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
+const zIndex = ref(++globalMaxZIndex)
 
 // Drag state
 const startX = ref(0)
@@ -99,8 +104,17 @@ const panelStyle = computed(() => ({
   width: isMinimized.value ? 'auto' : `${width.value}px`,
   height: isMinimized.value ? 'auto' : `${height.value}px`,
   left: `${left.value}px`,
-  top: `${top.value}px`
+  top: `${top.value}px`,
+  zIndex: zIndex.value
 }))
+
+function bringToFront() {
+  // Only update if this panel is not already at the top
+  if (zIndex.value <= globalMaxZIndex) {
+    globalMaxZIndex++
+    zIndex.value = globalMaxZIndex
+  }
+}
 
 function toggleMinimize() {
   isMinimized.value = !isMinimized.value
@@ -203,7 +217,6 @@ onUnmounted(() => {
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
-  z-index: 100;
   overflow: hidden;
 }
 
