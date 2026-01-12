@@ -15,6 +15,7 @@ import type {
   NodeSampleSettings,
   NodeReadSettings,
   NodeManualInputSettings,
+  NodeOutputSettings,
   PolarsCodeSettings,
   FilterOperator,
   AggType
@@ -170,6 +171,9 @@ class FlowToPolarsConverter {
       case 'preview':
         // Preview is a pass-through node
         this.handlePreview(varName, inputVars)
+        break
+      case 'output':
+        this.handleOutput(node.settings as NodeOutputSettings, varName, inputVars)
         break
       default:
         this.unsupportedNodes.push({
@@ -453,6 +457,41 @@ class FlowToPolarsConverter {
   private handlePreview(varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
     this.addCode(`${varName} = ${inputDf}  # Preview (pass-through)`)
+    this.addCode('')
+  }
+
+  private handleOutput(settings: NodeOutputSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const outputSettings = settings.output_settings
+
+    if (!outputSettings) {
+      this.addComment(`# Output node ${varName} has no settings configured`)
+      this.addCode(`${varName} = ${inputDf}`)
+      this.addCode('')
+      return
+    }
+
+    const fileName = outputSettings.name || 'output.csv'
+    const fileType = outputSettings.file_type || 'csv'
+    const tableSettings = outputSettings.table_settings
+
+    this.addComment(`# Write output to ${fileName}`)
+
+    if (fileType === 'parquet') {
+      // For parquet, use sink_parquet for lazy evaluation
+      this.addCode(`${inputDf}.sink_parquet("${fileName}")`)
+    } else {
+      // For CSV, use sink_csv with options
+      const delimiter = (tableSettings && 'delimiter' in tableSettings) ? tableSettings.delimiter : ','
+
+      this.addCode(`${inputDf}.sink_csv(`)
+      this.addCode(`    "${fileName}",`)
+      this.addCode(`    separator="${delimiter}"`)
+      this.addCode(`)`)
+    }
+
+    // Assign the input to varName so downstream code can reference it if needed
+    this.addCode(`${varName} = ${inputDf}  # Reference for potential downstream use`)
     this.addCode('')
   }
 
