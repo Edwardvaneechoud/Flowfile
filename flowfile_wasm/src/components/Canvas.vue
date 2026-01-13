@@ -187,9 +187,6 @@
     />
 
   </div>
-   
-
-
 </template>
 
 <script setup lang="ts">
@@ -226,8 +223,6 @@ import MissingFilesModal from './MissingFilesModal.vue'
 import DemoButton from './DemoButton.vue'
 import { useDemo } from '../composables/useDemo'
 
-
-
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 
@@ -243,8 +238,6 @@ const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
-
-
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
