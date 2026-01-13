@@ -1,228 +1,162 @@
-flowfile_version: "1.0.0"
-flowfile_id: 1
-flowfile_name: "Sales Analytics Demo"
+flowfile_version: 1.0.0
+flowfile_id: 1768345778339
+flowfile_name: Sales Analytics Demo
 flowfile_settings:
-  description: "Demo flow: Join orders with regions, filter, aggregate, and export to Parquet"
-  execution_mode: "Development"
-  execution_location: "local"
+  description: 'Demo flow: Join orders with regions, filter, aggregate, and export to Parquet'
+  execution_mode: Development
+  execution_location: local
   auto_save: false
   show_detailed_progress: false
-
 nodes:
-  # Read Orders CSV
   - id: 1
     type: read_csv
     is_start_node: true
-    description: "Read Orders"
+    description: Read Orders
     x_position: 100
     y_position: 150
     input_ids: []
-    outputs: [3]
+    outputs:
+      - 9
     setting_input:
-      flow_id: 1
-      node_id: 1
       cache_results: false
-      pos_x: 100
-      pos_y: 150
-      is_setup: true
-      description: "Read Orders"
-      file_name: "sample-data.csv"
+      file_name: sample-data.csv
       received_table:
-        name: "sample-data.csv"
-        file_type: "csv"
+        name: sample-data.csv
+        file_type: csv
         table_settings:
-          file_type: "csv"
-          delimiter: ","
+          file_type: csv
+          delimiter: ','
           has_headers: true
-          encoding: "utf-8"
-
-  # Read Regions CSV
+          encoding: utf-8
   - id: 2
     type: read_csv
     is_start_node: true
-    description: "Read Regions"
+    description: Read Regions
     x_position: 100
     y_position: 350
     input_ids: []
-    outputs: [3]
+    outputs:
+      - 9
     setting_input:
-      flow_id: 1
-      node_id: 2
       cache_results: false
-      pos_x: 100
-      pos_y: 350
-      is_setup: true
-      description: "Read Regions"
-      file_name: "regions.csv"
+      file_name: regions.csv
       received_table:
-        name: "regions.csv"
-        file_type: "csv"
+        name: regions.csv
+        file_type: csv
         table_settings:
-          file_type: "csv"
-          delimiter: ","
+          file_type: csv
+          delimiter: ','
           has_headers: true
-          encoding: "utf-8"
-
-  # Join Orders with Regions
-  - id: 3
+          encoding: utf-8
+  - id: 9
     type: join
     is_start_node: false
-    description: "Join with Regions"
+    description: Join with Regions
     x_position: 350
     y_position: 250
-    input_ids: [1, 2]
-    outputs: [4]
+    left_input_id: 1
+    right_input_id: 2
+    input_ids:
+      - 1
+    outputs:
+      - 4
     setting_input:
-      flow_id: 1
-      node_id: 3
-      cache_results: false
-      pos_x: 350
-      pos_y: 250
-      is_setup: true
-      description: "Join with Regions"
-      depending_on_ids: [1, 2]
-      left_input_id: 1
-      right_input_id: 2
+      cache_results: true
       join_input:
-        join_type: "left"
-        how: "left"
+        join_type: inner
+        how: inner
         join_mapping:
-          - left_col: "region"
-            right_col: "region"
-
-  # Filter Completed Orders
+          - left_col: region
+            right_col: region
+        left_suffix: ''
+        right_suffix: _right
   - id: 4
     type: filter
     is_start_node: false
-    description: "Completed Only"
+    description: Completed Only
     x_position: 600
     y_position: 250
-    input_ids: [3]
-    outputs: [5]
+    left_input_id: 9
+    input_ids:
+      - 9
+    outputs:
+      - 5
     setting_input:
-      flow_id: 1
-      node_id: 4
       cache_results: false
-      pos_x: 600
-      pos_y: 250
-      is_setup: true
-      description: "Completed Only"
-      depending_on_id: 3
       filter_input:
-        mode: "basic"
+        mode: basic
         basic_filter:
-          field: "status"
-          operator: "equals"
-          value: "Completed"
-        advanced_filter: ""
-
-  # Group by Region with Aggregations
+          field: status
+          operator: equals
+          value: Completed
+        advanced_filter: ''
   - id: 5
     type: group_by
     is_start_node: false
-    description: "Aggregate by Region"
+    description: Aggregate by Region
     x_position: 850
     y_position: 250
-    input_ids: [4]
-    outputs: [6]
+    input_ids:
+      - 4
+    outputs:
+      - 6
     setting_input:
-      flow_id: 1
-      node_id: 5
       cache_results: false
-      pos_x: 850
-      pos_y: 250
-      is_setup: true
-      description: "Aggregate by Region"
-      depending_on_id: 4
       groupby_input:
         agg_cols:
-          - old_name: "region_name"
-            agg: "groupby"
-            new_name: "region_name"
-          - old_name: "manager"
-            agg: "first"
-            new_name: "manager"
-          - old_name: "order_id"
-            agg: "count"
-            new_name: "order_count"
-          - old_name: "quantity"
-            agg: "sum"
-            new_name: "total_quantity"
-          - old_name: "unit_price"
-            agg: "mean"
-            new_name: "avg_price"
-          - old_name: "target_sales"
-            agg: "first"
-            new_name: "target_sales"
-
-  # Sort by Order Count
+          - old_name: region_name
+            agg: groupby
+            new_name: region_name
+            is_available: true
+          - old_name: manager
+            agg: first
+            new_name: manager
+            is_available: true
+          - old_name: order_id
+            agg: count
+            new_name: order_count
+            is_available: true
+          - old_name: quantity
+            agg: sum
+            new_name: total_quantity
+            is_available: true
+          - old_name: unit_price
+            agg: mean
+            new_name: avg_price
+            is_available: true
+          - old_name: target_sales
+            agg: first
+            new_name: target_sales
+            is_available: true
   - id: 6
     type: sort
     is_start_node: false
-    description: "Sort by Orders"
+    description: Sort by Orders
     x_position: 1100
     y_position: 250
-    input_ids: [5]
-    outputs: [7]
+    input_ids:
+      - 5
+    outputs:
+      - 7
     setting_input:
-      flow_id: 1
-      node_id: 6
       cache_results: false
-      pos_x: 1100
-      pos_y: 250
-      is_setup: true
-      description: "Sort by Orders"
-      depending_on_id: 5
       sort_input:
         sort_cols:
-          - column: "order_count"
+          - column: order_count
             descending: true
-
-  # Output as Parquet
+            is_available: true
   - id: 7
     type: output
     is_start_node: false
-    description: "Export Parquet"
+    description: Export Parquet
     x_position: 1350
     y_position: 250
-    input_ids: [6]
+    input_ids:
+      - 6
     outputs: []
     setting_input:
-      flow_id: 1
-      node_id: 7
       cache_results: false
-      pos_x: 1350
-      pos_y: 250
-      is_setup: true
-      description: "Export Parquet"
-      depending_on_id: 6
-      file_name: "regional_sales_summary"
-      file_type: "parquet"
+      file_name: regional_sales_summary
+      file_type: parquet
       output_table:
-        file_type: "parquet"
-
-connections:
-  - from_node: 1
-    to_node: 3
-    from_handle: "output-0"
-    to_handle: "input-0"
-  - from_node: 2
-    to_node: 3
-    from_handle: "output-0"
-    to_handle: "input-1"
-  - from_node: 3
-    to_node: 4
-    from_handle: "output-0"
-    to_handle: "input-0"
-  - from_node: 4
-    to_node: 5
-    from_handle: "output-0"
-    to_handle: "input-0"
-  - from_node: 5
-    to_node: 6
-    from_handle: "output-0"
-    to_handle: "input-0"
-  - from_node: 6
-    to_node: 7
-    from_handle: "output-0"
-    to_handle: "input-0"
+        file_type: parquet
