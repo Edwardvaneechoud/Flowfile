@@ -4,7 +4,7 @@
     :class="{ minimized: isMinimized, resizing: isResizing }"
     :style="panelStyle"
     ref="panelRef"
-    @mousedown="bringToFront"
+    @mousedown.stop="bringToFront"
   >
     <div class="panel-header" @mousedown="startMove">
       <button class="header-btn" @click.stop="toggleMinimize" :title="isMinimized ? 'Expand' : 'Minimize'">
