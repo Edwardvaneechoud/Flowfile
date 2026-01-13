@@ -136,9 +136,9 @@
       />
     </DraggablePanel>
 
-    <!-- Data Preview Panel -->
+    <!-- Data Preview Panel (Normal) -->
     <DraggablePanel
-      v-if="selectedNodeId !== null"
+      v-if="selectedNodeId !== null && !isPreviewExpanded"
       title="Table Preview"
       initial-position="bottom"
       :initial-height="280"
@@ -158,6 +158,9 @@
             <span class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
             <button class="auto-size-btn" @click="autoSizeColumns" title="Auto-size columns">
               <span class="material-icons" style="font-size: 14px;">fit_screen</span>
+            </button>
+            <button class="expand-btn" @click="togglePreviewExpanded" title="Expand to bottom half">
+              <span class="material-icons" style="font-size: 14px;">open_in_full</span>
             </button>
           </div>
           <div class="preview-grid-container">
@@ -189,6 +192,66 @@
         </div>
       </div>
     </DraggablePanel>
+
+    <!-- Expanded Data Preview Panel (Bottom Half) -->
+    <div v-if="selectedNodeId !== null && isPreviewExpanded" class="expanded-preview">
+      <div class="expanded-preview-header">
+        <span class="expanded-title">
+          <span class="material-icons" style="font-size: 18px; margin-right: 8px;">table_chart</span>
+          Table Preview: {{ selectedNodeId }}
+        </span>
+        <div class="expanded-actions">
+          <span v-if="selectedNodeResult?.data" class="row-count">{{ selectedNodeResult.data.total_rows }} rows</span>
+          <span v-if="selectedNodeResult?.data" class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
+          <button class="auto-size-btn" @click="autoSizeColumns" title="Auto-size columns">
+            <span class="material-icons" style="font-size: 14px;">fit_screen</span>
+          </button>
+          <button class="collapse-btn" @click="togglePreviewExpanded" title="Collapse">
+            <span class="material-icons" style="font-size: 14px;">close_fullscreen</span>
+          </button>
+          <button class="close-btn" @click="closeExpandedPreview" title="Close">
+            <span class="material-icons" style="font-size: 14px;">close</span>
+          </button>
+        </div>
+      </div>
+      <div class="expanded-preview-content">
+        <!-- Loading state -->
+        <div v-if="isPreviewLoading" class="preview-loading">
+          <div class="spinner small"></div>
+          <span>Loading preview...</span>
+        </div>
+
+        <!-- Data grid -->
+        <template v-else-if="selectedNodeResult?.success && selectedNodeResult?.data">
+          <div class="expanded-grid-container">
+            <AgGridVue
+              class="ag-theme-balham"
+              :rowData="rowData"
+              :columnDefs="columnDefs"
+              :defaultColDef="defaultColDef"
+              :pagination="true"
+              :paginationPageSize="100"
+              :enableCellTextSelection="true"
+              :suppressMenuHide="true"
+              :suppressMovableColumns="false"
+              :animateRows="true"
+              @grid-ready="onGridReady"
+              style="width: 100%; height: 100%;"
+            />
+          </div>
+        </template>
+
+        <!-- Error state -->
+        <div v-else-if="selectedNodeResult?.error" class="error-message">
+          {{ selectedNodeResult.error }}
+        </div>
+
+        <!-- Empty state -->
+        <div v-else class="no-data">
+          No data available. Run the flow to see results.
+        </div>
+      </div>
+    </div>
 
     <!-- Code Generator Modal -->
     <CodeGenerator
@@ -257,6 +320,7 @@ const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecu
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
+const isPreviewExpanded = ref(false)
 const toolbarHeight = ref(52)
 const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
@@ -636,6 +700,16 @@ function autoSizeColumns() {
   }
 }
 
+// Toggle expanded preview
+function togglePreviewExpanded() {
+  isPreviewExpanded.value = !isPreviewExpanded.value
+}
+
+// Close expanded preview
+function closeExpandedPreview() {
+  isPreviewExpanded.value = false
+}
+
 // Toolbar handlers
 async function handleRunFlow() {
   await flowStore.executeFlow()
@@ -853,8 +927,10 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.auto-size-btn {
-  margin-left: auto;
+.auto-size-btn,
+.expand-btn,
+.collapse-btn,
+.close-btn {
   padding: 4px 8px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
@@ -864,11 +940,24 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
+  color: var(--text-primary);
 }
 
-.auto-size-btn:hover {
+.auto-size-btn {
+  margin-left: auto;
+}
+
+.auto-size-btn:hover,
+.expand-btn:hover,
+.collapse-btn:hover {
   background: var(--bg-hover);
   border-color: var(--accent-color);
+}
+
+.close-btn:hover {
+  background: var(--error-light);
+  border-color: var(--error-color);
+  color: var(--error-color);
 }
 
 .preview-grid-container {
@@ -900,5 +989,90 @@ onUnmounted(() => {
   text-align: center;
   padding: 40px 20px;
   font-size: 13px;
+}
+
+/* Expanded Preview Panel (Bottom Half) */
+.expanded-preview {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50vh;
+  background: var(--bg-secondary);
+  border-top: 2px solid var(--border-color);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+}
+
+.expanded-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.expanded-title {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.expanded-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.expanded-actions .row-count,
+.expanded-actions .col-count {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.expanded-preview-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.expanded-grid-container {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* AG Grid Theme Overrides - ensure proper colors in both themes */
+.ag-theme-balham {
+  --ag-background-color: var(--bg-secondary);
+  --ag-header-background-color: var(--bg-tertiary);
+  --ag-odd-row-background-color: var(--bg-secondary);
+  --ag-row-hover-color: var(--bg-hover);
+  --ag-selected-row-background-color: var(--bg-selected);
+  --ag-foreground-color: var(--text-primary);
+  --ag-secondary-foreground-color: var(--text-secondary);
+  --ag-header-foreground-color: var(--text-primary);
+  --ag-border-color: var(--border-color);
+  --ag-row-border-color: var(--border-light);
+  --ag-input-focus-border-color: var(--accent-color);
+  --ag-range-selection-border-color: var(--accent-color);
+}
+
+/* AG Grid pagination and filter popup styling */
+.ag-theme-balham .ag-paging-panel {
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border-color);
+}
+
+.ag-theme-balham .ag-popup {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
 }
 </style>
