@@ -7,18 +7,21 @@ A minimal, browser-based data flow designer using Pyodide and Polars. This is a 
 - **Browser-Based Execution**: All data processing happens in your browser using WebAssembly
 - **Polars Integration**: Full Polars DataFrame operations via Pyodide
 - **Session Persistence**: Your flow is automatically saved to session storage
-- **11 Essential Nodes**:
+- **14 Essential Nodes**:
   - **Read CSV**: Load CSV files from your local machine
   - **Manual Input**: Enter data manually in CSV format
   - **Filter**: Apply conditional row filtering (basic and advanced modes)
   - **Select**: Pick, reorder, and rename columns
   - **Group By**: Aggregate data with various functions (sum, count, mean, min, max, etc.)
+  - **Pivot**: Reshape data from long to wide format
+  - **Unpivot**: Reshape data from wide to long format
   - **Join**: Combine datasets with different join types (inner, left, right, full, semi, anti)
   - **Sort**: Order rows by one or more columns
   - **Polars Code**: Write custom Polars/Python code for advanced transformations
   - **Unique**: Remove duplicate rows
   - **Take Sample**: Limit to first N rows
-  - **Preview**: Display results
+  - **Preview**: Display results in the browser
+  - **Output**: Download processed data as CSV or Parquet
 
 ## Getting Started
 
