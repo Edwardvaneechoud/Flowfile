@@ -61,33 +61,169 @@ export const usePyodideStore = defineStore('pyodide', () => {
 import polars as pl
 import json
 from typing import Dict, List, Any, Optional, Union
+from hashlib import md5
 
-# Global dataframe storage
-_dataframes: Dict[int, pl.DataFrame] = {}
+# =============================================================================
+# Global Storage: LazyFrames + Preview Cache
+# =============================================================================
+
+# Store LazyFrames (query plans, not materialized data)
+_lazyframes: Dict[int, pl.LazyFrame] = {}
+
+# Cache for materialized previews (only computed on demand)
+_preview_cache: Dict[int, Dict] = {}
+
+# Track query plan hashes to invalidate cache when upstream changes
+_plan_hashes: Dict[int, str] = {}
+
+# Schema cache (can be obtained from LazyFrame without collecting)
 _schemas: Dict[int, List[Dict[str, str]]] = {}
 
-def store_dataframe(node_id: int, df: pl.DataFrame):
-    """Store a dataframe for a node"""
-    _dataframes[node_id] = df
-    _schemas[node_id] = [{"name": col, "data_type": str(dtype)} for col, dtype in zip(df.columns, df.dtypes)]
 
-def get_dataframe(node_id: int) -> Optional[pl.DataFrame]:
-    """Get a dataframe for a node"""
-    return _dataframes.get(node_id)
+def _get_plan_hash(lf: pl.LazyFrame) -> str:
+    """Get a hash of the query plan to detect changes."""
+    try:
+        plan_str = str(lf.explain(optimized=True))
+        return md5(plan_str.encode()).hexdigest()[:16]
+    except:
+        return str(id(lf))
+
+
+def store_lazyframe(node_id: int, lf: pl.LazyFrame):
+    """Store a LazyFrame for a node. Invalidates preview cache if plan changed."""
+    # Get schema from LazyFrame (doesn't require collection!)
+    schema = lf.collect_schema()
+    _schemas[node_id] = [
+        {"name": name, "data_type": str(dtype)}
+        for name, dtype in schema.items()
+    ]
+
+    # Check if plan changed - if so, invalidate preview cache
+    new_hash = _get_plan_hash(lf)
+    old_hash = _plan_hashes.get(node_id)
+
+    if old_hash != new_hash:
+        _preview_cache.pop(node_id, None)
+        _plan_hashes[node_id] = new_hash
+
+    _lazyframes[node_id] = lf
+
+
+def get_lazyframe(node_id: int) -> Optional[pl.LazyFrame]:
+    """Get a LazyFrame for a node."""
+    return _lazyframes.get(node_id)
+
 
 def get_schema(node_id: int) -> List[Dict[str, str]]:
-    """Get schema for a node"""
+    """Get schema for a node (available without collecting)."""
     return _schemas.get(node_id, [])
 
+
+def has_cached_preview(node_id: int) -> bool:
+    """Check if a node has a cached preview."""
+    return node_id in _preview_cache
+
+
+def get_cached_preview(node_id: int) -> Optional[Dict]:
+    """Get cached preview data if available."""
+    return _preview_cache.get(node_id)
+
+
+def materialize_preview(node_id: int, max_rows: int = 100) -> Dict:
+    """
+    Materialize a preview for a node (on-demand).
+    This is the expensive operation - only called when user clicks to view.
+    """
+    lf = _lazyframes.get(node_id)
+    if lf is None:
+        return {"error": f"No LazyFrame found for node #{node_id}"}
+
+    try:
+        # Collect only the rows we need for preview
+        preview_df = lf.head(max_rows).collect()
+
+        # Get total row count (separate query)
+        try:
+            total_rows = lf.select(pl.len()).collect().item()
+        except:
+            total_rows = len(preview_df)
+
+        preview_data = {
+            "columns": preview_df.columns,
+            "data": preview_df.to_numpy().tolist() if len(preview_df) > 0 else [],
+            "total_rows": total_rows,
+            "preview_rows": len(preview_df)
+        }
+
+        # Cache the preview
+        _preview_cache[node_id] = preview_data
+
+        return preview_data
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def fetch_preview(node_id: int, max_rows: int = 100, force_refresh: bool = False) -> Dict:
+    """
+    Fetch preview data for a node. Called when user clicks to view.
+    """
+    if not force_refresh and has_cached_preview(node_id):
+        cached = get_cached_preview(node_id)
+        return {
+            "success": True,
+            "data": cached,
+            "from_cache": True
+        }
+
+    preview_data = materialize_preview(node_id, max_rows)
+
+    if "error" in preview_data:
+        return {
+            "success": False,
+            "error": preview_data["error"]
+        }
+
+    return {
+        "success": True,
+        "data": preview_data,
+        "from_cache": False
+    }
+
+
+def invalidate_downstream_previews(node_id: int, node_graph: Dict[int, List[int]]):
+    """
+    Invalidate preview cache for a node and all its downstream dependents.
+    """
+    to_invalidate = [node_id]
+    visited = set()
+
+    while to_invalidate:
+        current = to_invalidate.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+
+        _preview_cache.pop(current, None)
+
+        downstream = node_graph.get(current, [])
+        to_invalidate.extend(downstream)
+
+
 def clear_node(node_id: int):
-    """Clear data for a node"""
-    _dataframes.pop(node_id, None)
+    """Clear all data for a node."""
+    _lazyframes.pop(node_id, None)
     _schemas.pop(node_id, None)
+    _preview_cache.pop(node_id, None)
+    _plan_hashes.pop(node_id, None)
+
 
 def clear_all():
-    """Clear all data"""
-    _dataframes.clear()
+    """Clear all data."""
+    _lazyframes.clear()
     _schemas.clear()
+    _preview_cache.clear()
+    _plan_hashes.clear()
+
 
 # =============================================================================
 # Pydantic Schema Validation (matching flowfile_core/schemas/schemas.py)
@@ -211,54 +347,81 @@ def format_error(node_type: str, node_id: int, error: Exception, df: Optional[pl
 
     return " ".join(msg_parts)
 
-# Node execution functions
+def format_error_lf(node_type: str, node_id: int, error: Exception, lf: Optional[pl.LazyFrame] = None, column: str = None) -> str:
+    """Format error message with context for LazyFrame operations"""
+    error_str = str(error)
+    msg_parts = [f"{node_type.replace('_', ' ').title()} error on node #{node_id}:"]
+
+    column_keywords = ['column', 'ColumnNotFoundError', 'not found', 'SchemaError']
+    is_column_error = any(kw.lower() in error_str.lower() for kw in column_keywords)
+
+    if is_column_error and lf is not None:
+        try:
+            schema = lf.collect_schema()
+            available_cols = list(schema.keys())
+            msg_parts.append(f"'{column or 'unknown'}' - {error_str}")
+            msg_parts.append(f"Available columns: {', '.join(available_cols)}")
+
+            if column:
+                similar = [c for c in available_cols if column.lower() in c.lower() or c.lower() in column.lower()]
+                if similar:
+                    msg_parts.append(f"Did you mean: {', '.join(similar)}?")
+        except:
+            msg_parts.append(error_str)
+    else:
+        msg_parts.append(error_str)
+
+    if 'type' in error_str.lower() and 'cannot' in error_str.lower():
+        msg_parts.append("Suggestion: Check that the column data types match the operation.")
+    elif 'null' in error_str.lower() or 'none' in error_str.lower():
+        msg_parts.append("Suggestion: Consider filtering out null values first.")
+    elif 'parse' in error_str.lower() or 'csv' in error_str.lower():
+        msg_parts.append("Suggestion: Check your CSV delimiter and header settings.")
+
+    return " ".join(msg_parts)
+
+
+# =============================================================================
+# Node execution functions (LazyFrame-based)
+# =============================================================================
+
 def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
-    """Execute read CSV node with proper nested settings access"""
+    """Execute read CSV node - creates a LazyFrame"""
     try:
         import io
-        # 1. Access the nested table settings to match core schema
         table_settings = settings.get("received_table", {}).get("table_settings", {})
-        
-        # 2. Extract values using the correct keys (delimiter, starting_from_line)
+
+        # Source nodes: read into DataFrame first, then convert to lazy
         df = pl.read_csv(
             io.StringIO(file_content),
             has_header=table_settings.get("has_headers", True),
             separator=table_settings.get("delimiter", ","),
             skip_rows=table_settings.get("starting_from_line", 0)
         )
-        store_dataframe(node_id, df)
-        return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
+        lf = df.lazy()
+        store_lazyframe(node_id, lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error("read_csv", node_id, e)}
 
 
 def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
-    """Execute manual input node
-
-    Supports two formats:
-    1. raw_data_format (flowfile_core format): columnar data with columns metadata
-    2. Legacy format: CSV string with manual_input settings (has_headers, delimiter)
-    """
+    """Execute manual input node - creates a LazyFrame"""
     try:
         import io
 
-        # Check for flowfile_core format (raw_data_format)
         raw_data_format = settings.get("raw_data_format")
         if raw_data_format and raw_data_format.get("columns") and raw_data_format.get("data"):
-            # Build DataFrame from columnar format
             columns_meta = raw_data_format["columns"]
             data = raw_data_format["data"]
 
-            # data is in columnar format: [[col1_values], [col2_values], ...]
             if len(columns_meta) > 0 and len(data) > 0:
                 col_names = [c["name"] for c in columns_meta]
-                # Create dict for DataFrame constructor
                 df_dict = {name: values for name, values in zip(col_names, data)}
                 df = pl.DataFrame(df_dict)
             else:
                 df = pl.DataFrame()
         else:
-            # Legacy format: parse CSV from data_content string
             manual_input = settings.get("manual_input", {})
             has_headers = manual_input.get("has_headers", True)
             delimiter = manual_input.get("delimiter", ",")
@@ -269,15 +432,16 @@ def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dic
                 separator=delimiter
             )
 
-        store_dataframe(node_id, df)
-        return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
+        lf = df.lazy()
+        store_lazyframe(node_id, lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error("manual_input", node_id, e)}
 
 def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute filter node"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute filter node - chains onto input LazyFrame"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Filter error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     filter_input = settings.get("filter_input", {})
@@ -288,9 +452,9 @@ def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
         if mode == "advanced":
             expr = filter_input.get("advanced_filter", "")
             if expr:
-                result = df.filter(eval(expr))
+                result_lf = input_lf.filter(eval(expr))
             else:
-                result = df
+                result_lf = input_lf
         else:
             basic = filter_input.get("basic_filter", {})
             field = basic.get("field", "")
@@ -299,101 +463,103 @@ def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
             value2 = basic.get("value2", "")
 
             if not field:
-                result = df
+                result_lf = input_lf
             else:
                 col = pl.col(field)
 
-                # Try to convert value to appropriate type
                 try:
                     num_value = float(value) if '.' in value else int(value)
                 except:
                     num_value = value
 
                 if operator == "equals":
-                    result = df.filter(col == num_value)
+                    result_lf = input_lf.filter(col == num_value)
                 elif operator == "not_equals":
-                    result = df.filter(col != num_value)
+                    result_lf = input_lf.filter(col != num_value)
                 elif operator == "greater_than":
-                    result = df.filter(col > num_value)
+                    result_lf = input_lf.filter(col > num_value)
                 elif operator == "greater_than_or_equals":
-                    result = df.filter(col >= num_value)
+                    result_lf = input_lf.filter(col >= num_value)
                 elif operator == "less_than":
-                    result = df.filter(col < num_value)
+                    result_lf = input_lf.filter(col < num_value)
                 elif operator == "less_than_or_equals":
-                    result = df.filter(col <= num_value)
+                    result_lf = input_lf.filter(col <= num_value)
                 elif operator == "contains":
-                    result = df.filter(col.str.contains(value))
+                    result_lf = input_lf.filter(col.str.contains(value))
                 elif operator == "not_contains":
-                    result = df.filter(~col.str.contains(value))
+                    result_lf = input_lf.filter(~col.str.contains(value))
                 elif operator == "starts_with":
-                    result = df.filter(col.str.starts_with(value))
+                    result_lf = input_lf.filter(col.str.starts_with(value))
                 elif operator == "ends_with":
-                    result = df.filter(col.str.ends_with(value))
+                    result_lf = input_lf.filter(col.str.ends_with(value))
                 elif operator == "is_null":
-                    result = df.filter(col.is_null())
+                    result_lf = input_lf.filter(col.is_null())
                 elif operator == "is_not_null":
-                    result = df.filter(col.is_not_null())
+                    result_lf = input_lf.filter(col.is_not_null())
                 elif operator == "in":
                     values = [v.strip() for v in value.split(",")]
-                    result = df.filter(col.is_in(values))
+                    result_lf = input_lf.filter(col.is_in(values))
                 elif operator == "not_in":
                     values = [v.strip() for v in value.split(",")]
-                    result = df.filter(~col.is_in(values))
+                    result_lf = input_lf.filter(~col.is_in(values))
                 elif operator == "between":
                     try:
                         v1 = float(value) if '.' in value else int(value)
                         v2 = float(value2) if '.' in value2 else int(value2)
                     except:
                         v1, v2 = value, value2
-                    result = df.filter((col >= v1) & (col <= v2))
+                    result_lf = input_lf.filter((col >= v1) & (col <= v2))
                 else:
-                    result = df
+                    result_lf = input_lf
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("filter", node_id, e, df, field)}
+        return {"success": False, "error": format_error_lf("filter", node_id, e, input_lf, field)}
 
 def execute_select(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute select node"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute select node - column selection/renaming (lazy)"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Select error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
         select_input = settings.get("select_input", [])
 
         if not select_input:
-            result = df
+            result_lf = input_lf
         else:
-            # Filter to keep only columns marked as keep
             kept = [s for s in select_input if s.get("keep", True)]
             kept.sort(key=lambda x: x.get("position", 0))
+
+            # Get available columns from schema
+            schema = input_lf.collect_schema()
+            available_cols = set(schema.keys())
 
             exprs = []
             for s in kept:
                 old_name = s.get("old_name", "")
                 new_name = s.get("new_name", old_name)
-                if old_name in df.columns:
+                if old_name in available_cols:
                     if old_name != new_name:
                         exprs.append(pl.col(old_name).alias(new_name))
                     else:
                         exprs.append(pl.col(old_name))
 
             if exprs:
-                result = df.select(exprs)
+                result_lf = input_lf.select(exprs)
             else:
-                result = df
+                result_lf = input_lf
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("select", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("select", node_id, e, input_lf)}
 
 def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute group by node"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute group by node (lazy)"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Group By error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
@@ -401,14 +567,12 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
         agg_cols = groupby_input.get("agg_cols", [])
 
         if not agg_cols:
-            result = df
+            result_lf = input_lf
         else:
-            # Separate groupby columns from aggregation columns
             group_cols = [pl.col(c["old_name"]).alias(c["new_name"]) for c in agg_cols if c.get("agg") == "groupby"]
             agg_defs = [c for c in agg_cols if c.get("agg") != "groupby"]
 
             if not group_cols:
-                # No groupby columns, just aggregate
                 exprs = []
                 for a in agg_defs:
                     col = pl.col(a["old_name"])
@@ -436,9 +600,8 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
                     elif agg == "concat":
                         exprs.append(col.cast(pl.Utf8).str.concat(",").alias(new_name))
 
-                result = df.select(exprs) if exprs else df
+                result_lf = input_lf.select(exprs) if exprs else input_lf
             else:
-                # Group by and aggregate
                 exprs = []
                 for a in agg_defs:
                     col = pl.col(a["old_name"])
@@ -467,23 +630,23 @@ def execute_group_by(node_id: int, input_id: int, settings: Dict) -> Dict:
                         exprs.append(col.cast(pl.Utf8).str.concat(",").alias(new_name))
 
                 if exprs:
-                    result = df.group_by(group_cols).agg(exprs)
+                    result_lf = input_lf.group_by(group_cols).agg(exprs)
                 else:
-                    result = df.group_by(group_cols).agg(pl.count()).drop("count")
+                    result_lf = input_lf.group_by(group_cols).agg(pl.count()).drop("count")
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("group_by", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("group_by", node_id, e, input_lf)}
 
 def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> Dict:
-    """Execute join node"""
-    left_df = get_dataframe(left_id)
-    right_df = get_dataframe(right_id)
+    """Execute join node (lazy)"""
+    left_lf = get_lazyframe(left_id)
+    right_lf = get_lazyframe(right_id)
 
-    if left_df is None:
+    if left_lf is None:
         return {"success": False, "error": f"Join error on node #{node_id}: No left input data from node #{left_id}. Make sure the upstream node executed successfully."}
-    if right_df is None:
+    if right_lf is None:
         return {"success": False, "error": f"Join error on node #{node_id}: No right input data from node #{right_id}. Make sure the upstream node executed successfully."}
 
     try:
@@ -499,31 +662,34 @@ def execute_join(node_id: int, left_id: int, right_id: int, settings: Dict) -> D
         left_on = [m.get("left_col") for m in mapping]
         right_on = [m.get("right_col") for m in mapping]
 
-        # Validate columns exist
-        missing_left = [c for c in left_on if c not in left_df.columns]
-        missing_right = [c for c in right_on if c not in right_df.columns]
-        if missing_left:
-            return {"success": False, "error": f"Join error on node #{node_id}: Left columns not found: {missing_left}. Available columns: {list(left_df.columns)}"}
-        if missing_right:
-            return {"success": False, "error": f"Join error on node #{node_id}: Right columns not found: {missing_right}. Available columns: {list(right_df.columns)}"}
+        # Validate columns exist using schema
+        left_schema = left_lf.collect_schema()
+        right_schema = right_lf.collect_schema()
 
-        result = left_df.join(
-            right_df,
+        missing_left = [c for c in left_on if c not in left_schema]
+        missing_right = [c for c in right_on if c not in right_schema]
+        if missing_left:
+            return {"success": False, "error": f"Join error on node #{node_id}: Left columns not found: {missing_left}. Available columns: {list(left_schema.keys())}"}
+        if missing_right:
+            return {"success": False, "error": f"Join error on node #{node_id}: Right columns not found: {missing_right}. Available columns: {list(right_schema.keys())}"}
+
+        result_lf = left_lf.join(
+            right_lf,
             left_on=left_on,
             right_on=right_on,
             how=join_type,
             suffix=right_suffix
         )
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("join", node_id, e, left_df)}
+        return {"success": False, "error": format_error_lf("join", node_id, e, left_lf)}
 
 def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute sort node"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute sort node (lazy)"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Sort error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
@@ -531,21 +697,21 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
         sort_cols = sort_input.get("sort_cols", [])
 
         if not sort_cols:
-            result = df
+            result_lf = input_lf
         else:
             by = [c.get("column") for c in sort_cols]
             descending = [c.get("descending", False) for c in sort_cols]
-            result = df.sort(by, descending=descending)
+            result_lf = input_lf.sort(by, descending=descending)
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("sort", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("sort", node_id, e, input_lf)}
 
 def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute polars code node - runs arbitrary Polars code"""
-    input_df = get_dataframe(input_id)
-    if input_df is None:
+    """Execute polars code node - supports both DataFrame and LazyFrame in user code"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
@@ -553,114 +719,148 @@ def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
         code = polars_code_input.get("polars_code", "input_df")
 
         if not code or not code.strip():
-            result = input_df
+            result_lf = input_lf
         else:
             code = code.strip()
-            # Set up execution environment
-            local_vars = {"input_df": input_df, "pl": pl, "output_df": None}
+            # Provide both lazy and eager versions for user convenience
+            # input_df is collected for backward compatibility
+            input_df = input_lf.collect()
+            local_vars = {"input_df": input_df, "input_lf": input_lf, "pl": pl, "output_df": None, "output_lf": None}
             global_vars = {"pl": pl}
 
-            # Try exec first (handles assignments like output_df = ...)
             try:
                 exec(code, global_vars, local_vars)
-                # Check if output_df was set
-                if local_vars.get("output_df") is not None and isinstance(local_vars["output_df"], pl.DataFrame):
+
+                # Check for LazyFrame outputs first
+                if local_vars.get("output_lf") is not None and isinstance(local_vars["output_lf"], pl.LazyFrame):
+                    result_lf = local_vars["output_lf"]
+                elif local_vars.get("output_df") is not None:
                     result = local_vars["output_df"]
-                # Check if result was set
-                elif local_vars.get("result") is not None and isinstance(local_vars["result"], pl.DataFrame):
+                    if isinstance(result, pl.LazyFrame):
+                        result_lf = result
+                    elif isinstance(result, pl.DataFrame):
+                        result_lf = result.lazy()
+                    else:
+                        return {"success": False, "error": f"Polars Code error on node #{node_id}: output_df must be a DataFrame or LazyFrame"}
+                elif local_vars.get("result") is not None:
                     result = local_vars["result"]
-                # Check if df was set
-                elif local_vars.get("df") is not None and isinstance(local_vars["df"], pl.DataFrame):
+                    if isinstance(result, pl.LazyFrame):
+                        result_lf = result
+                    elif isinstance(result, pl.DataFrame):
+                        result_lf = result.lazy()
+                    else:
+                        return {"success": False, "error": f"Polars Code error on node #{node_id}: result must be a DataFrame or LazyFrame"}
+                elif local_vars.get("df") is not None:
                     result = local_vars["df"]
+                    if isinstance(result, pl.LazyFrame):
+                        result_lf = result
+                    elif isinstance(result, pl.DataFrame):
+                        result_lf = result.lazy()
+                    else:
+                        return {"success": False, "error": f"Polars Code error on node #{node_id}: df must be a DataFrame or LazyFrame"}
                 else:
-                    # Try to find any DataFrame that was created
-                    found_df = None
+                    # Try to find any DataFrame/LazyFrame that was created
+                    found_result = None
                     for var_name, var_val in local_vars.items():
-                        if isinstance(var_val, pl.DataFrame) and var_name not in ["input_df"]:
-                            found_df = var_val
-                            break
-                    if found_df is not None:
-                        result = found_df
+                        if var_name not in ["input_df", "input_lf", "pl", "output_df", "output_lf"]:
+                            if isinstance(var_val, pl.LazyFrame):
+                                found_result = var_val
+                                break
+                            elif isinstance(var_val, pl.DataFrame):
+                                found_result = var_val.lazy()
+                                break
+                    if found_result is not None:
+                        result_lf = found_result
                     else:
                         # Fallback: try eval on last line
                         lines = code.split('\\n')
                         last_line = lines[-1].strip()
                         if last_line and not last_line.startswith('#') and '=' not in last_line:
                             result = eval(last_line, global_vars, local_vars)
+                            if isinstance(result, pl.LazyFrame):
+                                result_lf = result
+                            elif isinstance(result, pl.DataFrame):
+                                result_lf = result.lazy()
+                            else:
+                                result_lf = input_lf
                         else:
-                            result = input_df
+                            result_lf = input_lf
             except SyntaxError:
-                # If exec fails with syntax error, try eval (for simple expressions)
                 result = eval(code, global_vars, local_vars)
+                if isinstance(result, pl.LazyFrame):
+                    result_lf = result
+                elif isinstance(result, pl.DataFrame):
+                    result_lf = result.lazy()
+                else:
+                    return {"success": False, "error": f"Polars Code error on node #{node_id}: Code must produce a DataFrame or LazyFrame, got {type(result).__name__}"}
 
-            # Validate result
-            if not isinstance(result, pl.DataFrame):
-                return {"success": False, "error": f"Polars Code error on node #{node_id}: Code must produce a DataFrame, got {type(result).__name__}. Assign result to 'output_df', 'result', or 'df'. Available columns in input: {list(input_df.columns)}"}
-
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("polars_code", node_id, e, input_df)}
+        return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lf)}
 
 def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute unique node"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute unique node (lazy)"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Unique error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
         unique_input = settings.get("unique_input", {})
-        # Support both flowfile_core format (columns/strategy) and component format (subset/keep)
         subset = unique_input.get("subset") or unique_input.get("columns") or []
         keep = unique_input.get("keep") or unique_input.get("strategy") or "first"
         maintain_order = unique_input.get("maintain_order", True)
 
         if subset:
-            result = df.unique(subset=subset, keep=keep, maintain_order=maintain_order)
+            result_lf = input_lf.unique(subset=subset, keep=keep, maintain_order=maintain_order)
         else:
-            result = df.unique(keep=keep, maintain_order=maintain_order)
+            result_lf = input_lf.unique(keep=keep, maintain_order=maintain_order)
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("unique", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("unique", node_id, e, input_lf)}
 
 def execute_head(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute head/limit node"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute head/limit node (lazy)"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Head error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
         head_input = settings.get("head_input", {})
         n = head_input.get("n", 10)
 
-        result = df.head(n)
+        result_lf = input_lf.head(n)
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("head", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("head", node_id, e, input_lf)}
 
 def execute_preview(node_id: int, input_id: int) -> Dict:
-    """Execute preview node - just passes through data"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute preview node - just passes through the LazyFrame"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Preview error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        store_dataframe(node_id, df)
-        return {"success": True, "data": df_to_preview(df), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, input_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("preview", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("preview", node_id, e, input_lf)}
 
 def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute pivot node - converts data from long to wide format"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute pivot node - converts data from long to wide format
+    Note: Pivot requires collecting data due to dynamic column creation"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Pivot error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
+        # Pivot needs to collect to determine unique values for columns
+        df = input_lf.collect()
+
         pivot_input = settings.get("pivot_input", {})
         index_columns = pivot_input.get("index_columns", [])
         pivot_column = pivot_input.get("pivot_column", "")
@@ -676,17 +876,14 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         if value_col not in df.columns:
             return {"success": False, "error": f"Pivot error on node #{node_id}: Value column '{value_col}' not found. Available columns: {list(df.columns)}"}
 
-        # Get unique values for the pivot column (limit to prevent too many columns)
         max_unique = 200
         unique_values = df.select(pl.col(pivot_column).cast(pl.String)).unique().sort(pivot_column).limit(max_unique).to_series().to_list()
 
         if len(unique_values) >= max_unique:
             return {"success": False, "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' has too many unique values (>={max_unique}). Please use a column with fewer unique values."}
 
-        # Determine group columns (index + pivot)
         group_cols = index_columns + [pivot_column] if index_columns else [pivot_column]
 
-        # Build aggregation expressions
         agg_map = {
             "sum": lambda c: pl.col(c).sum(),
             "mean": lambda c: pl.col(c).mean(),
@@ -698,7 +895,6 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
             "median": lambda c: pl.col(c).median(),
         }
 
-        # First aggregate the data
         agg_exprs = []
         for agg in aggregations:
             if agg in agg_map:
@@ -711,17 +907,13 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         grouped = df.group_by(group_cols).agg(agg_exprs)
 
-        # Now pivot the data
-        # Build the pivot manually by filtering for each unique value
         if index_columns:
             index_exprs = [pl.col(c) for c in index_columns]
         else:
-            # No index columns - add a temporary constant column
             grouped = grouped.with_columns(pl.lit(1).alias("__temp_idx__"))
             index_columns = ["__temp_idx__"]
             index_exprs = [pl.col("__temp_idx__")]
 
-        # Group by index columns and create struct for each pivot value
         pivot_exprs = []
         for unique_val in unique_values:
             for agg in aggregations:
@@ -732,19 +924,19 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         result = grouped.group_by(index_exprs).agg(pivot_exprs)
 
-        # Remove temp column if added
         if "__temp_idx__" in result.columns:
             result = result.drop("__temp_idx__")
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        result_lf = result.lazy()
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("pivot", node_id, e, df)}
+        return {"success": False, "error": format_error("pivot", node_id, e, df if 'df' in dir() else None)}
 
 def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute unpivot node - converts data from wide to long format"""
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute unpivot node - converts data from wide to long format (lazy)"""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Unpivot error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
@@ -754,9 +946,7 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         data_type_selector = unpivot_input.get("data_type_selector")
         selector_mode = unpivot_input.get("data_type_selector_mode", "column")
 
-        # Determine which columns to unpivot
         if selector_mode == "data_type" and data_type_selector:
-            # Select columns by data type
             import polars.selectors as cs
             selector_map = {
                 "float": cs.float,
@@ -769,56 +959,51 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
                 on_selector = selector_map[data_type_selector]()
             else:
                 on_selector = cs.all()
-            result = df.unpivot(on=on_selector, index=index_columns if index_columns else None)
+            result_lf = input_lf.unpivot(on=on_selector, index=index_columns if index_columns else None)
         elif value_columns:
-            # Explicit column list
-            # Validate columns exist
-            missing = [c for c in value_columns if c not in df.columns]
+            schema = input_lf.collect_schema()
+            missing = [c for c in value_columns if c not in schema]
             if missing:
-                return {"success": False, "error": f"Unpivot error on node #{node_id}: Columns not found: {missing}. Available columns: {list(df.columns)}"}
-            result = df.unpivot(on=value_columns, index=index_columns if index_columns else None)
+                return {"success": False, "error": f"Unpivot error on node #{node_id}: Columns not found: {missing}. Available columns: {list(schema.keys())}"}
+            result_lf = input_lf.unpivot(on=value_columns, index=index_columns if index_columns else None)
         else:
-            # No columns specified - unpivot all non-index columns
-            result = df.unpivot(index=index_columns if index_columns else None)
+            result_lf = input_lf.unpivot(index=index_columns if index_columns else None)
 
-        store_dataframe(node_id, result)
-        return {"success": True, "data": df_to_preview(result), "schema": get_schema(node_id)}
+        store_lazyframe(node_id, result_lf)
+        return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("unpivot", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("unpivot", node_id, e, input_lf)}
 
 def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute output node - prepares data for download in WASM environment.
-
-    Returns the serialized data content that can be downloaded by the browser.
-    Supports CSV and Parquet formats.
-    """
-    df = get_dataframe(input_id)
-    if df is None:
+    """Execute output node - prepares data for download.
+    Note: This must collect data to generate the output file."""
+    input_lf = get_lazyframe(input_id)
+    if input_lf is None:
         return {"success": False, "error": f"Output error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
         import io
         import base64
+
+        # Collect data for output
+        df = input_lf.collect()
+
         output_settings = settings.get("output_settings", {})
         file_type = output_settings.get("file_type", "csv")
         file_name = output_settings.get("name", "output.csv")
         table_settings = output_settings.get("table_settings", {})
 
-        # Store dataframe for preview
-        store_dataframe(node_id, df)
+        # Store as lazyframe for schema access
+        store_lazyframe(node_id, df.lazy())
 
-        # Prepare download content based on file type
         if file_type == "parquet":
-            # Write parquet to bytes buffer
             buffer = io.BytesIO()
             df.write_parquet(buffer)
             content = buffer.getvalue()
             content = base64.b64encode(content).decode('utf-8')
             mime_type = "application/octet-stream"
         else:
-            # Default to CSV
             delimiter = table_settings.get("delimiter", ",")
-            # Handle tab delimiter
             if delimiter == "tab":
                 delimiter = "\\t"
 
@@ -829,8 +1014,8 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         return {
             "success": True,
-            "data": df_to_preview(df),
             "schema": get_schema(node_id),
+            "has_data": True,
             "download": {
                 "content": content,
                 "file_name": file_name,
@@ -840,7 +1025,7 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
             }
         }
     except Exception as e:
-        return {"success": False, "error": format_error("output", node_id, e, df)}
+        return {"success": False, "error": format_error_lf("output", node_id, e, input_lf)}
 `)
   }
 
