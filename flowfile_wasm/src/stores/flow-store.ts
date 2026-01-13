@@ -39,6 +39,20 @@ const SETTING_INPUT_EXCLUDE = new Set([
   'depending_on_ids',
 ])
 
+// Node type mapping from flowfile_wasm to flowfile_core
+// flowfile_wasm uses more descriptive names internally, but flowfile_core uses different names
+const NODE_TYPE_TO_CORE: Record<string, string> = {
+  'read_csv': 'read',
+  'preview': 'explore_data',
+}
+
+/**
+ * Convert a flowfile_wasm node type to flowfile_core node type
+ */
+function toFlowfileCoreType(wasmType: string): string {
+  return NODE_TYPE_TO_CORE[wasmType] ?? wasmType
+}
+
 /**
  * Clean setting_input by removing fields that are excluded during export
  * This matches the behavior of flowfile_core's FlowfileNode serializer
@@ -244,11 +258,11 @@ export const useFlowStore = defineStore('flow', () => {
 
       flowfileNodes.push({
         id: node.id,
-        type: node.type,
+        type: toFlowfileCoreType(node.type),  // Map to flowfile_core type
         is_start_node: isStartNode,
         description: (node.settings as NodeBase).description || '',
-        x_position: node.x,
-        y_position: node.y,
+        x_position: Math.round(node.x),  // flowfile_core expects int
+        y_position: Math.round(node.y),  // flowfile_core expects int
         left_input_id: node.leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
@@ -1709,11 +1723,11 @@ result
 
       const flowfileNode: FlowfileNode = {
         id: node.id,
-        type: node.type,
+        type: toFlowfileCoreType(node.type),  // Map to flowfile_core type
         is_start_node: isStartNode,
         description: (node.settings as NodeBase).description || '',
-        x_position: node.x,
-        y_position: node.y,
+        x_position: Math.round(node.x),  // flowfile_core expects int
+        y_position: Math.round(node.y),  // flowfile_core expects int
         left_input_id: node.leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
