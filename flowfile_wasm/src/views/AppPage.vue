@@ -66,7 +66,7 @@
     <DocsModal :is-open="isDocsOpen" @close="isDocsOpen = false" />
 
     <!-- Prominent demo button for first-time visitors -->
-    <DemoButton v-if="!hasSeenDemo && pyodideReady" prominent />
+    <DemoButton v-if="!hasSeenDemo && !hasDismissedDemo && pyodideReady" prominent />
   </div>
 </template>
 
@@ -85,7 +85,7 @@ const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
-const { hasSeenDemo } = useDemo()
+const { hasSeenDemo, hasDismissedDemo } = useDemo()
 
 const isDocsOpen = ref(false)
 

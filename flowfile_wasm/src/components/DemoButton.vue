@@ -1,7 +1,15 @@
 <template>
   <!-- Prominent floating button for first-time visitors -->
-  <div v-if="prominent" class="demo-button-prominent" @click="handleClick">
-    <div class="demo-button-content">
+  <div v-if="prominent" class="demo-button-prominent">
+    <button
+      class="demo-dismiss-btn"
+      @click.stop="handleDismiss"
+      title="Dismiss"
+      aria-label="Dismiss demo button"
+    >
+      <span class="material-icons">close</span>
+    </button>
+    <div class="demo-button-content" @click="handleClick">
       <span class="material-icons demo-icon">play_circle</span>
       <span class="demo-text">Try Demo</span>
     </div>
@@ -32,9 +40,10 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'loaded'): void
+  (e: 'dismissed'): void
 }>()
 
-const { isLoading, loadDemo } = useDemo()
+const { isLoading, loadDemo, dismissDemo } = useDemo()
 
 async function handleClick() {
   const success = await loadDemo(true)
@@ -42,67 +51,103 @@ async function handleClick() {
     emit('loaded')
   }
 }
+
+function handleDismiss() {
+  dismissDemo()
+  emit('dismissed')
+}
 </script>
 
 <style scoped>
 /* Prominent floating button styles */
 .demo-button-prominent {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 1000;
-  cursor: pointer;
+  bottom: var(--spacing-6);
+  right: var(--spacing-6);
+  z-index: var(--z-index-dropdown);
 }
 
 .demo-button-content {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 24px;
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-hover) 100%);
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-6);
+  background: linear-gradient(135deg, var(--color-button-primary) 0%, var(--color-button-primary-hover) 100%);
   border-radius: var(--border-radius-full);
-  color: white;
+  color: var(--color-text-inverse);
   font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-lg);
-  box-shadow: 0 8px 32px rgba(8, 145, 178, 0.4), 0 4px 12px rgba(0, 0, 0, 0.15);
-  transition: all var(--transition-normal);
+  box-shadow: var(--shadow-lg);
+  transition: all var(--transition-normal) var(--transition-timing);
   position: relative;
   z-index: 2;
+  cursor: pointer;
 }
 
-.demo-button-prominent:hover .demo-button-content {
+.demo-button-content:hover {
   transform: translateY(-2px);
-  box-shadow: 0 12px 40px rgba(8, 145, 178, 0.5), 0 6px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-xl);
 }
 
-.demo-button-prominent:active .demo-button-content {
+.demo-button-content:active {
   transform: translateY(0);
 }
 
 .demo-icon {
-  font-size: 24px;
+  font-size: var(--font-size-4xl);
 }
 
 .demo-text {
   white-space: nowrap;
 }
 
+/* Dismiss button */
+.demo-dismiss-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--border-radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  z-index: 10;
+  transition: all var(--transition-fast) var(--transition-timing);
+  box-shadow: var(--shadow-sm);
+}
+
+.demo-dismiss-btn:hover {
+  background: var(--color-danger-light);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.demo-dismiss-btn .material-icons {
+  font-size: 16px;
+}
+
 /* Tooltip that appears on hover */
 .demo-tooltip {
   position: absolute;
-  bottom: calc(100% + 12px);
+  bottom: calc(100% + var(--spacing-3));
   left: 50%;
   transform: translateX(-50%) translateY(10px);
-  padding: 8px 16px;
+  padding: var(--spacing-2) var(--spacing-4);
   background: var(--color-gray-800);
-  color: white;
+  color: var(--color-text-inverse);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   border-radius: var(--border-radius-md);
   white-space: nowrap;
   opacity: 0;
   pointer-events: none;
-  transition: all var(--transition-normal);
+  transition: all var(--transition-normal) var(--transition-timing);
   box-shadow: var(--shadow-lg);
 }
 
@@ -131,7 +176,7 @@ async function handleClick() {
   height: 100%;
   border-radius: var(--border-radius-full);
   background: transparent;
-  border: 3px solid var(--color-accent);
+  border: 3px solid var(--color-button-primary);
   animation: pulse 2s ease-out infinite;
   pointer-events: none;
   z-index: 1;
@@ -154,22 +199,22 @@ async function handleClick() {
 
 /* Subtle toolbar button styles */
 .demo-btn-subtle {
-  background-color: var(--color-accent-subtle);
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+  background-color: var(--color-background-tertiary);
+  border-color: var(--color-border-primary);
+  color: var(--color-text-primary);
 }
 
 .demo-btn-subtle .btn-icon {
-  color: var(--color-accent);
+  color: var(--color-text-secondary);
 }
 
 .demo-btn-subtle:hover:not(:disabled) {
-  background-color: var(--color-accent);
-  color: white;
+  background-color: var(--color-background-hover);
+  border-color: var(--color-border-secondary);
 }
 
 .demo-btn-subtle:hover:not(:disabled) .btn-icon {
-  color: white;
+  color: var(--color-text-primary);
 }
 
 /* Dark theme adjustments */
@@ -181,28 +226,20 @@ async function handleClick() {
   border-top-color: var(--color-gray-700);
 }
 
-[data-theme="dark"] .demo-button-content {
-  box-shadow: 0 8px 32px rgba(8, 145, 178, 0.3), 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-[data-theme="dark"] .demo-button-prominent:hover .demo-button-content {
-  box-shadow: 0 12px 40px rgba(8, 145, 178, 0.4), 0 6px 16px rgba(0, 0, 0, 0.4);
-}
-
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .demo-button-prominent {
-    bottom: 16px;
-    right: 16px;
+    bottom: var(--spacing-4);
+    right: var(--spacing-4);
   }
 
   .demo-button-content {
-    padding: 12px 20px;
+    padding: var(--spacing-3) var(--spacing-5);
     font-size: var(--font-size-md);
   }
 
   .demo-icon {
-    font-size: 20px;
+    font-size: var(--font-size-3xl);
   }
 
   .demo-btn-subtle .btn-text {

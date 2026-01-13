@@ -12,11 +12,15 @@ import yaml from 'js-yaml'
 import type { FlowfileData } from '../types'
 
 const DEMO_SHOWN_KEY = 'flowfile_demo_shown'
+const DEMO_DISMISSED_KEY = 'flowfile_demo_dismissed'
 const CSV_NODE_ID = 1 // Must match the read_csv node ID in sample-flow.yaml
 
 // Track loading state
 const isLoading = ref(false)
 const loadError = ref<string | null>(null)
+
+// Reactive state for dismissed (needs to be reactive for UI updates)
+const isDismissed = ref(localStorage.getItem(DEMO_DISMISSED_KEY) === 'true')
 
 export function useDemo() {
   const flowStore = useFlowStore()
@@ -26,6 +30,13 @@ export function useDemo() {
    */
   const hasSeenDemo = computed(() => {
     return localStorage.getItem(DEMO_SHOWN_KEY) === 'true'
+  })
+
+  /**
+   * Check if the demo button has been dismissed
+   */
+  const hasDismissedDemo = computed(() => {
+    return isDismissed.value
   })
 
   /**
@@ -40,6 +51,16 @@ export function useDemo() {
    */
   function resetDemoState() {
     localStorage.removeItem(DEMO_SHOWN_KEY)
+    localStorage.removeItem(DEMO_DISMISSED_KEY)
+    isDismissed.value = false
+  }
+
+  /**
+   * Dismiss the demo button (hide it permanently)
+   */
+  function dismissDemo() {
+    localStorage.setItem(DEMO_DISMISSED_KEY, 'true')
+    isDismissed.value = true
   }
 
   /**
@@ -116,10 +137,12 @@ export function useDemo() {
 
   return {
     hasSeenDemo,
+    hasDismissedDemo,
     isLoading,
     loadError,
     loadDemo,
     markDemoAsSeen,
-    resetDemoState
+    resetDemoState,
+    dismissDemo
   }
 }
