@@ -10,7 +10,7 @@
   <a href="flowfile_core/README.md">Core</a> -
   <a href="flowfile_worker/README.md">Worker</a> -
   <a href="flowfile_frontend/README.md">Frontend</a> -
-  <a href="https://demo.flowfile.org"> Live Lite version"
+  <a href="https://demo.flowfile.org"> Try Online </a> -
   <a href="https://dev.to/edwardvaneechoud/building-flowfile-architecting-a-visual-etl-tool-with-polars-576c">Technical Architecture</a>
 </p>
 
