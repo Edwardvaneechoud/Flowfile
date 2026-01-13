@@ -5,3 +5,6 @@ declare module '*.vue' {
   const component: DefineComponent<{}, {}, any>
   export default component
 }
+
+/** Flowfile version injected at build time from pyproject.toml */
+declare const __FLOWFILE_VERSION__: string

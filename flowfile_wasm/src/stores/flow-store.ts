@@ -248,7 +248,7 @@ export const useFlowStore = defineStore('flow', () => {
 
     // No connections array - flowfile_core derives connections from node relationships
     const flowfileData: FlowfileData = {
-      flowfile_version: '1.0.0',
+      flowfile_version: __FLOWFILE_VERSION__,
       flowfile_id: Date.now(),
       flowfile_name: 'Session Flow',
       flowfile_settings: {
@@ -1426,7 +1426,7 @@ result
    * - No connections array (flowfile_core derives connections from node relationships)
    * - Cleaned setting_input (excludes flow_id, node_id, pos_x, pos_y, etc.)
    * - Description at node level
-   * - Uses version '1.0.0' for cross-system compatibility
+   * - Uses version from pyproject.toml for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
     const flowfileNodes: FlowfileNode[] = []
@@ -1460,7 +1460,7 @@ result
 
     // No connections array - flowfile_core derives connections from node relationships
     const flowfileData: FlowfileData = {
-      flowfile_version: '1.0.0',
+      flowfile_version: __FLOWFILE_VERSION__,
       flowfile_id: Date.now(),
       flowfile_name: name,
       flowfile_settings: {
