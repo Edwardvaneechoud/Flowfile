@@ -73,6 +73,17 @@ export const useFlowStore = defineStore('flow', () => {
   // File content storage for CSV nodes
   const fileContents = ref<Map<number, string>>(new Map())
 
+  // Preview cache state (for lazy loading)
+  const previewCache = ref<Map<number, {
+    data: any;
+    timestamp: number;
+    loading: boolean;
+  }>>(new Map())
+  const previewLoadingNodes = ref<Set<number>>(new Set())
+
+  // Track nodes that have been modified since last execution (dirty state)
+  const dirtyNodes = ref<Set<number>>(new Set())
+
   // Load state from session storage on init
   async function loadFromStorage() {
     try {
@@ -452,6 +463,9 @@ export const useFlowStore = defineStore('flow', () => {
     if (node) {
       node.settings = settings
       nodes.value.set(id, node)
+
+      // Invalidate preview cache for this node and downstream
+      invalidatePreviewCache(id)
     }
   }
 
@@ -459,6 +473,8 @@ export const useFlowStore = defineStore('flow', () => {
     nodes.value.delete(id)
     nodeResults.value.delete(id)
     fileContents.value.delete(id)
+    previewCache.value.delete(id)
+    dirtyNodes.value.delete(id)
 
     // Delete file from IndexedDB if it exists there
     fileStorage.deleteFileContent(id).catch(err => {
@@ -511,6 +527,9 @@ export const useFlowStore = defineStore('flow', () => {
           // For join nodes, input-1 is the right input
           targetNode.rightInputId = sourceId
         }
+
+        // Invalidate preview cache for target node
+        invalidatePreviewCache(targetId)
       }
 
       // Trigger immediate schema propagation for new connection
@@ -535,6 +554,9 @@ export const useFlowStore = defineStore('flow', () => {
         if (existingResult && !existingResult.data) {
           nodeResults.value.delete(targetId)
         }
+
+        // Invalidate preview cache for target node
+        invalidatePreviewCache(targetId)
       }
 
       edges.value = edges.value.filter(e => e.id !== edgeId)
@@ -576,6 +598,9 @@ export const useFlowStore = defineStore('flow', () => {
         debouncedPropagateSchemas()
       }
     }
+
+    // Invalidate preview cache
+    invalidatePreviewCache(nodeId)
   }
 
   /**
@@ -595,6 +620,14 @@ export const useFlowStore = defineStore('flow', () => {
 
   function selectNode(id: number | null) {
     selectedNodeId.value = id
+
+    // Auto-fetch preview when selecting a node that has data
+    if (id !== null) {
+      const result = nodeResults.value.get(id)
+      if (result?.success && !hasPreviewCached(id)) {
+        fetchNodePreview(id)
+      }
+    }
   }
 
   /**
@@ -619,13 +652,27 @@ export const useFlowStore = defineStore('flow', () => {
       }
     }
 
-    // Clean up Python dataframes for removed nodes
+    // Clean up preview cache for removed nodes
+    for (const [nodeId] of previewCache.value) {
+      if (!currentNodeIds.has(nodeId)) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+
+    // Clean up dirty flags for removed nodes
+    for (const nodeId of dirtyNodes.value) {
+      if (!currentNodeIds.has(nodeId)) {
+        dirtyNodes.value.delete(nodeId)
+      }
+    }
+
+    // Clean up Python lazyframes for removed nodes
     if (pyodideStore.isReady) {
       const nodeIdList = Array.from(currentNodeIds).join(',')
       await pyodideStore.runPython(`
-# Clean up orphaned dataframes
+# Clean up orphaned lazyframes
 current_node_ids = {${nodeIdList}} if ${currentNodeIds.size} > 0 else set()
-orphaned_ids = [nid for nid in list(_dataframes.keys()) if nid not in current_node_ids]
+orphaned_ids = [nid for nid in list(_lazyframes.keys()) if nid not in current_node_ids]
 for nid in orphaned_ids:
     clear_node(nid)
 `)
@@ -880,7 +927,8 @@ for nid in orphaned_ids:
       if (primaryInputId) {
         const inputResult = nodeResults.value.get(primaryInputId)
         inputSchema = inputResult?.schema || null
-        inputHasData = !!(inputResult?.data)
+        // Check if input was successfully executed (success=true means data is available)
+        inputHasData = !!(inputResult?.success || inputResult?.data)
       }
 
       // For join nodes, also get right input schema
@@ -926,7 +974,7 @@ for nid in orphaned_ids:
         const existingResult = nodeResults.value.get(nodeId)
         // Only preserve success if there's actual executed data
         // Schema inference alone doesn't mean the node was executed (success stays undefined = grey)
-        const hasExecutedData = existingResult?.data?.data && existingResult.data.data.length >= 0
+        const hasExecutedData = existingResult?.success || (existingResult?.data?.data && existingResult.data.data.length >= 0)
         nodeResults.value.set(nodeId, {
           success: hasExecutedData ? existingResult.success : undefined,
           schema: inferredSchema,
@@ -944,7 +992,7 @@ for nid in orphaned_ids:
         // Keep any existing executed result (which has actual schema from Python)
         // Only clear if there's no input AND no existing data
         const existingResult = nodeResults.value.get(nodeId)
-        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data) {
+        if (!inputSchema && !isSourceNode(node.type) && existingResult && !existingResult.data && !existingResult.success) {
           nodeResults.value.delete(nodeId)
         }
         // If there's an existing result with actual data, keep it - the schema from
@@ -963,6 +1011,190 @@ for nid in orphaned_ids:
       propagateTimeout = null
     }, 50)
   }
+
+  // =============================================================================
+  // Preview Cache Management (Lazy Loading)
+  // =============================================================================
+
+  /**
+   * Build downstream dependency graph
+   */
+  function buildDownstreamGraph(): Record<number, number[]> {
+    const downstreamGraph: Record<number, number[]> = {}
+    edges.value.forEach(edge => {
+      const sourceId = parseInt(edge.source)
+      const targetId = parseInt(edge.target)
+      if (!downstreamGraph[sourceId]) {
+        downstreamGraph[sourceId] = []
+      }
+      downstreamGraph[sourceId].push(targetId)
+    })
+    return downstreamGraph
+  }
+
+  /**
+   * Invalidate preview cache for a node and its downstream dependents
+   * Also marks these nodes as dirty (needing re-execution)
+   */
+  function invalidatePreviewCache(nodeId: number) {
+    const downstreamGraph = buildDownstreamGraph()
+
+    // FIRST: Synchronously clear TypeScript cache and mark nodes as dirty
+    // This must happen immediately before any async operations
+    const toInvalidate = [nodeId]
+    const visited = new Set<number>()
+
+    while (toInvalidate.length > 0) {
+      const current = toInvalidate.shift()!
+      if (visited.has(current)) continue
+      visited.add(current)
+
+      previewCache.value.delete(current)
+
+      // Mark node as dirty (has changes since last run)
+      dirtyNodes.value.add(current)
+
+      const downstream = downstreamGraph[current] || []
+      toInvalidate.push(...downstream)
+    }
+
+    // THEN: Invalidate in Python asynchronously (fire and forget)
+    if (pyodideStore.isReady) {
+      pyodideStore.runPython(`
+import json
+node_graph = json.loads('${JSON.stringify(downstreamGraph)}')
+node_graph = {int(k): v for k, v in node_graph.items()}
+invalidate_downstream_previews(${nodeId}, node_graph)
+`).catch(err => {
+        console.error('Failed to invalidate Python preview cache:', err)
+      })
+    }
+  }
+
+  /**
+   * Check if a node's preview is currently loading
+   */
+  function isPreviewLoading(nodeId: number): boolean {
+    return previewLoadingNodes.value.has(nodeId)
+  }
+
+  /**
+   * Check if a node has cached preview data
+   */
+  function hasPreviewCached(nodeId: number): boolean {
+    const cached = previewCache.value.get(nodeId)
+    if (cached && !cached.loading && cached.data !== null) {
+      return true
+    }
+    // Also check nodeResults for data
+    const result = nodeResults.value.get(nodeId)
+    return !!(result?.data)
+  }
+
+  /**
+   * Check if a node is dirty (has changes since last execution)
+   */
+  function isNodeDirty(nodeId: number): boolean {
+    return dirtyNodes.value.has(nodeId)
+  }
+
+  /**
+   * Check if a node has ever been executed successfully
+   */
+  function hasNodeExecuted(nodeId: number): boolean {
+    const result = nodeResults.value.get(nodeId)
+    return result?.success === true || result?.success === false
+  }
+
+  /**
+   * Fetch preview data for a node (on-demand, cached)
+   * This is called when user clicks on a node to view its data
+   */
+  async function fetchNodePreview(
+    nodeId: number,
+    options: { maxRows?: number; forceRefresh?: boolean } = {}
+  ): Promise<{ success: boolean; data?: any; error?: string; fromCache?: boolean }> {
+    const { maxRows = 100, forceRefresh = false } = options
+
+    // Check local cache first (unless force refresh)
+    if (!forceRefresh) {
+      const cached = previewCache.value.get(nodeId)
+      if (cached && !cached.loading && cached.data) {
+        // Also update nodeResults for display
+        const existingResult = nodeResults.value.get(nodeId)
+        if (existingResult) {
+          nodeResults.value.set(nodeId, {
+            ...existingResult,
+            data: cached.data
+          })
+        }
+        return { success: true, data: cached.data, fromCache: true }
+      }
+
+      // Check nodeResults too
+      const result = nodeResults.value.get(nodeId)
+      if (result?.data) {
+        return { success: true, data: result.data, fromCache: true }
+      }
+    }
+
+    if (!pyodideStore.isReady) {
+      return { success: false, error: 'Pyodide is not ready' }
+    }
+
+    // Mark as loading
+    previewLoadingNodes.value.add(nodeId)
+    previewCache.value.set(nodeId, {
+      data: null,
+      timestamp: Date.now(),
+      loading: true
+    })
+
+    try {
+      const result = await pyodideStore.runPythonWithResult(`
+result = fetch_preview(${nodeId}, max_rows=${maxRows}, force_refresh=${forceRefresh ? 'True' : 'False'})
+result
+`)
+
+      if (result.success) {
+        previewCache.value.set(nodeId, {
+          data: result.data,
+          timestamp: Date.now(),
+          loading: false
+        })
+
+        // Also update nodeResults with the preview data for display
+        const existingResult = nodeResults.value.get(nodeId)
+        if (existingResult) {
+          nodeResults.value.set(nodeId, {
+            ...existingResult,
+            data: result.data
+          })
+        }
+
+        return {
+          success: true,
+          data: result.data,
+          fromCache: result.from_cache
+        }
+      } else {
+        return { success: false, error: result.error }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      return { success: false, error: errorMessage }
+    } finally {
+      previewLoadingNodes.value.delete(nodeId)
+      const cached = previewCache.value.get(nodeId)
+      if (cached) {
+        cached.loading = false
+      }
+    }
+  }
+
+  // =============================================================================
+  // Node Execution
+  // =============================================================================
 
   async function executeNode(nodeId: number): Promise<NodeResult> {
     const node = nodes.value.get(nodeId)
@@ -1179,7 +1411,6 @@ result
             // Create result without content - just metadata
             result = {
               success: outputResult.success,
-              data: outputResult.data,
               schema: outputResult.schema,
               download: {
                 file_name,
@@ -1200,8 +1431,25 @@ result
           return { success: false, error: `Unknown node type: ${node.type}` }
       }
 
-      nodeResults.value.set(nodeId, result)
-      return result
+      // Store result - success=true indicates data is available in Python
+      const nodeResult: NodeResult = {
+        success: result.success,
+        schema: result.schema,
+        error: result.error,
+        download: result.download
+      }
+
+      nodeResults.value.set(nodeId, nodeResult)
+
+      // Clear dirty flag since we just executed
+      if (result.success) {
+        dirtyNodes.value.delete(nodeId)
+      }
+
+      // Clear preview cache since we just executed
+      previewCache.value.delete(nodeId)
+
+      return nodeResult
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       const errorResult: NodeResult = {
@@ -1221,6 +1469,8 @@ result
     isExecuting.value = true
     executionError.value = null
     nodeResults.value.clear()
+    previewCache.value.clear()  // Clear all preview cache
+    dirtyNodes.value.clear()    // Clear all dirty flags (will be re-set if execution fails)
 
     try {
       // Clean up orphaned data before execution
@@ -1230,14 +1480,24 @@ result
       await pyodideStore.runPython('clear_all()')
 
       // Get execution order and execute nodes
+      // This builds the lazy query plans - should be fast!
       const order = getExecutionOrder()
 
       for (const nodeId of order) {
         await executeNode(nodeId)
       }
+
       // After execution, propagate schemas to update downstream node settings
       // This syncs select_input, agg_cols, etc. with actual executed schemas
       await propagateSchemas()
+
+      // Optional: Auto-fetch preview for selected node
+      if (selectedNodeId.value !== null) {
+        const result = nodeResults.value.get(selectedNodeId.value)
+        if (result?.success) {
+          await fetchNodePreview(selectedNodeId.value)
+        }
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
@@ -1492,6 +1752,8 @@ result
       edges.value = []
       nodeResults.value.clear()
       fileContents.value.clear()
+      previewCache.value.clear()
+      dirtyNodes.value.clear()
       selectedNodeId.value = null
 
       // Clear IndexedDB file storage
@@ -1675,6 +1937,8 @@ result
     edges.value = []
     nodeResults.value.clear()
     fileContents.value.clear()
+    previewCache.value.clear()
+    dirtyNodes.value.clear()
     selectedNodeId.value = null
     nodeIdCounter.value = 0
     sessionStorage.removeItem(STORAGE_KEY)
@@ -1720,6 +1984,17 @@ result
     cleanupOrphanedData,
     propagateSchemas,
     setSourceNodeSchema,
+
+    // Preview management (lazy loading)
+    fetchNodePreview,
+    isPreviewLoading,
+    hasPreviewCached,
+    invalidatePreviewCache,
+
+    // Dirty state tracking
+    isNodeDirty,
+    hasNodeExecuted,
+    dirtyNodes,
 
     // Import/Export (FlowfileData format)
     exportToFlowfile,

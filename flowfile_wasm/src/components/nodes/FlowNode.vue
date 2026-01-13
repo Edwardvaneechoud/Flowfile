@@ -141,6 +141,9 @@ const iconUrl = computed(() => {
 })
 
 const statusClass = computed(() => {
+  const isDirty = flowStore.isNodeDirty(props.data.id)
+  if (isDirty) return 'unknown'  // Show grey when dirty
+  
   if (!props.data.result) return 'unknown'
   if (props.data.result.success === true) return 'success'
   if (props.data.result.success === false) return 'failure'
@@ -148,12 +151,16 @@ const statusClass = computed(() => {
 })
 
 const statusTooltip = computed(() => {
-  if (!props.data.result) return 'Status unknown'
+  // Check if node is dirty first
+  const isDirty = flowStore.isNodeDirty(props.data.id)
+  if (isDirty) return 'Node has changes - run flow to update'
+  
+  if (!props.data.result) return 'Not executed yet'
   if (props.data.result.success) {
     const rows = props.data.result.data?.total_rows
-    return rows !== undefined ? `Operation successful: ${rows} rows` : 'Operation successful'
+    return rows !== undefined ? `Success: ${rows} rows` : 'Success'
   }
-  return `Operation failed: ${props.data.result.error}`
+  return `Failed: ${props.data.result.error}`
 })
 
 const descriptionSummary = computed(() => {
