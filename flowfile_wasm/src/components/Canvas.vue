@@ -68,6 +68,7 @@
           @change="handleLoadFlow"
           style="display: none"
         />
+        <DemoButton v-if="hasSeenDemo" />
         <button
           class="action-btn"
           :class="{ active: showCodeGenerator }"
@@ -222,11 +223,16 @@ import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
+import DemoButton from './DemoButton.vue'
+import { useDemo } from '../composables/useDemo'
 
 
 
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+
+// Demo state
+const { hasSeenDemo } = useDemo()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)

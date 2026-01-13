@@ -64,6 +64,9 @@
     </button>
 
     <DocsModal :is-open="isDocsOpen" @close="isDocsOpen = false" />
+
+    <!-- Prominent demo button for first-time visitors -->
+    <DemoButton v-if="!hasSeenDemo && pyodideReady" prominent />
   </div>
 </template>
 
@@ -71,15 +74,18 @@
 import { ref, onMounted } from 'vue'
 import Canvas from '../components/Canvas.vue'
 import DocsModal from '../components/DocsModal.vue'
+import DemoButton from '../components/DemoButton.vue'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useThemeStore } from '../stores/theme-store'
 import { useTheme } from '../composables/useTheme'
+import { useDemo } from '../composables/useDemo'
 import { storeToRefs } from 'pinia'
 
 const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
+const { hasSeenDemo } = useDemo()
 
 const isDocsOpen = ref(false)
 
