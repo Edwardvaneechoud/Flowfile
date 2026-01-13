@@ -29,6 +29,20 @@ interface CodeGenerationOptions {
   flowName?: string
 }
 
+// Helper function to convert JavaScript values to Python-compatible string representation
+function toPythonValue(value: any): string {
+  if (typeof value === 'boolean') {
+    return value ? 'True' : 'False'
+  }
+  if (Array.isArray(value)) {
+    return '[' + value.map(toPythonValue).join(', ') + ']'
+  }
+  if (typeof value === 'string') {
+    return JSON.stringify(value)
+  }
+  return String(value)
+}
+
 class FlowToPolarsConverter {
   private nodes: Map<number, FlowNode>
   private edges: FlowEdge[]
@@ -221,7 +235,7 @@ class FlowToPolarsConverter {
 
     if (tableSettings) {
       this.addCode(`    separator="${tableSettings.delimiter || ','}",`)
-      this.addCode(`    has_header=${tableSettings.has_headers ?? true},`)
+      this.addCode(`    has_header=${(tableSettings.has_headers ?? true) ? 'True' : 'False'},`)
       if (tableSettings.starting_from_line) {
         this.addCode(`    skip_rows=${tableSettings.starting_from_line},`)
       }
@@ -436,7 +450,7 @@ class FlowToPolarsConverter {
 
     this.addCode(`${varName} = ${inputDf}.sort(`)
     this.addCode(`    ${JSON.stringify(sortCols)},`)
-    this.addCode(`    descending=${JSON.stringify(descending)}`)
+    this.addCode(`    descending=${toPythonValue(descending)}`)
     this.addCode(`)`)
     this.addCode('')
   }
@@ -536,20 +550,26 @@ class FlowToPolarsConverter {
 
   private handleOutput(settings: NodeOutputSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const outputSettings = settings.output_settings
 
-    if (!outputSettings) {
+    // Handle both nested format (from UI) and flat format (from YAML import)
+    // UI format: settings.output_settings.name, settings.output_settings.file_type, etc.
+    // YAML format: settings.file_name, settings.file_type, settings.output_table, etc.
+    const outputSettings = settings.output_settings
+    const anySettings = settings as any  // For accessing YAML format fields
+
+    // Try to get values from nested format first, fall back to flat format
+    const fileName = outputSettings?.name || anySettings.file_name || 'output.csv'
+    const fileType = outputSettings?.file_type || anySettings.file_type || 'csv'
+    const tableSettings = outputSettings?.table_settings || anySettings.output_table
+    const polarsMethod = outputSettings?.polars_method || (fileType === 'parquet' ? 'sink_parquet' : 'sink_csv')
+
+    // Check if we have any valid settings
+    if (!outputSettings && !anySettings.file_name && !anySettings.file_type) {
       this.addComment(`# Output node ${varName} has no settings configured`)
       this.addCode(`${varName} = ${inputDf}`)
       this.addCode('')
       return
     }
-
-    const fileName = outputSettings.name || 'output.csv'
-    const fileType = outputSettings.file_type || 'csv'
-    const tableSettings = outputSettings.table_settings
-    // Use polars_method if available, otherwise derive from file_type
-    const polarsMethod = outputSettings.polars_method || (fileType === 'parquet' ? 'sink_parquet' : 'sink_csv')
 
     this.addComment(`# Write output to ${fileName} using ${polarsMethod}`)
 
