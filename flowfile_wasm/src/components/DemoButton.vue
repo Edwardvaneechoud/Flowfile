@@ -62,7 +62,7 @@ function handleDismiss() {
 /* Prominent floating button styles */
 .demo-button-prominent {
   position: fixed;
-  bottom: var(--spacing-6);
+  top: 70px;
   right: var(--spacing-6);
   z-index: var(--z-index-dropdown);
 }
@@ -135,9 +135,9 @@ function handleDismiss() {
 /* Tooltip that appears on hover */
 .demo-tooltip {
   position: absolute;
-  bottom: calc(100% + var(--spacing-3));
+  top: calc(100% + var(--spacing-3));
   left: 50%;
-  transform: translateX(-50%) translateY(10px);
+  transform: translateX(-50%) translateY(-10px);
   padding: var(--spacing-2) var(--spacing-4);
   background: var(--color-gray-800);
   color: var(--color-text-inverse);
@@ -154,11 +154,11 @@ function handleDismiss() {
 .demo-tooltip::after {
   content: '';
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
   border: 6px solid transparent;
-  border-top-color: var(--color-gray-800);
+  border-bottom-color: var(--color-gray-800);
 }
 
 .demo-button-prominent:hover .demo-tooltip {
@@ -223,13 +223,13 @@ function handleDismiss() {
 }
 
 [data-theme="dark"] .demo-tooltip::after {
-  border-top-color: var(--color-gray-700);
+  border-bottom-color: var(--color-gray-700);
 }
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .demo-button-prominent {
-    bottom: var(--spacing-4);
+    top: 60px;
     right: var(--spacing-4);
   }
 
