@@ -3,6 +3,7 @@
     <!-- Node List Sidebar - Using DraggablePanel -->
     <DraggablePanel
       title="Data Actions"
+      panel-id="node-list-sidebar"
       initial-position="left"
       :initial-width="200"
       :initial-top="toolbarHeight"
@@ -118,6 +119,7 @@
     <DraggablePanel
       v-if="selectedNode"
       :title="getNodeDescription(selectedNode.type).title"
+      panel-id="node-settings-panel"
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
@@ -140,6 +142,7 @@
     <DraggablePanel
       v-if="selectedNodeId !== null"
       title="Table Preview"
+      panel-id="data-preview-panel"
       initial-position="bottom"
       :initial-height="280"
       :initial-left="200"
