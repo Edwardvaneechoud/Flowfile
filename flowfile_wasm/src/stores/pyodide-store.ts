@@ -255,8 +255,8 @@ class FlowfileNode(BaseModel):
     type: str
     is_start_node: bool = False
     description: Optional[str] = ""
-    x_position: Optional[int] = 0
-    y_position: Optional[int] = 0
+    x_position: Optional[float] = 0
+    y_position: Optional[float] = 0
     left_input_id: Optional[int] = None
     right_input_id: Optional[int] = None
     input_ids: Optional[List[int]] = Field(default_factory=list)
@@ -438,6 +438,21 @@ def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dic
     except Exception as e:
         return {"success": False, "error": format_error("manual_input", node_id, e)}
 
+
+def convert_filter_value(value: str, dtype) -> any:
+    """Convert a single filter value to match column data type"""
+    if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
+        return int(value)
+    elif dtype in (pl.Float32, pl.Float64):
+        return float(value)
+    elif dtype == pl.Boolean:
+        return value.lower() == 'true'
+    return value
+
+def convert_filter_values(values: list[str], dtype) -> list:
+    """Convert filter values to match column data type"""
+    return [convert_filter_value(v, dtype) for v in values]
+
 def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute filter node - chains onto input LazyFrame"""
     input_lf = get_lazyframe(input_id)
@@ -467,23 +482,24 @@ def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
             else:
                 col = pl.col(field)
 
-                try:
-                    num_value = float(value) if '.' in value else int(value)
-                except:
-                    num_value = value
+                # Get column data type from schema
+                schema = input_lf.collect_schema()
+                col_dtype = schema.get(field)
+
+                # DON'T convert here - do it per operator
 
                 if operator == "equals":
-                    result_lf = input_lf.filter(col == num_value)
+                    result_lf = input_lf.filter(col == convert_filter_value(value, col_dtype))
                 elif operator == "not_equals":
-                    result_lf = input_lf.filter(col != num_value)
+                    result_lf = input_lf.filter(col != convert_filter_value(value, col_dtype))
                 elif operator == "greater_than":
-                    result_lf = input_lf.filter(col > num_value)
+                    result_lf = input_lf.filter(col > convert_filter_value(value, col_dtype))
                 elif operator == "greater_than_or_equals":
-                    result_lf = input_lf.filter(col >= num_value)
+                    result_lf = input_lf.filter(col >= convert_filter_value(value, col_dtype))
                 elif operator == "less_than":
-                    result_lf = input_lf.filter(col < num_value)
+                    result_lf = input_lf.filter(col < convert_filter_value(value, col_dtype))
                 elif operator == "less_than_or_equals":
-                    result_lf = input_lf.filter(col <= num_value)
+                    result_lf = input_lf.filter(col <= convert_filter_value(value, col_dtype))
                 elif operator == "contains":
                     result_lf = input_lf.filter(col.str.contains(value))
                 elif operator == "not_contains":
@@ -498,24 +514,21 @@ def execute_filter(node_id: int, input_id: int, settings: Dict) -> Dict:
                     result_lf = input_lf.filter(col.is_not_null())
                 elif operator == "in":
                     values = [v.strip() for v in value.split(",")]
-                    result_lf = input_lf.filter(col.is_in(values))
+                    result_lf = input_lf.filter(col.is_in(convert_filter_values(values, col_dtype)))
                 elif operator == "not_in":
                     values = [v.strip() for v in value.split(",")]
-                    result_lf = input_lf.filter(~col.is_in(values))
+                    result_lf = input_lf.filter(~col.is_in(convert_filter_values(values, col_dtype)))
                 elif operator == "between":
-                    try:
-                        v1 = float(value) if '.' in value else int(value)
-                        v2 = float(value2) if '.' in value2 else int(value2)
-                    except:
-                        v1, v2 = value, value2
+                    v1 = convert_filter_value(value, col_dtype)
+                    v2 = convert_filter_value(value2, col_dtype)
                     result_lf = input_lf.filter((col >= v1) & (col <= v2))
                 else:
                     result_lf = input_lf
-
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
         return {"success": False, "error": format_error_lf("filter", node_id, e, input_lf, field)}
+
 
 def execute_select(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute select node - column selection/renaming (lazy)"""

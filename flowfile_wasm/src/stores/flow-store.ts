@@ -969,21 +969,18 @@ for nid in orphaned_ids:
         rightInputSchema
       )
 
-      // Update nodeResults with inferred schema
-      if (inferredSchema) {
-        const existingResult = nodeResults.value.get(nodeId)
-        // Only preserve success if there's actual executed data
-        // Schema inference alone doesn't mean the node was executed (success stays undefined = grey)
-        const hasExecutedData = existingResult?.success || (existingResult?.data?.data && existingResult.data.data.length >= 0)
-        nodeResults.value.set(nodeId, {
-          success: hasExecutedData ? existingResult.success : undefined,
-          schema: inferredSchema,
-          // Preserve existing data if any (for display purposes)
-          data: existingResult?.data,
-          execution_time: existingResult?.execution_time,
-          // Preserve download info for output nodes
-          download: existingResult?.download
-        })
+        if (inferredSchema) {
+          const existingResult = nodeResults.value.get(nodeId)
+          // Preserve success if it was explicitly set (true OR false means it was executed)
+          const wasExecuted = existingResult?.success !== undefined
+          nodeResults.value.set(nodeId, {
+            success: wasExecuted ? existingResult.success : undefined,
+            schema: inferredSchema,
+            data: existingResult?.data,
+            error: existingResult?.error,  // ADD THIS - preserve error!
+            execution_time: existingResult?.execution_time,
+            download: existingResult?.download
+          })
       } else {
         // inferOutputSchema returned null - this means:
         // 1. For polars_code/formula: schema can only be known after execution (and input wasn't available)
@@ -1178,7 +1175,16 @@ result
           fromCache: result.from_cache
         }
       } else {
-        return { success: false, error: result.error }
+          const existingResult = nodeResults.value.get(nodeId)
+          if (existingResult) {
+            nodeResults.value.set(nodeId, {
+              ...existingResult,
+              success: false,
+              error: result.error,
+              data: undefined
+            })
+          }
+          return { success: false, error: result.error }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
@@ -1889,13 +1895,16 @@ result
    * Load a flowfile from a File object
    * Supports both JSON and YAML formats (auto-detected by extension or content)
    */
-  async function loadFlowfile(file: File): Promise<boolean> {
+  async function loadFlowfile(file: File): Promise<{
+    success: boolean
+    missingFiles?: Array<{nodeId: number, fileName: string}>
+  }> {
     try {
       const text = await file.text()
       const fileName = file.name.toLowerCase()
-
+  
       let data: FlowfileData
-
+  
       // Detect format by extension or content
       if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) {
         // Parse as YAML
@@ -1913,24 +1922,51 @@ result
           data = yaml.load(text) as FlowfileData
         }
       }
-
+  
       if (!data.flowfile_version || !data.nodes) {
         throw new Error('Invalid flowfile format')
       }
-
+  
       // Optional: Validate using Pydantic schemas
       const validation = await validateFlowfileData(data)
       if (!validation.success) {
         console.warn('Flowfile validation warning:', validation.error)
         // Continue anyway - validation is advisory
       }
-
-      return importFromFlowfile(data)
+  
+      // Clear IndexedDB file storage
+      fileStorage.clearAll().catch(err => {
+        console.error('Failed to clear IndexedDB:', err)
+      })
+  
+      const imported = importFromFlowfile(data)
+      if (imported) {
+        const missingFiles = getMissingFileNodes()
+        return { success: true, missingFiles }
+      }
+      return { success: false }
     } catch (error) {
       console.error('Failed to load flowfile', error)
-      return false
+      return { success: false }
     }
   }
+
+  function getMissingFileNodes(): Array<{nodeId: number, fileName: string}> {
+    const missing: Array<{nodeId: number, fileName: string}> = []
+    
+    for (const [id, node] of nodes.value) {
+      if (node.type === 'read_csv') {
+        const settings = node.settings as NodeReadSettings
+        const fileName = settings.file_name || settings.received_table?.name
+        
+        if (fileName && !fileContents.value.has(id)) {
+          missing.push({ nodeId: id, fileName })
+        }
+      }
+    }
+    return missing
+  }
+
 
   function clearFlow() {
     nodes.value.clear()
@@ -1947,6 +1983,23 @@ result
     fileStorage.clearAll().catch(err => {
       console.error('Failed to clear IndexedDB:', err)
     })
+  }
+
+  function updateNodeFile(nodeId: number, fileName: string, content: string) {
+    fileContents.value.set(nodeId, content)
+    
+    const node = nodes.value.get(nodeId)
+    if (node && node.type === 'read_csv') {
+      const settings = node.settings as NodeReadSettings
+      settings.file_name = fileName
+      if (settings.received_table) {
+        settings.received_table.name = fileName
+      }
+    }
+    
+    // Mark node as dirty so it re-executes
+    dirtyNodes.value.add(nodeId)
+    saveToStorage()
   }
 
   return {
@@ -1967,6 +2020,7 @@ result
     getNodeInputSchema,
     getLeftInputSchema,
     getRightInputSchema,
+    getMissingFileNodes,
 
     // Actions
     generateNodeId,
@@ -1984,6 +2038,7 @@ result
     cleanupOrphanedData,
     propagateSchemas,
     setSourceNodeSchema,
+    updateNodeFile, 
 
     // Preview management (lazy loading)
     fetchNodePreview,
