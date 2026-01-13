@@ -409,8 +409,8 @@ class FlowToPolarsConverter {
 
   private handleSort(settings: NodeSortSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const sortCols = settings.sort_input.map(s => s.column)
-    const descending = settings.sort_input.map(s => s.how === 'desc')
+    const sortCols = settings.sort_input.sort_cols.map(s => s.column)
+    const descending = settings.sort_input.sort_cols.map(s => s.descending)
 
     this.addCode(`${varName} = ${inputDf}.sort(`)
     this.addCode(`    ${JSON.stringify(sortCols)},`)

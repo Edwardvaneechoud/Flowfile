@@ -301,7 +301,9 @@ export interface NodeSelectSettings extends NodeSingleInput {
 }
 
 export interface NodeSortSettings extends NodeSingleInput {
-  sort_input: SortByInput[]
+  sort_input: {
+    sort_cols: SortColumn[]
+  }
 }
 
 export interface NodeGroupBySettings extends NodeSingleInput {
