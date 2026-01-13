@@ -1,0 +1,162 @@
+flowfile_version: 1.0.0
+flowfile_id: 1768345778339
+flowfile_name: Sales Analytics Demo
+flowfile_settings:
+  description: 'Demo flow: Join orders with regions, filter, aggregate, and export to Parquet'
+  execution_mode: Development
+  execution_location: local
+  auto_save: false
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read_csv
+    is_start_node: true
+    description: Read Orders
+    x_position: 100
+    y_position: 150
+    input_ids: []
+    outputs:
+      - 9
+    setting_input:
+      cache_results: false
+      file_name: sales-data.csv
+      received_table:
+        name: sales-data.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 2
+    type: read_csv
+    is_start_node: true
+    description: Read Regions
+    x_position: 100
+    y_position: 350
+    input_ids: []
+    outputs:
+      - 9
+    setting_input:
+      cache_results: false
+      file_name: regions.csv
+      received_table:
+        name: regions.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+  - id: 9
+    type: join
+    is_start_node: false
+    description: Join with Regions
+    x_position: 350
+    y_position: 250
+    left_input_id: 1
+    right_input_id: 2
+    input_ids:
+      - 1
+    outputs:
+      - 4
+    setting_input:
+      cache_results: true
+      join_input:
+        join_type: inner
+        how: inner
+        join_mapping:
+          - left_col: region
+            right_col: region
+        left_suffix: ''
+        right_suffix: _right
+  - id: 4
+    type: filter
+    is_start_node: false
+    description: Completed Only
+    x_position: 600
+    y_position: 250
+    left_input_id: 9
+    input_ids:
+      - 9
+    outputs:
+      - 5
+    setting_input:
+      cache_results: false
+      filter_input:
+        mode: basic
+        basic_filter:
+          field: status
+          operator: equals
+          value: Completed
+        advanced_filter: ''
+  - id: 5
+    type: group_by
+    is_start_node: false
+    description: Aggregate by Region
+    x_position: 850
+    y_position: 250
+    input_ids:
+      - 4
+    outputs:
+      - 6
+    setting_input:
+      cache_results: false
+      groupby_input:
+        agg_cols:
+          - old_name: region_name
+            agg: groupby
+            new_name: region_name
+            is_available: true
+          - old_name: manager
+            agg: first
+            new_name: manager
+            is_available: true
+          - old_name: order_id
+            agg: count
+            new_name: order_count
+            is_available: true
+          - old_name: quantity
+            agg: sum
+            new_name: total_quantity
+            is_available: true
+          - old_name: unit_price
+            agg: mean
+            new_name: avg_price
+            is_available: true
+          - old_name: target_sales
+            agg: first
+            new_name: target_sales
+            is_available: true
+  - id: 6
+    type: sort
+    is_start_node: false
+    description: Sort by Orders
+    x_position: 1100
+    y_position: 250
+    input_ids:
+      - 5
+    outputs:
+      - 7
+    setting_input:
+      cache_results: false
+      sort_input:
+        sort_cols:
+          - column: order_count
+            descending: true
+            is_available: true
+  - id: 7
+    type: output
+    is_start_node: false
+    description: Export Parquet
+    x_position: 1350
+    y_position: 250
+    input_ids:
+      - 6
+    outputs: []
+    setting_input:
+      cache_results: false
+      file_name: regional_sales_summary
+      file_type: parquet
+      output_table:
+        file_type: parquet
