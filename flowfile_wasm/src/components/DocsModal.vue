@@ -245,6 +245,21 @@
             <section class="section links-section">
               <h2 class="section-title">Learn More</h2>
               <div class="links-grid">
+                <button class="link-card demo-link-card" @click="handleShowDemo">
+                  <div class="link-icon link-icon-demo">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                  </div>
+                  <div class="link-content">
+                    <h4>Try the Demo</h4>
+                    <p>Load a sample flow to see Flowfile in action with pre-loaded data</p>
+                  </div>
+                  <svg class="link-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                    <polyline points="12 5 19 12 12 19"/>
+                  </svg>
+                </button>
                 <a href="https://edwardvaneechoud.github.io/Flowfile/" target="_blank" rel="noopener" class="link-card">
                   <div class="link-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -299,13 +314,24 @@
 </template>
 
 <script setup lang="ts">
+import { useDemo } from '../composables/useDemo'
+
 defineProps<{
   isOpen: boolean
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   close: []
 }>()
+
+const { loadDemo } = useDemo()
+
+async function handleShowDemo() {
+  const success = await loadDemo(true)
+  if (success) {
+    emit('close')
+  }
+}
 </script>
 
 <style scoped>
@@ -758,6 +784,19 @@ defineEmits<{
 .link-card:hover .link-arrow {
   transform: translateX(4px);
   color: var(--color-accent);
+}
+
+/* Demo link card specific styles */
+.demo-link-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.link-icon-demo {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
 }
 
 /* Modal Footer */

@@ -70,6 +70,7 @@
           @change="handleLoadFlow"
           style="display: none"
         />
+        <DemoButton v-if="hasSeenDemo" />
         <button
           class="action-btn"
           :class="{ active: showCodeGenerator }"
@@ -192,9 +193,6 @@
     />
 
   </div>
-   
-
-
 </template>
 
 <script setup lang="ts">
@@ -228,11 +226,14 @@ import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
-
-
+import DemoButton from './DemoButton.vue'
+import { useDemo } from '../composables/useDemo'
 
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+
+// Demo state
+const { hasSeenDemo } = useDemo()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
@@ -243,8 +244,6 @@ const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
-
-
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
