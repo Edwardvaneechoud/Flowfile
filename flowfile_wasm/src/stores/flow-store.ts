@@ -1181,7 +1181,7 @@ result
               ...existingResult,
               success: false,
               error: result.error,
-              data: null
+              data: undefined
             })
           }
           return { success: false, error: result.error }
