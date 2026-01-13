@@ -13,7 +13,8 @@ import type { FlowfileData } from '../types'
 
 const DEMO_SHOWN_KEY = 'flowfile_demo_shown'
 const DEMO_DISMISSED_KEY = 'flowfile_demo_dismissed'
-const CSV_NODE_ID = 1 // Must match the read_csv node ID in sample-flow.yaml
+const ORDERS_NODE_ID = 1 // Must match the read_csv node ID for orders in sample-flow.yaml
+const REGIONS_NODE_ID = 2 // Must match the read_csv node ID for regions in sample-flow.yaml
 
 // Track loading state
 const isLoading = ref(false)
@@ -84,19 +85,28 @@ export function useDemo() {
     loadError.value = null
 
     try {
-      // Fetch the YAML flow definition
-      const flowResponse = await fetch('/demo/sample-flow.yaml')
+      // Fetch all demo files in parallel
+      const [flowResponse, ordersResponse, regionsResponse] = await Promise.all([
+        fetch('/demo/sample-flow.yaml'),
+        fetch('/demo/sample-data.csv'),
+        fetch('/demo/regions.csv')
+      ])
+
       if (!flowResponse.ok) {
         throw new Error(`Failed to fetch flow definition: ${flowResponse.status}`)
       }
-      const flowYaml = await flowResponse.text()
-
-      // Fetch the sample CSV data
-      const dataResponse = await fetch('/demo/sample-data.csv')
-      if (!dataResponse.ok) {
-        throw new Error(`Failed to fetch sample data: ${dataResponse.status}`)
+      if (!ordersResponse.ok) {
+        throw new Error(`Failed to fetch orders data: ${ordersResponse.status}`)
       }
-      const csvContent = await dataResponse.text()
+      if (!regionsResponse.ok) {
+        throw new Error(`Failed to fetch regions data: ${regionsResponse.status}`)
+      }
+
+      const [flowYaml, ordersContent, regionsContent] = await Promise.all([
+        flowResponse.text(),
+        ordersResponse.text(),
+        regionsResponse.text()
+      ])
 
       // Parse the YAML flow definition
       const flowData = yaml.load(flowYaml) as FlowfileData
@@ -110,13 +120,18 @@ export function useDemo() {
         throw new Error('Failed to import flow')
       }
 
-      // Load the CSV content into the Read CSV node
-      flowStore.setFileContent(CSV_NODE_ID, csvContent)
+      // Load the orders CSV content into the first Read CSV node
+      flowStore.setFileContent(ORDERS_NODE_ID, ordersContent)
+      const ordersSchema = inferSchemaFromCsv(ordersContent, true, ',')
+      if (ordersSchema) {
+        flowStore.setSourceNodeSchema(ORDERS_NODE_ID, ordersSchema)
+      }
 
-      // Infer schema from the CSV content
-      const schema = inferSchemaFromCsv(csvContent, true, ',')
-      if (schema) {
-        flowStore.setSourceNodeSchema(CSV_NODE_ID, schema)
+      // Load the regions CSV content into the second Read CSV node
+      flowStore.setFileContent(REGIONS_NODE_ID, regionsContent)
+      const regionsSchema = inferSchemaFromCsv(regionsContent, true, ',')
+      if (regionsSchema) {
+        flowStore.setSourceNodeSchema(REGIONS_NODE_ID, regionsSchema)
       }
 
       // Propagate schemas downstream
