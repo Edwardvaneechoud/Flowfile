@@ -12,6 +12,8 @@ import type {
   NodeJoinSettings,
   NodeSortSettings,
   NodeUniqueSettings,
+  NodePivotSettings,
+  NodeUnpivotSettings,
   NodeSampleSettings,
   NodeReadSettings,
   NodeManualInputSettings,
@@ -168,6 +170,12 @@ class FlowToPolarsConverter {
       case 'polars_code':
         this.handlePolarsCode(node.settings as PolarsCodeSettings, varName, inputVars)
         break
+      case 'pivot':
+        this.handlePivot(node.settings as NodePivotSettings, varName, inputVars)
+        break
+      case 'unpivot':
+        this.handleUnpivot(node.settings as NodeUnpivotSettings, varName, inputVars)
+        break
       case 'preview':
         // Preview is a pass-through node
         this.handlePreview(varName, inputVars)
@@ -279,20 +287,34 @@ class FlowToPolarsConverter {
 
   private createBasicFilterExpr(field: string, operator: FilterOperator, value: string, value2?: string): string {
     const col = `pl.col("${field}")`
-
+    
+    // Format value: no quotes for numbers/booleans, quotes for strings
+    const formatValue = (v: string) => {
+      // Check numeric
+      if (/^-?\d+(\.\d+)?$/.test(v)) {
+        return v
+      }
+      // Check boolean (convert to Python True/False)
+      const lower = v.toLowerCase()
+      if (lower === 'true') return 'True'
+      if (lower === 'false') return 'False'
+      // String
+      return `"${v}"`
+    }
+  
     switch (operator) {
       case 'equals':
-        return `${col} == "${value}"`
+        return `${col} == ${formatValue(value)}`
       case 'not_equals':
-        return `${col} != "${value}"`
+        return `${col} != ${formatValue(value)}`
       case 'greater_than':
-        return `${col} > ${value}`
+        return `${col} > ${formatValue(value)}`
       case 'greater_than_or_equals':
-        return `${col} >= ${value}`
+        return `${col} >= ${formatValue(value)}`
       case 'less_than':
-        return `${col} < ${value}`
+        return `${col} < ${formatValue(value)}`
       case 'less_than_or_equals':
-        return `${col} <= ${value}`
+        return `${col} <= ${formatValue(value)}`
       case 'contains':
         return `${col}.str.contains("${value}")`
       case 'not_contains':
@@ -306,15 +328,15 @@ class FlowToPolarsConverter {
       case 'is_not_null':
         return `${col}.is_not_null()`
       case 'in':
-        const values = value.split(',').map(v => `"${v.trim()}"`).join(', ')
+        const values = value.split(',').map(v => formatValue(v.trim())).join(', ')
         return `${col}.is_in([${values}])`
       case 'not_in':
-        const notValues = value.split(',').map(v => `"${v.trim()}"`).join(', ')
+        const notValues = value.split(',').map(v => formatValue(v.trim())).join(', ')
         return `~${col}.is_in([${notValues}])`
       case 'between':
-        return `${col}.is_between(${value}, ${value2 || value})`
+        return `${col}.is_between(${formatValue(value)}, ${formatValue(value2 || value)})`
       default:
-        return `${col} == "${value}"`
+        return `${col} == ${formatValue(value)}`
     }
   }
 
@@ -409,8 +431,8 @@ class FlowToPolarsConverter {
 
   private handleSort(settings: NodeSortSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const sortCols = settings.sort_input.map(s => s.column)
-    const descending = settings.sort_input.map(s => s.how === 'desc')
+    const sortCols = settings.sort_input.sort_cols.map(s => s.column)
+    const descending = settings.sort_input.sort_cols.map(s => s.descending)
 
     this.addCode(`${varName} = ${inputDf}.sort(`)
     this.addCode(`    ${JSON.stringify(sortCols)},`)
@@ -433,6 +455,58 @@ class FlowToPolarsConverter {
     }
     this.addCode('')
   }
+
+  private handlePivot(settings: NodePivotSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const pivotInput = settings.pivot_input
+    
+    // Handle multiple aggregations - just take first (same as core)
+    const aggFunc = pivotInput.aggregations?.[0] || 'first'
+    
+    if (pivotInput.index_columns.length === 0) {
+      // No index columns - need temp index
+      this.addCode(`${varName} = (${inputDf}.collect()`)
+      this.addCode(`    .with_columns(pl.lit(1).alias("__temp_index__"))`)
+      this.addCode(`    .pivot(`)
+      this.addCode(`        values="${pivotInput.value_col}",`)
+      this.addCode(`        index=["__temp_index__"],`)
+      this.addCode(`        columns="${pivotInput.pivot_column}",`)
+      this.addCode(`        aggregate_function="${aggFunc}"`)
+      this.addCode(`    )`)
+      this.addCode(`    .drop("__temp_index__")`)
+      this.addCode(`).lazy()`)
+    } else {
+      // Has index columns
+      this.addCode(`${varName} = ${inputDf}.collect().pivot(`)
+      this.addCode(`    values="${pivotInput.value_col}",`)
+      this.addCode(`    index=${JSON.stringify(pivotInput.index_columns)},`)
+      this.addCode(`    columns="${pivotInput.pivot_column}",`)
+      this.addCode(`    aggregate_function="${aggFunc}"`)
+      this.addCode(`).lazy()`)
+    }
+    this.addCode('')
+  }
+
+  private handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
+    const inputDf = inputVars.main || 'df'
+    const unpivotInput = settings.unpivot_input
+  
+    this.addCode(`${varName} = ${inputDf}.unpivot(`)
+    
+    if (unpivotInput.index_columns?.length > 0) {
+      this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
+    }
+    
+    if (unpivotInput.value_columns?.length > 0) {
+      this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
+    }
+    
+    this.addCode(`    variable_name="variable",`)
+    this.addCode(`    value_name="value"`)
+    this.addCode(`)`)
+    this.addCode('')
+  }
+
 
   private handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'

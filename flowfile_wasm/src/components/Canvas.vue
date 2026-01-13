@@ -64,7 +64,7 @@
         <input
           ref="fileInputRef"
           type="file"
-          accept=".flowfile,.json"
+          accept=".json,.yaml,.yml"
           @change="handleLoadFlow"
           style="display: none"
         />
@@ -177,7 +177,18 @@
       :is-visible="showCodeGenerator"
       @close="showCodeGenerator = false"
     />
+    <!-- Missing Files Modal -->
+    <MissingFilesModal
+      :is-open="showMissingFilesModal"
+      :missing-files="missingFiles"
+      @close="showMissingFilesModal = false"
+      @complete="showMissingFilesModal = false"
+    />
+
   </div>
+   
+
+
 </template>
 
 <script setup lang="ts">
@@ -210,11 +221,13 @@ import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
+import MissingFilesModal from './MissingFilesModal.vue'
+
+
 
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
 
-const vueFlowRef = ref()
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
 const toolbarHeight = ref(52)
@@ -222,6 +235,9 @@ const { screenToFlowCoordinate, removeNodes, updateNode } = useVueFlow()
 const searchQuery = ref('')
 const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
+const showMissingFilesModal = ref(false)
+const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
+
 
 
 // Node types for Vue Flow
@@ -532,15 +548,16 @@ async function handleLoadFlow(event: Event) {
   const file = input.files?.[0]
 
   if (!file) return
+  const result = await flowStore.loadFlowfile(file)
 
-  const success = await flowStore.loadFlowfile(file)
-  if (success) {
+  if (result.success && result.missingFiles?.length) {
+    showMissingFilesModal.value = true
+    missingFiles.value = result.missingFiles
     console.log('[Canvas] Flow loaded successfully')
   } else {
     alert('Failed to load flow file. Please check the file format.')
   }
 
-  // Reset input so same file can be loaded again
   input.value = ''
 }
 
