@@ -548,10 +548,12 @@ class FlowToPolarsConverter {
     const fileName = outputSettings.name || 'output.csv'
     const fileType = outputSettings.file_type || 'csv'
     const tableSettings = outputSettings.table_settings
+    // Use polars_method if available, otherwise derive from file_type
+    const polarsMethod = outputSettings.polars_method || (fileType === 'parquet' ? 'sink_parquet' : 'sink_csv')
 
-    this.addComment(`# Write output to ${fileName}`)
+    this.addComment(`# Write output to ${fileName} using ${polarsMethod}`)
 
-    if (fileType === 'parquet') {
+    if (polarsMethod === 'sink_parquet') {
       // For parquet, use sink_parquet for lazy evaluation
       this.addCode(`${inputDf}.sink_parquet("${fileName}")`)
     } else {
