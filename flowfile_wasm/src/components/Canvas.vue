@@ -7,6 +7,7 @@
       initial-position="left"
       :initial-width="200"
       :initial-top="toolbarHeight"
+      :default-z-index="100"
     >
       <div class="nodes-wrapper">
         <input
@@ -123,6 +124,7 @@
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
+      :default-z-index="120"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -146,6 +148,7 @@
       initial-position="bottom"
       :initial-height="280"
       :initial-left="200"
+      :default-z-index="110"
     >
       <div v-if="selectedNodeResult?.success && selectedNodeResult?.data" class="data-preview">
         <div class="preview-header">

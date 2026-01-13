@@ -41,6 +41,7 @@ interface Props {
   initialHeight?: number
   initialLeft?: number
   initialTop?: number
+  defaultZIndex?: number
   onClose?: () => void
 }
 
@@ -49,7 +50,8 @@ const props = withDefaults(defineProps<Props>(), {
   initialWidth: 400,
   initialHeight: 300,
   initialLeft: 0,
-  initialTop: 50
+  initialTop: 50,
+  defaultZIndex: 100
 })
 
 const panelRef = ref<HTMLElement | null>(null)
@@ -62,7 +64,11 @@ const top = ref(props.initialTop)
 const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
-const zIndex = ref(++globalMaxZIndex)
+
+// Initialize zIndex with defaultZIndex prop, update global counter if needed
+const initialZIndex = Math.max(props.defaultZIndex, globalMaxZIndex + 1)
+globalMaxZIndex = Math.max(globalMaxZIndex, initialZIndex)
+const zIndex = ref(initialZIndex)
 
 // Drag state
 const startX = ref(0)
@@ -82,7 +88,8 @@ function saveCurrentState() {
     height: height.value,
     left: left.value,
     top: top.value,
-    isMinimized: isMinimized.value
+    isMinimized: isMinimized.value,
+    zIndex: zIndex.value
   }
   savePanelState(props.panelId, state)
 }
@@ -107,6 +114,12 @@ onMounted(() => {
       left.value = validLeft
       top.value = validTop
       isMinimized.value = savedState.isMinimized
+
+      // Restore zIndex if saved, and update global counter
+      if (savedState.zIndex !== undefined) {
+        zIndex.value = savedState.zIndex
+        globalMaxZIndex = Math.max(globalMaxZIndex, savedState.zIndex)
+      }
       return
     }
   }
@@ -165,6 +178,7 @@ function bringToFront() {
   if (zIndex.value <= globalMaxZIndex) {
     globalMaxZIndex++
     zIndex.value = globalMaxZIndex
+    saveCurrentState()
   }
 }
 

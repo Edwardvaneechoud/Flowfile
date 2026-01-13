@@ -11,6 +11,7 @@ export interface PanelState {
   left: number
   top: number
   isMinimized: boolean
+  zIndex?: number
 }
 
 interface StoredPanelStates {
