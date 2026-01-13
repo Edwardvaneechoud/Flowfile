@@ -88,7 +88,7 @@ export function useDemo() {
       // Fetch all demo files in parallel
       const [flowResponse, ordersResponse, regionsResponse] = await Promise.all([
         fetch('/demo/sample-flow.yaml'),
-        fetch('/demo/sample-data.csv'),
+        fetch('/demo/sales-data.csv'),
         fetch('/demo/regions.csv')
       ])
 

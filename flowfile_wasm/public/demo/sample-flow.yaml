@@ -19,9 +19,9 @@ nodes:
       - 9
     setting_input:
       cache_results: false
-      file_name: sample-data.csv
+      file_name: sales-data.csv
       received_table:
-        name: sample-data.csv
+        name: sales-data.csv
         file_type: csv
         table_settings:
           file_type: csv
