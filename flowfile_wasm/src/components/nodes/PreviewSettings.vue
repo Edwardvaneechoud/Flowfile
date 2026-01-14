@@ -1,16 +1,6 @@
 <template>
   <div class="settings-form">
     <div class="preview-info">
-      <div class="info-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-          <circle cx="12" cy="12" r="3"/>
-        </svg>
-      </div>
-      <div class="info-text">
-        <h4>Preview Node</h4>
-        <p>This node displays the data from the connected input. No configuration needed.</p>
-      </div>
     </div>
 
     <div v-if="result" class="stats">
@@ -242,7 +232,6 @@ onUnmounted(() => {
 .preview-info {
   display: flex;
   gap: 16px;
-  padding: 16px;
   background: var(--color-accent-subtle);
   border-radius: var(--border-radius-md);
   border: 1px solid var(--color-border-light);
@@ -412,7 +401,7 @@ onUnmounted(() => {
 }
 
 .expanded-preview-panel {
-  height: 50vh;
+  height: 70vh;
   background: var(--color-background-secondary);
   border-top: 2px solid var(--color-border-primary);
   display: flex;
