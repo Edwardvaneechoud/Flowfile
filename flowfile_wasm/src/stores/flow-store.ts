@@ -1478,11 +1478,19 @@ result
       }
 
       // Store result - success=true indicates data is available in Python
+      // Preserve existing data if schema unchanged (data might be stale otherwise)
+      const existingResult = nodeResults.value.get(nodeId)
+      const schemaUnchanged = existingResult?.schema &&
+                              result.schema &&
+                              JSON.stringify(existingResult.schema) === JSON.stringify(result.schema)
+
       const nodeResult: NodeResult = {
         success: result.success,
         schema: result.schema,
         error: result.error,
-        download: result.download
+        download: result.download,
+        // Preserve data if schema unchanged (prevents data loss during schema propagation)
+        data: schemaUnchanged ? existingResult?.data : undefined
       }
 
       nodeResults.value.set(nodeId, nodeResult)
@@ -1492,8 +1500,10 @@ result
         dirtyNodes.value.delete(nodeId)
       }
 
-      // Clear preview cache since we just executed
-      previewCache.value.delete(nodeId)
+      // Clear preview cache only if schema changed (prevents cache thrashing during schema propagation)
+      if (!schemaUnchanged) {
+        previewCache.value.delete(nodeId)
+      }
 
       return nodeResult
     } catch (error) {
