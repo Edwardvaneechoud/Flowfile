@@ -72,6 +72,8 @@ nodes:
             right_col: region
         left_suffix: ''
         right_suffix: _right
+        left_select: []
+        right_select: []
   - id: 4
     type: filter
     is_start_node: false
