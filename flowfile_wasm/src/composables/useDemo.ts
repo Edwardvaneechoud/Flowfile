@@ -38,6 +38,14 @@ function shouldAutoLoadDemo(): boolean {
   const urlParams = new URLSearchParams(window.location.search)
   const hasDemoParam = urlParams.get('demo') === 'true'
 
+  console.log('[Demo] Checking auto-load conditions:', {
+    hostname,
+    isOnDemoSubdomain,
+    search: window.location.search,
+    hasDemoParam,
+    shouldLoad: isOnDemoSubdomain || hasDemoParam
+  })
+
   return isOnDemoSubdomain || hasDemoParam
 }
 
@@ -175,10 +183,14 @@ export function useDemo() {
    * @returns Promise<boolean> - True if demo was auto-loaded
    */
   async function autoLoadDemoIfNeeded(): Promise<boolean> {
+    console.log('[Demo] autoLoadDemoIfNeeded called')
     if (shouldAutoLoadDemo()) {
-      // Load without confirmation since user explicitly navigated to demo URL
-      return await loadDemo(false)
+      console.log('[Demo] Conditions met, loading demo...')
+      const result = await loadDemo(false)
+      console.log('[Demo] Demo load result:', result)
+      return result
     }
+    console.log('[Demo] Conditions not met, skipping auto-load')
     return false
   }
 
