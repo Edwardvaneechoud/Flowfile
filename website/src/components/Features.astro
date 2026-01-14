@@ -1,0 +1,254 @@
+---
+---
+
+<section class="features-section" id="features">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Features</span>
+      <h2 class="section-title">Two ways to build, one powerful pipeline</h2>
+      <p class="section-description">
+        Whether you prefer visual design or writing code, Flowfile gives you the same
+        high-performance pipeline with the flexibility to work your way.
+      </p>
+    </div>
+
+    <div class="features-grid">
+      <!-- Visual Editor -->
+      <div class="feature-card feature-large">
+        <div class="feature-icon" style="--icon-color: #22c55e;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <circle cx="15.5" cy="8.5" r="1.5" />
+            <circle cx="15.5" cy="15.5" r="1.5" />
+            <circle cx="8.5" cy="15.5" r="1.5" />
+            <path d="M10 8.5h4" />
+            <path d="M15.5 10v4" />
+            <path d="M14 15.5h-4" />
+            <path d="M8.5 14v-4" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Visual Editor</h3>
+        <p class="feature-description">
+          Drag-and-drop nodes to build complex data pipelines without writing a single line of code.
+          Perfect for data analysts and anyone who prefers a visual approach.
+        </p>
+        <ul class="feature-list">
+          <li>Intuitive drag-and-drop interface</li>
+          <li>Real-time data preview at each step</li>
+          <li>30+ transformation nodes</li>
+          <li>Save and share workflows</li>
+        </ul>
+      </div>
+
+      <!-- Python API -->
+      <div class="feature-card feature-large">
+        <div class="feature-icon" style="--icon-color: #6366f1;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
+            <line x1="14" y1="4" x2="10" y2="20" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Python API</h3>
+        <p class="feature-description">
+          Write pipelines in Python with a familiar, Polars-like syntax. Full programmatic
+          control with the same powerful engine under the hood.
+        </p>
+        <div class="code-preview">
+          <pre><code><span class="code-keyword">import</span> flowfile_frame <span class="code-keyword">as</span> ff
+
+df = ff.from_csv(<span class="code-string">"sales.csv"</span>)
+result = (
+    df.filter(ff.col(<span class="code-string">"sales"</span>) > <span class="code-number">1000</span>)
+      .group_by(<span class="code-string">"category"</span>)
+      .agg(ff.sum(<span class="code-string">"sales"</span>))
+)</code></pre>
+        </div>
+      </div>
+
+      <!-- Code Generation -->
+      <div class="feature-card">
+        <div class="feature-icon" style="--icon-color: #f97316;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <path d="M10 12l-2 2 2 2" />
+            <path d="M14 12l2 2-2 2" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Code Generation</h3>
+        <p class="feature-description">
+          Export your visual workflows as production-ready Python/Polars code.
+          No vendor lock-in — deploy anywhere.
+        </p>
+      </div>
+
+      <!-- Node Designer -->
+      <div class="feature-card">
+        <div class="feature-icon" style="--icon-color: #ec4899;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Rich Node Library</h3>
+        <p class="feature-description">
+          From basic filters to fuzzy matching and pivots. 30+ nodes covering every
+          ETL operation you need.
+        </p>
+      </div>
+
+      <!-- Data Sources -->
+      <div class="feature-card">
+        <div class="feature-icon" style="--icon-color: #22d3ee;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <ellipse cx="12" cy="5" rx="9" ry="3" />
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Multiple Data Sources</h3>
+        <p class="feature-description">
+          Connect to CSV, Excel, Parquet, PostgreSQL, S3, and more.
+          Read and write data wherever it lives.
+        </p>
+      </div>
+
+      <!-- Performance -->
+      <div class="feature-card">
+        <div class="feature-icon" style="--icon-color: #fbbf24;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+          </svg>
+        </div>
+        <h3 class="feature-title">Polars Performance</h3>
+        <p class="feature-description">
+          Built on Polars, not Pandas. Enjoy 10-100x faster execution with
+          lazy evaluation and query optimization.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .features-section {
+    padding: 6rem 2rem;
+    background:
+      radial-gradient(ellipse 50% 50% at 50% 100%, rgba(99, 102, 241, 0.05) 0%, transparent 50%),
+      var(--color-bg);
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    max-width: 1000px;
+    margin: 0 auto;
+  }
+
+  .feature-card {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    padding: 2rem;
+    transition: all 0.3s ease;
+  }
+
+  .feature-card:hover {
+    border-color: var(--color-text-muted);
+    transform: translateY(-4px);
+  }
+
+  .feature-large {
+    grid-column: span 1;
+  }
+
+  .feature-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--icon-color) 15%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.25rem;
+  }
+
+  .feature-icon svg {
+    width: 24px;
+    height: 24px;
+    stroke: var(--icon-color);
+  }
+
+  .feature-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    color: var(--color-text);
+  }
+
+  .feature-description {
+    color: var(--color-text-muted);
+    line-height: 1.7;
+    font-size: 0.95rem;
+  }
+
+  .feature-list {
+    margin-top: 1.25rem;
+    padding-left: 0;
+    list-style: none;
+  }
+
+  .feature-list li {
+    position: relative;
+    padding-left: 1.5rem;
+    margin-bottom: 0.5rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+  }
+
+  .feature-list li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: #22c55e;
+    font-weight: 600;
+  }
+
+  .code-preview {
+    margin-top: 1.25rem;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+  }
+
+  .code-preview pre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+
+  .code-preview code {
+    color: var(--color-text);
+  }
+
+  .code-keyword { color: #c792ea; }
+  .code-string { color: #c3e88d; }
+  .code-number { color: #f78c6c; }
+
+  @media (max-width: 768px) {
+    .features-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .feature-large {
+      grid-column: span 1;
+    }
+  }
+</style>

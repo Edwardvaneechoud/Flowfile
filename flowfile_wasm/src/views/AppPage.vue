@@ -85,13 +85,15 @@ const pyodideStore = usePyodideStore()
 const themeStore = useThemeStore()
 const { isReady: pyodideReady } = storeToRefs(pyodideStore)
 const { isDark, toggleTheme } = useTheme()
-const { hasSeenDemo, hasDismissedDemo } = useDemo()
+const { hasSeenDemo, hasDismissedDemo, autoLoadDemoIfNeeded } = useDemo()
 
 const isDocsOpen = ref(false)
 
 onMounted(async () => {
   themeStore.initialize()
   await pyodideStore.initialize()
+  // Auto-load demo if user navigated to demo subdomain or ?demo=true
+  await autoLoadDemoIfNeeded()
 })
 </script>
 
