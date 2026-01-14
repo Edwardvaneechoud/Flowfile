@@ -29,9 +29,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
+import { usePanelZIndexStore } from '../../stores/panel-zindex-store'
 
-// Global z-index counter shared across all DraggablePanel instances
-let globalMaxZIndex = 100
+// Use centralized z-index store for proper state sharing
+const zIndexStore = usePanelZIndexStore()
 
 interface Props {
   title: string
@@ -65,11 +66,13 @@ const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
 
-// Initialize zIndex with defaultZIndex prop, update global counter if needed
-const initialZIndex = Math.max(props.defaultZIndex, globalMaxZIndex + 1)
-globalMaxZIndex = Math.max(globalMaxZIndex, initialZIndex)
-const zIndex = ref(initialZIndex)
-console.log(`[${props.panelId}] Initialized with zIndex=${initialZIndex}, globalMaxZIndex=${globalMaxZIndex}`)
+// Initialize zIndex with defaultZIndex prop
+const zIndex = ref(props.defaultZIndex)
+
+// Register with the z-index store if we have a panelId
+if (props.panelId) {
+  zIndexStore.registerPanel(props.panelId, props.defaultZIndex)
+}
 
 // Drag state
 const startX = ref(0)
@@ -321,11 +324,11 @@ onMounted(() => {
       top.value = validTop
       isMinimized.value = savedState.isMinimized
 
-      // Restore zIndex if saved, and update global counter
+      // Restore zIndex if saved, and update the store
       if (savedState.zIndex !== undefined) {
         zIndex.value = savedState.zIndex
-        globalMaxZIndex = Math.max(globalMaxZIndex, savedState.zIndex)
-        console.log(`[${props.panelId}] Restored zIndex from saved state: ${savedState.zIndex}, globalMaxZIndex now ${globalMaxZIndex}`)
+        zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
+        console.log(`[${props.panelId}] Restored zIndex from saved state: ${savedState.zIndex}`)
       }
 
       // Add resize listener before returning
@@ -391,22 +394,16 @@ const panelStyle = computed(() => ({
 }))
 
 function bringToFront() {
-  // Debug logging
-  console.log(`[${props.panelId}] bringToFront called:`, {
-    currentZIndex: zIndex.value,
-    globalMaxZIndex,
-  })
+  if (!props.panelId) return
 
-  // Always bring to front when clicked
-  // Use the higher of our current globalMaxZIndex or the panel's current zIndex
-  // to handle cases where panels have stale views of globalMaxZIndex
-  const effectiveMax = Math.max(globalMaxZIndex, zIndex.value)
-  const newZIndex = effectiveMax + 1
+  // Use the centralized store to bring this panel to front
+  const newZIndex = zIndexStore.bringToFront(props.panelId)
 
-  globalMaxZIndex = newZIndex
-  zIndex.value = newZIndex
-  console.log(`[${props.panelId}] Updated zIndex to ${zIndex.value}, globalMaxZIndex now ${globalMaxZIndex}`)
-  saveCurrentState()
+  // Only update and save if the z-index actually changed
+  if (newZIndex !== zIndex.value) {
+    zIndex.value = newZIndex
+    saveCurrentState()
+  }
 }
 
 function toggleMinimize() {
@@ -507,6 +504,10 @@ onUnmounted(() => {
   if (resizeDebounceTimer) {
     clearTimeout(resizeDebounceTimer)
     resizeDebounceTimer = null
+  }
+  // Unregister from z-index store
+  if (props.panelId) {
+    zIndexStore.unregisterPanel(props.panelId)
   }
 })
 </script>
