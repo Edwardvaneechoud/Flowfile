@@ -4,9 +4,28 @@ Welcome to Flowfile! Whether you prefer visual drag-and-drop or writing code, we
 
 ## Choose Your Path
 
-<div markdown="1", style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 2rem 0;">
+<div markdown="1" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin: 2rem 0;">
 
-<div markdown="1", style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
+<div markdown="1" style="border: 2px solid #00CED1; padding: 1.5rem; border-radius: 8px; background: linear-gradient(135deg, rgba(0,206,209,0.05) 0%, rgba(0,206,209,0.1) 100%);">
+
+### 🌐 [Try in Browser](https://demo.flowfile.org)
+
+**No installation required!** Perfect for trying Flowfile instantly.
+
+**Features:**
+
+- Zero setup - just open a URL
+- 14 essential data transformation nodes
+- 100% privacy - data stays in your browser
+- Export results as CSV or Parquet
+
+[**Open in Browser →**](https://demo.flowfile.org)
+
+[Learn more about browser version](deployment/browser.md)
+
+</div>
+
+<div markdown="1" style="border: 1px solid #ddd; padding: 1.5rem; border-radius: 8px;">
 
 ### 🎨 [Visual Editor](visual-editor/index.md)
 

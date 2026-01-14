@@ -2,6 +2,15 @@
 
 A minimal, browser-based data flow designer using Pyodide and Polars. This is a lightweight version of Flowfile that runs entirely in the browser without any server-side computation.
 
+## Try It Now
+
+**[Open Flowfile WASM →](https://demo.flowfile.org)**
+
+No installation required. Your data stays 100% in your browser.
+
+<!-- TODO: Add screenshot of WASM interface showing a complete flow -->
+![Flowfile WASM Interface](docs/images/wasm-interface.png)
+
 ## Features
 
 - **Browser-Based Execution**: All data processing happens in your browser using WebAssembly
@@ -57,6 +66,9 @@ The output will be in the `dist` folder.
 5. **Run the flow** by clicking the "Run Flow" button in the header
 6. **View results** in the Table Preview panel at the bottom
 
+<!-- TODO: Add GIF showing the basic workflow of dragging, connecting, and running -->
+![Basic Workflow](docs/images/wasm-workflow.gif)
+
 ## Polars Code Node
 
 The Polars Code node allows you to write custom Python/Polars code for advanced transformations. Your code receives `input_df` (a Polars DataFrame) and should produce a result DataFrame.
@@ -65,7 +77,7 @@ Example:
 ```python
 # Simple transformation
 output_df = input_df.with_columns(
-    pl.col("price") * pl.col("quantity").alias("total")
+    (pl.col("price") * pl.col("quantity")).alias("total")
 )
 
 # Or just return an expression
@@ -73,6 +85,9 @@ input_df.filter(pl.col("status") == "active")
 ```
 
 The editor includes autocompletion for Polars functions and your DataFrame columns.
+
+<!-- TODO: Add screenshot of Polars Code node with autocomplete dropdown visible -->
+![Polars Code Editor with Autocomplete](docs/images/polars-code-autocomplete.png)
 
 ## Technical Details
 
@@ -85,9 +100,62 @@ The editor includes autocompletion for Polars functions and your DataFrame colum
 
 ## Limitations
 
-- File size limited by browser memory
+- File size limited by browser memory (~100MB recommended maximum)
 - Session storage persistence only (cleared when browser tab is closed)
-- Limited to the 11 essential nodes (compared to the full Flowfile editor)
+- Limited to 14 essential nodes (compared to 30+ in the full Flowfile editor)
+- No database connections (use full version for database support)
+- No cloud storage integration (use full version for S3, etc.)
+
+## Browser Compatibility
+
+| Browser | Version | Support |
+|---------|---------|---------|
+| Chrome | 90+ | Full support |
+| Firefox | 90+ | Full support |
+| Safari | 15+ | Full support |
+| Edge | 90+ | Full support |
+| Mobile browsers | - | Limited (desktop recommended) |
+
+> **Note**: The first load downloads Pyodide and Polars (~15MB total). Subsequent visits use cached files and load faster.
+
+## Troubleshooting
+
+### Pyodide won't load
+
+- **Check your internet connection** - Pyodide is loaded from a CDN
+- **Try a different browser** - Chrome typically has the best WebAssembly support
+- **Disable ad blockers** - Some ad blockers block CDN requests
+- **Check the browser console** - Press F12 and look for error messages
+- **Try incognito mode** - Rules out extension conflicts
+
+### File won't load or parse
+
+- **Check file size** - Keep files under 100MB for best performance
+- **Verify CSV format** - Ensure proper comma/delimiter separation
+- **Check encoding** - UTF-8 encoding works best
+- **Remove special characters** - Some special characters in headers can cause issues
+
+### Browser becomes slow or unresponsive
+
+- **Reduce data size** - Use the "Take Sample" node to work with a subset first
+- **Close other tabs** - Free up browser memory
+- **Refresh the page** - Clears memory and restarts the session
+- **Use a smaller file** - Try with a sample of your data
+
+### Results disappeared after closing tab
+
+This is expected behavior. Session storage is cleared when you close the tab.
+
+**To preserve your work:**
+- Use the **Output node** to download results as CSV or Parquet before closing
+- Use the **Export** feature to save your flow configuration
+
+### Flow won't run / errors in execution
+
+- **Check node connections** - Ensure all nodes are properly connected
+- **Verify input data** - Make sure your CSV loaded correctly
+- **Check Polars Code syntax** - If using Polars Code node, verify Python syntax
+- **Look at error messages** - Error details appear in the bottom panel
 
 ## Adding New Nodes (AI Context Prompt)
 

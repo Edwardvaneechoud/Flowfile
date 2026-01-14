@@ -7,8 +7,15 @@
 
 ## Installation
 
+<div style="background: linear-gradient(135deg, #00CED1 0%, #667eea 100%); padding: clamp(1rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem auto; max-width: 100%;">
+  <h3 style="margin-top: 0; color: white; font-size: clamp(1.2rem, 3vw, 1.5rem);">Fastest: Try in Your Browser (No Installation)</h3>
+  <p style="font-size: clamp(0.9rem, 2vw, 1rem);">Want to try Flowfile right now? Open the browser version - no downloads, no setup:</p>
+  <a href="https://demo.flowfile.org" style="display: inline-block; background: white; color: #667eea; padding: 0.8rem 1.5rem; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: clamp(0.9rem, 2vw, 1rem);">Open Flowfile in Browser →</a>
+  <p style="margin-bottom: 0; margin-top: 1rem; font-size: clamp(0.85rem, 2vw, 0.95rem); opacity: 0.9;">Includes 14 essential nodes. Data stays 100% in your browser. <a href="users/deployment/browser.md" style="color: white; text-decoration: underline;">Learn more</a></p>
+</div>
+
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: clamp(1rem, 3vw, 2rem); border-radius: 12px; color: white; margin: 2rem auto; max-width: 100%;">
-  <h3 style="margin-top: 0; color: white; font-size: clamp(1.2rem, 3vw, 1.5rem);">Recommended quickstart: Install from PyPI</h3>
+  <h3 style="margin-top: 0; color: white; font-size: clamp(1.2rem, 3vw, 1.5rem);">Recommended: Install from PyPI</h3>
   <pre style="background: rgba(0,0,0,0.3); padding: 1rem; border-radius: 8px; color: white; overflow-x: auto; -webkit-overflow-scrolling: touch;"><code>pip install flowfile</code></pre>
   <p style="margin-bottom: 0; font-size: clamp(0.9rem, 2vw, 1rem);">This installs everything you need - the Python API, visual editor, and all services.</p>
 </div>
