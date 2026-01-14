@@ -1,0 +1,45 @@
+name: Flowfile WASM Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flowfile_wasm/**'
+      - '.github/workflows/flowfile-wasm-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'flowfile_wasm/**'
+      - '.github/workflows/flowfile-wasm-tests.yml'
+  workflow_dispatch:
+
+# Explicit permissions for security
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: flowfile_wasm/package-lock.json
+
+      - name: Install dependencies
+        working-directory: flowfile_wasm
+        run: npm ci
+
+      - name: Run tests
+        working-directory: flowfile_wasm
+        run: npm run test:run
+
+      - name: Build (verify tests don't break build)
+        working-directory: flowfile_wasm
+        run: npm run build
