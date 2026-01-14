@@ -369,6 +369,13 @@ html, body, #app {
   --ag-range-selection-border-color: var(--color-accent);
   --ag-checkbox-checked-color: var(--color-accent);
   --ag-input-border-color: var(--color-border-primary);
+  /* Pagination and panel colors */
+  --ag-control-panel-background-color: var(--color-background-secondary);
+  --ag-subheader-background-color: var(--color-background-tertiary);
+  --ag-invalid-background-color: var(--color-danger-light);
+  --ag-input-disabled-background-color: var(--color-background-tertiary);
+  --ag-modal-overlay-background-color: var(--color-overlay);
+  --ag-popup-background-color: var(--color-background-primary);
 }
 
 /* AG Grid header styling */
@@ -387,6 +394,61 @@ html, body, #app {
 .ag-theme-balham .ag-status-bar,
 .ag-theme-balham .ag-header-row {
   font-weight: var(--font-weight-medium);
+}
+
+/* AG Grid pagination panel - ensure dark theme colors */
+.ag-theme-balham .ag-paging-panel {
+  background-color: var(--color-background-secondary);
+  border-top: 1px solid var(--color-border-primary);
+  color: var(--color-text-primary);
+}
+
+.ag-theme-balham .ag-paging-button {
+  color: var(--color-text-primary);
+}
+
+.ag-theme-balham .ag-paging-description {
+  color: var(--color-text-secondary);
+}
+
+/* AG Grid filter popup - ensure dark theme colors */
+.ag-theme-balham .ag-popup {
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+}
+
+.ag-theme-balham .ag-filter {
+  background-color: var(--color-background-primary);
+}
+
+.ag-theme-balham .ag-menu {
+  background-color: var(--color-background-primary);
+  border: 1px solid var(--color-border-primary);
+}
+
+.ag-theme-balham .ag-menu-option {
+  color: var(--color-text-primary);
+}
+
+.ag-theme-balham .ag-menu-option:hover {
+  background-color: var(--color-background-hover);
+}
+
+/* AG Grid input fields in filter */
+.ag-theme-balham .ag-text-field-input,
+.ag-theme-balham .ag-number-field-input {
+  background-color: var(--color-background-primary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-primary);
+}
+
+.ag-theme-balham .ag-select .ag-picker-field-wrapper {
+  background-color: var(--color-background-primary);
+  border-color: var(--color-border-primary);
+}
+
+.ag-theme-balham .ag-picker-field-display {
+  color: var(--color-text-primary);
 }
 
 /* ==========================================================================

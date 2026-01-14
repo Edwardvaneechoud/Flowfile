@@ -3,9 +3,11 @@
     <!-- Node List Sidebar - Using DraggablePanel -->
     <DraggablePanel
       title="Data Actions"
+      panel-id="node-list-sidebar"
       initial-position="left"
       :initial-width="200"
       :initial-top="toolbarHeight"
+      :default-z-index="100"
     >
       <div class="nodes-wrapper">
         <input
@@ -68,6 +70,7 @@
           @change="handleLoadFlow"
           style="display: none"
         />
+        <DemoButton v-if="hasSeenDemo" />
         <button
           class="action-btn"
           :class="{ active: showCodeGenerator }"
@@ -118,9 +121,11 @@
     <DraggablePanel
       v-if="selectedNode"
       :title="getNodeDescription(selectedNode.type).title"
+      panel-id="node-settings-panel"
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
+      :default-z-index="120"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -140,35 +145,55 @@
     <DraggablePanel
       v-if="selectedNodeId !== null"
       title="Table Preview"
+      panel-id="data-preview-panel"
       initial-position="bottom"
       :initial-height="280"
       :initial-left="200"
+      :default-z-index="110"
     >
-      <div v-if="selectedNodeResult?.success && selectedNodeResult?.data" class="data-preview">
-        <div class="preview-header">
-          <span class="row-count">{{ selectedNodeResult.data.total_rows }} rows</span>
-          <span class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
+      <div class="data-preview">
+        <!-- Loading state -->
+        <div v-if="isPreviewLoading" class="preview-loading">
+          <div class="spinner small"></div>
+          <span>Loading preview...</span>
         </div>
-        <div class="data-table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th v-for="col in selectedNodeResult.data.columns" :key="col">{{ col }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, idx) in selectedNodeResult.data.data" :key="idx">
-                <td v-for="(cell, cidx) in row" :key="cidx">{{ formatCell(cell) }}</td>
-              </tr>
-            </tbody>
-          </table>
+
+        <!-- Data grid -->
+        <template v-else-if="selectedNodeResult?.success && selectedNodeResult?.data">
+          <div class="preview-header">
+            <span class="row-count">{{ selectedNodeResult.data.total_rows }} rows</span>
+            <span class="col-count">{{ selectedNodeResult.data.columns?.length }} columns</span>
+            <button class="auto-size-btn" @click="autoSizeColumns" title="Auto-size columns">
+              <span class="material-icons" style="font-size: 14px;">fit_screen</span>
+            </button>
+          </div>
+          <div class="preview-grid-container">
+            <AgGridVue
+              class="ag-theme-balham"
+              :rowData="rowData"
+              :columnDefs="columnDefs"
+              :defaultColDef="defaultColDef"
+              :pagination="true"
+              :paginationPageSize="100"
+              :enableCellTextSelection="true"
+              :suppressMenuHide="true"
+              :suppressMovableColumns="false"
+              :animateRows="true"
+              @grid-ready="onGridReady"
+              style="width: 100%; height: 100%;"
+            />
+          </div>
+        </template>
+
+        <!-- Error state -->
+        <div v-else-if="selectedNodeResult?.error" class="error-message">
+          {{ selectedNodeResult.error }}
         </div>
-      </div>
-      <div v-else-if="selectedNodeResult?.error" class="error-message">
-        {{ selectedNodeResult.error }}
-      </div>
-      <div v-else class="no-data">
-        No data available. Run the flow to see results.
+
+        <!-- Empty state -->
+        <div v-else class="no-data">
+          No data available. Run the flow to see results.
+        </div>
       </div>
     </DraggablePanel>
 
@@ -186,9 +211,6 @@
     />
 
   </div>
-   
-
-
 </template>
 
 <script setup lang="ts">
@@ -199,7 +221,16 @@ import { MiniMap } from '@vue-flow/minimap'
 import { Controls } from '@vue-flow/controls'
 import { useFlowStore } from '../stores/flow-store'
 import { storeToRefs } from 'pinia'
-import type { NodeSettings, FlowEdge } from '../types'
+import type { NodeSettings, FlowEdge, ColumnSchema } from '../types'
+
+// AG Grid imports
+import { AgGridVue } from '@ag-grid-community/vue3'
+import { ClientSideRowModelModule } from '@ag-grid-community/client-side-row-model'
+import { ModuleRegistry } from '@ag-grid-community/core'
+import type { ColDef, GridReadyEvent, GridApi } from '@ag-grid-community/core'
+
+// Register AG Grid modules
+ModuleRegistry.registerModules([ClientSideRowModelModule])
 
 // Components
 import DraggablePanel from './common/DraggablePanel.vue'
@@ -222,11 +253,14 @@ import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
-
-
+import DemoButton from './DemoButton.vue'
+import { useDemo } from '../composables/useDemo'
 
 const flowStore = useFlowStore()
 const { nodes: flowNodes, edges: flowEdges, selectedNodeId, nodeResults, isExecuting } = storeToRefs(flowStore)
+
+// Demo state
+const { hasSeenDemo } = useDemo()
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const toolbarRef = ref<HTMLElement | null>(null)
@@ -237,8 +271,6 @@ const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
-
-
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -520,11 +552,93 @@ function getSettingsComponent(type: string) {
   return components[type] || null
 }
 
-// Format cell value for display
-function formatCell(value: any): string {
-  if (value === null || value === undefined) return 'null'
-  if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
+// AG Grid references and state
+const gridApi = ref<GridApi | null>(null)
+const isPreviewLoading = computed(() => {
+  if (selectedNodeId.value === null) return false
+  return flowStore.isPreviewLoading(selectedNodeId.value)
+})
+
+// AG Grid column definitions generated from schema
+const columnDefs = computed<ColDef[]>(() => {
+  const result = selectedNodeResult.value
+  if (!result?.data?.columns) return []
+
+  // Use schema for data types if available, otherwise use columns array
+  const schemaMap = new Map<string, ColumnSchema>()
+  if (result.schema) {
+    result.schema.forEach(col => schemaMap.set(col.name, col))
+  }
+
+  return result.data.columns.map((colName: string) => {
+    const schema = schemaMap.get(colName)
+    const dataType = schema?.data_type || 'Unknown'
+    const isNumeric = dataType.toLowerCase().includes('float') ||
+                      dataType.toLowerCase().includes('int') ||
+                      dataType.toLowerCase().includes('numeric')
+
+    return {
+      field: colName,
+      headerName: colName,
+      headerTooltip: `Type: ${dataType}`,
+      sortable: true,
+      filter: true,
+      resizable: true,
+      minWidth: 80,
+      flex: 1,
+      // Format numbers nicely
+      valueFormatter: isNumeric ? (params: any) => {
+        if (params.value === null || params.value === undefined) return 'null'
+        if (typeof params.value === 'number') {
+          // Check if it's a float with decimals
+          if (!Number.isInteger(params.value)) {
+            return params.value.toFixed(2)
+          }
+        }
+        return String(params.value)
+      } : (params: any) => {
+        if (params.value === null || params.value === undefined) return 'null'
+        if (typeof params.value === 'object') return JSON.stringify(params.value)
+        return String(params.value)
+      }
+    }
+  })
+})
+
+// AG Grid row data - convert from array of arrays to array of objects
+const rowData = computed(() => {
+  const result = selectedNodeResult.value
+  if (!result?.data?.data || !result?.data?.columns) return []
+
+  const columns = result.data.columns
+  return result.data.data.map((row: any[]) => {
+    const obj: Record<string, any> = {}
+    columns.forEach((colName: string, index: number) => {
+      obj[colName] = row[index]
+    })
+    return obj
+  })
+})
+
+// AG Grid default column definitions
+const defaultColDef: ColDef = {
+  sortable: true,
+  filter: true,
+  resizable: true,
+  minWidth: 80,
+  flex: 1,
+}
+
+// AG Grid event handlers
+function onGridReady(params: GridReadyEvent) {
+  gridApi.value = params.api
+}
+
+// Auto-size columns to fit content
+function autoSizeColumns() {
+  if (gridApi.value) {
+    gridApi.value.autoSizeAllColumns()
+  }
 }
 
 // Toolbar handlers
@@ -731,48 +845,52 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
 }
 
 .preview-header {
   display: flex;
+  align-items: center;
   gap: 16px;
-  margin-bottom: 12px;
+  padding: 8px 0;
   font-size: 12px;
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
-.data-table-wrapper {
-  flex: 1;
-  overflow: auto;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.data-table th,
-.data-table td {
-  padding: 6px 10px;
-  text-align: left;
-  border: 1px solid var(--border-light);
-  white-space: nowrap;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.data-table th {
+.auto-size-btn {
+  padding: 4px 8px;
   background: var(--bg-tertiary);
-  font-weight: 500;
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  color: var(--text-primary);
+  margin-left: auto;
 }
 
-.data-table tr:hover td {
+.auto-size-btn:hover {
   background: var(--bg-hover);
+  border-color: var(--accent-color);
+}
+
+.preview-grid-container {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .error-message {
@@ -788,5 +906,32 @@ onUnmounted(() => {
   text-align: center;
   padding: 40px 20px;
   font-size: 13px;
+}
+
+/* AG Grid Theme Overrides - ensure proper colors in both themes */
+.ag-theme-balham {
+  --ag-background-color: var(--bg-secondary);
+  --ag-header-background-color: var(--bg-tertiary);
+  --ag-odd-row-background-color: var(--bg-secondary);
+  --ag-row-hover-color: var(--bg-hover);
+  --ag-selected-row-background-color: var(--bg-selected);
+  --ag-foreground-color: var(--text-primary);
+  --ag-secondary-foreground-color: var(--text-secondary);
+  --ag-header-foreground-color: var(--text-primary);
+  --ag-border-color: var(--border-color);
+  --ag-row-border-color: var(--border-light);
+  --ag-input-focus-border-color: var(--accent-color);
+  --ag-range-selection-border-color: var(--accent-color);
+}
+
+/* AG Grid pagination and filter popup styling */
+.ag-theme-balham .ag-paging-panel {
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border-color);
+}
+
+.ag-theme-balham .ag-popup {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
 }
 </style>
