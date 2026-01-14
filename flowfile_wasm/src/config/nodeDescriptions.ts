@@ -45,7 +45,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Polars Code',
     intro: 'Write custom Polars code for advanced transformations. Access input_df and return a DataFrame. Supports full Python/Polars syntax.'
   },
-  preview: {
+  explore_data: {
     title: 'Preview',
     intro: 'Preview your data at this point in the flow. Does not modify the data.'
   },
