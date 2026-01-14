@@ -251,6 +251,50 @@ function handleWindowResize() {
   }, 16) // ~60fps debounce for smooth resizing
 }
 
+// Reset panel to initial position based on initialPosition prop
+function resetToInitialPosition() {
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+
+  // Reset to initial dimensions
+  width.value = props.initialWidth
+  height.value = props.initialHeight
+  isMinimized.value = false
+
+  // Calculate position based on initialPosition prop
+  switch (props.initialPosition) {
+    case 'right':
+      left.value = vw - width.value
+      top.value = props.initialTop
+      height.value = vh - props.initialTop
+      break
+    case 'left':
+      left.value = 0
+      top.value = props.initialTop
+      height.value = vh - props.initialTop
+      break
+    case 'bottom':
+      left.value = props.initialLeft
+      top.value = vh - height.value
+      width.value = vw - props.initialLeft
+      break
+    case 'top':
+      left.value = props.initialLeft
+      top.value = props.initialTop
+      width.value = vw - props.initialLeft
+      break
+  }
+
+  // Update viewport tracking
+  prevViewportWidth = vw
+  prevViewportHeight = vh
+}
+
+// Handle layout reset event from LayoutControls
+function handleLayoutReset() {
+  resetToInitialPosition()
+}
+
 // Compute initial position based on prop
 onMounted(() => {
   const vh = window.innerHeight
@@ -284,6 +328,8 @@ onMounted(() => {
 
       // Add resize listener before returning
       window.addEventListener('resize', handleWindowResize)
+      // Listen for layout reset events from LayoutControls
+      window.addEventListener('layout-reset', handleLayoutReset)
       return
     }
   }
@@ -314,6 +360,8 @@ onMounted(() => {
 
   // Add window resize listener for smart panel repositioning
   window.addEventListener('resize', handleWindowResize)
+  // Listen for layout reset events from LayoutControls
+  window.addEventListener('layout-reset', handleLayoutReset)
 })
 
 // Watch for changes to initialTop and update position (only if no saved state)
@@ -342,7 +390,8 @@ const panelStyle = computed(() => ({
 
 function bringToFront() {
   // Only update if this panel is not already at the top
-  if (zIndex.value <= globalMaxZIndex) {
+  // Use strict < to prevent incrementing when clicking on the already-topmost panel
+  if (zIndex.value < globalMaxZIndex) {
     globalMaxZIndex++
     zIndex.value = globalMaxZIndex
     saveCurrentState()
@@ -442,6 +491,7 @@ onUnmounted(() => {
   document.removeEventListener('mousemove', onResize)
   document.removeEventListener('mouseup', stopResize)
   window.removeEventListener('resize', handleWindowResize)
+  window.removeEventListener('layout-reset', handleLayoutReset)
   // Clear any pending debounce timer
   if (resizeDebounceTimer) {
     clearTimeout(resizeDebounceTimer)
