@@ -4,7 +4,7 @@
     :class="{ minimized: isMinimized, resizing: isResizing }"
     :style="panelStyle"
     ref="panelRef"
-    @mousedown="bringToFront"
+    @mousedown.stop="bringToFront"
   >
     <div class="panel-header" @mousedown="startMove">
       <button class="header-btn" @click.stop="toggleMinimize" :title="isMinimized ? 'Expand' : 'Minimize'">
@@ -28,17 +28,20 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
 
 // Global z-index counter shared across all DraggablePanel instances
 let globalMaxZIndex = 100
 
 interface Props {
   title: string
+  panelId?: string
   initialPosition?: 'left' | 'right' | 'bottom' | 'top'
   initialWidth?: number
   initialHeight?: number
   initialLeft?: number
   initialTop?: number
+  defaultZIndex?: number
   onClose?: () => void
 }
 
@@ -47,7 +50,8 @@ const props = withDefaults(defineProps<Props>(), {
   initialWidth: 400,
   initialHeight: 300,
   initialLeft: 0,
-  initialTop: 50
+  initialTop: 50,
+  defaultZIndex: 100
 })
 
 const panelRef = ref<HTMLElement | null>(null)
@@ -60,7 +64,11 @@ const top = ref(props.initialTop)
 const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
-const zIndex = ref(++globalMaxZIndex)
+
+// Initialize zIndex with defaultZIndex prop, update global counter if needed
+const initialZIndex = Math.max(props.defaultZIndex, globalMaxZIndex + 1)
+globalMaxZIndex = Math.max(globalMaxZIndex, initialZIndex)
+const zIndex = ref(initialZIndex)
 
 // Drag state
 const startX = ref(0)
@@ -71,11 +79,52 @@ const startLeft = ref(0)
 const startTop = ref(0)
 const resizeDirection = ref<string | null>(null)
 
+// Save current panel state to storage
+function saveCurrentState() {
+  if (!props.panelId) return
+
+  const state: PanelState = {
+    width: width.value,
+    height: height.value,
+    left: left.value,
+    top: top.value,
+    isMinimized: isMinimized.value,
+    zIndex: zIndex.value
+  }
+  savePanelState(props.panelId, state)
+}
+
 // Compute initial position based on prop
 onMounted(() => {
   const vh = window.innerHeight
   const vw = window.innerWidth
 
+  // Try to restore saved state first
+  if (props.panelId) {
+    const savedState = getPanelState(props.panelId)
+    if (savedState) {
+      // Validate saved position is still within viewport
+      const validLeft = Math.max(0, Math.min(savedState.left, vw - 100))
+      const validTop = Math.max(0, Math.min(savedState.top, vh - 50))
+      const validWidth = Math.min(savedState.width, vw - validLeft)
+      const validHeight = Math.min(savedState.height, vh - validTop)
+
+      width.value = validWidth
+      height.value = validHeight
+      left.value = validLeft
+      top.value = validTop
+      isMinimized.value = savedState.isMinimized
+
+      // Restore zIndex if saved, and update global counter
+      if (savedState.zIndex !== undefined) {
+        zIndex.value = savedState.zIndex
+        globalMaxZIndex = Math.max(globalMaxZIndex, savedState.zIndex)
+      }
+      return
+    }
+  }
+
+  // No saved state, use initial position based on prop
   switch (props.initialPosition) {
     case 'right':
       left.value = vw - width.value
@@ -100,8 +149,13 @@ onMounted(() => {
   }
 })
 
-// Watch for changes to initialTop and update position
+// Watch for changes to initialTop and update position (only if no saved state)
 watch(() => props.initialTop, (newTop) => {
+  // Don't update position if panel has saved state (user has manually positioned it)
+  if (props.panelId && getPanelState(props.panelId)) {
+    return
+  }
+
   const vh = window.innerHeight
   top.value = newTop
 
@@ -124,11 +178,13 @@ function bringToFront() {
   if (zIndex.value <= globalMaxZIndex) {
     globalMaxZIndex++
     zIndex.value = globalMaxZIndex
+    saveCurrentState()
   }
 }
 
 function toggleMinimize() {
   isMinimized.value = !isMinimized.value
+  saveCurrentState()
 }
 
 function startMove(e: MouseEvent) {
@@ -158,6 +214,7 @@ function stopMove() {
   isDragging.value = false
   document.removeEventListener('mousemove', onMove)
   document.removeEventListener('mouseup', stopMove)
+  saveCurrentState()
 }
 
 function startResize(direction: string) {
@@ -209,6 +266,7 @@ function stopResize() {
   resizeDirection.value = null
   document.removeEventListener('mousemove', onResize)
   document.removeEventListener('mouseup', stopResize)
+  saveCurrentState()
 }
 
 onUnmounted(() => {

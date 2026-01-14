@@ -3,9 +3,11 @@
     <!-- Node List Sidebar - Using DraggablePanel -->
     <DraggablePanel
       title="Data Actions"
+      panel-id="node-list-sidebar"
       initial-position="left"
       :initial-width="200"
       :initial-top="toolbarHeight"
+      :default-z-index="100"
     >
       <div class="nodes-wrapper">
         <input
@@ -119,9 +121,11 @@
     <DraggablePanel
       v-if="selectedNode"
       :title="getNodeDescription(selectedNode.type).title"
+      panel-id="node-settings-panel"
       initial-position="right"
       :initial-width="450"
       :initial-top="toolbarHeight"
+      :default-z-index="120"
       :on-close="() => flowStore.selectNode(null)"
     >
       <NodeTitle
@@ -141,9 +145,11 @@
     <DraggablePanel
       v-if="selectedNodeId !== null"
       title="Table Preview"
+      panel-id="data-preview-panel"
       initial-position="bottom"
       :initial-height="280"
       :initial-left="200"
+      :default-z-index="110"
     >
       <div class="data-preview">
         <!-- Loading state -->
