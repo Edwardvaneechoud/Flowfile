@@ -60,7 +60,7 @@ export const usePyodideStore = defineStore('pyodide', () => {
     await pyodide.value.runPythonAsync(`
 import polars as pl
 import json
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from hashlib import md5
 
 # =============================================================================
@@ -721,95 +721,147 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
     except Exception as e:
         return {"success": False, "error": format_error_lf("sort", node_id, e, input_lf)}
 
-def execute_polars_code(node_id: int, input_id: int, settings: Dict) -> Dict:
-    """Execute polars code node - supports both DataFrame and LazyFrame in user code"""
-    input_lf = get_lazyframe(input_id)
-    if input_lf is None:
-        return {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+def _build_local_vars(node_id: int, input_ids: List[int]) -> Tuple[Dict, Optional[Dict]]:
+    """Build local variables dict with inputs. Returns (local_vars, error_dict)."""
+    local_vars = {"pl": pl, "output_df": None, "output_lf": None}
+    
+    if len(input_ids) == 0:
+        return local_vars, None
+    
+    if len(input_ids) == 1:
+        input_lf = get_lazyframe(input_ids[0])
+        if input_lf is None:
+            return None, {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{input_ids[0]}. Make sure the upstream node executed successfully."}
+        local_vars["input_df"] = input_lf.collect()
+        local_vars["input_lf"] = input_lf
+    else:
+        for i, inp_id in enumerate(input_ids, start=1):
+            lf = get_lazyframe(inp_id)
+            if lf is None:
+                return None, {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{inp_id}. Make sure the upstream node executed successfully."}
+            local_vars[f"input_df_{i}"] = lf.collect()
+            local_vars[f"input_lf_{i}"] = lf
+        local_vars["input_df"] = local_vars["input_df_1"]
+        local_vars["input_lf"] = local_vars["input_lf_1"]
+    
+    return local_vars, None
 
+
+def _to_lazyframe(value: Any) -> Optional[pl.LazyFrame]:
+    """Convert value to LazyFrame if possible."""
+    if isinstance(value, pl.LazyFrame):
+        return value
+    if isinstance(value, pl.DataFrame):
+        return value.lazy()
+    return None
+
+
+def _find_result_in_locals(local_vars: Dict) -> Optional[pl.LazyFrame]:
+    """Find result from well-known variable names."""
+    for var_name in ["output_lf", "output_df", "result", "df"]:
+        value = local_vars.get(var_name)
+        if value is not None:
+            result = _to_lazyframe(value)
+            if result is not None:
+                return result
+    return None
+
+
+def _find_any_dataframe(local_vars: Dict) -> Optional[pl.LazyFrame]:
+    """Find any DataFrame/LazyFrame created by user code."""
+    skip_vars = {"input_df", "input_lf", "pl", "output_df", "output_lf"}
+    for var_name in local_vars:
+        if var_name.startswith("input_df_") or var_name.startswith("input_lf_"):
+            skip_vars.add(var_name)
+    
+    for var_name, var_val in local_vars.items():
+        if var_name not in skip_vars:
+            result = _to_lazyframe(var_val)
+            if result is not None:
+                return result
+    return None
+
+
+def _try_eval_last_line(code: str, global_vars: Dict, local_vars: Dict) -> Optional[pl.LazyFrame]:
+    """Try to eval the last line if it's an expression."""
+    lines = code.splitlines()
+    last_line = lines[-1].strip()
+    
+    if last_line and not last_line.startswith('#') and '=' not in last_line:
+        try:
+            result = eval(last_line, global_vars, local_vars)
+            return _to_lazyframe(result)
+        except:
+            pass
+    return None
+
+
+def _extract_result(code: str, global_vars: Dict, local_vars: Dict, has_inputs: bool) -> Tuple[Optional[pl.LazyFrame], Optional[str]]:
+    """Extract result from local_vars after code execution. Returns (result, error_message)."""
+    # 1. Check well-known variable names
+    result = _find_result_in_locals(local_vars)
+    if result is not None:
+        return result, None
+    
+    # 2. Find any DataFrame/LazyFrame created
+    result = _find_any_dataframe(local_vars)
+    if result is not None:
+        return result, None
+    
+    # 3. Try eval on last line
+    result = _try_eval_last_line(code, global_vars, local_vars)
+    if result is not None:
+        return result, None
+    
+    # 4. Fall back to input passthrough if available
+    if has_inputs:
+        return local_vars.get("input_lf"), None
+    
+    return None, "Code must produce a DataFrame or LazyFrame (set output_df or output_lf)"
+
+
+def execute_polars_code(node_id: int, input_ids: List[int], settings: Dict) -> Dict:
+    """Execute polars code node - supports zero, single, or multiple inputs."""
+    
+    # Build inputs
+    local_vars, error = _build_local_vars(node_id, input_ids)
+    if error:
+        return error
+    
     try:
         polars_code_input = settings.get("polars_code_input", {})
-        code = polars_code_input.get("polars_code", "input_df")
-
-        if not code or not code.strip():
-            result_lf = input_lf
+        code = (polars_code_input.get("polars_code") or "").strip()
+        
+        # Handle empty code
+        if not code:
+            if len(input_ids) == 0:
+                return {"success": False, "error": f"Polars Code error on node #{node_id}: No code provided and no input to pass through."}
+            result_lf = local_vars["input_lf"]
         else:
-            code = code.strip()
-            # Provide both lazy and eager versions for user convenience
-            # input_df is collected for backward compatibility
-            input_df = input_lf.collect()
-            local_vars = {"input_df": input_df, "input_lf": input_lf, "pl": pl, "output_df": None, "output_lf": None}
             global_vars = {"pl": pl}
-
+            
+            # Execute code
             try:
                 exec(code, global_vars, local_vars)
-
-                # Check for LazyFrame outputs first
-                if local_vars.get("output_lf") is not None and isinstance(local_vars["output_lf"], pl.LazyFrame):
-                    result_lf = local_vars["output_lf"]
-                elif local_vars.get("output_df") is not None:
-                    result = local_vars["output_df"]
-                    if isinstance(result, pl.LazyFrame):
-                        result_lf = result
-                    elif isinstance(result, pl.DataFrame):
-                        result_lf = result.lazy()
-                    else:
-                        return {"success": False, "error": f"Polars Code error on node #{node_id}: output_df must be a DataFrame or LazyFrame"}
-                elif local_vars.get("result") is not None:
-                    result = local_vars["result"]
-                    if isinstance(result, pl.LazyFrame):
-                        result_lf = result
-                    elif isinstance(result, pl.DataFrame):
-                        result_lf = result.lazy()
-                    else:
-                        return {"success": False, "error": f"Polars Code error on node #{node_id}: result must be a DataFrame or LazyFrame"}
-                elif local_vars.get("df") is not None:
-                    result = local_vars["df"]
-                    if isinstance(result, pl.LazyFrame):
-                        result_lf = result
-                    elif isinstance(result, pl.DataFrame):
-                        result_lf = result.lazy()
-                    else:
-                        return {"success": False, "error": f"Polars Code error on node #{node_id}: df must be a DataFrame or LazyFrame"}
-                else:
-                    # Try to find any DataFrame/LazyFrame that was created
-                    found_result = None
-                    for var_name, var_val in local_vars.items():
-                        if var_name not in ["input_df", "input_lf", "pl", "output_df", "output_lf"]:
-                            if isinstance(var_val, pl.LazyFrame):
-                                found_result = var_val
-                                break
-                            elif isinstance(var_val, pl.DataFrame):
-                                found_result = var_val.lazy()
-                                break
-                    if found_result is not None:
-                        result_lf = found_result
-                    else:
-                        # Fallback: try eval on last line
-                        lines = code.split('\\n')
-                        last_line = lines[-1].strip()
-                        if last_line and not last_line.startswith('#') and '=' not in last_line:
-                            result = eval(last_line, global_vars, local_vars)
-                            if isinstance(result, pl.LazyFrame):
-                                result_lf = result
-                            elif isinstance(result, pl.DataFrame):
-                                result_lf = result.lazy()
-                            else:
-                                result_lf = input_lf
-                        else:
-                            result_lf = input_lf
             except SyntaxError:
+                # Maybe it's just an expression
                 result = eval(code, global_vars, local_vars)
-                if isinstance(result, pl.LazyFrame):
-                    result_lf = result
-                elif isinstance(result, pl.DataFrame):
-                    result_lf = result.lazy()
-                else:
+                result_lf = _to_lazyframe(result)
+                if result_lf is None:
                     return {"success": False, "error": f"Polars Code error on node #{node_id}: Code must produce a DataFrame or LazyFrame, got {type(result).__name__}"}
-
+                store_lazyframe(node_id, result_lf)
+                return {"success": True, "schema": get_schema(node_id), "has_data": True}
+            
+            # Extract result
+            result_lf, error_msg = _extract_result(code, global_vars, local_vars, len(input_ids) > 0)
+            if error_msg:
+                return {"success": False, "error": f"Polars Code error on node #{node_id}: {error_msg}"}
+        
         store_lazyframe(node_id, result_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
+    
     except Exception as e:
+        input_lf = local_vars.get("input_lf") if len(input_ids) > 0 else None
         return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lf)}
 
 def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
