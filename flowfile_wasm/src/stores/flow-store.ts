@@ -218,30 +218,15 @@ export const useFlowStore = defineStore('flow', () => {
    * This handles imports from flowfile_core which doesn't have explicit connections
    */
   function deriveEdgesFromNodes(flowfileNodes: FlowfileNode[]) {
-    // Build a map of node id -> node for quick lookups
-    const nodeMap = new Map<number, FlowfileNode>()
-    for (const node of flowfileNodes) {
-      nodeMap.set(node.id, node)
-    }
+    // Collect all derived edges first
+    const derivedEdges: FlowEdge[] = []
 
     // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
     for (const targetNode of flowfileNodes) {
-      // Handle left_input_id (for join nodes - first input)
-      if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
-        const sourceId = targetNode.left_input_id
-        edges.value.push({
-          id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
-          source: String(sourceId),
-          target: String(targetNode.id),
-          sourceHandle: 'output-0',
-          targetHandle: 'input-0'
-        })
-      }
-
-      // Handle right_input_id (for join nodes - second input)
+      // Handle right_input_id (for join nodes - second input goes to input-1)
       if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
         const sourceId = targetNode.right_input_id
-        edges.value.push({
+        derivedEdges.push({
           id: `e${sourceId}-${targetNode.id}-output-0-input-1`,
           source: String(sourceId),
           target: String(targetNode.id),
@@ -250,22 +235,40 @@ export const useFlowStore = defineStore('flow', () => {
         })
       }
 
-      // Handle input_ids for non-join nodes (nodes without left/right inputs)
+      // Handle input_ids - these go to input-0
+      // In flowfile_core format: left_input_id is always null, inputs are in input_ids
+      // For join nodes: input_ids contains the left input, right_input_id has the right input
       if (targetNode.input_ids && targetNode.input_ids.length > 0) {
-        // Skip if this node has left/right inputs (join node) - those are handled above
-        if (!targetNode.left_input_id && !targetNode.right_input_id) {
-          for (const sourceId of targetNode.input_ids) {
-            edges.value.push({
-              id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
-              source: String(sourceId),
-              target: String(targetNode.id),
-              sourceHandle: 'output-0',
-              targetHandle: 'input-0'
-            })
-          }
+        for (const sourceId of targetNode.input_ids) {
+          derivedEdges.push({
+            id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
+            source: String(sourceId),
+            target: String(targetNode.id),
+            sourceHandle: 'output-0',
+            targetHandle: 'input-0'
+          })
+        }
+      }
+
+      // Handle legacy left_input_id (for backwards compatibility with old WASM format)
+      if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
+        // Only add if not already in input_ids
+        if (!targetNode.input_ids?.includes(targetNode.left_input_id)) {
+          const sourceId = targetNode.left_input_id
+          derivedEdges.push({
+            id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
+            source: String(sourceId),
+            target: String(targetNode.id),
+            sourceHandle: 'output-0',
+            targetHandle: 'input-0'
+          })
         }
       }
     }
+
+    // Add all edges at once
+    edges.value.push(...derivedEdges)
+    console.log('[deriveEdgesFromNodes] Created edges:', derivedEdges.map(e => `${e.source}->${e.target}`))
   }
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
@@ -279,6 +282,8 @@ export const useFlowStore = defineStore('flow', () => {
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
 
+      // In flowfile_core format, left_input_id is always null - inputs are in input_ids
+      // Only right_input_id is used (for join nodes' second input)
       flowfileNodes.push({
         id: node.id,
         type: node.type,
@@ -286,7 +291,6 @@ export const useFlowStore = defineStore('flow', () => {
         description: (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
-        left_input_id: node.leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
@@ -1731,6 +1735,7 @@ result
    * - Uses version '1.0.0' for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
+    console.log('[exportToFlowfile] Current edges:', edges.value.map(e => `${e.source}->${e.target}`))
     const flowfileNodes: FlowfileNode[] = []
 
     // Convert nodes
@@ -1743,6 +1748,8 @@ result
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
 
+      // In flowfile_core format, left_input_id is always null - inputs are in input_ids
+      // Only right_input_id is used (for join nodes' second input)
       const flowfileNode: FlowfileNode = {
         id: node.id,
         type: node.type,
@@ -1750,7 +1757,6 @@ result
         description: (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
-        left_input_id: node.leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
