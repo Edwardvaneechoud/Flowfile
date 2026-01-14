@@ -69,6 +69,7 @@ const isDragging = ref(false)
 const initialZIndex = Math.max(props.defaultZIndex, globalMaxZIndex + 1)
 globalMaxZIndex = Math.max(globalMaxZIndex, initialZIndex)
 const zIndex = ref(initialZIndex)
+console.log(`[${props.panelId}] Initialized with zIndex=${initialZIndex}, globalMaxZIndex=${globalMaxZIndex}`)
 
 // Drag state
 const startX = ref(0)
@@ -324,6 +325,7 @@ onMounted(() => {
       if (savedState.zIndex !== undefined) {
         zIndex.value = savedState.zIndex
         globalMaxZIndex = Math.max(globalMaxZIndex, savedState.zIndex)
+        console.log(`[${props.panelId}] Restored zIndex from saved state: ${savedState.zIndex}, globalMaxZIndex now ${globalMaxZIndex}`)
       }
 
       // Add resize listener before returning
@@ -389,12 +391,22 @@ const panelStyle = computed(() => ({
 }))
 
 function bringToFront() {
+  // Debug logging
+  console.log(`[${props.panelId}] bringToFront called:`, {
+    currentZIndex: zIndex.value,
+    globalMaxZIndex,
+    condition: `${zIndex.value} < ${globalMaxZIndex} = ${zIndex.value < globalMaxZIndex}`
+  })
+
   // Only update if this panel is not already at the top
   // Use strict < to prevent incrementing when clicking on the already-topmost panel
   if (zIndex.value < globalMaxZIndex) {
     globalMaxZIndex++
     zIndex.value = globalMaxZIndex
+    console.log(`[${props.panelId}] Updated zIndex to ${zIndex.value}, globalMaxZIndex now ${globalMaxZIndex}`)
     saveCurrentState()
+  } else {
+    console.log(`[${props.panelId}] Already at top, no change needed`)
   }
 }
 
