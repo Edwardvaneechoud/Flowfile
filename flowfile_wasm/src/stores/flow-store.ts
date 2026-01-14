@@ -39,6 +39,31 @@ const SETTING_INPUT_EXCLUDE = new Set([
   'depending_on_ids',
 ])
 
+// Fields to exclude from nested objects (not in flowfile_core schema)
+const NESTED_FIELDS_EXCLUDE = new Set([
+  'is_available',  // Used internally for UI state, not part of flowfile_core
+])
+
+/**
+ * Recursively clean an object/array by removing excluded fields
+ */
+function deepClean(value: any): any {
+  if (value === null || value === undefined) return value
+  if (Array.isArray(value)) {
+    return value.map(item => deepClean(item))
+  }
+  if (typeof value === 'object') {
+    const cleaned: Record<string, any> = {}
+    for (const [key, val] of Object.entries(value)) {
+      if (!NESTED_FIELDS_EXCLUDE.has(key)) {
+        cleaned[key] = deepClean(val)
+      }
+    }
+    return cleaned
+  }
+  return value
+}
+
 /**
  * Clean setting_input by removing fields that are excluded during export
  * This matches the behavior of flowfile_core's FlowfileNode serializer
@@ -48,7 +73,7 @@ function cleanSettingInput(settings: NodeSettings): any {
   const cleaned: Record<string, any> = {}
   for (const [key, value] of Object.entries(settings)) {
     if (!SETTING_INPUT_EXCLUDE.has(key)) {
-      cleaned[key] = value
+      cleaned[key] = deepClean(value)
     }
   }
   return cleaned
