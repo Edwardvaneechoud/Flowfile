@@ -63,7 +63,7 @@ describe('Code Generation', () => {
       expect(code).toContain('pl.scan_csv')
       expect(code).toContain('data.csv')
       expect(code).toContain('separator=","')
-      expect(code).toContain('has_header=true')
+      expect(code).toContain('has_header=True')
     })
 
     it('should generate code for manual_input node', () => {
@@ -189,10 +189,12 @@ describe('Code Generation', () => {
       const nodes = new Map<number, FlowNode>()
       nodes.set(1, createNode(1, 'read_csv', { received_table: { name: 'data.csv', table_settings: {} } }))
       nodes.set(2, createNode(2, 'sort', {
-        sort_input: [
-          { column: 'date', how: 'desc' },
-          { column: 'name', how: 'asc' }
-        ]
+        sort_input: {
+          sort_cols: [
+            { column: 'date', descending: true },
+            { column: 'name', descending: false }
+          ]
+        }
       }, [1]))
 
       const code = generateCode({
@@ -202,7 +204,7 @@ describe('Code Generation', () => {
 
       expect(code).toContain('.sort(')
       expect(code).toContain('["date","name"]')
-      expect(code).toContain('descending=[true,false]')
+      expect(code).toContain('descending=[True, False]')
     })
 
     it('should generate code for unique node', () => {
