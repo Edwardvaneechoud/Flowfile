@@ -218,18 +218,15 @@ export const useFlowStore = defineStore('flow', () => {
    * This handles imports from flowfile_core which doesn't have explicit connections
    */
   function deriveEdgesFromNodes(flowfileNodes: FlowfileNode[]) {
-    // Build a map of node id -> node for quick lookups
-    const nodeMap = new Map<number, FlowfileNode>()
-    for (const node of flowfileNodes) {
-      nodeMap.set(node.id, node)
-    }
+    // Collect all derived edges first
+    const derivedEdges: FlowEdge[] = []
 
     // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
     for (const targetNode of flowfileNodes) {
       // Handle right_input_id (for join nodes - second input goes to input-1)
       if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
         const sourceId = targetNode.right_input_id
-        edges.value.push({
+        derivedEdges.push({
           id: `e${sourceId}-${targetNode.id}-output-0-input-1`,
           source: String(sourceId),
           target: String(targetNode.id),
@@ -243,7 +240,7 @@ export const useFlowStore = defineStore('flow', () => {
       // For join nodes: input_ids contains the left input, right_input_id has the right input
       if (targetNode.input_ids && targetNode.input_ids.length > 0) {
         for (const sourceId of targetNode.input_ids) {
-          edges.value.push({
+          derivedEdges.push({
             id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
             source: String(sourceId),
             target: String(targetNode.id),
@@ -258,7 +255,7 @@ export const useFlowStore = defineStore('flow', () => {
         // Only add if not already in input_ids
         if (!targetNode.input_ids?.includes(targetNode.left_input_id)) {
           const sourceId = targetNode.left_input_id
-          edges.value.push({
+          derivedEdges.push({
             id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
             source: String(sourceId),
             target: String(targetNode.id),
@@ -268,6 +265,10 @@ export const useFlowStore = defineStore('flow', () => {
         }
       }
     }
+
+    // Add all edges at once
+    edges.value.push(...derivedEdges)
+    console.log('[deriveEdgesFromNodes] Created edges:', derivedEdges.map(e => `${e.source}->${e.target}`))
   }
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
@@ -1734,6 +1735,7 @@ result
    * - Uses version '1.0.0' for cross-system compatibility
    */
   function exportToFlowfile(name: string = 'Untitled Flow'): FlowfileData {
+    console.log('[exportToFlowfile] Current edges:', edges.value.map(e => `${e.source}->${e.target}`))
     const flowfileNodes: FlowfileNode[] = []
 
     // Convert nodes
