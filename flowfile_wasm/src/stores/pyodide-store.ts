@@ -706,14 +706,14 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Sort error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        sort_input = settings.get("sort_input", {})
-        sort_cols = sort_input.get("sort_cols", [])
+        # sort_input is now a flat list matching flowfile_core: [{column, how}]
+        sort_input = settings.get("sort_input", [])
 
-        if not sort_cols:
+        if not sort_input:
             result_lf = input_lf
         else:
-            by = [c.get("column") for c in sort_cols]
-            descending = [c.get("descending", False) for c in sort_cols]
+            by = [c.get("column") for c in sort_input]
+            descending = [c.get("how") == "desc" for c in sort_input]
             result_lf = input_lf.sort(by, descending=descending)
 
         store_lazyframe(node_id, result_lf)

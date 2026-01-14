@@ -445,8 +445,10 @@ class FlowToPolarsConverter {
 
   private handleSort(settings: NodeSortSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
-    const sortCols = settings.sort_input.sort_cols.map(s => s.column)
-    const descending = settings.sort_input.sort_cols.map(s => s.descending)
+    // sort_input is now a flat array matching flowfile_core: [{column, how}]
+    const sortInput = settings.sort_input || []
+    const sortCols = sortInput.map(s => s.column)
+    const descending = sortInput.map(s => s.how === 'desc')
 
     this.addCode(`${varName} = ${inputDf}.sort(`)
     this.addCode(`    ${JSON.stringify(sortCols)},`)
