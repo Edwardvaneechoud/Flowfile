@@ -144,7 +144,7 @@ nodes:
   - id: 7
     type: output
     is_start_node: false
-    description: Export Parquet
+    description: Export CSV
     x_position: 1350
     y_position: 250
     input_ids:
@@ -153,9 +153,11 @@ nodes:
     setting_input:
       cache_results: false
       output_settings:
-        name: regional_sales_summary.parquet
+        name: regional_sales_summary.csv
         directory: .
-        file_type: parquet
+        file_type: csv
         write_mode: overwrite
         table_settings:
-          file_type: parquet
+          file_type: csv
+          delimiter: ","
+          encoding: utf-8

@@ -1010,11 +1010,8 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_lazyframe(node_id, df.lazy())
 
         if file_type == "parquet":
-            buffer = io.BytesIO()
-            df.write_parquet(buffer)
-            content = buffer.getvalue()
-            content = base64.b64encode(content).decode('utf-8')
-            mime_type = "application/octet-stream"
+            # Parquet export is not supported in the browser/WASM environment
+            return {"success": False, "error": f"Output error on node #{node_id}: Parquet export is not supported in the browser. Please use CSV format instead."}
         else:
             delimiter = table_settings.get("delimiter", ",")
             if delimiter == "tab":
