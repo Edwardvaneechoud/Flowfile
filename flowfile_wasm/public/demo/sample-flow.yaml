@@ -1,0 +1,90 @@
+flowfile_version: 1.0.0
+flowfile_id: 1000000000001
+flowfile_name: sample_flow
+flowfile_settings:
+  description: Sample flow demonstrating basic CSV operations
+  execution_mode: Development
+  execution_location: local
+  auto_save: true
+  show_detailed_progress: false
+nodes:
+  - id: 1
+    type: read
+    is_start_node: true
+    description: Read Sales Data
+    x_position: 100
+    y_position: 200
+    input_ids: []
+    outputs:
+      - 2
+    setting_input:
+      cache_results: false
+      received_file:
+        name: sales.csv
+        path: sales.csv
+        file_type: csv
+        table_settings:
+          file_type: csv
+          delimiter: ','
+          has_headers: true
+          encoding: utf-8
+          starting_from_line: 0
+          infer_schema_length: 100
+          truncate_ragged_lines: false
+          ignore_errors: false
+  - id: 2
+    type: filter
+    is_start_node: false
+    description: Filter Active Records
+    x_position: 350
+    y_position: 200
+    input_ids:
+      - 1
+    outputs:
+      - 3
+    setting_input:
+      cache_results: false
+      filter_input:
+        mode: basic
+        basic_filter:
+          field: status
+          operator: equals
+          value: active
+        advanced_filter: ''
+  - id: 3
+    type: group_by
+    is_start_node: false
+    description: Aggregate by Region
+    x_position: 600
+    y_position: 200
+    input_ids:
+      - 2
+    outputs:
+      - 4
+    setting_input:
+      cache_results: false
+      groupby_input:
+        agg_cols:
+          - old_name: region
+            agg: groupby
+            new_name: region
+            is_available: true
+          - old_name: amount
+            agg: sum
+            new_name: total_amount
+            is_available: true
+          - old_name: amount
+            agg: count
+            new_name: record_count
+            is_available: true
+  - id: 4
+    type: explore_data
+    is_start_node: false
+    description: Preview Results
+    x_position: 850
+    y_position: 200
+    input_ids:
+      - 3
+    outputs: []
+    setting_input:
+      cache_results: false
