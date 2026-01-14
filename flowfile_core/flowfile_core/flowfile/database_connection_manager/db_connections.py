@@ -213,6 +213,14 @@ def store_cloud_connection(
         ).id
     else:
         azure_account_key_ref_id = None
+    if connection.azure_sas_token is not None:
+        azure_sas_token_ref_id = store_secret(
+            db,
+            SecretInput(name=connection.connection_name + "azure_sas_token", value=connection.azure_sas_token),
+            user_id,
+        ).id
+    else:
+        azure_sas_token_ref_id = None
 
     db_cloud_connection = DBCloudStorageConnection(
         connection_name=connection.connection_name,
@@ -231,6 +239,7 @@ def store_cloud_connection(
         azure_client_id=connection.azure_client_id,
         azure_account_key_id=azure_account_key_ref_id,
         azure_client_secret_id=azure_client_secret_ref_id,
+        azure_sas_token_id=azure_sas_token_ref_id,
         # Common fields
         endpoint_url=connection.endpoint_url,
         verify_ssl=connection.verify_ssl,
@@ -290,6 +299,12 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         if secret_record:
             azure_client_secret = decrypt_secret(secret_record.encrypted_value)
 
+    azure_sas_token = None
+    if db_connection.azure_sas_token_id:
+        secret_record = db.query(Secret).filter(Secret.id == db_connection.azure_sas_token_id).first()
+        if secret_record:
+            azure_sas_token = decrypt_secret(secret_record.encrypted_value)
+
     # Construct the full Pydantic model
     return FullCloudStorageConnection(
         connection_name=db_connection.connection_name,
@@ -305,6 +320,7 @@ def get_cloud_connection_schema(db: Session, connection_name: str, user_id: int)
         azure_tenant_id=db_connection.azure_tenant_id,
         azure_client_id=db_connection.azure_client_id,
         azure_client_secret=azure_client_secret,
+        azure_sas_token=azure_sas_token,
         endpoint_url=db_connection.endpoint_url,
         verify_ssl=db_connection.verify_ssl,
     )

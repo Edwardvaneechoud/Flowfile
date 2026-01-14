@@ -19,7 +19,7 @@
         <label for="storage-type" class="form-label">Storage Type</label>
         <select id="storage-type" v-model="connection.storageType" class="form-input" required>
           <option value="s3">AWS S3</option>
-          <!-- <option value="adls">Azure Data Lake Storage</option> -->
+          <option value="adls">Azure Data Lake Storage</option>
         </select>
       </div>
 
@@ -200,6 +200,29 @@
             </div>
           </div>
         </template>
+
+        <!-- Azure SAS Token (for sas_token auth) -->
+        <div v-if="connection.authMethod === 'sas_token'" class="form-field">
+          <label for="azure-sas-token" class="form-label">Azure SAS Token</label>
+          <div class="password-field">
+            <input
+              id="azure-sas-token"
+              v-model="connection.azureSasToken"
+              :type="showAzureSasToken ? 'text' : 'password'"
+              class="form-input"
+              placeholder="SAS token"
+              :required="connection.authMethod === 'sas_token'"
+            />
+            <button
+              type="button"
+              class="toggle-visibility"
+              aria-label="Toggle Azure SAS token visibility"
+              @click="showAzureSasToken = !showAzureSasToken"
+            >
+              <i :class="showAzureSasToken ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'"></i>
+            </button>
+          </div>
+        </div>
       </template>
 
       <!-- Common Fields -->
@@ -299,6 +322,7 @@ watch(
 const showAwsSecret = ref(false);
 const showAzureKey = ref(false);
 const showAzureSecret = ref(false);
+const showAzureSasToken = ref(false);
 
 // Computed property for available auth methods based on storage type
 const availableAuthMethods = computed(() => {
@@ -353,6 +377,8 @@ const isValid = computed(() => {
         !!connection.value.azureClientId &&
         !!connection.value.azureClientSecret
       );
+    } else if (connection.value.authMethod === "sas_token") {
+      return !!connection.value.azureSasToken;
     }
   }
 

@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import boto3
+from azure.storage.blob import BlobServiceClient, ContainerClient
 from botocore.exceptions import ClientError
 
 from flowfile_core.schemas.cloud_storage_schemas import FullCloudStorageConnection
@@ -258,3 +259,125 @@ def ensure_path_has_wildcard_pattern(resource_path: str, file_format: Literal["c
     if not resource_path.endswith(f"*.{file_format}"):
         resource_path = resource_path.rstrip("/") + f"/**/*.{file_format}"
     return resource_path
+
+
+def get_first_file_from_adls_dir(source: str, storage_options: dict[str, Any] = None) -> str:
+    """
+    Get the first file from an Azure ADLS directory path.
+
+    Parameters
+    ----------
+    source : str
+        ADLS path with wildcards (e.g., 'az://container/prefix/**/*.parquet' or
+        'abfs://container@account.dfs.core.windows.net/prefix/*.parquet')
+
+    storage_options: dict
+        Storage options containing authentication details
+
+    Returns
+    -------
+    str
+        ADLS URI of the first file found
+
+    Raises
+    ------
+    ValueError
+        If source path is invalid or no files found
+    Exception
+        If ADLS access fails
+    """
+    if not (source.startswith("az://") or source.startswith("abfs://")):
+        raise ValueError("Source must be a valid ADLS URI starting with 'az://' or 'abfs://'")
+
+    container_name, prefix, account_name = _parse_adls_path(source)
+    file_extension = _get_file_extension(source)
+    base_prefix = _remove_wildcards_from_prefix(prefix)
+
+    blob_service_client = _create_adls_client(account_name, storage_options)
+    container_client = blob_service_client.get_container_client(container_name)
+
+    # List blobs with the given prefix
+    first_file = _get_first_adls_file(container_client, base_prefix, file_extension)
+
+    # Return first file URI in az:// format
+    return f"az://{container_name}/{first_file['name']}"
+
+
+def _parse_adls_path(source: str) -> tuple[str, str, str]:
+    """
+    Parse ADLS URI into container name, prefix, and account name.
+
+    Supports both formats:
+    - az://container/prefix/path
+    - abfs://container@account.dfs.core.windows.net/prefix/path
+    """
+    if source.startswith("az://"):
+        # Format: az://container/prefix/path
+        path_parts = source[5:].split("/", 1)  # Remove 'az://'
+        container_name = path_parts[0]
+        prefix = path_parts[1] if len(path_parts) > 1 else ""
+        account_name = None  # Will be extracted from storage_options
+    elif source.startswith("abfs://"):
+        # Format: abfs://container@account.dfs.core.windows.net/prefix/path
+        path_parts = source[7:].split("/", 1)  # Remove 'abfs://'
+        container_and_account = path_parts[0]
+        prefix = path_parts[1] if len(path_parts) > 1 else ""
+
+        # Extract container and account
+        if "@" in container_and_account:
+            container_name, account_part = container_and_account.split("@", 1)
+            account_name = account_part.split(".")[0]  # Extract account name from FQDN
+        else:
+            container_name = container_and_account
+            account_name = None
+    else:
+        raise ValueError("Invalid ADLS URI format")
+
+    return container_name, prefix, account_name
+
+
+def _create_adls_client(account_name: str | None, storage_options: dict[str, Any] | None) -> BlobServiceClient:
+    """Create Azure Blob Service Client with optional credentials."""
+    if storage_options is None:
+        raise ValueError("Storage options are required for ADLS connections")
+
+    # Extract account name from storage options if not provided
+    if account_name is None:
+        account_name = storage_options.get("account_name")
+
+    if not account_name:
+        raise ValueError("Azure account name is required")
+
+    account_url = f"https://{account_name}.blob.core.windows.net"
+
+    # Authenticate based on available credentials
+    if "account_key" in storage_options:
+        return BlobServiceClient(account_url=account_url, credential=storage_options["account_key"])
+    elif "sas_token" in storage_options:
+        return BlobServiceClient(account_url=account_url, credential=storage_options["sas_token"])
+    elif "client_id" in storage_options and "client_secret" in storage_options and "tenant_id" in storage_options:
+        # Service principal authentication
+        from azure.identity import ClientSecretCredential
+
+        credential = ClientSecretCredential(
+            tenant_id=storage_options["tenant_id"],
+            client_id=storage_options["client_id"],
+            client_secret=storage_options["client_secret"],
+        )
+        return BlobServiceClient(account_url=account_url, credential=credential)
+    else:
+        raise ValueError("No valid authentication method found in storage options")
+
+
+def _get_first_adls_file(container_client: ContainerClient, base_prefix: str, file_extension: str) -> dict[str, Any]:
+    """List all files in ADLS container with given prefix and return the first match."""
+    try:
+        blob_list = container_client.list_blobs(name_starts_with=base_prefix)
+
+        for blob in blob_list:
+            if blob.name.endswith(f".{file_extension}"):
+                return {"name": blob.name}
+
+        raise ValueError(f"No {file_extension} files found in container with prefix {base_prefix}")
+    except Exception as e:
+        raise ValueError(f"Failed to list files in ADLS container: {e}")
