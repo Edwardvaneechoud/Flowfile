@@ -44,7 +44,7 @@ from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, schemas, output_model
-from flowfile_core.schemas.history_schema import HistoryActionType
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
@@ -505,8 +505,8 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection):
 # ============================================================================
 
 
-@router.post('/editor/undo/', tags=['editor'], response_model=schemas.UndoRedoResult)
-def undo_action(flow_id: int) -> schemas.UndoRedoResult:
+@router.post('/editor/undo/', tags=['editor'], response_model=UndoRedoResult)
+def undo_action(flow_id: int) -> UndoRedoResult:
     """Undo the last action in the flow graph.
 
     Args:
@@ -521,8 +521,8 @@ def undo_action(flow_id: int) -> schemas.UndoRedoResult:
     return flow.undo()
 
 
-@router.post('/editor/redo/', tags=['editor'], response_model=schemas.UndoRedoResult)
-def redo_action(flow_id: int) -> schemas.UndoRedoResult:
+@router.post('/editor/redo/', tags=['editor'], response_model=UndoRedoResult)
+def redo_action(flow_id: int) -> UndoRedoResult:
     """Redo the last undone action in the flow graph.
 
     Args:
@@ -537,8 +537,8 @@ def redo_action(flow_id: int) -> schemas.UndoRedoResult:
     return flow.redo()
 
 
-@router.get('/editor/history_status/', tags=['editor'], response_model=schemas.HistoryState)
-def get_history_status(flow_id: int) -> schemas.HistoryState:
+@router.get('/editor/history_status/', tags=['editor'], response_model=HistoryState)
+def get_history_status(flow_id: int) -> HistoryState:
     """Get the current undo/redo history status for a flow.
 
     Args:
