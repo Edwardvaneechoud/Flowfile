@@ -23,6 +23,24 @@ const loadError = ref<string | null>(null)
 // Reactive state for dismissed (needs to be reactive for UI updates)
 const isDismissed = ref(localStorage.getItem(DEMO_DISMISSED_KEY) === 'true')
 
+/**
+ * Check if the demo should be auto-loaded based on URL parameters or subdomain
+ * Supports:
+ * - demo.flowfile.org (subdomain)
+ * - ?demo=true (query parameter)
+ */
+function shouldAutoLoadDemo(): boolean {
+  // Check for demo subdomain (e.g., demo.flowfile.org)
+  const hostname = window.location.hostname
+  const isOnDemoSubdomain = hostname.startsWith('demo.')
+
+  // Check for ?demo=true query parameter
+  const urlParams = new URLSearchParams(window.location.search)
+  const hasDemoParam = urlParams.get('demo') === 'true'
+
+  return isOnDemoSubdomain || hasDemoParam
+}
+
 export function useDemo() {
   const flowStore = useFlowStore()
 
@@ -150,6 +168,20 @@ export function useDemo() {
     }
   }
 
+  /**
+   * Auto-load the demo if URL conditions are met
+   * This is called on app startup and loads without confirmation
+   *
+   * @returns Promise<boolean> - True if demo was auto-loaded
+   */
+  async function autoLoadDemoIfNeeded(): Promise<boolean> {
+    if (shouldAutoLoadDemo()) {
+      // Load without confirmation since user explicitly navigated to demo URL
+      return await loadDemo(false)
+    }
+    return false
+  }
+
   return {
     hasSeenDemo,
     hasDismissedDemo,
@@ -158,6 +190,8 @@ export function useDemo() {
     loadDemo,
     markDemoAsSeen,
     resetDemoState,
-    dismissDemo
+    dismissDemo,
+    shouldAutoLoadDemo,
+    autoLoadDemoIfNeeded
   }
 }
