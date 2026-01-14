@@ -29,6 +29,22 @@ interface CodeGenerationOptions {
   flowName?: string
 }
 
+
+interface JoinInputVars {
+  main: string;
+  right: string;
+}
+function isJoinInputVars(input: unknown): input is JoinInputVars {
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    'main' in input &&
+    typeof (input as any).main === 'string' &&
+    'right' in input &&
+    typeof (input as any).right === 'string'
+  );
+}
+
 // Helper function to convert JavaScript values to Python-compatible string representation
 function toPythonValue(value: any): string {
   if (typeof value === 'boolean') {
@@ -169,7 +185,12 @@ class FlowToPolarsConverter {
         this.handleGroupBy(node.settings as NodeGroupBySettings, varName, inputVars)
         break
       case 'join':
-        this.handleJoin(node.settings as NodeJoinSettings, varName, inputVars)
+        if (isJoinInputVars(inputVars)) {
+          // Hovering over 'inputVars' here shows: interface JoinInputVars
+          this.handleJoin(node.settings as NodeJoinSettings, varName, inputVars);
+      } else {
+          console.error("Input does not match interface JoinInputVars");
+      }
         break
       case 'sort':
         this.handleSort(node.settings as NodeSortSettings, varName, inputVars)
@@ -432,9 +453,9 @@ class FlowToPolarsConverter {
     return mapping[agg] || 'sum'
   }
 
-  private handleJoin(settings: NodeJoinSettings, varName: string, inputVars: { left?: string; right?: string }): void {
-    const leftDf = inputVars.left || 'df_left'
-    const rightDf = inputVars.right || 'df_right'
+  private handleJoin(settings: NodeJoinSettings, varName: string, inputVars: { main: string; right: string }): void {
+    const leftDf = inputVars.main
+    const rightDf = inputVars.right
     const joinInput = settings.join_input
 
     const leftOn = joinInput.join_mapping.map(jm => jm.left_col)
@@ -562,7 +583,6 @@ class FlowToPolarsConverter {
     // Determine function parameters based on number of inputs
     let params: string
     let args: string
-    // console.log('inputVars', inputVars)
     const inputKeys = Object.keys(inputVars)
     if (inputKeys.length === 0) {
       params = ''
