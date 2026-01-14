@@ -207,21 +207,27 @@ class FlowToPolarsConverter {
     }
   }
 
-  private getInputVars(node: FlowNode): { main?: string; left?: string; right?: string } {
-    const inputVars: { main?: string; left?: string; right?: string } = {}
-
+  private getInputVars(node: FlowNode): Record<string, string> {
+    const inputVars: Record<string, string> = {}
+  
     if (node.leftInputId !== undefined) {
       inputVars.left = this.nodeVarMapping.get(node.leftInputId) || 'df_left'
     }
-
+  
     if (node.rightInputId !== undefined) {
       inputVars.right = this.nodeVarMapping.get(node.rightInputId) || 'df_right'
     }
-
+  
     if (node.inputIds && node.inputIds.length > 0) {
-      inputVars.main = this.nodeVarMapping.get(node.inputIds[0]) || 'df'
+      if (node.inputIds.length === 1) {
+        inputVars.main = this.nodeVarMapping.get(node.inputIds[0]) || 'df'
+      } else {
+        for (let i = 0; i < node.inputIds.length; i++) {
+          inputVars[`main_${i}`] = this.nodeVarMapping.get(node.inputIds[i]) || `df_${i}`
+        }
+      }
     }
-
+  
     return inputVars
   }
 
@@ -503,26 +509,44 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
-    const inputDf = inputVars.main || 'df'
-    const unpivotInput = settings.unpivot_input
-  
-    this.addCode(`${varName} = ${inputDf}.unpivot(`)
-    
-    if (unpivotInput.index_columns?.length > 0) {
-      this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
-    }
-    
-    if (unpivotInput.value_columns?.length > 0) {
-      this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
-    }
-    
-    this.addCode(`    variable_name="variable",`)
-    this.addCode(`    value_name="value"`)
-    this.addCode(`)`)
-    this.addCode('')
-  }
+        private handleUnpivot(settings: NodeUnpivotSettings, varName: string, inputVars: { main?: string }): void {
+          const inputDf = inputVars.main || 'df'
+          const unpivotInput = settings.unpivot_input
 
+      this.addCode(`${varName} = ${inputDf}.unpivot(`)
+
+      // Index columns
+      if (unpivotInput.index_columns?.length > 0) {
+        this.addCode(`    index=${JSON.stringify(unpivotInput.index_columns)},`)
+      }
+
+      // Handle the "on" parameter based on selector mode
+      if (unpivotInput.data_type_selector_mode === 'data_type' && unpivotInput.data_type_selector) {
+        // Add the import for column selectors
+        this.imports.add('import polars.selectors as cs')
+
+        // Map the selector string to the Polars selector function
+        const selectorMap: Record<string, string> = {
+          'numeric': 'cs.numeric()',
+          'string': 'cs.string()',
+          'float': 'cs.float()',
+          'date': 'cs.temporal()',  // Note: 'date' maps to temporal() in Polars
+          'all': 'cs.all()'
+        }
+
+        const selector = selectorMap[unpivotInput.data_type_selector] || 'cs.all()'
+
+        this.addCode(`    on=${selector},`)
+      } else if (unpivotInput.value_columns?.length > 0) {
+        // Column mode - use explicit column names
+        this.addCode(`    on=${JSON.stringify(unpivotInput.value_columns)},`)
+      }
+
+      this.addCode(`    variable_name="variable",`)
+      this.addCode(`    value_name="value"`)
+      this.addCode(`)`)
+      this.addCode('')
+    }
 
   private handleSample(settings: NodeSampleSettings, varName: string, inputVars: { main?: string }): void {
     const inputDf = inputVars.main || 'df'
@@ -532,15 +556,90 @@ class FlowToPolarsConverter {
     this.addCode('')
   }
 
-  private handlePolarsCode(settings: PolarsCodeSettings, varName: string, inputVars: { main?: string }): void {
-    const inputDf = inputVars.main || 'df'
-    const code = settings.polars_code_input?.polars_code || ''
+  private handlePolarsCode(settings: PolarsCodeSettings, varName: string, inputVars: { main?: string; left?: string; right?: string }): void {
+    const code = (settings.polars_code_input?.polars_code || '').trim()
+    
+    // Determine function parameters based on number of inputs
+    let params: string
+    let args: string
+    // console.log('inputVars', inputVars)
+    const inputKeys = Object.keys(inputVars)
+    if (inputKeys.length === 0) {
+      params = ''
+      args = ''
+    } else if (inputKeys.length === 1) {
+      params = 'input_df: pl.LazyFrame'
+      args = Object.values(inputVars)[0] || 'df'
+    } else {
+      // Multiple inputs
+      const paramList: string[] = []
+      const argList: string[] = []
+      let i = 1
+      for (const key of Object.keys(inputVars).sort()) {
+        if (key.startsWith('main')) {
+          paramList.push(`input_df_${i}: pl.LazyFrame`)
+          argList.push(inputVars[key as keyof typeof inputVars] || `df_${i}`)
+          i++
+        }
+      }
+      params = paramList.join(', ')
+      args = argList.join(', ')
+    }
+  
+    this.addCode('# Custom Polars code')
+    this.addCode(`def _polars_code_${varName.replace('df_', '')}(${params}):`)
+  
+    // 1. Check if output_df is explicitly assigned
+    // Regex matches "output_df =" or "output_df=" at start of line or after whitespace
+    const hasOutputDf = /\boutput_df\s*=/.test(code)
 
-    // Replace 'df' with actual input variable name
-    const processedCode = code.replace(/\bdf\b/g, inputDf)
+    if (hasOutputDf) {
+      // If output_df is assigned, we write the code and force return output_df
+      for (const line of code.split('\n')) {
+        if (line.trim()) {
+          this.addCode(`    ${line}`)
+        }
+      }
+      // Only add return if the user didn't explicitly write "return output_df" at the end
+      if (!code.trim().endsWith('return output_df')) {
+        this.addCode(`    return output_df`)
+      }
 
-    this.addCode(`# Custom Polars code`)
-    this.addCode(`${varName} = ${processedCode}`)
+    } else {
+      // 2. No output_df assigned. Determine if it's an expression or a script.
+      const isSingleLine = code.split('\n').filter(l => l.trim()).length === 1
+      const isAssignment = code.includes('=')
+      const hasReturn = code.includes('return')
+
+      if (isSingleLine && !isAssignment && !hasReturn) {
+        // It's a simple expression (e.g., "input_df.select(...)")
+        this.addCode(`    return ${code}`)
+      } else {
+        // It's a script without output_df
+        for (const line of code.split('\n')) {
+          if (line.trim()) {
+            this.addCode(`    ${line}`)
+          }
+        }
+        if (!hasReturn) {
+          const lines = code.split('\n').map(l => l.trim()).filter(l => l && l.includes('='))
+          if (lines.length > 0) {
+            const lastAssignment = lines[lines.length - 1]
+            // Simple split to get variable name (e.g. "df_new = ...")
+            const outputVar = lastAssignment.split('=')[0].trim()
+            // Basic validity check to ensure we don't return "df['col']" or similar
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(outputVar)) {
+              this.addCode(`    return ${outputVar}`)
+            }
+          }
+        }
+      }
+    }
+  
+    this.addCode('')
+  
+    // Call the function
+    this.addCode(`${varName} = _polars_code_${varName.replace('df_', '')}(${args})`)
     this.addCode('')
   }
 

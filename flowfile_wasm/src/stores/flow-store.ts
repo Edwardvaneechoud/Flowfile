@@ -1357,13 +1357,9 @@ result
         }
 
         case 'polars_code': {
-          const inputId = node.inputIds[0]
-          if (!inputId) {
-            return { success: false, error: 'No input connected' }
-          }
           result = await runPythonWithResult(`
 import json
-result = execute_polars_code(${nodeId}, ${inputId}, json.loads(${toPythonJson(node.settings)}))
+result = execute_polars_code(${nodeId}, [${node.inputIds.join(', ')}], json.loads(${toPythonJson(node.settings)}))
 result
 `)
           break
