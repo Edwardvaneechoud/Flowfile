@@ -66,94 +66,102 @@ The recommended pattern is to **design your flow once** (with test data) and the
 2. Embed the same flow in your app and inject production data
 3. Reuse flows without modifying the flow structure
 
-### Pattern 1: Design Flow + Inject Data (Recommended)
+### Named Bindings (Recommended)
+
+Use the node's **description** field as the binding name. This is much cleaner than using node IDs!
 
 ```vue
 <template>
-  <!-- Load a pre-designed flow and inject your app's data -->
   <FlowfileEditor
     :initial-flow="savedFlow"
-    :initial-data="{ 1: myAppData }"
+    :inputs="inputData"
+    v-model:outputs="results"
+    :auto-execute="true"
+  />
+
+  <!-- Results are automatically bound! -->
+  <div v-if="results.summary">
+    Total rows: {{ results.summary.total_rows }}
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive } from 'vue'
+
+// Your flow has nodes with descriptions:
+// - Read node with description: "customers"
+// - Read node with description: "orders"
+// - Output node with description: "summary"
+const savedFlow = { /* your FlowfileData */ }
+
+// Bind data by name (matches node descriptions!)
+const inputData = reactive({
+  customers: `name,region\nAlice,North\nBob,South`,
+  orders: `customer,amount\nAlice,100\nBob,200`
+})
+
+// Results come back by name too
+const results = ref({})
+
+// When inputData changes, flow auto-re-executes
+function updateData() {
+  inputData.customers = newCsvFromApi
+}
+</script>
+```
+
+**How it works:**
+1. In the flow designer, set each node's **description** to a meaningful name
+2. Use `inputs` prop to inject data by that name
+3. Use `v-model:outputs` to receive results by name
+4. Changes to inputs automatically re-execute the flow
+
+### Using Node IDs (Alternative)
+
+If you prefer explicit control, you can use node IDs directly:
+
+```vue
+<template>
+  <FlowfileEditor
+    :initial-flow="savedFlow"
+    :initial-data="{ 1: customersCsv, 2: ordersCsv }"
     :auto-execute="true"
     @execution-complete="handleResults"
   />
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-
-// Flow designed in the editor (saved as YAML/JSON)
-const savedFlow = { /* your FlowfileData */ }
-
-// Data from your app - injected into node ID 1 (a read node)
-const myAppData = ref(`name,age,city
-Alice,30,NYC
-Bob,25,LA`)
-
-function handleResults(results) {
-  // Get results from output nodes
-  console.log(results)
-}
-</script>
-```
-
-### Pattern 2: Inject Data into Multiple Source Nodes
-
-```vue
-<template>
-  <FlowfileEditor
-    :initial-flow="joinFlow"
-    :initial-data="dataSources"
-    :auto-execute="true"
-  />
-</template>
-
-<script setup lang="ts">
-// Flow with two read nodes (e.g., for a join operation)
-const joinFlow = { /* ... */ }
-
 // Map node IDs to data content
-const dataSources = {
-  1: { name: 'customers.csv', content: customersCsv },
-  2: { name: 'orders.csv', content: ordersCsv }
+const customersCsv = `name,age\nAlice,30`
+const ordersCsv = `item,price\nWidget,10`
+
+function handleResults(results: Map<number, NodeResult>) {
+  const outputNode = results.get(3) // Get by node ID
+  console.log(outputNode?.data)
 }
 </script>
 ```
 
-### Pattern 3: Inject Data Programmatically
+### Programmatic Injection
 
 ```vue
 <template>
-  <FlowfileEditor ref="editorRef" :initial-flow="savedFlow" />
-  <button @click="refreshData">Refresh Data</button>
+  <FlowfileEditor ref="editor" :initial-flow="savedFlow" />
+  <button @click="refresh">Refresh Data</button>
 </template>
 
 <script setup lang="ts">
-const editorRef = ref()
+const editor = ref()
 
-async function refreshData() {
-  // Get fresh data from your API
+async function refresh() {
   const freshData = await fetchFromAPI()
 
-  // Inject into existing source nodes
-  await editorRef.value.injectData({
-    1: { name: 'latest.csv', content: freshData }
-  }, true) // true = auto-execute after injection
+  // By name (matches node description)
+  await editor.value.injectData({
+    customers: freshData
+  }, true) // true = auto-execute
 }
 </script>
-```
-
-### Simple Case: Single Data Source
-
-```vue
-<template>
-  <!-- For flows with a single source node, just pass a string -->
-  <FlowfileEditor
-    :initial-flow="simpleFlow"
-    :initial-data="csvString"
-    :auto-execute="true"
-  />
-</template>
 ```
 
 ## Component Props
@@ -161,8 +169,10 @@ async function refreshData() {
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `initialFlow` | `FlowfileData` | - | Pre-load a saved flow |
-| `initialData` | See below | - | Data to inject into source nodes |
-| `autoExecute` | `boolean` | `false` | Auto-execute after loading initial data |
+| `inputs` | `Record<string, string>` | - | **Named input bindings** (by node description) |
+| `v-model:outputs` | `Record<string, DataPreview>` | - | **Named output bindings** (reactive) |
+| `initialData` | See below | - | Data by node ID (alternative to `inputs`) |
+| `autoExecute` | `boolean` | `false` | Auto-execute after loading data |
 | `showHeader` | `boolean` | `false` | Show the header bar with branding |
 | `showThemeToggle` | `boolean` | `true` | Show the theme toggle button |
 | `theme` | `'light' \| 'dark'` | `'light'` | Initial theme |
@@ -170,7 +180,21 @@ async function refreshData() {
 | `height` | `string` | `'100%'` | Editor height |
 | `width` | `string` | `'100%'` | Editor width |
 
-### `initialData` Formats
+### `inputs` Format (Recommended)
+
+Uses node **descriptions** as keys - much more readable than node IDs!
+
+```typescript
+// In your flow, nodes have descriptions like "customers", "orders"
+inputs: {
+  customers: "name,age\nAlice,30",
+  orders: { name: "orders.csv", content: "..." }
+}
+```
+
+### `initialData` Formats (Alternative)
+
+Uses node IDs as keys:
 
 | Format | Example | Behavior |
 |--------|---------|----------|

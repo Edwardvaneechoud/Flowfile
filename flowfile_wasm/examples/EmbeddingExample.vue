@@ -3,8 +3,8 @@
 
   This shows the complete pattern:
   1. Load a pre-designed flow
-  2. Inject your app's data into source nodes
-  3. Execute and get results
+  2. Bind your app's data using named inputs (matches node descriptions)
+  3. Get results via v-model:outputs (also by name)
 -->
 
 <template>
@@ -14,60 +14,66 @@
     <!-- Your app's data source -->
     <div class="data-source">
       <h2>Input Data</h2>
-      <textarea v-model="myData" rows="5"></textarea>
-      <button @click="runAnalysis" :disabled="!ready">
-        Run Analysis
-      </button>
+      <textarea v-model="inputs.sales_data" rows="5"></textarea>
+      <p class="hint">Edit the data above - flow auto-executes on change!</p>
     </div>
 
-    <!-- Embedded Flowfile Editor -->
+    <!-- Embedded Flowfile Editor with named bindings -->
     <div class="editor-wrapper">
       <FlowfileEditor
-        ref="editor"
         :initial-flow="analysisFlow"
+        :inputs="inputs"
+        v-model:outputs="outputs"
+        :auto-execute="true"
         height="500px"
         @pyodide-ready="ready = true"
-        @execution-complete="onResults"
       />
     </div>
 
-    <!-- Results from the flow -->
-    <div class="results" v-if="results">
-      <h2>Results</h2>
+    <!-- Results bound by name! -->
+    <div class="results" v-if="outputs.summary">
+      <h2>Results (from "summary" node)</h2>
       <table>
         <thead>
           <tr>
-            <th v-for="col in results.columns" :key="col">{{ col }}</th>
+            <th v-for="col in outputs.summary.columns" :key="col">{{ col }}</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, i) in results.data" :key="i">
+          <tr v-for="(row, i) in outputs.summary.data" :key="i">
             <td v-for="(cell, j) in row" :key="j">{{ cell }}</td>
           </tr>
         </tbody>
       </table>
+      <p>Total rows: {{ outputs.summary.total_rows }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import type { FlowfileData, NodeResult } from 'flowfile-wasm'
+import { ref, reactive } from 'vue'
+import type { FlowfileData, DataPreview } from 'flowfile-wasm'
 
-const editor = ref()
 const ready = ref(false)
-const results = ref<{ columns: string[]; data: any[][] } | null>(null)
 
-// Sample data from your app
-const myData = ref(`name,sales,region
+// Named inputs - keys match node descriptions in the flow
+// When this changes, the flow auto-re-executes!
+const inputs = reactive({
+  sales_data: `name,sales,region
 Alice,1200,North
 Bob,800,South
 Charlie,1500,North
 Diana,900,South
-Eve,2000,North`)
+Eve,2000,North`
+})
 
-// Pre-designed flow (you'd typically load this from a file/API)
-// This flow: reads CSV → groups by region → sums sales
+// Named outputs - populated after execution
+// Keys match node descriptions in the flow
+const outputs = ref<Record<string, DataPreview | null>>({})
+
+// Pre-designed flow with named nodes:
+// - "sales_data" (read node) - receives input
+// - "summary" (group_by node) - produces output
 const analysisFlow: FlowfileData = {
   flowfile_version: '1.0.0',
   flowfile_id: 1,
@@ -84,7 +90,7 @@ const analysisFlow: FlowfileData = {
       id: 1,
       type: 'read',
       is_start_node: true,
-      description: 'Input Data',
+      description: 'sales_data',  // <-- This name is used for input binding!
       x_position: 100,
       y_position: 150,
       input_ids: [],
@@ -95,7 +101,7 @@ const analysisFlow: FlowfileData = {
         pos_x: 100,
         pos_y: 150,
         is_setup: true,
-        description: 'Input Data',
+        description: 'sales_data',
         received_file: {
           name: 'data.csv',
           path: 'data.csv',
@@ -113,7 +119,7 @@ const analysisFlow: FlowfileData = {
       id: 2,
       type: 'group_by',
       is_start_node: false,
-      description: 'Sum by Region',
+      description: 'summary',  // <-- This name is used for output binding!
       x_position: 350,
       y_position: 150,
       input_ids: [1],
@@ -124,7 +130,7 @@ const analysisFlow: FlowfileData = {
         pos_x: 350,
         pos_y: 150,
         is_setup: true,
-        description: 'Sum by Region',
+        description: 'summary',
         depending_on_id: 1,
         groupby_input: {
           agg_cols: [
@@ -138,29 +144,6 @@ const analysisFlow: FlowfileData = {
   connections: [
     { from_node: 1, to_node: 2, from_handle: 'source', to_handle: 'target' }
   ]
-}
-
-// Inject data and execute
-async function runAnalysis() {
-  if (!editor.value || !ready.value) return
-
-  // Inject your app's data into node 1 (the read node)
-  await editor.value.injectData({
-    1: { name: 'sales.csv', content: myData.value }
-  }, true) // true = auto-execute
-}
-
-// Handle results
-function onResults(nodeResults: Map<number, NodeResult>) {
-  // Get result from the last node (group_by node, id=2)
-  const groupByResult = nodeResults.get(2)
-
-  if (groupByResult?.success && groupByResult.data) {
-    results.value = {
-      columns: groupByResult.data.columns,
-      data: groupByResult.data.data
-    }
-  }
 }
 </script>
 

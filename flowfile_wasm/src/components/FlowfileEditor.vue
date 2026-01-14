@@ -69,7 +69,7 @@ import { useFlowStore } from '../stores/flow-store'
 import { usePyodideStore } from '../stores/pyodide-store'
 import { useThemeStore } from '../stores/theme-store'
 import { useTheme } from '../composables/useTheme'
-import type { FlowfileData, NodeResult } from '../types'
+import type { FlowfileData, NodeResult, DataPreview } from '../types'
 
 // =============================================================================
 // Props
@@ -93,6 +93,25 @@ export interface FlowfileEditorProps {
    * This allows you to design flows with placeholder data and inject real data at runtime.
    */
   initialData?: string | { name: string; content: string } | Record<number, string | { name: string; content: string }>
+
+  /**
+   * Named input bindings - maps node descriptions to data.
+   * More readable than using node IDs!
+   *
+   * Example: { customers: "csv...", orders: "csv..." }
+   *
+   * The key matches the node's "description" field in the flow designer.
+   * This is the recommended way to bind data in embedded flows.
+   */
+  inputs?: Record<string, string | { name: string; content: string }>
+
+  /**
+   * v-model for named output bindings.
+   * After execution, this contains results keyed by node description.
+   *
+   * Example output: { summary: { columns: [...], data: [...] } }
+   */
+  outputs?: Record<string, DataPreview | null>
 
   /**
    * Whether to auto-execute the flow after loading initial data
@@ -174,6 +193,11 @@ const emit = defineEmits<{
    * Emitted when data is loaded into a source node
    */
   (e: 'data-loaded', nodeId: number, fileName: string): void
+
+  /**
+   * v-model update for outputs - emits named results after execution
+   */
+  (e: 'update:outputs', outputs: Record<string, DataPreview | null>): void
 }>()
 
 // =============================================================================
@@ -215,9 +239,14 @@ onMounted(async () => {
       flowStore.importFromFlowfile(props.initialFlow)
     }
 
-    // Load initial data if provided
+    // Load initial data if provided (legacy node ID approach)
     if (props.initialData) {
       await loadInitialData()
+    }
+
+    // Load named inputs (modern approach - uses node descriptions)
+    if (props.inputs) {
+      await injectNamedInputs()
     }
   }
 })
@@ -247,9 +276,20 @@ watch(isExecuting, (executing, wasExecuting) => {
       emit('execution-error', executionError.value)
     } else {
       emit('execution-complete', nodeResults.value)
+
+      // Emit named outputs for v-model binding
+      const namedOutputs = buildNamedOutputs()
+      emit('update:outputs', namedOutputs)
     }
   }
 })
+
+// Watch for inputs prop changes (reactive data binding)
+watch(() => props.inputs, async (newInputs) => {
+  if (newInputs && pyodideReady.value) {
+    await injectNamedInputs()
+  }
+}, { deep: true })
 
 // Watch for node selection
 watch(selectedNodeId, (nodeId) => {
@@ -263,10 +303,64 @@ watch(selectedNodeId, (nodeId) => {
 /**
  * Find all source nodes (read/manual_input) in the flow
  */
-function getSourceNodes(): Array<{ id: number; type: string }> {
+function getSourceNodes(): Array<{ id: number; type: string; description?: string }> {
   return flowStore.nodeList
     .filter(node => node.type === 'read' || node.type === 'manual_input')
-    .map(node => ({ id: node.id, type: node.type }))
+    .map(node => ({ id: node.id, type: node.type, description: node.description }))
+}
+
+/**
+ * Find a node by its description (for named bindings)
+ */
+function findNodeByDescription(description: string): number | null {
+  const node = flowStore.nodeList.find(
+    n => n.description?.toLowerCase() === description.toLowerCase()
+  )
+  return node?.id ?? null
+}
+
+/**
+ * Inject data using named bindings (matches node descriptions)
+ */
+async function injectNamedInputs() {
+  const inputs = props.inputs
+  if (!inputs) return
+
+  for (const [name, data] of Object.entries(inputs)) {
+    const nodeId = findNodeByDescription(name)
+    if (nodeId === null) {
+      console.warn(`[FlowfileEditor] No node found with description "${name}"`)
+      continue
+    }
+
+    if (typeof data === 'string') {
+      injectDataIntoNode(nodeId, data)
+    } else {
+      injectDataIntoNode(nodeId, data.content, data.name)
+    }
+  }
+
+  if (props.autoExecute) {
+    await flowStore.executeFlow()
+  }
+}
+
+/**
+ * Build named outputs from execution results (keyed by node description)
+ */
+function buildNamedOutputs(): Record<string, DataPreview | null> {
+  const outputs: Record<string, DataPreview | null> = {}
+
+  for (const node of flowStore.nodeList) {
+    if (!node.description) continue
+
+    const result = flowStore.getNodeResult(node.id)
+    if (result?.success && result.data) {
+      outputs[node.description] = result.data
+    }
+  }
+
+  return outputs
 }
 
 /**
