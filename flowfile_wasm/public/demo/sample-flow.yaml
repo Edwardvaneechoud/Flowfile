@@ -79,7 +79,6 @@ nodes:
     description: Completed Only
     x_position: 600
     y_position: 250
-    left_input_id: 9
     input_ids:
       - 9
     outputs:
