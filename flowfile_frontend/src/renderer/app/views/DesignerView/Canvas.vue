@@ -16,6 +16,7 @@ import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useHistoryStore } from "../../stores/history-store";
 import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
 import {
   getFlowData,
@@ -38,6 +39,7 @@ const itemStore = useItemStore();
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const historyStore = useHistoryStore();
 const rawCustomNode = markRaw(CustomNode);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
@@ -131,6 +133,8 @@ const loadFlow = async () => {
   const vueFlowInput = await getFlowData(nodeStore.flow_id);
   await nextTick();
   await importFlow(vueFlowInput);
+  // Refresh history status after loading flow
+  await historyStore.refreshStatus(nodeStore.flow_id);
 };
 
 const selectNodeExternally = (nodeId: number) => {
@@ -372,6 +376,26 @@ const hideLogViewer = () => {
   nodeStore.hideLogViewer();
 };
 
+const handleUndo = async () => {
+  if (nodeStore.flow_id < 0) return;
+
+  const result = await historyStore.undo(nodeStore.flow_id);
+  if (result?.success) {
+    // Reload the flow to reflect the undone state
+    await loadFlow();
+  }
+};
+
+const handleRedo = async () => {
+  if (nodeStore.flow_id < 0) return;
+
+  const result = await historyStore.redo(nodeStore.flow_id);
+  if (result?.success) {
+    // Reload the flow to reflect the redone state
+    await loadFlow();
+  }
+};
+
 const handleKeyDown = (event: KeyboardEvent) => {
   let eventKeyClicked = event.ctrlKey || event.metaKey;
   // Normalize key to lowercase to handle Caps Lock being on
@@ -401,6 +425,14 @@ const handleKeyDown = (event: KeyboardEvent) => {
     // Paste nodes only if no text is selected
     copyValue(clickedPosition.value.x, clickedPosition.value.y);
     event.preventDefault();
+  } else if (eventKeyClicked && key === "z" && !event.shiftKey && !isInputElement) {
+    // Undo (Ctrl+Z / Cmd+Z)
+    event.preventDefault();
+    handleUndo();
+  } else if (eventKeyClicked && (key === "z" && event.shiftKey || key === "y") && !isInputElement) {
+    // Redo (Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y / Cmd+Y)
+    event.preventDefault();
+    handleRedo();
   } else if (eventKeyClicked && key === "n") {
     // Create new flow
     event.preventDefault();

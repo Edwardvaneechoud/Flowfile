@@ -69,6 +69,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
@@ -299,6 +300,10 @@ class FlowGraph:
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
+        # Initialize history manager for undo/redo support
+        from flowfile_core.flowfile.history_manager import HistoryManager
+
+        self._history_manager = HistoryManager()
         if path_ref is not None:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
         elif input_flow is not None:
@@ -315,6 +320,183 @@ class FlowGraph:
         ):
             self.reset()
         self._flow_settings = flow_settings
+
+    @property
+    def history(self):
+        """Get the history manager for undo/redo operations."""
+        return self._history_manager
+
+    def get_history_state(self) -> HistoryState:
+        """Get the current state of the history manager.
+
+        Returns:
+            HistoryState object with undo/redo availability info.
+        """
+        return self._history_manager.get_state()
+
+    def capture_history_snapshot(
+        self,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int | None = None,
+    ) -> None:
+        """Capture the current state for undo/redo before making changes.
+
+        Args:
+            action_type: The type of action about to be performed.
+            description: Human-readable description of the action.
+            node_id: Optional node ID if the action involves a specific node.
+        """
+        self._history_manager.capture_snapshot(self, action_type, description, node_id)
+
+    def undo(self) -> UndoRedoResult:
+        """Undo the last action.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        return self._history_manager.undo(self)
+
+    def redo(self) -> UndoRedoResult:
+        """Redo the last undone action.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        return self._history_manager.redo(self)
+
+    def restore_from_snapshot(self, snapshot: schemas.FlowfileData) -> None:
+        """Restore the flow graph from a snapshot.
+
+        This method clears the current state and rebuilds the graph
+        from the provided snapshot. Used by the history manager for undo/redo.
+
+        Args:
+            snapshot: The FlowfileData snapshot to restore from.
+        """
+        logger.info(f"Restoring flow from snapshot (version: {snapshot.flowfile_version})")
+
+        # Clear current state
+        self._node_db.clear()
+        self._node_ids.clear()
+        self._flow_starts.clear()
+        self._results = None
+
+        # Restore flow settings (but preserve runtime state like flow_id)
+        self._flow_settings.description = snapshot.flowfile_settings.description
+        self._flow_settings.execution_mode = snapshot.flowfile_settings.execution_mode
+        self._flow_settings.execution_location = snapshot.flowfile_settings.execution_location
+        self._flow_settings.auto_save = snapshot.flowfile_settings.auto_save
+        self._flow_settings.show_detailed_progress = snapshot.flowfile_settings.show_detailed_progress
+
+        # Build a map of node IDs to their input connections for restoration
+        node_input_map: dict[int, tuple[list[int], int | None, int | None]] = {}
+        for node_data in snapshot.nodes:
+            node_input_map[node_data.id] = (
+                node_data.input_ids or [],
+                node_data.left_input_id,
+                node_data.right_input_id,
+            )
+
+        # First pass: Create all nodes as promises
+        for node_data in snapshot.nodes:
+            node_promise = input_schema.NodePromise(
+                flow_id=self.flow_id,
+                node_id=node_data.id,
+                node_type=node_data.type,
+                pos_x=node_data.x_position or 0,
+                pos_y=node_data.y_position or 0,
+                description=node_data.description or "",
+                is_setup=False,
+            )
+            self.add_node_promise(node_promise)
+
+            # Mark as start node if needed
+            if node_data.is_start_node:
+                node = self.get_node(node_data.id)
+                if node:
+                    self.add_node_to_starting_list(node)
+
+        # Second pass: Apply settings and restore connections
+        for node_data in snapshot.nodes:
+            if node_data.setting_input is not None:
+                # Get the settings class for this node type
+                settings_class = schemas.get_settings_class_for_node_type(node_data.type)
+                if settings_class is not None:
+                    try:
+                        # Prepare settings data with required fields
+                        settings_dict = node_data.setting_input
+                        if isinstance(settings_dict, dict):
+                            settings_dict = dict(settings_dict)
+                            settings_dict["flow_id"] = self.flow_id
+                            settings_dict["node_id"] = node_data.id
+                            settings_dict["pos_x"] = node_data.x_position or 0
+                            settings_dict["pos_y"] = node_data.y_position or 0
+                            if node_data.description:
+                                settings_dict["description"] = node_data.description
+
+                            # Handle depending_on_id for single input nodes
+                            main_inputs, left_input, right_input = node_input_map.get(node_data.id, ([], None, None))
+                            if main_inputs and "depending_on_id" not in settings_dict:
+                                settings_dict["depending_on_id"] = main_inputs[0]
+                            if main_inputs and "depending_on_ids" not in settings_dict:
+                                settings_dict["depending_on_ids"] = main_inputs
+
+                            # Validate and create settings
+                            node_settings = settings_class.model_validate(settings_dict)
+
+                            # Find and call the appropriate add method
+                            add_method_name = f"add_{node_data.type}"
+                            if hasattr(self, add_method_name):
+                                add_method = getattr(self, add_method_name)
+                                add_method(node_settings)
+                    except Exception as e:
+                        logger.warning(f"Failed to restore settings for node {node_data.id} ({node_data.type}): {e}")
+
+        # Third pass: Restore connections
+        for node_data in snapshot.nodes:
+            main_inputs, left_input, right_input = node_input_map.get(node_data.id, ([], None, None))
+            to_node = self.get_node(node_data.id)
+            if to_node is None:
+                continue
+
+            # Restore main inputs
+            for input_id in main_inputs:
+                from_node = self.get_node(input_id)
+                if from_node is not None:
+                    try:
+                        node_connection = input_schema.NodeConnection.create_from_simple_input(
+                            from_id=input_id, to_id=node_data.id, input_type="main"
+                        )
+                        add_connection(self, node_connection)
+                    except Exception as e:
+                        logger.debug(f"Connection {input_id} -> {node_data.id} may already exist: {e}")
+
+            # Restore left input
+            if left_input is not None:
+                from_node = self.get_node(left_input)
+                if from_node is not None:
+                    try:
+                        node_connection = input_schema.NodeConnection.create_from_simple_input(
+                            from_id=left_input, to_id=node_data.id, input_type="left"
+                        )
+                        add_connection(self, node_connection)
+                    except Exception as e:
+                        logger.debug(f"Left connection {left_input} -> {node_data.id} may already exist: {e}")
+
+            # Restore right input
+            if right_input is not None:
+                from_node = self.get_node(right_input)
+                if from_node is not None:
+                    try:
+                        node_connection = input_schema.NodeConnection.create_from_simple_input(
+                            from_id=right_input, to_id=node_data.id, input_type="right"
+                        )
+                        add_connection(self, node_connection)
+                    except Exception as e:
+                        logger.debug(f"Right connection {right_input} -> {node_data.id} may already exist: {e}")
+
+        logger.info(f"Restored {len(self._node_db)} nodes from snapshot")
 
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.

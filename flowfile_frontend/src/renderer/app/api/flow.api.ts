@@ -8,7 +8,12 @@ import type {
   LocalFileInfo,
   NodeConnection,
   NodePromise,
+  HistoryState,
+  UndoRedoResult,
+  HistoryStateResponse,
+  UndoRedoResultResponse,
 } from "../types";
+import { toHistoryState, toUndoRedoResult } from "../types";
 
 export class FlowApi {
   // ============================================================================
@@ -266,5 +271,64 @@ export class FlowApi {
       headers: { accept: "application/json" },
     });
     return response.data;
+  }
+
+  // ============================================================================
+  // History / Undo-Redo Operations
+  // ============================================================================
+
+  /**
+   * Undo the last action in the flow
+   */
+  static async undo(flowId: number): Promise<UndoRedoResult> {
+    const response = await axios.post<UndoRedoResultResponse>(
+      "/editor/undo/",
+      {},
+      {
+        params: { flow_id: flowId },
+        headers: { accept: "application/json" },
+      },
+    );
+    return toUndoRedoResult(response.data);
+  }
+
+  /**
+   * Redo the last undone action in the flow
+   */
+  static async redo(flowId: number): Promise<UndoRedoResult> {
+    const response = await axios.post<UndoRedoResultResponse>(
+      "/editor/redo/",
+      {},
+      {
+        params: { flow_id: flowId },
+        headers: { accept: "application/json" },
+      },
+    );
+    return toUndoRedoResult(response.data);
+  }
+
+  /**
+   * Get the current history status (can undo/redo, descriptions)
+   */
+  static async getHistoryStatus(flowId: number): Promise<HistoryState> {
+    const response = await axios.get<HistoryStateResponse>("/editor/history_status/", {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return toHistoryState(response.data);
+  }
+
+  /**
+   * Clear all history for the flow
+   */
+  static async clearHistory(flowId: number): Promise<void> {
+    await axios.post(
+      "/editor/history_clear/",
+      {},
+      {
+        params: { flow_id: flowId },
+        headers: { accept: "application/json" },
+      },
+    );
   }
 }
