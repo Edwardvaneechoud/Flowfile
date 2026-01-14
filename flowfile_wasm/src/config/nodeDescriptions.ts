@@ -5,7 +5,7 @@ export interface NodeDescription {
 }
 
 export const nodeDescriptions: Record<string, NodeDescription> = {
-  read_csv: {
+  read: {
     title: 'Read CSV',
     intro: 'Load data from a CSV file. Drag and drop a file or paste CSV content directly.'
   },
@@ -45,7 +45,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
     title: 'Polars Code',
     intro: 'Write custom Polars code for advanced transformations. Access input_df and return a DataFrame. Supports full Python/Polars syntax.'
   },
-  preview: {
+  explore_data: {
     title: 'Preview',
     intro: 'Preview your data at this point in the flow. Does not modify the data.'
   },
@@ -59,7 +59,7 @@ export const nodeDescriptions: Record<string, NodeDescription> = {
   },
   output: {
     title: 'Write Data',
-    intro: 'Export your data as CSV or Parquet. Run the flow to prepare the data, then download the file to your computer.'
+    intro: 'Export your data as CSV. Run the flow to prepare the data, then download the file to your computer.'
   }
 }
 

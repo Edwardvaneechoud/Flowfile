@@ -389,7 +389,7 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
     """Execute read CSV node - creates a LazyFrame"""
     try:
         import io
-        table_settings = settings.get("received_table", {}).get("table_settings", {})
+        table_settings = settings.get("received_file", {}).get("table_settings", {})
 
         # Source nodes: read into DataFrame first, then convert to lazy
         df = pl.read_csv(
@@ -402,7 +402,7 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
         store_lazyframe(node_id, lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("read_csv", node_id, e)}
+        return {"success": False, "error": format_error("read", node_id, e)}
 
 
 def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
@@ -706,14 +706,14 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
         return {"success": False, "error": f"Sort error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
     try:
-        sort_input = settings.get("sort_input", {})
-        sort_cols = sort_input.get("sort_cols", [])
+        # sort_input is now a flat list matching flowfile_core: [{column, how}]
+        sort_input = settings.get("sort_input", [])
 
-        if not sort_cols:
+        if not sort_input:
             result_lf = input_lf
         else:
-            by = [c.get("column") for c in sort_cols]
-            descending = [c.get("descending", False) for c in sort_cols]
+            by = [c.get("column") for c in sort_input]
+            descending = [c.get("how") == "desc" for c in sort_input]
             result_lf = input_lf.sort(by, descending=descending)
 
         store_lazyframe(node_id, result_lf)
@@ -861,7 +861,7 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
         store_lazyframe(node_id, input_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error_lf("preview", node_id, e, input_lf)}
+        return {"success": False, "error": format_error_lf("explore_data", node_id, e, input_lf)}
 
 def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute pivot node - converts data from long to wide format
@@ -1010,11 +1010,8 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
         store_lazyframe(node_id, df.lazy())
 
         if file_type == "parquet":
-            buffer = io.BytesIO()
-            df.write_parquet(buffer)
-            content = buffer.getvalue()
-            content = base64.b64encode(content).decode('utf-8')
-            mime_type = "application/octet-stream"
+            # Parquet export is not supported in the browser/WASM environment
+            return {"success": False, "error": f"Output error on node #{node_id}: Parquet export is not supported in the browser. Please use CSV format instead."}
         else:
             delimiter = table_settings.get("delimiter", ",")
             if delimiter == "tab":

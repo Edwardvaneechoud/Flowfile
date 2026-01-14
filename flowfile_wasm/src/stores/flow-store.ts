@@ -39,6 +39,31 @@ const SETTING_INPUT_EXCLUDE = new Set([
   'depending_on_ids',
 ])
 
+// Fields to exclude from nested objects (not in flowfile_core schema)
+const NESTED_FIELDS_EXCLUDE = new Set([
+  'is_available',  // Used internally for UI state, not part of flowfile_core
+])
+
+/**
+ * Recursively clean an object/array by removing excluded fields
+ */
+function deepClean(value: any): any {
+  if (value === null || value === undefined) return value
+  if (Array.isArray(value)) {
+    return value.map(item => deepClean(item))
+  }
+  if (typeof value === 'object') {
+    const cleaned: Record<string, any> = {}
+    for (const [key, val] of Object.entries(value)) {
+      if (!NESTED_FIELDS_EXCLUDE.has(key)) {
+        cleaned[key] = deepClean(val)
+      }
+    }
+    return cleaned
+  }
+  return value
+}
+
 /**
  * Clean setting_input by removing fields that are excluded during export
  * This matches the behavior of flowfile_core's FlowfileNode serializer
@@ -48,7 +73,7 @@ function cleanSettingInput(settings: NodeSettings): any {
   const cleaned: Record<string, any> = {}
   for (const [key, value] of Object.entries(settings)) {
     if (!SETTING_INPUT_EXCLUDE.has(key)) {
-      cleaned[key] = value
+      cleaned[key] = deepClean(value)
     }
   }
   return cleaned
@@ -96,12 +121,24 @@ export const useFlowStore = defineStore('flow', () => {
 
           // Import from FlowfileData
           for (const flowfileNode of data.nodes) {
+            // Migrate old node types to new names (for backward compatibility)
+            let nodeType = flowfileNode.type
+            if (nodeType === 'read_csv') nodeType = 'read'
+            if (nodeType === 'preview') nodeType = 'explore_data'
+
+            // Migrate old settings field names
+            let settings = flowfileNode.setting_input as NodeSettings
+            if (settings && (settings as any).received_table && !(settings as any).received_file) {
+              (settings as any).received_file = (settings as any).received_table
+              delete (settings as any).received_table
+            }
+
             const node: FlowNode = {
               id: flowfileNode.id,
-              type: flowfileNode.type,
+              type: nodeType,
               x: flowfileNode.x_position,
               y: flowfileNode.y_position,
-              settings: flowfileNode.setting_input as NodeSettings,
+              settings,
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
@@ -247,8 +284,8 @@ export const useFlowStore = defineStore('flow', () => {
         type: node.type,
         is_start_node: isStartNode,
         description: (node.settings as NodeBase).description || '',
-        x_position: node.x,
-        y_position: node.y,
+        x_position: Math.round(node.x),  // flowfile_core expects int
+        y_position: Math.round(node.y),  // flowfile_core expects int
         left_input_id: node.leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
@@ -578,14 +615,14 @@ export const useFlowStore = defineStore('flow', () => {
 
     // Get node to check settings for CSV parsing options
     const node = nodes.value.get(nodeId)
-    if (node && (node.type === 'read_csv' || node.type === 'manual_input')) {
+    if (node && (node.type === 'read' || node.type === 'manual_input')) {
       let hasHeaders = true
       let delimiter = ','
 
-      if (node.type === 'read_csv') {
+      if (node.type === 'read') {
         const settings = node.settings as any
-        hasHeaders = settings?.received_table?.table_settings?.has_headers ?? true
-        delimiter = settings?.received_table?.table_settings?.delimiter ?? ','
+        hasHeaders = settings?.received_file?.table_settings?.has_headers ?? true
+        delimiter = settings?.received_file?.table_settings?.delimiter ?? ','
       }
 
       // Infer schema from CSV content
@@ -875,15 +912,14 @@ for nid in orphaned_ids:
     }
 
     if (node.type === 'sort') {
-      // Check if sorted columns still exist
-      const sortInput = settings.sort_input
-      if (sortInput?.sort_cols) {
+      // Check if sorted columns still exist - sort_input is now a flat array
+      const sortInput = settings.sort_input as any[]
+      if (sortInput && Array.isArray(sortInput)) {
         const inputColumnNames = new Set(inputSchema.map(c => c.name))
-        sortInput.sort_cols = sortInput.sort_cols.map((col: any) => ({
+        settings.sort_input = sortInput.map((col: any) => ({
           ...col,
           is_available: inputColumnNames.has(col.column)
         }))
-        settings.sort_input = sortInput
         node.settings = settings
         modified = true
       }
@@ -1214,7 +1250,7 @@ result
       let result: NodeResult
 
       switch (node.type) {
-        case 'read_csv': {
+        case 'read': {
           const content = fileContents.value.get(nodeId)
           if (!content) {
             return { success: false, error: 'No file loaded' }
@@ -1355,7 +1391,7 @@ result
           break
         }
 
-        case 'preview': {
+        case 'explore_data': {
           const inputId = node.inputIds[0]
           if (!inputId) {
             return { success: false, error: 'No input connected' }
@@ -1525,18 +1561,19 @@ result
     }
 
     switch (type) {
-      case 'read_csv':
+      case 'read':
         return {
           ...base,
-          received_table: {
+          received_file: {
             name: '',
+            path: '',  // Required by flowfile_core
             file_type: 'csv',
             table_settings: {
               file_type: 'csv',
               delimiter: ',',
               has_headers: true,
-              starting_from_line: 0,
               encoding: 'utf-8',
+              starting_from_line: 0,
               infer_schema_length: 100,
               truncate_ragged_lines: false,
               ignore_errors: false
@@ -1600,9 +1637,8 @@ result
       case 'sort':
         return {
           ...base,
-          sort_input: {
-            sort_cols: []
-          }
+          // sort_input is a flat array matching flowfile_core's NodeSort schema
+          sort_input: []
         } as any
 
       case 'formula':
@@ -1658,7 +1694,7 @@ result
           }
         } as any
 
-      case 'preview':
+      case 'explore_data':
         return {
           ...base
         } as NodeSettings
@@ -1712,8 +1748,8 @@ result
         type: node.type,
         is_start_node: isStartNode,
         description: (node.settings as NodeBase).description || '',
-        x_position: node.x,
-        y_position: node.y,
+        x_position: Math.round(node.x),  // flowfile_core expects int
+        y_position: Math.round(node.y),  // flowfile_core expects int
         left_input_id: node.leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
@@ -1774,12 +1810,24 @@ result
       for (const flowfileNode of data.nodes) {
         if (flowfileNode.id > maxId) maxId = flowfileNode.id
 
+        // Migrate old node types to new names (for backward compatibility)
+        let nodeType = flowfileNode.type
+        if (nodeType === 'read_csv') nodeType = 'read'
+        if (nodeType === 'preview') nodeType = 'explore_data'
+
+        // Migrate old settings field names
+        let settings = flowfileNode.setting_input as NodeSettings
+        if (settings && (settings as any).received_table && !(settings as any).received_file) {
+          (settings as any).received_file = (settings as any).received_table
+          delete (settings as any).received_table
+        }
+
         const node: FlowNode = {
           id: flowfileNode.id,
-          type: flowfileNode.type,
+          type: nodeType,
           x: flowfileNode.x_position ?? 0,
           y: flowfileNode.y_position ?? 0,
-          settings: flowfileNode.setting_input as NodeSettings,
+          settings,
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
@@ -1955,9 +2003,9 @@ result
     const missing: Array<{nodeId: number, fileName: string}> = []
     
     for (const [id, node] of nodes.value) {
-      if (node.type === 'read_csv') {
+      if (node.type === 'read') {
         const settings = node.settings as NodeReadSettings
-        const fileName = settings.file_name || settings.received_table?.name
+        const fileName = settings.file_name || settings.received_file?.name
         
         if (fileName && !fileContents.value.has(id)) {
           missing.push({ nodeId: id, fileName })
@@ -1989,11 +2037,12 @@ result
     fileContents.value.set(nodeId, content)
     
     const node = nodes.value.get(nodeId)
-    if (node && node.type === 'read_csv') {
+    if (node && node.type === 'read') {
       const settings = node.settings as NodeReadSettings
       settings.file_name = fileName
-      if (settings.received_table) {
-        settings.received_table.name = fileName
+      if (settings.received_file) {
+        settings.received_file.name = fileName
+        settings.received_file.path = fileName  // Also set path as required by flowfile_core
       }
     }
     

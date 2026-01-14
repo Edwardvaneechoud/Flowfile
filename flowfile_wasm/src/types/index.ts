@@ -257,25 +257,32 @@ export interface RawData {
 // INPUT TABLE SCHEMAS (for CSV reading)
 // =============================================================================
 
+// Matches flowfile_core InputCsvTable
 export interface InputCsvTable {
   file_type: 'csv'
   reference?: string
   starting_from_line?: number
   delimiter: string
   has_headers: boolean
-  encoding?: string
+  encoding: string
+  parquet_ref?: string
+  row_delimiter?: string
   quote_char?: string
   infer_schema_length?: number
   truncate_ragged_lines?: boolean
   ignore_errors?: boolean
 }
 
+// Matches flowfile_core ReceivedTable
 export interface ReceivedTable {
   id?: number
-  name: string
-  path?: string
+  name?: string
+  path: string  // Required in flowfile_core
   directory?: string
+  analysis_file_available?: boolean
+  status?: string
   fields?: MinimalFieldInfo[]
+  abs_file_path?: string
   file_type: 'csv' | 'json' | 'parquet' | 'excel'
   table_settings: InputCsvTable
 }
@@ -284,8 +291,9 @@ export interface ReceivedTable {
 // NODE SETTING TYPES (matches flowfile_core node structures)
 // =============================================================================
 
+// Matches flowfile_core NodeRead
 export interface NodeReadSettings extends NodeBase {
-  received_table?: ReceivedTable
+  received_file?: ReceivedTable  // Matches flowfile_core's 'received_file' field
   // Simplified for WASM - we store file content separately
   file_name?: string
 }
@@ -303,10 +311,9 @@ export interface NodeSelectSettings extends NodeSingleInput {
   keep_missing?: boolean
 }
 
+// Matches flowfile_core's NodeSort - sort_input is a flat list
 export interface NodeSortSettings extends NodeSingleInput {
-  sort_input: {
-    sort_cols: SortColumn[]
-  }
+  sort_input: SortColumn[]
 }
 
 export interface NodeGroupBySettings extends NodeSingleInput {
@@ -475,7 +482,7 @@ export interface FlowState {
 
 export const NODE_TYPES = {
   // Input nodes
-  read_csv: 'read_csv',
+  read: 'read',  // Matches flowfile_core's 'read' type
   manual_input: 'manual_input',
 
   // Transform nodes
@@ -495,7 +502,7 @@ export const NODE_TYPES = {
   join: 'join',
 
   // Output nodes
-  preview: 'preview',
+  explore_data: 'explore_data',  // Matches flowfile_core's 'explore_data' type
   output: 'output',
 } as const
 
@@ -537,10 +544,9 @@ export interface SelectSettings extends NodeBase {
   depending_on_id?: number
 }
 
+// Matches flowfile_core's NodeSort - sort_input is a flat list
 export interface SortSettings extends NodeBase {
-  sort_input: {
-    sort_cols: SortColumn[]
-  }
+  sort_input: SortColumn[]
   depending_on_id?: number
 }
 
@@ -628,9 +634,10 @@ export interface SelectColumn {
   position?: number
 }
 
+// Matches flowfile_core's SortByInput
 export interface SortColumn {
   column: string
-  descending: boolean
+  how: 'asc' | 'desc'
 }
 
 export interface AggColumn {

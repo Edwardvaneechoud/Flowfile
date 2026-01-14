@@ -19,22 +19,8 @@
         />
       </div>
 
-      <!-- File Type -->
-      <div class="form-group">
-        <label class="filter-label">File Type</label>
-        <select
-          :value="outputSettings.file_type"
-          @change="updateFileType(($event.target as HTMLSelectElement).value as OutputFileType)"
-          class="select"
-        >
-          <option v-for="type in fileTypes" :key="type.value" :value="type.value">
-            {{ type.label }}
-          </option>
-        </select>
-      </div>
-
       <!-- CSV Options -->
-      <div v-if="outputSettings.file_type === 'csv'" class="format-options">
+      <div class="format-options">
         <div class="form-group">
           <label class="filter-label">Delimiter</label>
           <select
@@ -59,13 +45,6 @@
               {{ opt }}
             </option>
           </select>
-        </div>
-      </div>
-
-      <!-- Parquet Info -->
-      <div v-if="outputSettings.file_type === 'parquet'" class="format-options">
-        <div class="help-text">
-          Parquet files will be downloaded as binary data with optimal compression.
         </div>
       </div>
 
@@ -103,7 +82,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
-import type { OutputNodeSettings, OutputFileType, OutputCsvTable, OutputSettings, OutputPolarsMethod } from '../../types'
+import type { OutputNodeSettings, OutputCsvTable, OutputSettings } from '../../types'
 
 const props = defineProps<{
   nodeId: number
@@ -116,12 +95,6 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// File type options (CSV and Parquet only)
-const fileTypes = [
-  { value: 'csv', label: 'CSV (.csv)' },
-  { value: 'parquet', label: 'Parquet (.parquet)' }
-]
-
 // CSV options
 const delimiterOptions = [
   { value: ',', label: 'Comma (,)' },
@@ -132,24 +105,18 @@ const delimiterOptions = [
 
 const encodingOptions = ['utf-8', 'ISO-8859-1', 'ASCII']
 
-// Helper function to get polars method from file type
-function getPolarsMethod(fileType: OutputFileType): OutputPolarsMethod {
-  return fileType === 'parquet' ? 'sink_parquet' : 'sink_csv'
-}
-
-// Initialize output settings from props
-const initialFileType = props.settings.output_settings?.file_type || 'csv'
+// Initialize output settings from props (CSV only in WASM)
 const outputSettings = ref<OutputSettings>({
   name: props.settings.output_settings?.name || 'output.csv',
   directory: props.settings.output_settings?.directory || '.',
-  file_type: initialFileType,
+  file_type: 'csv',
   write_mode: props.settings.output_settings?.write_mode || 'overwrite',
   table_settings: props.settings.output_settings?.table_settings || {
     file_type: 'csv',
     delimiter: ',',
     encoding: 'utf-8'
   },
-  polars_method: props.settings.output_settings?.polars_method || getPolarsMethod(initialFileType)
+  polars_method: 'sink_csv'
 })
 
 // Computed properties for format-specific settings
@@ -182,54 +149,13 @@ watch(() => props.settings.output_settings, (newSettings) => {
 
 // Update functions
 function updateFileName(value: string) {
-  outputSettings.value.name = value
-
-  // Auto-detect file type from extension
-  const extension = value.split('.').pop()?.toLowerCase()
-  if (extension) {
-    const extMap: Record<string, OutputFileType> = {
-      'csv': 'csv',
-      'parquet': 'parquet'
-    }
-    if (extMap[extension] && extMap[extension] !== outputSettings.value.file_type) {
-      updateFileType(extMap[extension])
-      return // updateFileType already emits
-    }
+  // Ensure .csv extension
+  let name = value
+  if (!name.toLowerCase().endsWith('.csv')) {
+    const baseName = name.split('.')[0]
+    name = baseName + '.csv'
   }
-
-  emitUpdate()
-}
-
-function updateFileType(value: OutputFileType) {
-  outputSettings.value.file_type = value
-
-  // Update polars_method based on file type
-  outputSettings.value.polars_method = getPolarsMethod(value)
-
-  // Update table_settings based on file type
-  switch (value) {
-    case 'csv':
-      outputSettings.value.table_settings = {
-        file_type: 'csv',
-        delimiter: ',',
-        encoding: 'utf-8'
-      }
-      break
-    case 'parquet':
-      outputSettings.value.table_settings = {
-        file_type: 'parquet'
-      }
-      break
-  }
-
-  // Update file extension
-  const baseName = outputSettings.value.name.split('.')[0]
-  const extMap: Record<OutputFileType, string> = {
-    'csv': '.csv',
-    'parquet': '.parquet'
-  }
-  outputSettings.value.name = baseName + extMap[value]
-
+  outputSettings.value.name = name
   emitUpdate()
 }
 

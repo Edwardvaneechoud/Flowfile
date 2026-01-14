@@ -262,7 +262,7 @@ export function inferOutputSchema(
   rightInputSchema?: ColumnSchema[] | null
 ): ColumnSchema[] | null {
   // Source nodes - schema comes from actual data, not inference
-  if (nodeType === 'read_csv' || nodeType === 'manual_input') {
+  if (nodeType === 'read' || nodeType === 'manual_input') {
     // These nodes get their schema from loaded data
     // Return null to indicate we should keep existing schema
     return null
@@ -280,7 +280,7 @@ export function inferOutputSchema(
     case 'head':
     case 'sample':
     case 'unique':
-    case 'preview':
+    case 'explore_data':
       return inputSchema
 
     // Polars code - can't infer transformations without execution
@@ -322,7 +322,7 @@ export function inferOutputSchema(
  * Check if a node type is a source node (produces data rather than transforming it)
  */
 export function isSourceNode(nodeType: string): boolean {
-  return nodeType === 'read_csv' || nodeType === 'manual_input'
+  return nodeType === 'read' || nodeType === 'manual_input'
 }
 
 /**

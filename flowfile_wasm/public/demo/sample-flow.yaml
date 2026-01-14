@@ -9,7 +9,7 @@ flowfile_settings:
   show_detailed_progress: false
 nodes:
   - id: 1
-    type: read_csv
+    type: read
     is_start_node: true
     description: Read Orders
     x_position: 100
@@ -20,8 +20,9 @@ nodes:
     setting_input:
       cache_results: false
       file_name: sales-data.csv
-      received_table:
+      received_file:
         name: sales-data.csv
+        path: sales-data.csv
         file_type: csv
         table_settings:
           file_type: csv
@@ -29,7 +30,7 @@ nodes:
           has_headers: true
           encoding: utf-8
   - id: 2
-    type: read_csv
+    type: read
     is_start_node: true
     description: Read Regions
     x_position: 100
@@ -40,8 +41,9 @@ nodes:
     setting_input:
       cache_results: false
       file_name: regions.csv
-      received_table:
+      received_file:
         name: regions.csv
+        path: regions.csv
         file_type: csv
         table_settings:
           file_type: csv
@@ -70,6 +72,8 @@ nodes:
             right_col: region
         left_suffix: ''
         right_suffix: _right
+        left_select: []
+        right_select: []
   - id: 4
     type: filter
     is_start_node: false
@@ -107,27 +111,21 @@ nodes:
           - old_name: region_name
             agg: groupby
             new_name: region_name
-            is_available: true
           - old_name: manager
             agg: first
             new_name: manager
-            is_available: true
           - old_name: order_id
             agg: count
             new_name: order_count
-            is_available: true
           - old_name: quantity
             agg: sum
             new_name: total_quantity
-            is_available: true
           - old_name: unit_price
             agg: mean
             new_name: avg_price
-            is_available: true
           - old_name: target_sales
             agg: first
             new_name: target_sales
-            is_available: true
   - id: 6
     type: sort
     is_start_node: false
@@ -141,14 +139,12 @@ nodes:
     setting_input:
       cache_results: false
       sort_input:
-        sort_cols:
-          - column: order_count
-            descending: true
-            is_available: true
+        - column: order_count
+          how: desc
   - id: 7
     type: output
     is_start_node: false
-    description: Export Parquet
+    description: Export CSV
     x_position: 1350
     y_position: 250
     input_ids:
@@ -156,7 +152,12 @@ nodes:
     outputs: []
     setting_input:
       cache_results: false
-      file_name: regional_sales_summary
-      file_type: parquet
-      output_table:
-        file_type: parquet
+      output_settings:
+        name: regional_sales_summary.csv
+        directory: .
+        file_type: csv
+        write_mode: overwrite
+        table_settings:
+          file_type: csv
+          delimiter: ","
+          encoding: utf-8
