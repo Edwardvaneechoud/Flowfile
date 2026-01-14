@@ -28,7 +28,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
+import { getPanelState, savePanelState, clearPanelState, type PanelState } from '../../stores/panel-store'
 
 // Global z-index counter shared across all DraggablePanel instances
 let globalMaxZIndex = 100
@@ -94,6 +94,51 @@ function saveCurrentState() {
   savePanelState(props.panelId, state)
 }
 
+// Reset panel to default position based on initialPosition prop
+function resetToDefault() {
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+
+  // Clear saved state so panel uses defaults
+  if (props.panelId) {
+    clearPanelState(props.panelId)
+  }
+
+  // Reset to initial dimensions
+  width.value = props.initialWidth
+  height.value = props.initialHeight
+  isMinimized.value = false
+
+  // Calculate position based on initialPosition prop
+  switch (props.initialPosition) {
+    case 'right':
+      left.value = vw - width.value
+      top.value = props.initialTop
+      height.value = vh - props.initialTop
+      break
+    case 'left':
+      left.value = 0
+      top.value = props.initialTop
+      height.value = vh - props.initialTop
+      break
+    case 'bottom':
+      left.value = props.initialLeft
+      top.value = vh - height.value
+      width.value = vw - props.initialLeft
+      break
+    case 'top':
+      left.value = props.initialLeft
+      top.value = props.initialTop
+      width.value = vw - props.initialLeft
+      break
+  }
+}
+
+// Handle window resize - reset panels to default positions
+function handleWindowResize() {
+  resetToDefault()
+}
+
 // Compute initial position based on prop
 onMounted(() => {
   const vh = window.innerHeight
@@ -147,6 +192,9 @@ onMounted(() => {
       width.value = vw - props.initialLeft
       break
   }
+
+  // Add window resize listener to reset panels to default when window size changes
+  window.addEventListener('resize', handleWindowResize)
 })
 
 // Watch for changes to initialTop and update position (only if no saved state)
@@ -274,6 +322,7 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopMove)
   document.removeEventListener('mousemove', onResize)
   document.removeEventListener('mouseup', stopResize)
+  window.removeEventListener('resize', handleWindowResize)
 })
 </script>
 
