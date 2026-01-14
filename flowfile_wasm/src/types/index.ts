@@ -141,14 +141,11 @@ export interface JoinMap {
   right_col: string
 }
 
-export interface JoinInputs {
-  renames: SelectInput[]
-}
-
+// Internal format uses flat arrays, transformed to {select: []} on export
 export interface JoinInput {
   join_mapping: JoinMap[]
-  left_select?: JoinInputs
-  right_select?: JoinInputs
+  left_select: SelectInput[]
+  right_select: SelectInput[]
   how: JoinStrategy
 }
 

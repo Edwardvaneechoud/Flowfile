@@ -65,10 +65,44 @@ function deepClean(value: any): any {
 }
 
 /**
+ * Transform join_input to match flowfile_core schema
+ * - left_select/right_select should be {select: []} not []
+ * - Remove extra fields not in flowfile_core
+ */
+function transformJoinInput(joinInput: any): any {
+  if (!joinInput) return joinInput
+
+  const transformed: any = {
+    join_mapping: joinInput.join_mapping || [],
+    how: joinInput.how || 'inner',
+  }
+
+  // Transform left_select: [] to {select: []}
+  if (Array.isArray(joinInput.left_select)) {
+    transformed.left_select = { select: joinInput.left_select }
+  } else if (joinInput.left_select?.select) {
+    transformed.left_select = joinInput.left_select
+  } else {
+    transformed.left_select = { select: [] }
+  }
+
+  // Transform right_select: [] to {select: []}
+  if (Array.isArray(joinInput.right_select)) {
+    transformed.right_select = { select: joinInput.right_select }
+  } else if (joinInput.right_select?.select) {
+    transformed.right_select = joinInput.right_select
+  } else {
+    transformed.right_select = { select: [] }
+  }
+
+  return transformed
+}
+
+/**
  * Clean setting_input by removing fields that are excluded during export
  * This matches the behavior of flowfile_core's FlowfileNode serializer
  */
-function cleanSettingInput(settings: NodeSettings): any {
+function cleanSettingInput(settings: NodeSettings, nodeType: string): any {
   if (!settings) return null
   const cleaned: Record<string, any> = {}
   for (const [key, value] of Object.entries(settings)) {
@@ -76,6 +110,12 @@ function cleanSettingInput(settings: NodeSettings): any {
       cleaned[key] = deepClean(value)
     }
   }
+
+  // Transform join_input for join nodes
+  if (nodeType === 'join' && cleaned.join_input) {
+    cleaned.join_input = transformJoinInput(cleaned.join_input)
+  }
+
   return cleaned
 }
 
@@ -290,7 +330,7 @@ export const useFlowStore = defineStore('flow', () => {
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: cleanSettingInput(node.settings)
+        setting_input: cleanSettingInput(node.settings, node.type)
       })
     })
 
@@ -1626,11 +1666,10 @@ result
           ...base,
           depending_on_ids: [],
           join_input: {
-            join_type: 'inner',
             how: 'inner',
             join_mapping: [],
-            left_suffix: '_left',
-            right_suffix: '_right'
+            left_select: [],
+            right_select: []
           }
         } as any
 
@@ -1754,7 +1793,7 @@ result
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: cleanSettingInput(node.settings)
+        setting_input: cleanSettingInput(node.settings, node.type)
       }
 
       flowfileNodes.push(flowfileNode)
