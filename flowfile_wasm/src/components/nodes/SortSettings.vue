@@ -40,9 +40,9 @@
           >
             <td>{{ sort.column }}</td>
             <td>
-              <select :value="sort.descending" @change="updateDescending(idx, ($event.target as HTMLSelectElement).value === 'true')" class="select-sm">
-                <option :value="false">Ascending</option>
-                <option :value="true">Descending</option>
+              <select :value="sort.how" @change="updateHow(idx, ($event.target as HTMLSelectElement).value as 'asc' | 'desc')" class="select-sm">
+                <option value="asc">Ascending</option>
+                <option value="desc">Descending</option>
               </select>
             </td>
           </tr>
@@ -56,8 +56,8 @@
       class="context-menu"
       :style="{ top: contextMenuPosition.y + 'px', left: contextMenuPosition.x + 'px' }"
     >
-      <button @click="setSortSettings(false)">Ascending</button>
-      <button @click="setSortSettings(true)">Descending</button>
+      <button @click="setSortSettings('asc')">Ascending</button>
+      <button @click="setSortSettings('desc')">Descending</button>
     </div>
 
     <!-- Context Menu for rows -->
@@ -87,10 +87,10 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Initialize directly from props - no watch needed
+// Initialize directly from props - sort_input is now a flat array matching flowfile_core
 const sortCols = ref<SortColumn[]>(
-  props.settings.sort_input?.sort_cols
-    ? props.settings.sort_input.sort_cols.map(s => ({ column: s.column, descending: s.descending }))
+  props.settings.sort_input
+    ? props.settings.sort_input.map(s => ({ column: s.column, how: s.how }))
     : []
 )
 const selectedColumns = ref<string[]>([])
@@ -136,17 +136,17 @@ function hideContextMenu() {
   contextMenuColumn.value = null
 }
 
-function setSortSettings(descending: boolean) {
+function setSortSettings(how: 'asc' | 'desc') {
   const column = contextMenuColumn.value
   if (column) {
-    sortCols.value.push({ column, descending })
+    sortCols.value.push({ column, how })
     emitUpdate()
   }
   hideContextMenu()
 }
 
-function updateDescending(index: number, descending: boolean) {
-  sortCols.value[index].descending = descending
+function updateHow(index: number, how: 'asc' | 'desc') {
+  sortCols.value[index].how = how
   emitUpdate()
 }
 
@@ -163,12 +163,11 @@ function emitUpdate() {
   const settings: SortSettings = {
     ...props.settings,
     is_setup: sortCols.value.length > 0,
-    sort_input: {
-      sort_cols: sortCols.value.map(s => ({
-        column: s.column,
-        descending: s.descending
-      }))
-    }
+    // sort_input is now a flat array matching flowfile_core's NodeSort schema
+    sort_input: sortCols.value.map(s => ({
+      column: s.column,
+      how: s.how
+    }))
   }
   emit('update:settings', settings)
 }

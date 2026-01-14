@@ -311,10 +311,9 @@ export interface NodeSelectSettings extends NodeSingleInput {
   keep_missing?: boolean
 }
 
+// Matches flowfile_core's NodeSort - sort_input is a flat list
 export interface NodeSortSettings extends NodeSingleInput {
-  sort_input: {
-    sort_cols: SortColumn[]
-  }
+  sort_input: SortColumn[]
 }
 
 export interface NodeGroupBySettings extends NodeSingleInput {
@@ -545,10 +544,9 @@ export interface SelectSettings extends NodeBase {
   depending_on_id?: number
 }
 
+// Matches flowfile_core's NodeSort - sort_input is a flat list
 export interface SortSettings extends NodeBase {
-  sort_input: {
-    sort_cols: SortColumn[]
-  }
+  sort_input: SortColumn[]
   depending_on_id?: number
 }
 
@@ -636,9 +634,10 @@ export interface SelectColumn {
   position?: number
 }
 
+// Matches flowfile_core's SortByInput
 export interface SortColumn {
   column: string
-  descending: boolean
+  how: 'asc' | 'desc'
 }
 
 export interface AggColumn {

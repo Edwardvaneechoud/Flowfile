@@ -65,35 +65,13 @@ function deepClean(value: any): any {
 }
 
 /**
- * Transform settings to match flowfile_core schema for specific node types
- * This handles structural differences between flowfile_wasm and flowfile_core
- */
-function transformSettingsForExport(settings: NodeSettings, nodeType: string): any {
-  if (!settings) return null
-  const transformed = { ...settings } as any
-
-  // Sort node: transform { sort_cols: [{column, descending}] } to [{column, how}]
-  if (nodeType === 'sort' && transformed.sort_input?.sort_cols) {
-    transformed.sort_input = transformed.sort_input.sort_cols.map((col: any) => ({
-      column: col.column,
-      how: col.descending ? 'desc' : 'asc'
-    }))
-  }
-
-  return transformed
-}
-
-/**
  * Clean setting_input by removing fields that are excluded during export
  * This matches the behavior of flowfile_core's FlowfileNode serializer
  */
-function cleanSettingInput(settings: NodeSettings, nodeType: string): any {
+function cleanSettingInput(settings: NodeSettings): any {
   if (!settings) return null
-  // First transform to flowfile_core format
-  const transformed = transformSettingsForExport(settings, nodeType)
-  // Then clean excluded fields
   const cleaned: Record<string, any> = {}
-  for (const [key, value] of Object.entries(transformed)) {
+  for (const [key, value] of Object.entries(settings)) {
     if (!SETTING_INPUT_EXCLUDE.has(key)) {
       cleaned[key] = deepClean(value)
     }
@@ -153,22 +131,6 @@ export const useFlowStore = defineStore('flow', () => {
             if (settings && (settings as any).received_table && !(settings as any).received_file) {
               (settings as any).received_file = (settings as any).received_table
               delete (settings as any).received_table
-            }
-
-            // Transform sort_input from flowfile_core format to flowfile_wasm format
-            // flowfile_core: sort_input: [{ column, how }]
-            // flowfile_wasm: sort_input: { sort_cols: [{ column, descending }] }
-            if (nodeType === 'sort' && settings && (settings as any).sort_input) {
-              const sortInput = (settings as any).sort_input
-              // Check if it's flowfile_core format (array) vs flowfile_wasm format (object with sort_cols)
-              if (Array.isArray(sortInput)) {
-                (settings as any).sort_input = {
-                  sort_cols: sortInput.map((col: any) => ({
-                    column: col.column,
-                    descending: col.how === 'desc'
-                  }))
-                }
-              }
             }
 
             const node: FlowNode = {
@@ -328,7 +290,7 @@ export const useFlowStore = defineStore('flow', () => {
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: cleanSettingInput(node.settings, node.type)
+        setting_input: cleanSettingInput(node.settings)
       })
     })
 
@@ -950,15 +912,14 @@ for nid in orphaned_ids:
     }
 
     if (node.type === 'sort') {
-      // Check if sorted columns still exist
-      const sortInput = settings.sort_input
-      if (sortInput?.sort_cols) {
+      // Check if sorted columns still exist - sort_input is now a flat array
+      const sortInput = settings.sort_input as any[]
+      if (sortInput && Array.isArray(sortInput)) {
         const inputColumnNames = new Set(inputSchema.map(c => c.name))
-        sortInput.sort_cols = sortInput.sort_cols.map((col: any) => ({
+        settings.sort_input = sortInput.map((col: any) => ({
           ...col,
           is_available: inputColumnNames.has(col.column)
         }))
-        settings.sort_input = sortInput
         node.settings = settings
         modified = true
       }
@@ -1676,9 +1637,8 @@ result
       case 'sort':
         return {
           ...base,
-          sort_input: {
-            sort_cols: []
-          }
+          // sort_input is a flat array matching flowfile_core's NodeSort schema
+          sort_input: []
         } as any
 
       case 'formula':
@@ -1794,7 +1754,7 @@ result
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
-        setting_input: cleanSettingInput(node.settings, node.type)
+        setting_input: cleanSettingInput(node.settings)
       }
 
       flowfileNodes.push(flowfileNode)
@@ -1860,22 +1820,6 @@ result
         if (settings && (settings as any).received_table && !(settings as any).received_file) {
           (settings as any).received_file = (settings as any).received_table
           delete (settings as any).received_table
-        }
-
-        // Transform sort_input from flowfile_core format to flowfile_wasm format
-        // flowfile_core: sort_input: [{ column, how }]
-        // flowfile_wasm: sort_input: { sort_cols: [{ column, descending }] }
-        if (nodeType === 'sort' && settings && (settings as any).sort_input) {
-          const sortInput = (settings as any).sort_input
-          // Check if it's flowfile_core format (array) vs flowfile_wasm format (object with sort_cols)
-          if (Array.isArray(sortInput)) {
-            (settings as any).sort_input = {
-              sort_cols: sortInput.map((col: any) => ({
-                column: col.column,
-                descending: col.how === 'desc'
-              }))
-            }
-          }
         }
 
         const node: FlowNode = {
