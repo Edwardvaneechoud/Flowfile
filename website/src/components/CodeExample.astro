@@ -155,7 +155,7 @@
     margin: 0;
     font-family: var(--font-mono);
     font-size: 13px;
-    line-height: 1.7;
+    line-height: 1.5;
   }
 
   .code-content code {
@@ -164,6 +164,11 @@
 
   .line {
     display: block;
+    min-height: 1.5em;
+  }
+
+  .line:empty {
+    min-height: 0.75em;
   }
 
   .kw { color: #c792ea; }
