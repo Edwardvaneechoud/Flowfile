@@ -139,7 +139,7 @@ class FlowToPolarsConverter {
 
     // Route to appropriate handler
     switch (node.type) {
-      case 'read_csv':
+      case 'read':
         this.handleReadCsv(node.settings as NodeReadSettings, varName)
         break
       case 'manual_input':
@@ -176,8 +176,8 @@ class FlowToPolarsConverter {
       case 'unpivot':
         this.handleUnpivot(node.settings as NodeUnpivotSettings, varName, inputVars)
         break
-      case 'preview':
-        // Preview is a pass-through node
+      case 'explore_data':
+        // explore_data is a pass-through node
         this.handlePreview(varName, inputVars)
         break
       case 'output':

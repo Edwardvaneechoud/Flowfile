@@ -472,7 +472,7 @@ export interface FlowState {
 
 export const NODE_TYPES = {
   // Input nodes
-  read_csv: 'read_csv',
+  read: 'read',  // Matches flowfile_core's 'read' type
   manual_input: 'manual_input',
 
   // Transform nodes
@@ -492,7 +492,7 @@ export const NODE_TYPES = {
   join: 'join',
 
   // Output nodes
-  preview: 'preview',
+  explore_data: 'explore_data',  // Matches flowfile_core's 'explore_data' type
   output: 'output',
 } as const
 

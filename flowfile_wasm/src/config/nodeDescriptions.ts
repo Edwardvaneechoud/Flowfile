@@ -5,7 +5,7 @@ export interface NodeDescription {
 }
 
 export const nodeDescriptions: Record<string, NodeDescription> = {
-  read_csv: {
+  read: {
     title: 'Read CSV',
     intro: 'Load data from a CSV file. Drag and drop a file or paste CSV content directly.'
   },

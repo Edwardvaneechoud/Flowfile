@@ -39,20 +39,6 @@ const SETTING_INPUT_EXCLUDE = new Set([
   'depending_on_ids',
 ])
 
-// Node type mapping from flowfile_wasm to flowfile_core
-// flowfile_wasm uses more descriptive names internally, but flowfile_core uses different names
-const NODE_TYPE_TO_CORE: Record<string, string> = {
-  'read_csv': 'read',
-  'preview': 'explore_data',
-}
-
-/**
- * Convert a flowfile_wasm node type to flowfile_core node type
- */
-function toFlowfileCoreType(wasmType: string): string {
-  return NODE_TYPE_TO_CORE[wasmType] ?? wasmType
-}
-
 /**
  * Clean setting_input by removing fields that are excluded during export
  * This matches the behavior of flowfile_core's FlowfileNode serializer
@@ -258,7 +244,7 @@ export const useFlowStore = defineStore('flow', () => {
 
       flowfileNodes.push({
         id: node.id,
-        type: toFlowfileCoreType(node.type),  // Map to flowfile_core type
+        type: node.type,
         is_start_node: isStartNode,
         description: (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
@@ -592,11 +578,11 @@ export const useFlowStore = defineStore('flow', () => {
 
     // Get node to check settings for CSV parsing options
     const node = nodes.value.get(nodeId)
-    if (node && (node.type === 'read_csv' || node.type === 'manual_input')) {
+    if (node && (node.type === 'read' || node.type === 'manual_input')) {
       let hasHeaders = true
       let delimiter = ','
 
-      if (node.type === 'read_csv') {
+      if (node.type === 'read') {
         const settings = node.settings as any
         hasHeaders = settings?.received_table?.table_settings?.has_headers ?? true
         delimiter = settings?.received_table?.table_settings?.delimiter ?? ','
@@ -1228,7 +1214,7 @@ result
       let result: NodeResult
 
       switch (node.type) {
-        case 'read_csv': {
+        case 'read': {
           const content = fileContents.value.get(nodeId)
           if (!content) {
             return { success: false, error: 'No file loaded' }
@@ -1369,7 +1355,7 @@ result
           break
         }
 
-        case 'preview': {
+        case 'explore_data': {
           const inputId = node.inputIds[0]
           if (!inputId) {
             return { success: false, error: 'No input connected' }
@@ -1539,7 +1525,7 @@ result
     }
 
     switch (type) {
-      case 'read_csv':
+      case 'read':
         return {
           ...base,
           received_table: {
@@ -1672,7 +1658,7 @@ result
           }
         } as any
 
-      case 'preview':
+      case 'explore_data':
         return {
           ...base
         } as NodeSettings
@@ -1723,7 +1709,7 @@ result
 
       const flowfileNode: FlowfileNode = {
         id: node.id,
-        type: toFlowfileCoreType(node.type),  // Map to flowfile_core type
+        type: node.type,
         is_start_node: isStartNode,
         description: (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
@@ -1969,7 +1955,7 @@ result
     const missing: Array<{nodeId: number, fileName: string}> = []
     
     for (const [id, node] of nodes.value) {
-      if (node.type === 'read_csv') {
+      if (node.type === 'read') {
         const settings = node.settings as NodeReadSettings
         const fileName = settings.file_name || settings.received_table?.name
         
@@ -2003,7 +1989,7 @@ result
     fileContents.value.set(nodeId, content)
     
     const node = nodes.value.get(nodeId)
-    if (node && node.type === 'read_csv') {
+    if (node && node.type === 'read') {
       const settings = node.settings as NodeReadSettings
       settings.file_name = fileName
       if (settings.received_table) {

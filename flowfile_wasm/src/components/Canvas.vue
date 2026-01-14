@@ -270,7 +270,7 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Input Sources',
     isOpen: true,
     nodes: [
-      { type: 'read_csv', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
+      { type: 'read', name: 'Read CSV', icon: 'input_data.png', inputs: 0, outputs: 1 },
       { type: 'manual_input', name: 'Manual Input', icon: 'manual_input.png', inputs: 0, outputs: 1 }
     ]
   },
@@ -306,7 +306,7 @@ const nodeCategories = ref<NodeCategory[]>([
     name: 'Output Operations',
     isOpen: true,
     nodes: [
-      { type: 'preview', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 },
+      { type: 'explore_data', name: 'Preview', icon: 'view.png', inputs: 1, outputs: 0 },
       { type: 'output', name: 'Write Data', icon: 'output.png', inputs: 1, outputs: 0 }
     ]
   }
@@ -502,7 +502,7 @@ function updateSettings(settings: NodeSettings) {
 // Get settings component for node type
 function getSettingsComponent(type: string) {
   const components: Record<string, any> = {
-    read_csv: ReadCsvSettings,
+    read: ReadCsvSettings,
     manual_input: ManualInputSettings,
     filter: FilterSettings,
     select: SelectSettings,
@@ -512,7 +512,7 @@ function getSettingsComponent(type: string) {
     polars_code: PolarsCodeSettings,
     unique: UniqueSettings,
     head: HeadSettings,
-    preview: PreviewSettings,
+    explore_data: PreviewSettings,
     pivot: PivotSettings,
     unpivot: UnpivotSettings,
     output: OutputSettings

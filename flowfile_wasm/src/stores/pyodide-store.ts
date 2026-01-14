@@ -402,7 +402,7 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
         store_lazyframe(node_id, lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("read_csv", node_id, e)}
+        return {"success": False, "error": format_error("read", node_id, e)}
 
 
 def execute_manual_input(node_id: int, data_content: str, settings: Dict) -> Dict:
@@ -861,7 +861,7 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
         store_lazyframe(node_id, input_lf)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error_lf("preview", node_id, e, input_lf)}
+        return {"success": False, "error": format_error_lf("explore_data", node_id, e, input_lf)}
 
 def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute pivot node - converts data from long to wide format
