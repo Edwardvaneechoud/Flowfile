@@ -400,10 +400,12 @@ onUnmounted(() => {
   position: absolute;
   opacity: 0;
   transition: opacity 0.15s;
+  pointer-events: none;
 }
 
 .draggable-panel:hover .resize-handle {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .resize-handle.right {
