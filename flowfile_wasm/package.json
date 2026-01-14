@@ -1,16 +1,45 @@
 {
   "name": "flowfile-wasm",
   "version": "0.1.0",
-  "description": "Minimal WASM-based data flow designer using Pyodide and Polars",
+  "description": "Embeddable browser-based data flow designer using Pyodide and Polars",
   "type": "module",
+  "main": "./dist/flowfile-wasm.umd.js",
+  "module": "./dist/flowfile-wasm.es.js",
+  "types": "./dist/types/lib.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/flowfile-wasm.es.js",
+      "require": "./dist/flowfile-wasm.umd.js",
+      "types": "./dist/types/lib.d.ts"
+    },
+    "./style.css": "./dist/flowfile-wasm.css",
+    "./dist/*": "./dist/*"
+  },
+  "files": [
+    "dist",
+    "src/types"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "build:lib": "vue-tsc --noEmit && vite build --mode library",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "pinia": "^2.0.0",
+    "vue": "^3.3.0"
+  },
+  "peerDependenciesMeta": {
+    "pinia": {
+      "optional": false
+    },
+    "vue": {
+      "optional": false
+    }
   },
   "dependencies": {
     "@ag-grid-community/client-side-row-model": "^31.1.1",

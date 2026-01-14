@@ -386,7 +386,7 @@ class FileStorageManager {
   }
 }
 
-// Export singleton instance
+// Export singleton instance and class
 export const fileStorage = new FileStorageManager();
-export { SIZE_THRESHOLD };
+export { FileStorageManager, SIZE_THRESHOLD };
 export type { DownloadEntry };
