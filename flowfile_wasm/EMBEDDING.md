@@ -60,108 +60,100 @@ function onExecutionComplete(results: Map<number, NodeResult>) {
 
 ## Loading External Data
 
-### Option 1: Pass Initial Data via Props
+The recommended pattern is to **design your flow once** (with test data) and then **inject real data at runtime**. This lets you:
+
+1. Design & test flows in isolation using the designer
+2. Embed the same flow in your app and inject production data
+3. Reuse flows without modifying the flow structure
+
+### Pattern 1: Design Flow + Inject Data (Recommended)
 
 ```vue
 <template>
+  <!-- Load a pre-designed flow and inject your app's data -->
   <FlowfileEditor
-    :initial-data="csvData"
+    :initial-flow="savedFlow"
+    :initial-data="{ 1: myAppData }"
     :auto-execute="true"
-    @data-loaded="onDataLoaded"
+    @execution-complete="handleResults"
   />
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 
-// Raw CSV string
-const csvData = ref(`name,age,city
+// Flow designed in the editor (saved as YAML/JSON)
+const savedFlow = { /* your FlowfileData */ }
+
+// Data from your app - injected into node ID 1 (a read node)
+const myAppData = ref(`name,age,city
 Alice,30,NYC
-Bob,25,LA
-Charlie,35,Chicago`)
+Bob,25,LA`)
+
+function handleResults(results) {
+  // Get results from output nodes
+  console.log(results)
+}
 </script>
 ```
 
-### Option 2: Load Data Programmatically
+### Pattern 2: Inject Data into Multiple Source Nodes
 
 ```vue
 <template>
-  <FlowfileEditor ref="editorRef" />
-  <button @click="loadMyData">Load Data</button>
+  <FlowfileEditor
+    :initial-flow="joinFlow"
+    :initial-data="dataSources"
+    :auto-execute="true"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+// Flow with two read nodes (e.g., for a join operation)
+const joinFlow = { /* ... */ }
 
+// Map node IDs to data content
+const dataSources = {
+  1: { name: 'customers.csv', content: customersCsv },
+  2: { name: 'orders.csv', content: ordersCsv }
+}
+</script>
+```
+
+### Pattern 3: Inject Data Programmatically
+
+```vue
+<template>
+  <FlowfileEditor ref="editorRef" :initial-flow="savedFlow" />
+  <button @click="refreshData">Refresh Data</button>
+</template>
+
+<script setup lang="ts">
 const editorRef = ref()
 
-async function loadMyData() {
-  // Wait for Pyodide to be ready
-  if (!editorRef.value?.isPyodideReady()) {
-    console.log('Waiting for Pyodide...')
-    return
-  }
+async function refreshData() {
+  // Get fresh data from your API
+  const freshData = await fetchFromAPI()
 
-  // Add a read node and load data
-  const nodeId = editorRef.value.addNode('read', 100, 100)
-  editorRef.value.loadData(nodeId, myCSVContent, 'mydata.csv')
-
-  // Execute the flow
-  await editorRef.value.executeFlow()
+  // Inject into existing source nodes
+  await editorRef.value.injectData({
+    1: { name: 'latest.csv', content: freshData }
+  }, true) // true = auto-execute after injection
 }
 </script>
 ```
 
-### Option 3: Load Initial Flow with Data
+### Simple Case: Single Data Source
 
 ```vue
 <template>
-  <FlowfileEditor :initial-flow="savedFlow" />
+  <!-- For flows with a single source node, just pass a string -->
+  <FlowfileEditor
+    :initial-flow="simpleFlow"
+    :initial-data="csvString"
+    :auto-execute="true"
+  />
 </template>
-
-<script setup lang="ts">
-import type { FlowfileData } from 'flowfile-wasm'
-
-// Load a saved flow (e.g., from your backend)
-const savedFlow: FlowfileData = {
-  flowfile_version: '1.0.0',
-  flowfile_id: 1,
-  flowfile_name: 'My Analysis',
-  flowfile_settings: {
-    description: '',
-    execution_mode: 'Development',
-    execution_location: 'local',
-    auto_save: true,
-    show_detailed_progress: false
-  },
-  nodes: [
-    {
-      id: 1,
-      type: 'read',
-      is_start_node: true,
-      description: 'Load data',
-      x_position: 100,
-      y_position: 100,
-      input_ids: [],
-      outputs: [2],
-      setting_input: {
-        received_file: {
-          name: 'data.csv',
-          path: 'data.csv',
-          file_type: 'csv',
-          table_settings: {
-            file_type: 'csv',
-            delimiter: ',',
-            has_headers: true,
-            encoding: 'utf-8'
-          }
-        }
-      }
-    },
-    // ... more nodes
-  ]
-}
-</script>
 ```
 
 ## Component Props
@@ -169,7 +161,7 @@ const savedFlow: FlowfileData = {
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `initialFlow` | `FlowfileData` | - | Pre-load a saved flow |
-| `initialData` | `string \| { name: string; content: string }` | - | CSV data to load into a new read node |
+| `initialData` | See below | - | Data to inject into source nodes |
 | `autoExecute` | `boolean` | `false` | Auto-execute after loading initial data |
 | `showHeader` | `boolean` | `false` | Show the header bar with branding |
 | `showThemeToggle` | `boolean` | `true` | Show the theme toggle button |
@@ -177,6 +169,15 @@ const savedFlow: FlowfileData = {
 | `containerClass` | `string` | `''` | Custom CSS class for the container |
 | `height` | `string` | `'100%'` | Editor height |
 | `width` | `string` | `'100%'` | Editor width |
+
+### `initialData` Formats
+
+| Format | Example | Behavior |
+|--------|---------|----------|
+| `string` | `"a,b\n1,2"` | Inject into first source node |
+| `{ name, content }` | `{ name: 'data.csv', content: '...' }` | Inject with filename |
+| `Record<nodeId, string>` | `{ 1: '...', 2: '...' }` | Inject into specific nodes |
+| `Record<nodeId, { name, content }>` | `{ 1: { name: 'a.csv', content: '...' } }` | Inject with filenames |
 
 ## Events
 
@@ -202,11 +203,15 @@ interface FlowfileEditorAPI {
   importFlow(data: FlowfileData): boolean
   clearFlow(): void
 
+  // Data injection (key for embedding!)
+  loadData(nodeId: number, content: string, fileName?: string): boolean
+  injectData(dataMap: Record<number, string | { name, content }>, autoExecute?: boolean): Promise<void>
+  getSourceNodes(): Array<{ id: number; type: string }>
+
   // Node operations
   addNode(type: string, x: number, y: number): number
   removeNode(nodeId: number): void
   selectNode(nodeId: number | null): void
-  loadData(nodeId: number, content: string, fileName?: string): void
 
   // Results
   getNodeResult(nodeId: number): NodeResult | undefined

@@ -82,10 +82,17 @@ export interface FlowfileEditorProps {
   initialFlow?: FlowfileData
 
   /**
-   * Initial CSV data to load into a source node
-   * Can be a string (raw CSV) or { name: string, content: string }
+   * Data to inject into source nodes (read/manual_input).
+   *
+   * Can be:
+   * - A string: Injected into the first source node
+   * - { name, content }: Injected into the first source node with filename
+   * - { [nodeId]: string }: Map of node IDs to CSV content
+   * - { [nodeId]: { name, content } }: Map of node IDs to named content
+   *
+   * This allows you to design flows with placeholder data and inject real data at runtime.
    */
-  initialData?: string | { name: string; content: string }
+  initialData?: string | { name: string; content: string } | Record<number, string | { name: string; content: string }>
 
   /**
    * Whether to auto-execute the flow after loading initial data
@@ -254,67 +261,101 @@ watch(selectedNodeId, (nodeId) => {
 // =============================================================================
 
 /**
- * Load initial data into the flow
+ * Find all source nodes (read/manual_input) in the flow
+ */
+function getSourceNodes(): Array<{ id: number; type: string }> {
+  return flowStore.nodeList
+    .filter(node => node.type === 'read' || node.type === 'manual_input')
+    .map(node => ({ id: node.id, type: node.type }))
+}
+
+/**
+ * Inject data into a specific node
+ */
+function injectDataIntoNode(nodeId: number, content: string, fileName?: string) {
+  const node = flowStore.getNode(nodeId)
+  if (!node) {
+    console.warn(`[FlowfileEditor] Node ${nodeId} not found for data injection`)
+    return false
+  }
+
+  // Set the file content
+  flowStore.setFileContent(nodeId, content)
+
+  // Update filename in settings if provided
+  if (fileName) {
+    const settings = node.settings as any
+    if (node.type === 'read') {
+      flowStore.updateNodeSettings(nodeId, {
+        ...settings,
+        file_name: fileName,
+        received_file: {
+          ...settings.received_file,
+          name: fileName,
+          path: fileName
+        }
+      })
+    }
+  }
+
+  emit('data-loaded', nodeId, fileName || 'data.csv')
+  return true
+}
+
+/**
+ * Load initial data into the flow.
+ *
+ * Supports multiple formats:
+ * - string: Inject into first source node
+ * - { name, content }: Inject into first source node with filename
+ * - { [nodeId]: ... }: Inject into specific nodes by ID
  */
 async function loadInitialData() {
   const data = props.initialData
   if (!data) return
 
-  // If no flow exists, create a read node
-  if (flowStore.nodeList.length === 0) {
-    const nodeId = flowStore.addNode('read', 100, 100)
+  const sourceNodes = getSourceNodes()
 
-    // Set the file content
-    if (typeof data === 'string') {
-      flowStore.setFileContent(nodeId, data)
-      flowStore.updateNodeSettings(nodeId, {
-        ...flowStore.getNode(nodeId)!.settings,
-        file_name: 'data.csv',
-        received_file: {
-          name: 'data.csv',
-          path: 'data.csv',
-          file_type: 'csv',
-          table_settings: {
-            file_type: 'csv',
-            delimiter: ',',
-            has_headers: true,
-            encoding: 'utf-8',
-            starting_from_line: 0,
-            infer_schema_length: 100,
-            truncate_ragged_lines: false,
-            ignore_errors: false
-          }
-        }
-      } as any)
-      emit('data-loaded', nodeId, 'data.csv')
+  // Case 1: Data is a record mapping node IDs to content
+  if (typeof data === 'object' && !('content' in data)) {
+    // It's a Record<number, ...>
+    const dataMap = data as Record<number, string | { name: string; content: string }>
+
+    for (const [nodeIdStr, nodeData] of Object.entries(dataMap)) {
+      const nodeId = parseInt(nodeIdStr, 10)
+
+      if (typeof nodeData === 'string') {
+        injectDataIntoNode(nodeId, nodeData)
+      } else {
+        injectDataIntoNode(nodeId, nodeData.content, nodeData.name)
+      }
+    }
+  }
+  // Case 2: Data is a single string - inject into first source node
+  else if (typeof data === 'string') {
+    if (sourceNodes.length > 0) {
+      injectDataIntoNode(sourceNodes[0].id, data)
     } else {
-      flowStore.setFileContent(nodeId, data.content)
-      flowStore.updateNodeSettings(nodeId, {
-        ...flowStore.getNode(nodeId)!.settings,
-        file_name: data.name,
-        received_file: {
-          name: data.name,
-          path: data.name,
-          file_type: 'csv',
-          table_settings: {
-            file_type: 'csv',
-            delimiter: ',',
-            has_headers: true,
-            encoding: 'utf-8',
-            starting_from_line: 0,
-            infer_schema_length: 100,
-            truncate_ragged_lines: false,
-            ignore_errors: false
-          }
-        }
-      } as any)
-      emit('data-loaded', nodeId, data.name)
+      // No source nodes exist - create one
+      const nodeId = flowStore.addNode('read', 100, 100)
+      injectDataIntoNode(nodeId, data)
     }
+  }
+  // Case 3: Data is { name, content } - inject into first source node
+  else if ('content' in data) {
+    const namedData = data as { name: string; content: string }
+    if (sourceNodes.length > 0) {
+      injectDataIntoNode(sourceNodes[0].id, namedData.content, namedData.name)
+    } else {
+      // No source nodes exist - create one
+      const nodeId = flowStore.addNode('read', 100, 100)
+      injectDataIntoNode(nodeId, namedData.content, namedData.name)
+    }
+  }
 
-    // Auto-execute if configured
-    if (props.autoExecute) {
-      await flowStore.executeFlow()
-    }
+  // Auto-execute if configured
+  if (props.autoExecute) {
+    await flowStore.executeFlow()
   }
 }
 
@@ -352,20 +393,41 @@ defineExpose({
   clearFlow: () => flowStore.clearFlow(),
 
   /**
-   * Load CSV data into a specific node
+   * Load CSV data into a specific node (keeps existing node settings)
    */
   loadData: (nodeId: number, content: string, fileName?: string) => {
-    flowStore.setFileContent(nodeId, content)
-    if (fileName) {
-      const node = flowStore.getNode(nodeId)
-      if (node) {
-        flowStore.updateNodeSettings(nodeId, {
-          ...node.settings,
-          file_name: fileName
-        } as any)
+    return injectDataIntoNode(nodeId, content, fileName)
+  },
+
+  /**
+   * Inject data into source nodes.
+   * - If dataMap is provided: inject into specific nodes by ID
+   * - If dataMap is undefined: inject into all source nodes from props.initialData
+   */
+  injectData: async (
+    dataMap?: Record<number, string | { name: string; content: string }>,
+    autoExecute?: boolean
+  ) => {
+    if (dataMap) {
+      for (const [nodeIdStr, nodeData] of Object.entries(dataMap)) {
+        const nodeId = parseInt(nodeIdStr, 10)
+        if (typeof nodeData === 'string') {
+          injectDataIntoNode(nodeId, nodeData)
+        } else {
+          injectDataIntoNode(nodeId, nodeData.content, nodeData.name)
+        }
       }
     }
+
+    if (autoExecute) {
+      await flowStore.executeFlow()
+    }
   },
+
+  /**
+   * Get all source nodes (read/manual_input) in the flow
+   */
+  getSourceNodes,
 
   /**
    * Add a new node to the flow
