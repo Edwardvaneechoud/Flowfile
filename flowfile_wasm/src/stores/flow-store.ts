@@ -1986,8 +1986,7 @@ result
   }
 
   function updateNodeFile(nodeId: number, fileName: string, content: string) {
-    fileContents.value.set(nodeId, content)
-    
+    // Update the file name in node settings
     const node = nodes.value.get(nodeId)
     if (node && node.type === 'read_csv') {
       const settings = node.settings as NodeReadSettings
@@ -1996,7 +1995,10 @@ result
         settings.received_table.name = fileName
       }
     }
-    
+
+    // Use setFileContent to handle schema inference and propagation
+    setFileContent(nodeId, content)
+
     // Mark node as dirty so it re-executes
     dirtyNodes.value.add(nodeId)
     saveToStorage()

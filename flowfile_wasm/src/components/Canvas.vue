@@ -664,10 +664,12 @@ async function handleLoadFlow(event: Event) {
   if (!file) return
   const result = await flowStore.loadFlowfile(file)
 
-  if (result.success && result.missingFiles?.length) {
-    showMissingFilesModal.value = true
-    missingFiles.value = result.missingFiles
+  if (result.success) {
     console.log('[Canvas] Flow loaded successfully')
+    if (result.missingFiles?.length) {
+      showMissingFilesModal.value = true
+      missingFiles.value = result.missingFiles
+    }
   } else {
     alert('Failed to load flow file. Please check the file format.')
   }
