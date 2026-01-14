@@ -395,19 +395,18 @@ function bringToFront() {
   console.log(`[${props.panelId}] bringToFront called:`, {
     currentZIndex: zIndex.value,
     globalMaxZIndex,
-    condition: `${zIndex.value} < ${globalMaxZIndex} = ${zIndex.value < globalMaxZIndex}`
   })
 
-  // Only update if this panel is not already at the top
-  // Use strict < to prevent incrementing when clicking on the already-topmost panel
-  if (zIndex.value < globalMaxZIndex) {
-    globalMaxZIndex++
-    zIndex.value = globalMaxZIndex
-    console.log(`[${props.panelId}] Updated zIndex to ${zIndex.value}, globalMaxZIndex now ${globalMaxZIndex}`)
-    saveCurrentState()
-  } else {
-    console.log(`[${props.panelId}] Already at top, no change needed`)
-  }
+  // Always bring to front when clicked
+  // Use the higher of our current globalMaxZIndex or the panel's current zIndex
+  // to handle cases where panels have stale views of globalMaxZIndex
+  const effectiveMax = Math.max(globalMaxZIndex, zIndex.value)
+  const newZIndex = effectiveMax + 1
+
+  globalMaxZIndex = newZIndex
+  zIndex.value = newZIndex
+  console.log(`[${props.panelId}] Updated zIndex to ${zIndex.value}, globalMaxZIndex now ${globalMaxZIndex}`)
+  saveCurrentState()
 }
 
 function toggleMinimize() {
