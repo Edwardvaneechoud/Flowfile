@@ -254,25 +254,32 @@ export interface RawData {
 // INPUT TABLE SCHEMAS (for CSV reading)
 // =============================================================================
 
+// Matches flowfile_core InputCsvTable
 export interface InputCsvTable {
   file_type: 'csv'
   reference?: string
   starting_from_line?: number
   delimiter: string
   has_headers: boolean
-  encoding?: string
+  encoding: string
+  parquet_ref?: string
+  row_delimiter?: string
   quote_char?: string
   infer_schema_length?: number
   truncate_ragged_lines?: boolean
   ignore_errors?: boolean
 }
 
+// Matches flowfile_core ReceivedTable
 export interface ReceivedTable {
   id?: number
-  name: string
-  path?: string
+  name?: string
+  path: string  // Required in flowfile_core
   directory?: string
+  analysis_file_available?: boolean
+  status?: string
   fields?: MinimalFieldInfo[]
+  abs_file_path?: string
   file_type: 'csv' | 'json' | 'parquet' | 'excel'
   table_settings: InputCsvTable
 }
@@ -281,8 +288,9 @@ export interface ReceivedTable {
 // NODE SETTING TYPES (matches flowfile_core node structures)
 // =============================================================================
 
+// Matches flowfile_core NodeRead
 export interface NodeReadSettings extends NodeBase {
-  received_table?: ReceivedTable
+  received_file?: ReceivedTable  // Matches flowfile_core's 'received_file' field
   // Simplified for WASM - we store file content separately
   file_name?: string
 }

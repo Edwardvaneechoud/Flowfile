@@ -88,22 +88,23 @@ const localSettings = ref<NodeReadSettings>({
   pos_y: 0,
   is_setup: false,
   description: '',
-  received_table: {
+  received_file: {
     name: '',
+    path: '',  // Required by flowfile_core
     file_type: 'csv',
     table_settings: {
       file_type: 'csv',
       delimiter: ',',
       has_headers: true,
-      starting_from_line: 0,
-      encoding: 'utf-8'
+      encoding: 'utf-8',
+      starting_from_line: 0
     }
   },
   file_name: ''
 })
 
 // Get table settings helper
-const tableSettings = computed(() => localSettings.value.received_table?.table_settings)
+const tableSettings = computed(() => localSettings.value.received_file?.table_settings)
 
 // Load settings on mount
 onMounted(() => {
@@ -121,21 +122,23 @@ function loadSettings(settings: NodeSettings) {
   localSettings.value.pos_y = s.pos_y ?? 0
   localSettings.value.cache_results = s.cache_results ?? true
 
-  // Handle new schema (received_table)
-  if (s.received_table) {
-    localSettings.value.received_table = s.received_table
-    localSettings.value.file_name = s.file_name ?? s.received_table.name ?? ''
+  // Handle new schema (received_file)
+  if (s.received_file) {
+    localSettings.value.received_file = s.received_file
+    localSettings.value.file_name = s.file_name ?? s.received_file.name ?? ''
   }
   // Handle legacy schema (direct properties)
   else if (s.file_name !== undefined || s.has_headers !== undefined) {
     localSettings.value.file_name = s.file_name ?? ''
-    localSettings.value.received_table = {
+    localSettings.value.received_file = {
       name: s.file_name ?? '',
+      path: s.file_name ?? '',  // Required by flowfile_core
       file_type: 'csv',
       table_settings: {
         file_type: 'csv',
         delimiter: s.delimiter ?? ',',
         has_headers: s.has_headers ?? true,
+        encoding: 'utf-8',
         starting_from_line: s.skip_rows ?? 0
       }
     }
@@ -177,8 +180,9 @@ async function handleFileSelect(event: Event) {
 
     // Update settings
     localSettings.value.file_name = file.name
-    if (localSettings.value.received_table) {
-      localSettings.value.received_table.name = file.name
+    if (localSettings.value.received_file) {
+      localSettings.value.received_file.name = file.name
+      localSettings.value.received_file.path = file.name  // Required by flowfile_core
     }
     localSettings.value.is_setup = true
     emitUpdate()
@@ -195,8 +199,8 @@ function formatFileSize(bytes: number): string {
 }
 
 function updateTableSetting(key: string, value: any) {
-  if (localSettings.value.received_table?.table_settings) {
-    (localSettings.value.received_table.table_settings as any)[key] = value
+  if (localSettings.value.received_file?.table_settings) {
+    (localSettings.value.received_file.table_settings as any)[key] = value
   }
   emitUpdate()
 

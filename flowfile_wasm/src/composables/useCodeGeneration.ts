@@ -212,7 +212,7 @@ class FlowToPolarsConverter {
   }
 
   private handleReadCsv(settings: NodeReadSettings, varName: string): void {
-    const table = settings.received_table
+    const table = settings.received_file
     const fileName = settings.file_name || table?.name || 'data.csv'
     const tableSettings = table?.table_settings
 

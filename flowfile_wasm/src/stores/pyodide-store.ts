@@ -389,7 +389,7 @@ def execute_read_csv(node_id: int, file_content: str, settings: Dict) -> Dict:
     """Execute read CSV node - creates a LazyFrame"""
     try:
         import io
-        table_settings = settings.get("received_table", {}).get("table_settings", {})
+        table_settings = settings.get("received_file", {}).get("table_settings", {})
 
         # Source nodes: read into DataFrame first, then convert to lazy
         df = pl.read_csv(

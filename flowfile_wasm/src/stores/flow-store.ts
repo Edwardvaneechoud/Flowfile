@@ -584,8 +584,8 @@ export const useFlowStore = defineStore('flow', () => {
 
       if (node.type === 'read') {
         const settings = node.settings as any
-        hasHeaders = settings?.received_table?.table_settings?.has_headers ?? true
-        delimiter = settings?.received_table?.table_settings?.delimiter ?? ','
+        hasHeaders = settings?.received_file?.table_settings?.has_headers ?? true
+        delimiter = settings?.received_file?.table_settings?.delimiter ?? ','
       }
 
       // Infer schema from CSV content
@@ -1528,15 +1528,16 @@ result
       case 'read':
         return {
           ...base,
-          received_table: {
+          received_file: {
             name: '',
+            path: '',  // Required by flowfile_core
             file_type: 'csv',
             table_settings: {
               file_type: 'csv',
               delimiter: ',',
               has_headers: true,
-              starting_from_line: 0,
               encoding: 'utf-8',
+              starting_from_line: 0,
               infer_schema_length: 100,
               truncate_ragged_lines: false,
               ignore_errors: false
@@ -1957,7 +1958,7 @@ result
     for (const [id, node] of nodes.value) {
       if (node.type === 'read') {
         const settings = node.settings as NodeReadSettings
-        const fileName = settings.file_name || settings.received_table?.name
+        const fileName = settings.file_name || settings.received_file?.name
         
         if (fileName && !fileContents.value.has(id)) {
           missing.push({ nodeId: id, fileName })
@@ -1992,8 +1993,9 @@ result
     if (node && node.type === 'read') {
       const settings = node.settings as NodeReadSettings
       settings.file_name = fileName
-      if (settings.received_table) {
-        settings.received_table.name = fileName
+      if (settings.received_file) {
+        settings.received_file.name = fileName
+        settings.received_file.path = fileName  // Also set path as required by flowfile_core
       }
     }
     
