@@ -152,7 +152,10 @@ nodes:
     outputs: []
     setting_input:
       cache_results: false
-      file_name: regional_sales_summary
-      file_type: parquet
-      output_table:
+      output_settings:
+        name: regional_sales_summary.parquet
+        directory: .
         file_type: parquet
+        write_mode: overwrite
+        table_settings:
+          file_type: parquet
