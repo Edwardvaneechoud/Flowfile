@@ -279,6 +279,10 @@ export const useFlowStore = defineStore('flow', () => {
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
 
+      // For join nodes (nodes with rightInputId), left_input_id should be null
+      // because the left input is already represented in input_ids (flowfile_core format)
+      const leftInputId = node.rightInputId ? undefined : node.leftInputId
+
       flowfileNodes.push({
         id: node.id,
         type: node.type,
@@ -286,7 +290,7 @@ export const useFlowStore = defineStore('flow', () => {
         description: (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
-        left_input_id: node.leftInputId,
+        left_input_id: leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
@@ -1743,6 +1747,10 @@ result
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
 
+      // For join nodes (nodes with rightInputId), left_input_id should be null
+      // because the left input is already represented in input_ids (flowfile_core format)
+      const leftInputId = node.rightInputId ? undefined : node.leftInputId
+
       const flowfileNode: FlowfileNode = {
         id: node.id,
         type: node.type,
@@ -1750,7 +1758,7 @@ result
         description: (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
-        left_input_id: node.leftInputId,
+        left_input_id: leftInputId,
         right_input_id: node.rightInputId,
         input_ids: node.inputIds,
         outputs,
