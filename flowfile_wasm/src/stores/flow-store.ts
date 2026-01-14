@@ -226,19 +226,7 @@ export const useFlowStore = defineStore('flow', () => {
 
     // For each node, look at incoming connections based on input_ids, left_input_id, right_input_id
     for (const targetNode of flowfileNodes) {
-      // Handle left_input_id (for join nodes - first input)
-      if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
-        const sourceId = targetNode.left_input_id
-        edges.value.push({
-          id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
-          source: String(sourceId),
-          target: String(targetNode.id),
-          sourceHandle: 'output-0',
-          targetHandle: 'input-0'
-        })
-      }
-
-      // Handle right_input_id (for join nodes - second input)
+      // Handle right_input_id (for join nodes - second input goes to input-1)
       if (targetNode.right_input_id !== undefined && targetNode.right_input_id !== null) {
         const sourceId = targetNode.right_input_id
         edges.value.push({
@@ -250,19 +238,33 @@ export const useFlowStore = defineStore('flow', () => {
         })
       }
 
-      // Handle input_ids for non-join nodes (nodes without left/right inputs)
+      // Handle input_ids - these go to input-0
+      // In flowfile_core format: left_input_id is always null, inputs are in input_ids
+      // For join nodes: input_ids contains the left input, right_input_id has the right input
       if (targetNode.input_ids && targetNode.input_ids.length > 0) {
-        // Skip if this node has left/right inputs (join node) - those are handled above
-        if (!targetNode.left_input_id && !targetNode.right_input_id) {
-          for (const sourceId of targetNode.input_ids) {
-            edges.value.push({
-              id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
-              source: String(sourceId),
-              target: String(targetNode.id),
-              sourceHandle: 'output-0',
-              targetHandle: 'input-0'
-            })
-          }
+        for (const sourceId of targetNode.input_ids) {
+          edges.value.push({
+            id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
+            source: String(sourceId),
+            target: String(targetNode.id),
+            sourceHandle: 'output-0',
+            targetHandle: 'input-0'
+          })
+        }
+      }
+
+      // Handle legacy left_input_id (for backwards compatibility with old WASM format)
+      if (targetNode.left_input_id !== undefined && targetNode.left_input_id !== null) {
+        // Only add if not already in input_ids
+        if (!targetNode.input_ids?.includes(targetNode.left_input_id)) {
+          const sourceId = targetNode.left_input_id
+          edges.value.push({
+            id: `e${sourceId}-${targetNode.id}-output-0-input-0`,
+            source: String(sourceId),
+            target: String(targetNode.id),
+            sourceHandle: 'output-0',
+            targetHandle: 'input-0'
+          })
         }
       }
     }
