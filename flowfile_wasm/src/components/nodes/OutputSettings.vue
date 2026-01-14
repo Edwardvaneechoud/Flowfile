@@ -103,7 +103,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
-import type { OutputNodeSettings, OutputFileType, OutputCsvTable, OutputSettings } from '../../types'
+import type { OutputNodeSettings, OutputFileType, OutputCsvTable, OutputSettings, OutputPolarsMethod } from '../../types'
 
 const props = defineProps<{
   nodeId: number
@@ -132,17 +132,24 @@ const delimiterOptions = [
 
 const encodingOptions = ['utf-8', 'ISO-8859-1', 'ASCII']
 
+// Helper function to get polars method from file type
+function getPolarsMethod(fileType: OutputFileType): OutputPolarsMethod {
+  return fileType === 'parquet' ? 'sink_parquet' : 'sink_csv'
+}
+
 // Initialize output settings from props
+const initialFileType = props.settings.output_settings?.file_type || 'csv'
 const outputSettings = ref<OutputSettings>({
   name: props.settings.output_settings?.name || 'output.csv',
   directory: props.settings.output_settings?.directory || '.',
-  file_type: props.settings.output_settings?.file_type || 'csv',
+  file_type: initialFileType,
   write_mode: props.settings.output_settings?.write_mode || 'overwrite',
   table_settings: props.settings.output_settings?.table_settings || {
     file_type: 'csv',
     delimiter: ',',
     encoding: 'utf-8'
-  }
+  },
+  polars_method: props.settings.output_settings?.polars_method || getPolarsMethod(initialFileType)
 })
 
 // Computed properties for format-specific settings
@@ -195,6 +202,9 @@ function updateFileName(value: string) {
 
 function updateFileType(value: OutputFileType) {
   outputSettings.value.file_type = value
+
+  // Update polars_method based on file type
+  outputSettings.value.polars_method = getPolarsMethod(value)
 
   // Update table_settings based on file type
   switch (value) {
