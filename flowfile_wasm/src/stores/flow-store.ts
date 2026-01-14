@@ -279,9 +279,9 @@ export const useFlowStore = defineStore('flow', () => {
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
 
-      // For join nodes (nodes with rightInputId), left_input_id should be null
-      // because the left input is already represented in input_ids (flowfile_core format)
-      const leftInputId = node.rightInputId ? undefined : node.leftInputId
+      // For join nodes, left_input_id should be null because the left input
+      // is already represented in input_ids (flowfile_core format)
+      const leftInputId = node.type === 'join' ? undefined : node.leftInputId
 
       flowfileNodes.push({
         id: node.id,
@@ -1747,9 +1747,9 @@ result
         .filter(e => e.source === String(id))
         .map(e => parseInt(e.target))
 
-      // For join nodes (nodes with rightInputId), left_input_id should be null
-      // because the left input is already represented in input_ids (flowfile_core format)
-      const leftInputId = node.rightInputId ? undefined : node.leftInputId
+      // For join nodes, left_input_id should be null because the left input
+      // is already represented in input_ids (flowfile_core format)
+      const leftInputId = node.type === 'join' ? undefined : node.leftInputId
 
       const flowfileNode: FlowfileNode = {
         id: node.id,
