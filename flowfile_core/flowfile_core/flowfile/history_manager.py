@@ -99,15 +99,21 @@ class HistoryManager:
             description: Human-readable description of the action.
             node_id: Optional node ID if the action involves a specific node.
         """
+        logger.info(f"History: capture_snapshot called - action_type={action_type}, description='{description}', node_id={node_id}")
+
         if not self.config.enabled:
+            logger.info("History: Skipping capture - history is disabled")
             return
 
         if self._is_restoring:
-            # Don't capture snapshots during undo/redo operations
+            logger.info("History: Skipping capture - currently restoring")
             return
 
         try:
+            logger.info(f"History: Getting flowfile data for snapshot...")
             snapshot = flow_graph.get_flowfile_data()
+            logger.info(f"History: Snapshot contains {len(snapshot.nodes)} nodes")
+
             entry = HistoryEntry(
                 snapshot=snapshot,
                 action_type=action_type,
@@ -118,9 +124,9 @@ class HistoryManager:
             self._undo_stack.append(entry)
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
-            logger.info(f"History: Captured snapshot for '{description}' (undo stack size: {len(self._undo_stack)})")
+            logger.info(f"History: Captured snapshot for '{description}' (undo stack size: {len(self._undo_stack)}, redo stack cleared)")
         except Exception as e:
-            logger.error(f"History: Failed to capture snapshot: {e}")
+            logger.error(f"History: Failed to capture snapshot: {e}", exc_info=True)
 
     def undo(self, flow_graph: "FlowGraph") -> UndoRedoResult:
         """Undo the last action by restoring the previous state.
@@ -131,13 +137,17 @@ class HistoryManager:
         Returns:
             UndoRedoResult indicating success or failure.
         """
+        logger.info(f"History: undo() called - can_undo={self.can_undo}, undo_stack_size={len(self._undo_stack)}")
+
         if not self.can_undo:
+            logger.info("History: Nothing to undo")
             return UndoRedoResult(
                 success=False,
                 error_message="Nothing to undo",
             )
 
         if flow_graph.flow_settings.is_running:
+            logger.info("History: Cannot undo - flow is running")
             return UndoRedoResult(
                 success=False,
                 error_message="Cannot undo while flow is running",
@@ -148,8 +158,10 @@ class HistoryManager:
 
             # Get the entry to undo (this contains the state BEFORE the action)
             entry = self._undo_stack.pop()
+            logger.info(f"History: Popped entry '{entry.description}' from undo stack (snapshot has {len(entry.snapshot.nodes)} nodes)")
 
             # Capture current state for redo BEFORE restoring
+            logger.info("History: Capturing current state for redo stack...")
             current_snapshot = flow_graph.get_flowfile_data()
             redo_entry = HistoryEntry(
                 snapshot=current_snapshot,
@@ -159,18 +171,20 @@ class HistoryManager:
                 node_id=entry.node_id,
             )
             self._redo_stack.append(redo_entry)
+            logger.info(f"History: Pushed current state to redo stack (redo stack size: {len(self._redo_stack)})")
 
             # Restore the previous state
+            logger.info(f"History: Restoring snapshot with {len(entry.snapshot.nodes)} nodes...")
             flow_graph.restore_from_snapshot(entry.snapshot)
 
-            logger.info(f"History: Undone '{entry.description}'")
+            logger.info(f"History: Undo SUCCESS - '{entry.description}' (undo stack: {len(self._undo_stack)}, redo stack: {len(self._redo_stack)})")
             return UndoRedoResult(
                 success=True,
                 action_description=entry.description,
             )
 
         except Exception as e:
-            logger.error(f"History: Undo failed: {e}")
+            logger.error(f"History: Undo FAILED: {e}", exc_info=True)
             return UndoRedoResult(
                 success=False,
                 error_message=str(e),
@@ -187,13 +201,17 @@ class HistoryManager:
         Returns:
             UndoRedoResult indicating success or failure.
         """
+        logger.info(f"History: redo() called - can_redo={self.can_redo}, redo_stack_size={len(self._redo_stack)}")
+
         if not self.can_redo:
+            logger.info("History: Nothing to redo")
             return UndoRedoResult(
                 success=False,
                 error_message="Nothing to redo",
             )
 
         if flow_graph.flow_settings.is_running:
+            logger.info("History: Cannot redo - flow is running")
             return UndoRedoResult(
                 success=False,
                 error_message="Cannot redo while flow is running",
@@ -204,8 +222,10 @@ class HistoryManager:
 
             # Get the entry to redo (this contains the state AFTER the action)
             entry = self._redo_stack.pop()
+            logger.info(f"History: Popped entry '{entry.description}' from redo stack (snapshot has {len(entry.snapshot.nodes)} nodes)")
 
             # Capture current state for undo BEFORE restoring
+            logger.info("History: Capturing current state for undo stack...")
             current_snapshot = flow_graph.get_flowfile_data()
             undo_entry = HistoryEntry(
                 snapshot=current_snapshot,
@@ -215,18 +235,20 @@ class HistoryManager:
                 node_id=entry.node_id,
             )
             self._undo_stack.append(undo_entry)
+            logger.info(f"History: Pushed current state to undo stack (undo stack size: {len(self._undo_stack)})")
 
             # Restore the redo state
+            logger.info(f"History: Restoring snapshot with {len(entry.snapshot.nodes)} nodes...")
             flow_graph.restore_from_snapshot(entry.snapshot)
 
-            logger.info(f"History: Redone '{entry.description}'")
+            logger.info(f"History: Redo SUCCESS - '{entry.description}' (undo stack: {len(self._undo_stack)}, redo stack: {len(self._redo_stack)})")
             return UndoRedoResult(
                 success=True,
                 action_description=entry.description,
             )
 
         except Exception as e:
-            logger.error(f"History: Redo failed: {e}")
+            logger.error(f"History: Redo FAILED: {e}", exc_info=True)
             return UndoRedoResult(
                 success=False,
                 error_message=str(e),

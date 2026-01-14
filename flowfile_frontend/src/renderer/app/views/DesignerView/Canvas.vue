@@ -130,11 +130,15 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 }
 
 const loadFlow = async () => {
+  console.log(`[Canvas] loadFlow called - flow_id=${nodeStore.flow_id}`);
   const vueFlowInput = await getFlowData(nodeStore.flow_id);
+  console.log(`[Canvas] loadFlow received ${vueFlowInput.node_inputs?.length || 0} nodes, ${vueFlowInput.node_edges?.length || 0} edges`);
   await nextTick();
   await importFlow(vueFlowInput);
   // Refresh history status after loading flow
+  console.log("[Canvas] loadFlow - refreshing history status...");
   await historyStore.refreshStatus(nodeStore.flow_id);
+  console.log("[Canvas] loadFlow complete");
 };
 
 const selectNodeExternally = (nodeId: number) => {
@@ -377,22 +381,40 @@ const hideLogViewer = () => {
 };
 
 const handleUndo = async () => {
-  if (nodeStore.flow_id < 0) return;
+  console.log(`[Canvas] handleUndo called - flow_id=${nodeStore.flow_id}`);
+  if (nodeStore.flow_id < 0) {
+    console.log("[Canvas] handleUndo skipped - invalid flow_id");
+    return;
+  }
 
+  console.log("[Canvas] Calling historyStore.undo...");
   const result = await historyStore.undo(nodeStore.flow_id);
+  console.log("[Canvas] historyStore.undo result:", result);
   if (result?.success) {
-    // Reload the flow to reflect the undone state
+    console.log("[Canvas] Undo succeeded, reloading flow...");
     await loadFlow();
+    console.log("[Canvas] Flow reloaded after undo");
+  } else {
+    console.log("[Canvas] Undo did not succeed or returned null");
   }
 };
 
 const handleRedo = async () => {
-  if (nodeStore.flow_id < 0) return;
+  console.log(`[Canvas] handleRedo called - flow_id=${nodeStore.flow_id}`);
+  if (nodeStore.flow_id < 0) {
+    console.log("[Canvas] handleRedo skipped - invalid flow_id");
+    return;
+  }
 
+  console.log("[Canvas] Calling historyStore.redo...");
   const result = await historyStore.redo(nodeStore.flow_id);
+  console.log("[Canvas] historyStore.redo result:", result);
   if (result?.success) {
-    // Reload the flow to reflect the redone state
+    console.log("[Canvas] Redo succeeded, reloading flow...");
     await loadFlow();
+    console.log("[Canvas] Flow reloaded after redo");
+  } else {
+    console.log("[Canvas] Redo did not succeed or returned null");
   }
 };
 
@@ -427,10 +449,12 @@ const handleKeyDown = (event: KeyboardEvent) => {
     event.preventDefault();
   } else if (eventKeyClicked && key === "z" && !event.shiftKey && !isInputElement) {
     // Undo (Ctrl+Z / Cmd+Z)
+    console.log("[Canvas] Ctrl+Z pressed - triggering undo");
     event.preventDefault();
     handleUndo();
   } else if (eventKeyClicked && (key === "z" && event.shiftKey || key === "y") && !isInputElement) {
     // Redo (Ctrl+Shift+Z / Cmd+Shift+Z or Ctrl+Y / Cmd+Y)
+    console.log("[Canvas] Ctrl+Shift+Z or Ctrl+Y pressed - triggering redo");
     event.preventDefault();
     handleRedo();
   } else if (eventKeyClicked && key === "n") {

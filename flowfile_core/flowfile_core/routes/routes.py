@@ -515,10 +515,14 @@ def undo_action(flow_id: int) -> UndoRedoResult:
     Returns:
         UndoRedoResult indicating success or failure with details.
     """
+    logger.info(f"API: /editor/undo/ called for flow_id={flow_id}")
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
+        logger.error(f"API: /editor/undo/ - Flow {flow_id} not found")
         raise HTTPException(404, 'Flow not found')
-    return flow.undo()
+    result = flow.undo()
+    logger.info(f"API: /editor/undo/ result: success={result.success}, action={result.action_description}, error={result.error_message}")
+    return result
 
 
 @router.post('/editor/redo/', tags=['editor'], response_model=UndoRedoResult)
@@ -531,10 +535,14 @@ def redo_action(flow_id: int) -> UndoRedoResult:
     Returns:
         UndoRedoResult indicating success or failure with details.
     """
+    logger.info(f"API: /editor/redo/ called for flow_id={flow_id}")
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
+        logger.error(f"API: /editor/redo/ - Flow {flow_id} not found")
         raise HTTPException(404, 'Flow not found')
-    return flow.redo()
+    result = flow.redo()
+    logger.info(f"API: /editor/redo/ result: success={result.success}, action={result.action_description}, error={result.error_message}")
+    return result
 
 
 @router.get('/editor/history_status/', tags=['editor'], response_model=HistoryState)
@@ -547,10 +555,14 @@ def get_history_status(flow_id: int) -> HistoryState:
     Returns:
         HistoryState with can_undo, can_redo, and descriptions.
     """
+    logger.info(f"API: /editor/history_status/ called for flow_id={flow_id}")
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
+        logger.error(f"API: /editor/history_status/ - Flow {flow_id} not found")
         raise HTTPException(404, 'Flow not found')
-    return flow.get_history_state()
+    state = flow.get_history_state()
+    logger.info(f"API: /editor/history_status/ result: can_undo={state.can_undo}, can_redo={state.can_redo}, undo_count={state.undo_count}, redo_count={state.redo_count}")
+    return state
 
 
 @router.post('/editor/history_clear/', tags=['editor'])

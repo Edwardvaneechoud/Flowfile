@@ -24,18 +24,26 @@ export const useHistoryStore = defineStore("history", {
      * Refresh the history status from the backend
      */
     async refreshStatus(flowId: number): Promise<void> {
-      if (flowId < 0) return;
+      console.log(`[HistoryStore] refreshStatus called for flowId=${flowId}`);
+      if (flowId < 0) {
+        console.log("[HistoryStore] refreshStatus skipped - invalid flowId");
+        return;
+      }
 
       try {
         const status = await FlowApi.getHistoryStatus(flowId);
+        console.log("[HistoryStore] refreshStatus received:", status);
         this.canUndo = status.canUndo;
         this.canRedo = status.canRedo;
         this.undoDescription = status.undoDescription;
         this.redoDescription = status.redoDescription;
         this.undoCount = status.undoCount;
         this.redoCount = status.redoCount;
+        console.log(
+          `[HistoryStore] State updated: canUndo=${this.canUndo}, canRedo=${this.canRedo}, undoCount=${this.undoCount}`,
+        );
       } catch (error) {
-        console.error("Failed to refresh history status:", error);
+        console.error("[HistoryStore] Failed to refresh history status:", error);
       }
     },
 
@@ -44,18 +52,24 @@ export const useHistoryStore = defineStore("history", {
      * @returns The result of the undo operation
      */
     async undo(flowId: number): Promise<UndoRedoResult | null> {
+      console.log(
+        `[HistoryStore] undo called - flowId=${flowId}, canUndo=${this.canUndo}, isLoading=${this.isLoading}`,
+      );
       if (flowId < 0 || !this.canUndo || this.isLoading) {
+        console.log("[HistoryStore] undo skipped - preconditions not met");
         return null;
       }
 
       this.isLoading = true;
       try {
+        console.log("[HistoryStore] Calling FlowApi.undo...");
         const result = await FlowApi.undo(flowId);
+        console.log("[HistoryStore] FlowApi.undo result:", result);
         // Refresh status after undo
         await this.refreshStatus(flowId);
         return result;
       } catch (error) {
-        console.error("Undo failed:", error);
+        console.error("[HistoryStore] Undo failed:", error);
         return {
           success: false,
           actionDescription: null,
@@ -71,18 +85,24 @@ export const useHistoryStore = defineStore("history", {
      * @returns The result of the redo operation
      */
     async redo(flowId: number): Promise<UndoRedoResult | null> {
+      console.log(
+        `[HistoryStore] redo called - flowId=${flowId}, canRedo=${this.canRedo}, isLoading=${this.isLoading}`,
+      );
       if (flowId < 0 || !this.canRedo || this.isLoading) {
+        console.log("[HistoryStore] redo skipped - preconditions not met");
         return null;
       }
 
       this.isLoading = true;
       try {
+        console.log("[HistoryStore] Calling FlowApi.redo...");
         const result = await FlowApi.redo(flowId);
+        console.log("[HistoryStore] FlowApi.redo result:", result);
         // Refresh status after redo
         await this.refreshStatus(flowId);
         return result;
       } catch (error) {
-        console.error("Redo failed:", error);
+        console.error("[HistoryStore] Redo failed:", error);
         return {
           success: false,
           actionDescription: null,
