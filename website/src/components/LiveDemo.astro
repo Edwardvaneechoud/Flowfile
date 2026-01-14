@@ -17,7 +17,8 @@ const { demoUrl = 'https://demo.getflowfile.com' } = Astro.props;
       </p>
     </div>
 
-    <div class="demo-window">
+    <!-- Desktop: Embedded Demo -->
+    <div class="demo-window desktop-demo">
       <!-- Window Header -->
       <div class="window-header">
         <div class="window-controls">
@@ -63,6 +64,34 @@ const { demoUrl = 'https://demo.getflowfile.com' } = Astro.props;
           allow="clipboard-read; clipboard-write"
           loading="lazy"
         ></iframe>
+      </div>
+    </div>
+
+    <!-- Mobile: Link to Demo -->
+    <div class="mobile-demo">
+      <div class="mobile-demo-card">
+        <div class="mobile-demo-visual">
+          <!-- Simplified flow visualization -->
+          <div class="mini-flow">
+            <div class="mini-node input"></div>
+            <div class="mini-connector"></div>
+            <div class="mini-node transform"></div>
+            <div class="mini-connector"></div>
+            <div class="mini-node aggregate"></div>
+            <div class="mini-connector"></div>
+            <div class="mini-node output"></div>
+          </div>
+        </div>
+        <div class="mobile-demo-content">
+          <h3>Try the Live Demo</h3>
+          <p>Build data pipelines visually with our browser-based editor. Best experienced on a larger screen.</p>
+          <a href={demoUrl} target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            Open Demo
+          </a>
+        </div>
       </div>
     </div>
 
@@ -302,6 +331,96 @@ const { demoUrl = 'https://demo.getflowfile.com' } = Astro.props;
     stroke: var(--color-primary);
   }
 
+  /* Mobile Demo Fallback */
+  .mobile-demo {
+    display: none;
+  }
+
+  .mobile-demo-card {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .mobile-demo-visual {
+    padding: 32px 24px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .mini-flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .mini-node {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    border: 2px solid;
+  }
+
+  .mini-node.input {
+    border-color: #22c55e;
+    background: rgba(34, 197, 94, 0.2);
+  }
+
+  .mini-node.transform {
+    border-color: #6366f1;
+    background: rgba(99, 102, 241, 0.2);
+  }
+
+  .mini-node.aggregate {
+    border-color: #f97316;
+    background: rgba(249, 115, 22, 0.2);
+  }
+
+  .mini-node.output {
+    border-color: #ec4899;
+    background: rgba(236, 72, 153, 0.2);
+  }
+
+  .mini-connector {
+    width: 20px;
+    height: 2px;
+    background: var(--color-border);
+  }
+
+  .mobile-demo-content {
+    padding: 24px;
+    text-align: center;
+  }
+
+  .mobile-demo-content h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 8px;
+  }
+
+  .mobile-demo-content p {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+
+  .mobile-demo-content .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    font-size: 1rem;
+  }
+
+  .mobile-demo-content .btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
   /* Responsive */
   @media (max-width: 900px) {
     .iframe-container {
@@ -321,13 +440,17 @@ const { demoUrl = 'https://demo.getflowfile.com' } = Astro.props;
     }
   }
 
-  @media (max-width: 600px) {
-    .live-demo-section {
-      padding: 4rem 1rem;
+  @media (max-width: 768px) {
+    .desktop-demo {
+      display: none;
     }
 
-    .iframe-container {
-      height: 450px;
+    .mobile-demo {
+      display: block;
+    }
+
+    .live-demo-section {
+      padding: 4rem 1rem;
     }
 
     .demo-features {

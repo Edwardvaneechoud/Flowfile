@@ -12,22 +12,6 @@
     </div>
 
     <div class="install-flow">
-      <!-- Connection Lines SVG -->
-      <svg class="flow-connections" viewBox="0 0 700 60" preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#6366f1" stop-opacity="0.7" />
-            <stop offset="50%" stop-color="#f97316" stop-opacity="0.7" />
-            <stop offset="100%" stop-color="#22c55e" stop-opacity="0.7" />
-          </linearGradient>
-          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" opacity="0.7" />
-          </marker>
-        </defs>
-        <path class="flow-line" d="M 95 30 L 270 30" marker-end="url(#arrowhead)" />
-        <path class="flow-line" d="M 430 30 L 605 30" marker-end="url(#arrowhead)" />
-      </svg>
-
       <div class="flow-steps">
         <!-- Step 1: Install -->
         <div class="flow-step">
@@ -57,6 +41,13 @@
           </div>
         </div>
 
+        <!-- Arrow 1 -->
+        <div class="flow-arrow">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M5 12h14M13 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
         <!-- Step 2: Launch -->
         <div class="flow-step">
           <div class="step-node" data-step="2">
@@ -83,6 +74,13 @@
           </div>
         </div>
 
+        <!-- Arrow 2 -->
+        <div class="flow-arrow">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M5 12h14M13 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
         <!-- Step 3: Build -->
         <div class="flow-step">
           <div class="step-node" data-step="3">
@@ -97,9 +95,7 @@
             <span class="step-label">Build</span>
           </div>
           <div class="step-content">
-            <p class="step-description">
-              Drag & drop nodes to create your data pipeline
-            </p>
+            <p class="step-description">Drag & drop nodes to create your data pipeline</p>
           </div>
         </div>
       </div>
@@ -135,43 +131,31 @@
     margin: 0 auto 3rem;
   }
 
-  .flow-connections {
-    position: absolute;
-    top: 28px;
-    left: 0;
-    width: 100%;
-    height: 60px;
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  .flow-line {
-    stroke: url(#flowGradient);
-    stroke-width: 2;
-    fill: none;
-    stroke-dasharray: 8 4;
-    animation: flowDash 1s linear infinite;
-  }
-
-  @keyframes flowDash {
-    to {
-      stroke-dashoffset: -12;
-    }
-  }
-
   .flow-steps {
     display: flex;
-    justify-content: space-between;
-    position: relative;
-    z-index: 1;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 0;
   }
 
   .flow-step {
     display: flex;
     flex-direction: column;
     align-items: center;
-    flex: 1;
-    max-width: 220px;
+    flex: 0 0 200px;
+  }
+
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    padding-top: 14px;
+    color: var(--color-text-muted);
+    opacity: 0.5;
+  }
+
+  .flow-arrow svg {
+    width: 32px;
+    height: 32px;
   }
 
   .step-node {
@@ -288,31 +272,24 @@
   }
 
   @media (max-width: 700px) {
-    .flow-connections {
-      display: none;
-    }
-
     .flow-steps {
       flex-direction: column;
       align-items: center;
-      gap: 2rem;
+      gap: 1.5rem;
     }
 
     .flow-step {
       max-width: 280px;
-      position: relative;
     }
 
-    .flow-step:not(:last-child)::after {
-      content: '';
-      position: absolute;
-      bottom: -1.25rem;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 2px;
-      height: 16px;
-      background: linear-gradient(to bottom, #6366f1, #f97316);
-      opacity: 0.5;
+    .flow-arrow {
+      transform: rotate(90deg);
+      padding: 0;
+    }
+
+    .flow-arrow svg {
+      width: 24px;
+      height: 24px;
     }
   }
 </style>
