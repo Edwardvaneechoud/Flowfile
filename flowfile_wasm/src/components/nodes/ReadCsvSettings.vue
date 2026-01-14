@@ -122,10 +122,11 @@ function loadSettings(settings: NodeSettings) {
   localSettings.value.pos_y = s.pos_y ?? 0
   localSettings.value.cache_results = s.cache_results ?? true
 
-  // Handle new schema (received_file)
-  if (s.received_file) {
-    localSettings.value.received_file = s.received_file
-    localSettings.value.file_name = s.file_name ?? s.received_file.name ?? ''
+  // Handle new schema (received_file) or old schema (received_table)
+  const receivedFile = s.received_file || s.received_table
+  if (receivedFile) {
+    localSettings.value.received_file = receivedFile
+    localSettings.value.file_name = s.file_name ?? receivedFile.name ?? ''
   }
   // Handle legacy schema (direct properties)
   else if (s.file_name !== undefined || s.has_headers !== undefined) {

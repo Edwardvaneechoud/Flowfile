@@ -96,12 +96,24 @@ export const useFlowStore = defineStore('flow', () => {
 
           // Import from FlowfileData
           for (const flowfileNode of data.nodes) {
+            // Migrate old node types to new names (for backward compatibility)
+            let nodeType = flowfileNode.type
+            if (nodeType === 'read_csv') nodeType = 'read'
+            if (nodeType === 'preview') nodeType = 'explore_data'
+
+            // Migrate old settings field names
+            let settings = flowfileNode.setting_input as NodeSettings
+            if (settings && (settings as any).received_table && !(settings as any).received_file) {
+              (settings as any).received_file = (settings as any).received_table
+              delete (settings as any).received_table
+            }
+
             const node: FlowNode = {
               id: flowfileNode.id,
-              type: flowfileNode.type,
+              type: nodeType,
               x: flowfileNode.x_position,
               y: flowfileNode.y_position,
-              settings: flowfileNode.setting_input as NodeSettings,
+              settings,
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
@@ -1775,12 +1787,24 @@ result
       for (const flowfileNode of data.nodes) {
         if (flowfileNode.id > maxId) maxId = flowfileNode.id
 
+        // Migrate old node types to new names (for backward compatibility)
+        let nodeType = flowfileNode.type
+        if (nodeType === 'read_csv') nodeType = 'read'
+        if (nodeType === 'preview') nodeType = 'explore_data'
+
+        // Migrate old settings field names
+        let settings = flowfileNode.setting_input as NodeSettings
+        if (settings && (settings as any).received_table && !(settings as any).received_file) {
+          (settings as any).received_file = (settings as any).received_table
+          delete (settings as any).received_table
+        }
+
         const node: FlowNode = {
           id: flowfileNode.id,
-          type: flowfileNode.type,
+          type: nodeType,
           x: flowfileNode.x_position ?? 0,
           y: flowfileNode.y_position ?? 0,
-          settings: flowfileNode.setting_input as NodeSettings,
+          settings,
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
