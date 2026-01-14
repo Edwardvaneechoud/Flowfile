@@ -54,6 +54,50 @@ function cleanSettingInput(settings: NodeSettings): any {
   return cleaned
 }
 
+/**
+ * Convert flowfile_core format settings to WASM internal format
+ * flowfile_core uses different field names than the WASM app
+ */
+function convertSettingsFromFlowfileCore(nodeType: string, settings: any): NodeSettings {
+  if (!settings) return settings
+
+  // Handle output node conversion
+  if (nodeType === 'output') {
+    // Check if already in WASM format (has output_settings)
+    if (settings.output_settings) {
+      return settings
+    }
+
+    // Convert from flowfile_core format
+    // flowfile_core: { file_name, file_type, output_table }
+    // WASM format: { output_settings: { name, file_type, table_settings } }
+    const fileType = settings.file_type || 'csv'
+    const fileName = settings.file_name || 'output'
+
+    // Add extension if not present
+    const extension = fileType === 'parquet' ? '.parquet' : '.csv'
+    const fullFileName = fileName.includes('.') ? fileName : fileName + extension
+
+    return {
+      ...settings,
+      output_settings: {
+        name: fullFileName,
+        directory: '.',
+        file_type: fileType,
+        write_mode: 'overwrite',
+        table_settings: settings.output_table || {
+          file_type: fileType,
+          delimiter: ',',
+          encoding: 'utf-8'
+        },
+        polars_method: fileType === 'parquet' ? 'sink_parquet' : 'sink_csv'
+      }
+    } as any
+  }
+
+  return settings
+}
+
 function toPythonJson(value: unknown): string {
   return JSON.stringify(JSON.stringify(value))
 }
@@ -101,7 +145,7 @@ export const useFlowStore = defineStore('flow', () => {
               type: flowfileNode.type,
               x: flowfileNode.x_position,
               y: flowfileNode.y_position,
-              settings: flowfileNode.setting_input as NodeSettings,
+              settings: convertSettingsFromFlowfileCore(flowfileNode.type, flowfileNode.setting_input),
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
@@ -1779,7 +1823,7 @@ result
           type: flowfileNode.type,
           x: flowfileNode.x_position ?? 0,
           y: flowfileNode.y_position ?? 0,
-          settings: flowfileNode.setting_input as NodeSettings,
+          settings: convertSettingsFromFlowfileCore(flowfileNode.type, flowfileNode.setting_input),
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
