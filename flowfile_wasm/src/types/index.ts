@@ -205,6 +205,8 @@ export interface OutputParquetTable {
 
 export type OutputTableSettings = OutputCsvTable | OutputParquetTable
 
+export type OutputPolarsMethod = 'sink_csv' | 'sink_parquet'
+
 export interface OutputSettings {
   name: string                     // Filename (e.g., "output.csv")
   directory: string                // Target directory (not used in WASM, kept for compatibility)
@@ -212,6 +214,7 @@ export interface OutputSettings {
   fields?: string[]
   write_mode: OutputWriteMode
   table_settings: OutputTableSettings
+  polars_method: OutputPolarsMethod  // The polars method to use for writing (sink_csv or sink_parquet)
 }
 
 // =============================================================================
