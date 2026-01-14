@@ -5,7 +5,7 @@ order_id,customer_name,product,category,quantity,unit_price,order_date,region,st
 1004,David Brown,USB-C Hub,Electronics,10,79.99,2024-01-18,West,Completed
 1005,Emma Davis,Standing Desk,Furniture,2,699.99,2024-01-19,North,Completed
 1006,Frank Miller,Mechanical Keyboard,Electronics,3,189.99,2024-01-20,South,Pending
-1007,Grace Wilson,Monitor 27",Electronics,4,399.99,2024-01-21,East,Completed
+1007,Grace Wilson,Monitor 27 inch,Electronics,4,399.99,2024-01-21,East,Completed
 1008,Henry Taylor,Office Chair,Furniture,5,299.99,2024-01-22,West,Completed
 1009,Ivy Anderson,Webcam HD,Electronics,8,89.99,2024-01-23,North,Completed
 1010,Jack Thomas,Desk Lamp,Furniture,12,59.99,2024-01-24,South,Completed
