@@ -111,27 +111,21 @@ nodes:
           - old_name: region_name
             agg: groupby
             new_name: region_name
-            is_available: true
           - old_name: manager
             agg: first
             new_name: manager
-            is_available: true
           - old_name: order_id
             agg: count
             new_name: order_count
-            is_available: true
           - old_name: quantity
             agg: sum
             new_name: total_quantity
-            is_available: true
           - old_name: unit_price
             agg: mean
             new_name: avg_price
-            is_available: true
           - old_name: target_sales
             agg: first
             new_name: target_sales
-            is_available: true
   - id: 6
     type: sort
     is_start_node: false
@@ -148,7 +142,6 @@ nodes:
         sort_cols:
           - column: order_count
             descending: true
-            is_available: true
   - id: 7
     type: output
     is_start_node: false
