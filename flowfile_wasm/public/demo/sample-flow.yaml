@@ -139,9 +139,8 @@ nodes:
     setting_input:
       cache_results: false
       sort_input:
-        sort_cols:
-          - column: order_count
-            descending: true
+        - column: order_count
+          how: desc
   - id: 7
     type: output
     is_start_node: false
