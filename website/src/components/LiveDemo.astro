@@ -1,0 +1,369 @@
+---
+interface Props {
+  demoUrl?: string;
+}
+
+const { demoUrl = 'https://demo.getflowfile.com' } = Astro.props;
+---
+
+<section class="live-demo-section" id="demo">
+  <div class="container">
+    <div class="section-header">
+      <span class="section-label">Try It Now</span>
+      <h2 class="section-title">Interactive Live Demo</h2>
+      <p class="section-description">
+        Experience Flowfile directly in your browser. Build data pipelines visually,
+        connect nodes, and see your data transform in real-time — no installation required.
+      </p>
+    </div>
+
+    <div class="demo-window">
+      <!-- Window Header -->
+      <div class="window-header">
+        <div class="window-controls">
+          <span class="window-dot red"></span>
+          <span class="window-dot yellow"></span>
+          <span class="window-dot green"></span>
+        </div>
+        <span class="window-title">Flowfile — Browser-Based Data Designer</span>
+        <a href={demoUrl} target="_blank" rel="noopener noreferrer" class="open-external">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+          Open in new tab
+        </a>
+      </div>
+
+      <!-- Loading State -->
+      <div class="loading-container" id="demo-loading">
+        <div class="loading-content">
+          <div class="loading-spinner">
+            <svg viewBox="0 0 50 50">
+              <circle cx="25" cy="25" r="20" fill="none" stroke-width="4" />
+            </svg>
+          </div>
+          <div class="loading-text">
+            <span class="loading-title">Loading Flowfile Demo</span>
+            <span class="loading-subtitle">Initializing Pyodide & Polars WASM...</span>
+          </div>
+        </div>
+        <div class="loading-tips">
+          <span>First load may take a few seconds to initialize the Python environment</span>
+        </div>
+      </div>
+
+      <!-- Iframe Container -->
+      <div class="iframe-container">
+        <iframe
+          id="demo-iframe"
+          src={demoUrl}
+          title="Flowfile Live Demo"
+          allow="clipboard-read; clipboard-write"
+          loading="lazy"
+        ></iframe>
+      </div>
+    </div>
+
+    <div class="demo-features">
+      <div class="feature-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <line x1="3" y1="9" x2="21" y2="9" />
+          <line x1="9" y1="21" x2="9" y2="9" />
+        </svg>
+        <span>14 Node Types</span>
+      </div>
+      <div class="feature-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+        </svg>
+        <span>Runs in Browser</span>
+      </div>
+      <div class="feature-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+        </svg>
+        <span>No Installation</span>
+      </div>
+      <div class="feature-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 18 22 12 16 6" />
+          <polyline points="8 6 2 12 8 18" />
+        </svg>
+        <span>Generate Python Code</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .live-demo-section {
+    padding: 6rem 2rem;
+    background: var(--color-bg);
+  }
+
+  .demo-window {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    position: relative;
+  }
+
+  .window-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .window-controls {
+    display: flex;
+    gap: 8px;
+  }
+
+  .window-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  .window-dot.red { background: #ff5f57; }
+  .window-dot.yellow { background: #febc2e; }
+  .window-dot.green { background: #28c840; }
+
+  .window-title {
+    margin-left: 12px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    flex: 1;
+  }
+
+  .open-external {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+
+  .open-external:hover {
+    color: var(--color-text);
+    border-color: var(--color-primary);
+    background: rgba(99, 102, 241, 0.1);
+  }
+
+  .open-external svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  /* Loading State */
+  .loading-container {
+    position: absolute;
+    inset: 45px 0 0 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg-elevated);
+    z-index: 10;
+    gap: 24px;
+    transition: opacity 0.3s ease;
+  }
+
+  .loading-container.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .loading-spinner svg {
+    width: 48px;
+    height: 48px;
+    animation: spin 1.5s linear infinite;
+  }
+
+  .loading-spinner svg circle {
+    stroke: var(--color-primary);
+    stroke-linecap: round;
+    stroke-dasharray: 80, 200;
+    stroke-dashoffset: 0;
+    animation: dash 1.5s ease-in-out infinite;
+  }
+
+  @keyframes spin {
+    100% { transform: rotate(360deg); }
+  }
+
+  @keyframes dash {
+    0% {
+      stroke-dasharray: 1, 200;
+      stroke-dashoffset: 0;
+    }
+    50% {
+      stroke-dasharray: 80, 200;
+      stroke-dashoffset: -35;
+    }
+    100% {
+      stroke-dasharray: 80, 200;
+      stroke-dashoffset: -125;
+    }
+  }
+
+  .loading-text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .loading-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .loading-subtitle {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .loading-tips {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    padding: 8px 16px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: 8px;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+  }
+
+  /* Iframe Container */
+  .iframe-container {
+    position: relative;
+    width: 100%;
+    height: 650px;
+    background: var(--color-bg-card);
+  }
+
+  .iframe-container iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+
+  /* Demo Features */
+  .demo-features {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 32px;
+  }
+
+  .feature-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+  }
+
+  .feature-badge svg {
+    width: 16px;
+    height: 16px;
+    stroke: var(--color-primary);
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .iframe-container {
+      height: 550px;
+    }
+
+    .window-title {
+      display: none;
+    }
+
+    .open-external span {
+      display: none;
+    }
+
+    .open-external {
+      padding: 8px;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .live-demo-section {
+      padding: 4rem 1rem;
+    }
+
+    .iframe-container {
+      height: 450px;
+    }
+
+    .demo-features {
+      gap: 8px;
+    }
+
+    .feature-badge {
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+
+    .feature-badge svg {
+      width: 14px;
+      height: 14px;
+    }
+  }
+</style>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const iframe = document.getElementById('demo-iframe') as HTMLIFrameElement;
+    const loading = document.getElementById('demo-loading');
+
+    if (iframe && loading) {
+      // Hide loading when iframe loads
+      iframe.addEventListener('load', () => {
+        // Give a small delay for the app to initialize
+        setTimeout(() => {
+          loading.classList.add('hidden');
+        }, 500);
+      });
+
+      // Fallback: hide loading after max timeout
+      setTimeout(() => {
+        loading.classList.add('hidden');
+      }, 15000);
+    }
+  });
+</script>
