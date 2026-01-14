@@ -1,0 +1,61 @@
+order_id,customer_name,product,category,quantity,unit_price,order_date,region,status
+1001,Alice Johnson,Laptop Pro 15,Electronics,2,1299.99,2024-01-15,North,Completed
+1002,Bob Smith,Wireless Headphones,Electronics,5,149.99,2024-01-16,South,Completed
+1003,Carol Williams,Ergonomic Chair,Furniture,1,449.99,2024-01-17,East,Completed
+1004,David Brown,USB-C Hub,Electronics,10,79.99,2024-01-18,West,Completed
+1005,Emma Davis,Standing Desk,Furniture,2,699.99,2024-01-19,North,Completed
+1006,Frank Miller,Mechanical Keyboard,Electronics,3,189.99,2024-01-20,South,Pending
+1007,Grace Wilson,Monitor 27 inch,Electronics,4,399.99,2024-01-21,East,Completed
+1008,Henry Taylor,Office Chair,Furniture,5,299.99,2024-01-22,West,Completed
+1009,Ivy Anderson,Webcam HD,Electronics,8,89.99,2024-01-23,North,Completed
+1010,Jack Thomas,Desk Lamp,Furniture,12,59.99,2024-01-24,South,Completed
+1011,Kate Jackson,External SSD 1TB,Electronics,6,129.99,2024-01-25,East,Completed
+1012,Liam White,Filing Cabinet,Furniture,3,199.99,2024-01-26,West,Pending
+1013,Mia Harris,Bluetooth Speaker,Electronics,7,79.99,2024-01-27,North,Completed
+1014,Noah Martin,Bookshelf,Furniture,2,249.99,2024-01-28,South,Completed
+1015,Olivia Garcia,Tablet Stand,Electronics,15,39.99,2024-01-29,East,Completed
+1016,Peter Martinez,Conference Table,Furniture,1,899.99,2024-01-30,West,Completed
+1017,Quinn Robinson,Power Bank,Electronics,20,49.99,2024-02-01,North,Completed
+1018,Rachel Clark,Desk Organizer,Furniture,10,29.99,2024-02-02,South,Completed
+1019,Samuel Lewis,Gaming Mouse,Electronics,8,69.99,2024-02-03,East,Completed
+1020,Tina Lee,Whiteboard,Furniture,4,149.99,2024-02-04,West,Pending
+1021,Uma Walker,Laptop Stand,Electronics,6,89.99,2024-02-05,North,Completed
+1022,Victor Hall,Office Sofa,Furniture,1,1199.99,2024-02-06,South,Completed
+1023,Wendy Allen,Smart Watch,Electronics,12,299.99,2024-02-07,East,Completed
+1024,Xavier Young,Side Table,Furniture,8,99.99,2024-02-08,West,Completed
+1025,Yolanda King,Wireless Charger,Electronics,25,34.99,2024-02-09,North,Completed
+1026,Zach Wright,Coat Rack,Furniture,6,79.99,2024-02-10,South,Completed
+1027,Amy Scott,Noise Canceling Earbuds,Electronics,10,199.99,2024-02-11,East,Completed
+1028,Brian Adams,Plant Stand,Furniture,7,44.99,2024-02-12,West,Completed
+1029,Cindy Baker,USB Microphone,Electronics,4,149.99,2024-02-13,North,Pending
+1030,Derek Nelson,Magazine Rack,Furniture,9,34.99,2024-02-14,South,Completed
+1031,Elena Hill,Portable Projector,Electronics,2,599.99,2024-02-15,East,Completed
+1032,Fred Green,Footrest,Furniture,11,49.99,2024-02-16,West,Completed
+1033,Gina Campbell,Digital Camera,Electronics,3,749.99,2024-02-17,North,Completed
+1034,Hugo Mitchell,Wall Shelf,Furniture,14,69.99,2024-02-18,South,Completed
+1035,Irene Roberts,E-Reader,Electronics,5,139.99,2024-02-19,East,Completed
+1036,Jason Turner,Storage Bin Set,Furniture,8,39.99,2024-02-20,West,Pending
+1037,Kelly Phillips,Fitness Tracker,Electronics,15,99.99,2024-02-21,North,Completed
+1038,Leo Evans,Corner Desk,Furniture,2,549.99,2024-02-22,South,Completed
+1039,Monica Edwards,Smart Home Hub,Electronics,6,129.99,2024-02-23,East,Completed
+1040,Nathan Collins,Accent Chair,Furniture,3,399.99,2024-02-24,West,Completed
+1041,Olga Stewart,Drone Mini,Electronics,4,449.99,2024-02-25,North,Completed
+1042,Paul Morris,TV Stand,Furniture,2,299.99,2024-02-26,South,Completed
+1043,Quinn Murphy,VR Headset,Electronics,3,399.99,2024-02-27,East,Pending
+1044,Rita Rivera,Executive Desk,Furniture,1,799.99,2024-02-28,West,Completed
+1045,Steve Cox,Action Camera,Electronics,5,299.99,2024-03-01,North,Completed
+1046,Tara Howard,Room Divider,Furniture,2,189.99,2024-03-02,South,Completed
+1047,Ulysses Ward,Smart Speaker,Electronics,8,179.99,2024-03-03,East,Completed
+1048,Vera Torres,Bar Stool Set,Furniture,4,249.99,2024-03-04,West,Completed
+1049,Will Peterson,Laptop Sleeve,Electronics,20,29.99,2024-03-05,North,Completed
+1050,Xena Gray,Console Table,Furniture,3,349.99,2024-03-06,South,Completed
+1051,York Ramirez,Wireless Router,Electronics,7,149.99,2024-03-07,East,Completed
+1052,Zara James,End Table Set,Furniture,5,199.99,2024-03-08,West,Pending
+1053,Aaron Watson,Streaming Device,Electronics,12,49.99,2024-03-09,North,Completed
+1054,Bella Brooks,Desk Mat,Furniture,18,24.99,2024-03-10,South,Completed
+1055,Carl Kelly,Portable Speaker,Electronics,9,89.99,2024-03-11,East,Completed
+1056,Diana Sanders,Monitor Stand,Furniture,6,79.99,2024-03-12,West,Completed
+1057,Eric Price,Graphics Tablet,Electronics,4,249.99,2024-03-13,North,Completed
+1058,Fiona Bennett,Cushion Set,Furniture,10,59.99,2024-03-14,South,Completed
+1059,George Wood,Dash Cam,Electronics,6,139.99,2024-03-15,East,Pending
+1060,Holly Barnes,Ladder Shelf,Furniture,3,169.99,2024-03-16,West,Completed

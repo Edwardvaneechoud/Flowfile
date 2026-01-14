@@ -278,7 +278,7 @@ defineExpose({
 
 .tab-icon {
   font-size: var(--font-size-xl);
-  color: var(--primary-blue);
+  color: var(--color-accent-subtle);
   flex-shrink: 0;
 }
 
