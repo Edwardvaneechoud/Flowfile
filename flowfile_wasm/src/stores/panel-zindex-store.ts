@@ -23,7 +23,6 @@ export const usePanelZIndexStore = defineStore('panelZIndex', () => {
   function registerPanel(panelId: string, initialZIndex: number) {
     if (!panels.value[panelId]) {
       panels.value[panelId] = initialZIndex
-      console.log(`[ZIndexStore] Registered ${panelId} with zIndex=${initialZIndex}, maxZIndex=${maxZIndex.value}`)
     }
   }
 
@@ -31,7 +30,6 @@ export const usePanelZIndexStore = defineStore('panelZIndex', () => {
   function unregisterPanel(panelId: string) {
     if (panels.value[panelId] !== undefined) {
       delete panels.value[panelId]
-      console.log(`[ZIndexStore] Unregistered ${panelId}`)
     }
   }
 
@@ -45,22 +43,13 @@ export const usePanelZIndexStore = defineStore('panelZIndex', () => {
     const currentZIndex = panels.value[panelId] ?? BASE_Z_INDEX
     const currentMax = maxZIndex.value
 
-    console.log(`[ZIndexStore] bringToFront(${panelId}):`, {
-      currentZIndex,
-      maxZIndex: currentMax,
-      allPanels: { ...panels.value }
-    })
-
     // Only increment if this panel is not already at the top
     if (currentZIndex < currentMax) {
       const newZIndex = currentMax + 1
       panels.value[panelId] = newZIndex
-      console.log(`[ZIndexStore] ${panelId} moved to front: ${newZIndex}`)
       return newZIndex
-    } else {
-      console.log(`[ZIndexStore] ${panelId} already at top, no change`)
-      return currentZIndex
     }
+    return currentZIndex
   }
 
   // Get z-index for a specific panel

@@ -328,7 +328,6 @@ onMounted(() => {
       if (savedState.zIndex !== undefined) {
         zIndex.value = savedState.zIndex
         zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
-        console.log(`[${props.panelId}] Restored zIndex from saved state: ${savedState.zIndex}`)
       }
 
       // Add resize listener before returning
