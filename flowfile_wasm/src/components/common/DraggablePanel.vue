@@ -29,9 +29,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { getPanelState, savePanelState, type PanelState } from '../../stores/panel-store'
+import { usePanelZIndexStore } from '../../stores/panel-zindex-store'
 
-// Global z-index counter shared across all DraggablePanel instances
-let globalMaxZIndex = 100
+// Use centralized z-index store for proper state sharing
+const zIndexStore = usePanelZIndexStore()
 
 interface Props {
   title: string
@@ -65,10 +66,13 @@ const isMinimized = ref(false)
 const isResizing = ref(false)
 const isDragging = ref(false)
 
-// Initialize zIndex with defaultZIndex prop, update global counter if needed
-const initialZIndex = Math.max(props.defaultZIndex, globalMaxZIndex + 1)
-globalMaxZIndex = Math.max(globalMaxZIndex, initialZIndex)
-const zIndex = ref(initialZIndex)
+// Initialize zIndex with defaultZIndex prop
+const zIndex = ref(props.defaultZIndex)
+
+// Register with the z-index store if we have a panelId
+if (props.panelId) {
+  zIndexStore.registerPanel(props.panelId, props.defaultZIndex)
+}
 
 // Drag state
 const startX = ref(0)
@@ -78,6 +82,17 @@ const startHeight = ref(0)
 const startLeft = ref(0)
 const startTop = ref(0)
 const resizeDirection = ref<string | null>(null)
+
+// Track previous viewport dimensions for proportional resize calculations
+let prevViewportWidth = window.innerWidth
+let prevViewportHeight = window.innerHeight
+let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+// Edge snap threshold in pixels - if panel is within this distance of an edge, consider it "docked"
+const EDGE_SNAP_THRESHOLD = 10
+const MIN_PANEL_WIDTH = 200
+const MIN_PANEL_HEIGHT = 100
+const MIN_VISIBLE_HEADER = 50 // Minimum header visible for dragging
 
 // Save current panel state to storage
 function saveCurrentState() {
@@ -94,20 +109,214 @@ function saveCurrentState() {
   savePanelState(props.panelId, state)
 }
 
+// Detect which edges the panel is currently docked/snapped to
+function detectDockedEdges(vw: number, vh: number) {
+  const panelRight = left.value + width.value
+  const panelBottom = top.value + height.value
+
+  return {
+    left: left.value <= EDGE_SNAP_THRESHOLD,
+    right: Math.abs(panelRight - vw) <= EDGE_SNAP_THRESHOLD,
+    top: top.value <= EDGE_SNAP_THRESHOLD,
+    bottom: Math.abs(panelBottom - vh) <= EDGE_SNAP_THRESHOLD,
+    // Check if panel spans full width/height (stretched to edges)
+    fullWidth: left.value <= EDGE_SNAP_THRESHOLD && Math.abs(panelRight - vw) <= EDGE_SNAP_THRESHOLD,
+    fullHeight: top.value <= EDGE_SNAP_THRESHOLD && Math.abs(panelBottom - vh) <= EDGE_SNAP_THRESHOLD
+  }
+}
+
+// Smart resize handler - maintains edge docking and proportional positioning
+function handleWindowResizeSmartly() {
+  const newVw = window.innerWidth
+  const newVh = window.innerHeight
+
+  // Skip if viewport didn't actually change
+  if (newVw === prevViewportWidth && newVh === prevViewportHeight) {
+    return
+  }
+
+  // Detect current docking state before resize
+  const docked = detectDockedEdges(prevViewportWidth, prevViewportHeight)
+
+  // Calculate scale factors
+  const scaleX = newVw / prevViewportWidth
+  const scaleY = newVh / prevViewportHeight
+
+  // Calculate new dimensions based on docking state
+  let newLeft = left.value
+  let newTop = top.value
+  let newWidth = width.value
+  let newHeight = height.value
+
+  // Handle horizontal positioning and width
+  if (docked.fullWidth) {
+    // Panel spans full width - maintain that
+    newLeft = 0
+    newWidth = newVw
+  } else if (docked.left && docked.right) {
+    // Docked to both edges - scale width proportionally but keep edges
+    newLeft = 0
+    newWidth = newVw
+  } else if (docked.right) {
+    // Docked to right edge - keep right edge fixed, adjust left
+    newLeft = newVw - width.value
+  } else if (docked.left) {
+    // Docked to left edge - keep left at 0
+    newLeft = 0
+  } else {
+    // Not docked - scale position proportionally to maintain relative position
+    newLeft = Math.round(left.value * scaleX)
+  }
+
+  // Handle vertical positioning and height
+  if (docked.fullHeight) {
+    // Panel spans full height - maintain that
+    newTop = 0
+    newHeight = newVh
+  } else if (docked.top && docked.bottom) {
+    // Docked to both edges - span full height
+    newTop = 0
+    newHeight = newVh
+  } else if (docked.bottom) {
+    // Docked to bottom edge - keep bottom edge fixed, adjust top
+    newTop = newVh - height.value
+  } else if (docked.top) {
+    // Docked to top edge - keep top at 0 or initialTop
+    newTop = Math.min(top.value, props.initialTop)
+  } else {
+    // Not docked - scale position proportionally
+    newTop = Math.round(top.value * scaleY)
+  }
+
+  // Handle panels that should stretch based on initialPosition
+  if (props.initialPosition === 'left' || props.initialPosition === 'right') {
+    // Side panels typically stretch vertically
+    if (docked.top || top.value <= props.initialTop + EDGE_SNAP_THRESHOLD) {
+      newTop = props.initialTop
+      if (docked.bottom) {
+        newHeight = newVh - props.initialTop
+      }
+    }
+  } else if (props.initialPosition === 'bottom' || props.initialPosition === 'top') {
+    // Top/bottom panels typically stretch horizontally
+    if (docked.left) {
+      newLeft = props.initialLeft
+      if (docked.right) {
+        newWidth = newVw - props.initialLeft
+      }
+    }
+  }
+
+  // Apply constraints to ensure panel stays within viewport
+  // Ensure minimum sizes
+  newWidth = Math.max(MIN_PANEL_WIDTH, newWidth)
+  newHeight = Math.max(MIN_PANEL_HEIGHT, newHeight)
+
+  // Ensure panel doesn't exceed viewport
+  newWidth = Math.min(newWidth, newVw)
+  newHeight = Math.min(newHeight, newVh)
+
+  // Ensure panel stays within viewport bounds
+  // At least MIN_VISIBLE_HEADER pixels must be visible horizontally
+  newLeft = Math.max(MIN_VISIBLE_HEADER - newWidth, Math.min(newLeft, newVw - MIN_VISIBLE_HEADER))
+  // Panel must be at least partially visible vertically
+  newTop = Math.max(0, Math.min(newTop, newVh - MIN_VISIBLE_HEADER))
+
+  // If panel would be off-screen, bring it back
+  if (newLeft + newWidth < MIN_VISIBLE_HEADER) {
+    newLeft = MIN_VISIBLE_HEADER - newWidth
+  }
+  if (newLeft > newVw - MIN_VISIBLE_HEADER) {
+    newLeft = newVw - MIN_VISIBLE_HEADER
+  }
+
+  // Apply the new values
+  left.value = Math.round(newLeft)
+  top.value = Math.round(newTop)
+  width.value = Math.round(newWidth)
+  height.value = Math.round(newHeight)
+
+  // Update previous viewport dimensions
+  prevViewportWidth = newVw
+  prevViewportHeight = newVh
+
+  // Save the new state
+  saveCurrentState()
+}
+
+// Debounced window resize handler
+function handleWindowResize() {
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer)
+  }
+  resizeDebounceTimer = setTimeout(() => {
+    handleWindowResizeSmartly()
+    resizeDebounceTimer = null
+  }, 16) // ~60fps debounce for smooth resizing
+}
+
+// Reset panel to initial position based on initialPosition prop
+function resetToInitialPosition() {
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+
+  // Reset to initial dimensions
+  width.value = props.initialWidth
+  height.value = props.initialHeight
+  isMinimized.value = false
+
+  // Calculate position based on initialPosition prop
+  switch (props.initialPosition) {
+    case 'right':
+      left.value = vw - width.value
+      top.value = props.initialTop
+      height.value = vh - props.initialTop
+      break
+    case 'left':
+      left.value = 0
+      top.value = props.initialTop
+      height.value = vh - props.initialTop
+      break
+    case 'bottom':
+      left.value = props.initialLeft
+      top.value = vh - height.value
+      width.value = vw - props.initialLeft
+      break
+    case 'top':
+      left.value = props.initialLeft
+      top.value = props.initialTop
+      width.value = vw - props.initialLeft
+      break
+  }
+
+  // Update viewport tracking
+  prevViewportWidth = vw
+  prevViewportHeight = vh
+}
+
+// Handle layout reset event from LayoutControls
+function handleLayoutReset() {
+  resetToInitialPosition()
+}
+
 // Compute initial position based on prop
 onMounted(() => {
   const vh = window.innerHeight
   const vw = window.innerWidth
 
+  // Initialize viewport tracking for smart resize
+  prevViewportWidth = vw
+  prevViewportHeight = vh
+
   // Try to restore saved state first
   if (props.panelId) {
     const savedState = getPanelState(props.panelId)
     if (savedState) {
-      // Validate saved position is still within viewport
-      const validLeft = Math.max(0, Math.min(savedState.left, vw - 100))
-      const validTop = Math.max(0, Math.min(savedState.top, vh - 50))
-      const validWidth = Math.min(savedState.width, vw - validLeft)
-      const validHeight = Math.min(savedState.height, vh - validTop)
+      // Validate saved position is still within viewport using smart constraints
+      const validWidth = Math.max(MIN_PANEL_WIDTH, Math.min(savedState.width, vw))
+      const validHeight = Math.max(MIN_PANEL_HEIGHT, Math.min(savedState.height, vh))
+      const validLeft = Math.max(0, Math.min(savedState.left, vw - MIN_VISIBLE_HEADER))
+      const validTop = Math.max(0, Math.min(savedState.top, vh - MIN_VISIBLE_HEADER))
 
       width.value = validWidth
       height.value = validHeight
@@ -115,11 +324,16 @@ onMounted(() => {
       top.value = validTop
       isMinimized.value = savedState.isMinimized
 
-      // Restore zIndex if saved, and update global counter
+      // Restore zIndex if saved, and update the store
       if (savedState.zIndex !== undefined) {
         zIndex.value = savedState.zIndex
-        globalMaxZIndex = Math.max(globalMaxZIndex, savedState.zIndex)
+        zIndexStore.updateZIndex(props.panelId!, savedState.zIndex)
       }
+
+      // Add resize listener before returning
+      window.addEventListener('resize', handleWindowResize)
+      // Listen for layout reset events from LayoutControls
+      window.addEventListener('layout-reset', handleLayoutReset)
       return
     }
   }
@@ -147,6 +361,11 @@ onMounted(() => {
       width.value = vw - props.initialLeft
       break
   }
+
+  // Add window resize listener for smart panel repositioning
+  window.addEventListener('resize', handleWindowResize)
+  // Listen for layout reset events from LayoutControls
+  window.addEventListener('layout-reset', handleLayoutReset)
 })
 
 // Watch for changes to initialTop and update position (only if no saved state)
@@ -174,10 +393,14 @@ const panelStyle = computed(() => ({
 }))
 
 function bringToFront() {
-  // Only update if this panel is not already at the top
-  if (zIndex.value <= globalMaxZIndex) {
-    globalMaxZIndex++
-    zIndex.value = globalMaxZIndex
+  if (!props.panelId) return
+
+  // Use the centralized store to bring this panel to front
+  const newZIndex = zIndexStore.bringToFront(props.panelId)
+
+  // Only update and save if the z-index actually changed
+  if (newZIndex !== zIndex.value) {
+    zIndex.value = newZIndex
     saveCurrentState()
   }
 }
@@ -274,6 +497,17 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', stopMove)
   document.removeEventListener('mousemove', onResize)
   document.removeEventListener('mouseup', stopResize)
+  window.removeEventListener('resize', handleWindowResize)
+  window.removeEventListener('layout-reset', handleLayoutReset)
+  // Clear any pending debounce timer
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer)
+    resizeDebounceTimer = null
+  }
+  // Unregister from z-index store
+  if (props.panelId) {
+    zIndexStore.unregisterPanel(props.panelId)
+  }
 })
 </script>
 
@@ -351,10 +585,12 @@ onUnmounted(() => {
   position: absolute;
   opacity: 0;
   transition: opacity 0.15s;
+  pointer-events: none;
 }
 
 .draggable-panel:hover .resize-handle {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .resize-handle.right {

@@ -210,6 +210,9 @@
       @complete="showMissingFilesModal = false"
     />
 
+    <!-- Layout Controls Button -->
+    <LayoutControls @reset-layout="handleResetLayout" />
+
   </div>
 </template>
 
@@ -254,6 +257,7 @@ import OutputSettings from './nodes/OutputSettings.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
 import DemoButton from './DemoButton.vue'
+import LayoutControls from './common/LayoutControls.vue'
 import { useDemo } from '../composables/useDemo'
 
 const flowStore = useFlowStore()
@@ -679,6 +683,12 @@ function handleClearFlow() {
   if (confirm('Are you sure you want to clear the entire flow? This cannot be undone.')) {
     flowStore.clearFlow()
   }
+}
+
+// Handle layout reset from LayoutControls
+function handleResetLayout() {
+  // Dispatch custom event that DraggablePanel components listen to
+  window.dispatchEvent(new CustomEvent('layout-reset'))
 }
 
 // Keyboard shortcut handler
