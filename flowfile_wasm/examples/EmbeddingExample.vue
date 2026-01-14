@@ -3,8 +3,8 @@
 
   This shows the complete pattern:
   1. Load a pre-designed flow
-  2. Bind your app's data using named inputs (matches node descriptions)
-  3. Get results via v-model:outputs (also by name)
+  2. Bind your app's data using named inputs (matches node binding_name)
+  3. Get results via v-model:outputs (also by binding_name)
 -->
 
 <template>
@@ -56,7 +56,7 @@ import type { FlowfileData, DataPreview } from 'flowfile-wasm'
 
 const ready = ref(false)
 
-// Named inputs - keys match node descriptions in the flow
+// Named inputs - keys match node binding_name in the flow
 // When this changes, the flow auto-re-executes!
 const inputs = reactive({
   sales_data: `name,sales,region
@@ -68,12 +68,12 @@ Eve,2000,North`
 })
 
 // Named outputs - populated after execution
-// Keys match node descriptions in the flow
+// Keys match node binding_name in the flow
 const outputs = ref<Record<string, DataPreview | null>>({})
 
-// Pre-designed flow with named nodes:
-// - "sales_data" (read node) - receives input
-// - "summary" (group_by node) - produces output
+// Pre-designed flow with binding_name on nodes:
+// - binding_name: "sales_data" (read node) - receives input
+// - binding_name: "summary" (group_by node) - produces output
 const analysisFlow: FlowfileData = {
   flowfile_version: '1.0.0',
   flowfile_id: 1,
@@ -90,7 +90,8 @@ const analysisFlow: FlowfileData = {
       id: 1,
       type: 'read',
       is_start_node: true,
-      description: 'sales_data',  // <-- This name is used for input binding!
+      description: 'Load Sales Data',      // Human-readable description
+      binding_name: 'sales_data',           // <-- Used for input binding!
       x_position: 100,
       y_position: 150,
       input_ids: [],
@@ -101,7 +102,8 @@ const analysisFlow: FlowfileData = {
         pos_x: 100,
         pos_y: 150,
         is_setup: true,
-        description: 'sales_data',
+        description: 'Load Sales Data',
+        binding_name: 'sales_data',
         received_file: {
           name: 'data.csv',
           path: 'data.csv',
@@ -119,7 +121,8 @@ const analysisFlow: FlowfileData = {
       id: 2,
       type: 'group_by',
       is_start_node: false,
-      description: 'summary',  // <-- This name is used for output binding!
+      description: 'Sum Sales by Region',   // Human-readable description
+      binding_name: 'summary',               // <-- Used for output binding!
       x_position: 350,
       y_position: 150,
       input_ids: [1],
@@ -130,7 +133,8 @@ const analysisFlow: FlowfileData = {
         pos_x: 350,
         pos_y: 150,
         is_setup: true,
-        description: 'summary',
+        description: 'Sum Sales by Region',
+        binding_name: 'summary',
         depending_on_id: 1,
         groupby_input: {
           agg_cols: [

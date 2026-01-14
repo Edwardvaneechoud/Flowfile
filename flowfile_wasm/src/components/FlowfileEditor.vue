@@ -95,19 +95,19 @@ export interface FlowfileEditorProps {
   initialData?: string | { name: string; content: string } | Record<number, string | { name: string; content: string }>
 
   /**
-   * Named input bindings - maps node descriptions to data.
-   * More readable than using node IDs!
+   * Named input bindings - maps binding names to data.
+   * Much cleaner than using node IDs!
    *
    * Example: { customers: "csv...", orders: "csv..." }
    *
-   * The key matches the node's "description" field in the flow designer.
+   * The key matches the node's "binding_name" field (set in the flow designer).
    * This is the recommended way to bind data in embedded flows.
    */
   inputs?: Record<string, string | { name: string; content: string }>
 
   /**
    * v-model for named output bindings.
-   * After execution, this contains results keyed by node description.
+   * After execution, this contains results keyed by node binding_name.
    *
    * Example output: { summary: { columns: [...], data: [...] } }
    */
@@ -303,33 +303,33 @@ watch(selectedNodeId, (nodeId) => {
 /**
  * Find all source nodes (read/manual_input) in the flow
  */
-function getSourceNodes(): Array<{ id: number; type: string; description?: string }> {
+function getSourceNodes(): Array<{ id: number; type: string; binding_name?: string }> {
   return flowStore.nodeList
     .filter(node => node.type === 'read' || node.type === 'manual_input')
-    .map(node => ({ id: node.id, type: node.type, description: node.description }))
+    .map(node => ({ id: node.id, type: node.type, binding_name: node.binding_name }))
 }
 
 /**
- * Find a node by its description (for named bindings)
+ * Find a node by its binding_name (for named bindings)
  */
-function findNodeByDescription(description: string): number | null {
+function findNodeByBindingName(bindingName: string): number | null {
   const node = flowStore.nodeList.find(
-    n => n.description?.toLowerCase() === description.toLowerCase()
+    n => n.binding_name?.toLowerCase() === bindingName.toLowerCase()
   )
   return node?.id ?? null
 }
 
 /**
- * Inject data using named bindings (matches node descriptions)
+ * Inject data using named bindings (matches node binding_name)
  */
 async function injectNamedInputs() {
   const inputs = props.inputs
   if (!inputs) return
 
   for (const [name, data] of Object.entries(inputs)) {
-    const nodeId = findNodeByDescription(name)
+    const nodeId = findNodeByBindingName(name)
     if (nodeId === null) {
-      console.warn(`[FlowfileEditor] No node found with description "${name}"`)
+      console.warn(`[FlowfileEditor] No node found with binding_name "${name}"`)
       continue
     }
 
@@ -346,17 +346,17 @@ async function injectNamedInputs() {
 }
 
 /**
- * Build named outputs from execution results (keyed by node description)
+ * Build named outputs from execution results (keyed by node binding_name)
  */
 function buildNamedOutputs(): Record<string, DataPreview | null> {
   const outputs: Record<string, DataPreview | null> = {}
 
   for (const node of flowStore.nodeList) {
-    if (!node.description) continue
+    if (!node.binding_name) continue
 
     const result = flowStore.getNodeResult(node.id)
     if (result?.success && result.data) {
-      outputs[node.description] = result.data
+      outputs[node.binding_name] = result.data
     }
   }
 

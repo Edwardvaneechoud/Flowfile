@@ -68,7 +68,7 @@ The recommended pattern is to **design your flow once** (with test data) and the
 
 ### Named Bindings (Recommended)
 
-Use the node's **description** field as the binding name. This is much cleaner than using node IDs!
+Use the node's **binding_name** field for clean data binding. This is a valid identifier that can also be used for generated Python variable names.
 
 ```vue
 <template>
@@ -88,19 +88,19 @@ Use the node's **description** field as the binding name. This is much cleaner t
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 
-// Your flow has nodes with descriptions:
-// - Read node with description: "customers"
-// - Read node with description: "orders"
-// - Output node with description: "summary"
+// Your flow has nodes with binding_name:
+// - Read node: binding_name: "customers"
+// - Read node: binding_name: "orders"
+// - Output node: binding_name: "summary"
 const savedFlow = { /* your FlowfileData */ }
 
-// Bind data by name (matches node descriptions!)
+// Bind data by name (matches node binding_name!)
 const inputData = reactive({
   customers: `name,region\nAlice,North\nBob,South`,
   orders: `customer,amount\nAlice,100\nBob,200`
 })
 
-// Results come back by name too
+// Results come back by binding_name too
 const results = ref({})
 
 // When inputData changes, flow auto-re-executes
@@ -111,10 +111,11 @@ function updateData() {
 ```
 
 **How it works:**
-1. In the flow designer, set each node's **description** to a meaningful name
+1. In the flow designer, set each node's **binding_name** (valid identifier, no spaces)
 2. Use `inputs` prop to inject data by that name
 3. Use `v-model:outputs` to receive results by name
 4. Changes to inputs automatically re-execute the flow
+5. Same binding_name is used for generated Python code variable names!
 
 ### Using Node IDs (Alternative)
 
@@ -169,8 +170,8 @@ async function refresh() {
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `initialFlow` | `FlowfileData` | - | Pre-load a saved flow |
-| `inputs` | `Record<string, string>` | - | **Named input bindings** (by node description) |
-| `v-model:outputs` | `Record<string, DataPreview>` | - | **Named output bindings** (reactive) |
+| `inputs` | `Record<string, string>` | - | **Named input bindings** (by node `binding_name`) |
+| `v-model:outputs` | `Record<string, DataPreview>` | - | **Named output bindings** (by `binding_name`) |
 | `initialData` | See below | - | Data by node ID (alternative to `inputs`) |
 | `autoExecute` | `boolean` | `false` | Auto-execute after loading data |
 | `showHeader` | `boolean` | `false` | Show the header bar with branding |
@@ -182,10 +183,10 @@ async function refresh() {
 
 ### `inputs` Format (Recommended)
 
-Uses node **descriptions** as keys - much more readable than node IDs!
+Uses node **binding_name** as keys - much more readable than node IDs!
 
 ```typescript
-// In your flow, nodes have descriptions like "customers", "orders"
+// In your flow, nodes have binding_name like "customers", "orders"
 inputs: {
   customers: "name,age\nAlice,30",
   orders: { name: "orders.csv", content: "..." }

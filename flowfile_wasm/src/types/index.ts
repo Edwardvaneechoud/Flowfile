@@ -15,6 +15,15 @@ export interface NodeBase {
   pos_y: number
   is_setup: boolean
   description: string
+  /**
+   * Optional binding name for external data injection and code generation.
+   * Must be a valid identifier (letters, numbers, underscores; no spaces).
+   * Used for:
+   * - Named input/output bindings in embedded FlowfileEditor
+   * - Variable names in generated Python code
+   * Falls back to `node_{id}` if not set.
+   */
+  binding_name?: string
 }
 
 export interface NodeSingleInput extends NodeBase {
@@ -388,6 +397,7 @@ export interface FlowfileNode {
   type: string
   is_start_node: boolean
   description: string
+  binding_name?: string  // For embeddings + code generation
   x_position: number
   y_position: number
   left_input_id?: number
@@ -427,6 +437,7 @@ export interface FlowNode {
   leftInputId?: number
   rightInputId?: number
   description?: string
+  binding_name?: string  // For embeddings + code generation
 }
 
 export interface FlowEdge {
