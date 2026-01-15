@@ -115,8 +115,10 @@ Drag these components from the left panel into your sections:
 |-----------|----------|-------------------|
 | **Secret Selector** | API keys, passwords, credentials | `str` (SecretStr) |
 
-!!! warning "Security Best Practice"
-    Always use Secret Selector for sensitive data like API keys. Never hardcode credentials in your process code.
+!!! note "No Secret Usage Validation"
+    There is currently no scanning to verify that secrets are handled securely 
+    in your process code. You are responsible for ensuring secrets are not 
+    logged, exposed in error messages, or written to output data.
 
 ---
 
