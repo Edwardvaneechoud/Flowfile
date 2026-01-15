@@ -155,7 +155,6 @@
     margin: 0;
     font-family: var(--font-mono);
     font-size: 13px;
-    line-height: 1.5;
   }
 
   .code-content code {
@@ -163,12 +162,12 @@
   }
 
   .line {
-    display: block;
-    min-height: 1.5em;
+    display: inline;
   }
 
   .line:empty {
-    min-height: 0.75em;
+  display: block;
+    min-height: 0.01em;
   }
 
   .kw { color: #c792ea; }
@@ -226,11 +225,9 @@
     const codeContent = `import flowfile_frame as ff
 
 # Read data from CSV
-df = ff.from_csv("sales_data.csv")
-
+df = ff.scan_csv("sales_data.csv")
 # Filter rows where sales > 1000
 filtered = df.filter(ff.col("sales") > 1000)
-
 # Group by category and aggregate
 result = (
     filtered
@@ -241,7 +238,6 @@ result = (
         ff.count().alias("count")
     )
 )
-
 # Export to Parquet
 result.to_parquet("output.parquet")`;
 
