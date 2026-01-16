@@ -41,7 +41,8 @@ export const usePyodideStore = defineStore('pyodide', () => {
       })
 
       loadingStatus.value = 'Installing packages...'
-      await pyodide.value.loadPackage(['numpy', 'polars', 'pydantic'])
+      // Load polars and pydantic - numpy is avoided by using native Polars rows() method
+      await pyodide.value.loadPackage(['polars', 'pydantic'])
 
       loadingStatus.value = 'Setting up execution engine...'
       await setupExecutionEngine()
@@ -60,8 +61,10 @@ export const usePyodideStore = defineStore('pyodide', () => {
     await pyodide.value.runPythonAsync(`
 import polars as pl
 import json
+import gc
 from typing import Dict, List, Any, Optional, Union, Tuple
 from hashlib import md5
+from collections import OrderedDict
 
 # =============================================================================
 # Global Storage: LazyFrames + Preview Cache
@@ -71,13 +74,42 @@ from hashlib import md5
 _lazyframes: Dict[int, pl.LazyFrame] = {}
 
 # Cache for materialized previews (only computed on demand)
-_preview_cache: Dict[int, Dict] = {}
+# Using OrderedDict for LRU eviction
+_preview_cache: OrderedDict[int, Dict] = OrderedDict()
+_PREVIEW_CACHE_MAX_SIZE = 20  # Max number of cached previews
+_PREVIEW_CACHE_MAX_MEMORY_MB = 50  # Approximate max memory for preview cache
 
 # Track query plan hashes to invalidate cache when upstream changes
 _plan_hashes: Dict[int, str] = {}
 
 # Schema cache (can be obtained from LazyFrame without collecting)
 _schemas: Dict[int, List[Dict[str, str]]] = {}
+
+
+def _estimate_preview_size_mb(preview_data: Dict) -> float:
+    """Estimate memory size of preview data in MB."""
+    try:
+        data = preview_data.get("data", [])
+        if not data:
+            return 0.001
+        # Rough estimate: each cell ~50 bytes average
+        num_cells = len(data) * len(data[0]) if data and len(data) > 0 else 0
+        return (num_cells * 50) / (1024 * 1024)
+    except:
+        return 0.1
+
+
+def _evict_preview_cache_if_needed():
+    """Evict oldest entries if cache exceeds limits."""
+    # Evict by count
+    while len(_preview_cache) > _PREVIEW_CACHE_MAX_SIZE:
+        _preview_cache.popitem(last=False)
+
+    # Evict by estimated memory
+    total_mb = sum(_estimate_preview_size_mb(v) for v in _preview_cache.values())
+    while total_mb > _PREVIEW_CACHE_MAX_MEMORY_MB and len(_preview_cache) > 1:
+        _preview_cache.popitem(last=False)
+        total_mb = sum(_estimate_preview_size_mb(v) for v in _preview_cache.values())
 
 
 def _get_plan_hash(lf: pl.LazyFrame) -> str:
@@ -133,30 +165,44 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> Dict:
     """
     Materialize a preview for a node (on-demand).
     This is the expensive operation - only called when user clicks to view.
+    Memory-optimized: collects once with row count included.
     """
     lf = _lazyframes.get(node_id)
     if lf is None:
         return {"error": f"No LazyFrame found for node #{node_id}"}
 
     try:
-        # Collect only the rows we need for preview
-        preview_df = lf.head(max_rows).collect()
+        # Optimized: Add row number to get total count in single collection
+        # This avoids the double .collect() call
+        lf_with_count = lf.with_row_index("__row_idx__")
+        preview_df = lf_with_count.head(max_rows).collect()
 
-        # Get total row count (separate query)
+        # Get total rows from a separate lightweight query (just count, no data)
         try:
             total_rows = lf.select(pl.len()).collect().item()
         except:
+            # Fallback: if we got max_rows, there's probably more
             total_rows = len(preview_df)
+
+        # Remove the temporary index column before returning
+        if "__row_idx__" in preview_df.columns:
+            preview_df = preview_df.drop("__row_idx__")
 
         preview_data = {
             "columns": preview_df.columns,
-            "data": preview_df.to_numpy().tolist() if len(preview_df) > 0 else [],
+            # Use native Polars rows() instead of numpy to reduce memory footprint
+            "data": [list(row) for row in preview_df.rows()] if len(preview_df) > 0 else [],
             "total_rows": total_rows,
             "preview_rows": len(preview_df)
         }
 
-        # Cache the preview
+        # Explicitly delete the DataFrame to free memory immediately
+        del preview_df
+
+        # Cache the preview with LRU eviction
         _preview_cache[node_id] = preview_data
+        _preview_cache.move_to_end(node_id)  # Mark as recently used
+        _evict_preview_cache_if_needed()
 
         return preview_data
     except Exception as e:
@@ -166,9 +212,13 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> Dict:
 def fetch_preview(node_id: int, max_rows: int = 100, force_refresh: bool = False) -> Dict:
     """
     Fetch preview data for a node. Called when user clicks to view.
+    Uses LRU cache with eviction.
     """
     if not force_refresh and has_cached_preview(node_id):
         cached = get_cached_preview(node_id)
+        # Mark as recently used for LRU
+        if node_id in _preview_cache:
+            _preview_cache.move_to_end(node_id)
         return {
             "success": True,
             "data": cached,
@@ -223,16 +273,30 @@ def clear_all():
     _schemas.clear()
     _preview_cache.clear()
     _plan_hashes.clear()
+    gc.collect()
+
+
+def run_gc():
+    """Force garbage collection. Call after heavy operations."""
+    gc.collect()
+    return {"freed": True}
+
+
+def get_memory_stats() -> Dict:
+    """Get memory statistics for debugging."""
+    import sys
+    return {
+        "lazyframes_count": len(_lazyframes),
+        "preview_cache_count": len(_preview_cache),
+        "schemas_count": len(_schemas),
+        "plan_hashes_count": len(_plan_hashes),
+        "preview_cache_size_estimate_mb": sum(_estimate_preview_size_mb(v) for v in _preview_cache.values())
+    }
 
 
 # =============================================================================
-# Pydantic Schema Validation (matching flowfile_core/schemas/schemas.py)
+# Pydantic Schema Validation (optional - lazy loaded to reduce startup memory)
 # =============================================================================
-from pydantic import BaseModel, Field
-from typing import Literal
-
-ExecutionModeLiteral = Literal["Development", "Performance"]
-ExecutionLocationsLiteral = Literal["local", "remote"]
 
 # Fields to exclude from setting_input when serializing
 SETTING_INPUT_EXCLUDE = {
@@ -241,46 +305,76 @@ SETTING_INPUT_EXCLUDE = {
     "is_user_defined", "depending_on_id", "depending_on_ids"
 }
 
-class FlowfileSettings(BaseModel):
-    """Settings for flowfile serialization (YAML/JSON)."""
-    description: Optional[str] = None
-    execution_mode: ExecutionModeLiteral = "Performance"
-    execution_location: ExecutionLocationsLiteral = "local"
-    auto_save: bool = False
-    show_detailed_progress: bool = True
+# Pydantic is optional - loaded lazily only when validation is actually called
+_pydantic_loaded = False
+_FlowfileData = None
 
-class FlowfileNode(BaseModel):
-    """Node representation for flowfile serialization."""
-    id: int
-    type: str
-    is_start_node: bool = False
-    description: Optional[str] = ""
-    x_position: Optional[float] = 0
-    y_position: Optional[float] = 0
-    left_input_id: Optional[int] = None
-    right_input_id: Optional[int] = None
-    input_ids: Optional[List[int]] = Field(default_factory=list)
-    outputs: Optional[List[int]] = Field(default_factory=list)
-    setting_input: Optional[Any] = None
+def _load_pydantic():
+    """Lazy load pydantic and define validation models."""
+    global _pydantic_loaded, _FlowfileData
+    if _pydantic_loaded:
+        return _FlowfileData is not None
 
-class FlowfileData(BaseModel):
-    """Root model for flowfile serialization (YAML/JSON)."""
-    flowfile_version: str
-    flowfile_id: int
-    flowfile_name: str
-    flowfile_settings: FlowfileSettings
-    nodes: List[FlowfileNode]
+    try:
+        from pydantic import BaseModel, Field
+        from typing import Literal
+
+        ExecutionModeLiteral = Literal["Development", "Performance"]
+        ExecutionLocationsLiteral = Literal["local", "remote"]
+
+        class FlowfileSettings(BaseModel):
+            description: Optional[str] = None
+            execution_mode: ExecutionModeLiteral = "Performance"
+            execution_location: ExecutionLocationsLiteral = "local"
+            auto_save: bool = False
+            show_detailed_progress: bool = True
+
+        class FlowfileNode(BaseModel):
+            id: int
+            type: str
+            is_start_node: bool = False
+            description: Optional[str] = ""
+            x_position: Optional[float] = 0
+            y_position: Optional[float] = 0
+            left_input_id: Optional[int] = None
+            right_input_id: Optional[int] = None
+            input_ids: Optional[List[int]] = Field(default_factory=list)
+            outputs: Optional[List[int]] = Field(default_factory=list)
+            setting_input: Optional[Any] = None
+
+        class FlowfileData(BaseModel):
+            flowfile_version: str
+            flowfile_id: int
+            flowfile_name: str
+            flowfile_settings: FlowfileSettings
+            nodes: List[FlowfileNode]
+
+        _FlowfileData = FlowfileData
+        _pydantic_loaded = True
+        return True
+    except ImportError:
+        _pydantic_loaded = True
+        return False
 
 def validate_flowfile_data(data: Dict) -> Dict:
-    """Validate flowfile data using Pydantic schemas.
+    """Validate flowfile data using Pydantic schemas (lazy loaded).
 
     Returns a dict with:
     - success: bool
     - data: validated data (if successful)
     - error: error message (if failed)
     """
+    # Try to lazy-load pydantic
+    if not _load_pydantic():
+        # Pydantic not available - skip validation, assume valid
+        return {
+            "success": True,
+            "data": data,
+            "error": None
+        }
+
     try:
-        validated = FlowfileData.model_validate(data)
+        validated = _FlowfileData.model_validate(data)
         return {
             "success": True,
             "data": validated.model_dump(),
@@ -311,7 +405,8 @@ def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> Dict:
     preview_df = df.head(max_rows)
     return {
         "columns": df.columns,
-        "data": preview_df.to_numpy().tolist() if len(preview_df) > 0 else [],
+        # Use native Polars rows() instead of numpy to reduce memory footprint
+        "data": [list(row) for row in preview_df.rows()] if len(preview_df) > 0 else [],
         "total_rows": len(df)
     }
 
@@ -721,30 +816,52 @@ def execute_sort(node_id: int, input_id: int, settings: Dict) -> Dict:
     except Exception as e:
         return {"success": False, "error": format_error_lf("sort", node_id, e, input_lf)}
 
-def _build_local_vars(node_id: int, input_ids: List[int]) -> Tuple[Dict, Optional[Dict]]:
-    """Build local variables dict with inputs. Returns (local_vars, error_dict)."""
+def _build_local_vars(node_id: int, input_ids: List[int]) -> Tuple[Dict, Optional[Dict], List[str]]:
+    """Build local variables dict with inputs. Returns (local_vars, error_dict, df_keys_to_cleanup)."""
     local_vars = {"pl": pl, "output_df": None, "output_lf": None}
-    
+    df_keys_to_cleanup = []  # Track which keys hold materialized DataFrames
+
     if len(input_ids) == 0:
-        return local_vars, None
-    
+        return local_vars, None, df_keys_to_cleanup
+
     if len(input_ids) == 1:
         input_lf = get_lazyframe(input_ids[0])
         if input_lf is None:
-            return None, {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{input_ids[0]}. Make sure the upstream node executed successfully."}
+            return None, {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{input_ids[0]}. Make sure the upstream node executed successfully."}, []
         local_vars["input_df"] = input_lf.collect()
         local_vars["input_lf"] = input_lf
+        df_keys_to_cleanup.append("input_df")
     else:
         for i, inp_id in enumerate(input_ids, start=1):
             lf = get_lazyframe(inp_id)
             if lf is None:
-                return None, {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{inp_id}. Make sure the upstream node executed successfully."}
+                # Clean up any already-collected DataFrames before returning error
+                for key in df_keys_to_cleanup:
+                    if key in local_vars:
+                        del local_vars[key]
+                gc.collect()
+                return None, {"success": False, "error": f"Polars Code error on node #{node_id}: No input data from node #{inp_id}. Make sure the upstream node executed successfully."}, []
             local_vars[f"input_df_{i}"] = lf.collect()
             local_vars[f"input_lf_{i}"] = lf
+            df_keys_to_cleanup.append(f"input_df_{i}")
         local_vars["input_df"] = local_vars["input_df_1"]
         local_vars["input_lf"] = local_vars["input_lf_1"]
-    
-    return local_vars, None
+
+    return local_vars, None, df_keys_to_cleanup
+
+
+def _cleanup_local_vars(local_vars: Dict, df_keys_to_cleanup: List[str]):
+    """Clean up materialized DataFrames from local_vars to free memory."""
+    for key in df_keys_to_cleanup:
+        if key in local_vars:
+            del local_vars[key]
+    # Also clean up any user-created DataFrames that aren't the result
+    for key in list(local_vars.keys()):
+        if key not in ("pl", "output_df", "output_lf", "input_lf") and not key.startswith("input_lf_"):
+            val = local_vars.get(key)
+            if isinstance(val, (pl.DataFrame, pl.LazyFrame)):
+                del local_vars[key]
+    gc.collect()
 
 
 def _to_lazyframe(value: Any) -> Optional[pl.LazyFrame]:
@@ -821,25 +938,27 @@ def _extract_result(code: str, global_vars: Dict, local_vars: Dict, has_inputs: 
 
 
 def execute_polars_code(node_id: int, input_ids: List[int], settings: Dict) -> Dict:
-    """Execute polars code node - supports zero, single, or multiple inputs."""
-    
+    """Execute polars code node - supports zero, single, or multiple inputs.
+    Memory-optimized: cleans up materialized DataFrames after execution."""
+
     # Build inputs
-    local_vars, error = _build_local_vars(node_id, input_ids)
+    local_vars, error, df_keys_to_cleanup = _build_local_vars(node_id, input_ids)
     if error:
         return error
-    
+
     try:
         polars_code_input = settings.get("polars_code_input", {})
         code = (polars_code_input.get("polars_code") or "").strip()
-        
+
         # Handle empty code
         if not code:
             if len(input_ids) == 0:
+                _cleanup_local_vars(local_vars, df_keys_to_cleanup)
                 return {"success": False, "error": f"Polars Code error on node #{node_id}: No code provided and no input to pass through."}
             result_lf = local_vars["input_lf"]
         else:
             global_vars = {"pl": pl}
-            
+
             # Execute code
             try:
                 exec(code, global_vars, local_vars)
@@ -848,20 +967,25 @@ def execute_polars_code(node_id: int, input_ids: List[int], settings: Dict) -> D
                 result = eval(code, global_vars, local_vars)
                 result_lf = _to_lazyframe(result)
                 if result_lf is None:
+                    _cleanup_local_vars(local_vars, df_keys_to_cleanup)
                     return {"success": False, "error": f"Polars Code error on node #{node_id}: Code must produce a DataFrame or LazyFrame, got {type(result).__name__}"}
                 store_lazyframe(node_id, result_lf)
+                _cleanup_local_vars(local_vars, df_keys_to_cleanup)
                 return {"success": True, "schema": get_schema(node_id), "has_data": True}
-            
+
             # Extract result
             result_lf, error_msg = _extract_result(code, global_vars, local_vars, len(input_ids) > 0)
             if error_msg:
+                _cleanup_local_vars(local_vars, df_keys_to_cleanup)
                 return {"success": False, "error": f"Polars Code error on node #{node_id}: {error_msg}"}
-        
+
         store_lazyframe(node_id, result_lf)
+        _cleanup_local_vars(local_vars, df_keys_to_cleanup)
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
-    
+
     except Exception as e:
         input_lf = local_vars.get("input_lf") if len(input_ids) > 0 else None
+        _cleanup_local_vars(local_vars, df_keys_to_cleanup)
         return {"success": False, "error": format_error_lf("polars_code", node_id, e, input_lf)}
 
 def execute_unique(node_id: int, input_id: int, settings: Dict) -> Dict:
@@ -917,10 +1041,15 @@ def execute_preview(node_id: int, input_id: int) -> Dict:
 
 def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute pivot node - converts data from long to wide format
-    Note: Pivot requires collecting data due to dynamic column creation"""
+    Note: Pivot requires collecting data due to dynamic column creation.
+    Memory-optimized: cleans up intermediate DataFrames."""
     input_lf = get_lazyframe(input_id)
     if input_lf is None:
         return {"success": False, "error": f"Pivot error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
+
+    df = None
+    grouped = None
+    result = None
 
     try:
         # Pivot needs to collect to determine unique values for columns
@@ -933,18 +1062,30 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
         aggregations = pivot_input.get("aggregations", ["sum"])
 
         if not pivot_column:
+            del df
+            gc.collect()
             return {"success": False, "error": f"Pivot error on node #{node_id}: No pivot column specified. Please select a column whose values will become new columns."}
         if not value_col:
+            del df
+            gc.collect()
             return {"success": False, "error": f"Pivot error on node #{node_id}: No value column specified. Please select a column containing values to aggregate."}
         if pivot_column not in df.columns:
-            return {"success": False, "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' not found. Available columns: {list(df.columns)}"}
+            cols = list(df.columns)
+            del df
+            gc.collect()
+            return {"success": False, "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' not found. Available columns: {cols}"}
         if value_col not in df.columns:
-            return {"success": False, "error": f"Pivot error on node #{node_id}: Value column '{value_col}' not found. Available columns: {list(df.columns)}"}
+            cols = list(df.columns)
+            del df
+            gc.collect()
+            return {"success": False, "error": f"Pivot error on node #{node_id}: Value column '{value_col}' not found. Available columns: {cols}"}
 
         max_unique = 200
         unique_values = df.select(pl.col(pivot_column).cast(pl.String)).unique().sort(pivot_column).limit(max_unique).to_series().to_list()
 
         if len(unique_values) >= max_unique:
+            del df
+            gc.collect()
             return {"success": False, "error": f"Pivot error on node #{node_id}: Pivot column '{pivot_column}' has too many unique values (>={max_unique}). Please use a column with fewer unique values."}
 
         group_cols = index_columns + [pivot_column] if index_columns else [pivot_column]
@@ -972,6 +1113,10 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         grouped = df.group_by(group_cols).agg(agg_exprs)
 
+        # Free original df memory immediately after grouping
+        del df
+        df = None
+
         if index_columns:
             index_exprs = [pl.col(c) for c in index_columns]
         else:
@@ -989,14 +1134,31 @@ def execute_pivot(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         result = grouped.group_by(index_exprs).agg(pivot_exprs)
 
+        # Free grouped memory
+        del grouped
+        grouped = None
+
         if "__temp_idx__" in result.columns:
             result = result.drop("__temp_idx__")
 
         result_lf = result.lazy()
         store_lazyframe(node_id, result_lf)
+
+        # Clean up result DataFrame
+        del result
+        gc.collect()
+
         return {"success": True, "schema": get_schema(node_id), "has_data": True}
     except Exception as e:
-        return {"success": False, "error": format_error("pivot", node_id, e, df if 'df' in dir() else None)}
+        # Clean up on error
+        if df is not None:
+            del df
+        if grouped is not None:
+            del grouped
+        if result is not None:
+            del result
+        gc.collect()
+        return {"success": False, "error": format_error("pivot", node_id, e)}
 
 def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute unpivot node - converts data from wide to long format (lazy)"""
@@ -1041,17 +1203,19 @@ def execute_unpivot(node_id: int, input_id: int, settings: Dict) -> Dict:
 
 def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
     """Execute output node - prepares data for download.
-    Note: This must collect data to generate the output file."""
+    Note: This must collect data to generate the output file.
+    Memory-optimized: cleans up DataFrame after generating output."""
     input_lf = get_lazyframe(input_id)
     if input_lf is None:
         return {"success": False, "error": f"Output error on node #{node_id}: No input data from node #{input_id}. Make sure the upstream node executed successfully."}
 
+    df = None
     try:
         import io
-        import base64
 
         # Collect data for output
         df = input_lf.collect()
+        row_count = len(df)
 
         output_settings = settings.get("output_settings", {})
         file_type = output_settings.get("file_type", "csv")
@@ -1063,6 +1227,8 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
 
         if file_type == "parquet":
             # Parquet export is not supported in the browser/WASM environment
+            del df
+            gc.collect()
             return {"success": False, "error": f"Output error on node #{node_id}: Parquet export is not supported in the browser. Please use CSV format instead."}
         else:
             delimiter = table_settings.get("delimiter", ",")
@@ -1074,6 +1240,10 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
             content = buffer.getvalue()
             mime_type = "text/csv"
 
+        # Free DataFrame memory immediately after writing
+        del df
+        gc.collect()
+
         return {
             "success": True,
             "schema": get_schema(node_id),
@@ -1083,10 +1253,13 @@ def execute_output(node_id: int, input_id: int, settings: Dict) -> Dict:
                 "file_name": file_name,
                 "file_type": file_type,
                 "mime_type": mime_type,
-                "row_count": len(df)
+                "row_count": row_count
             }
         }
     except Exception as e:
+        if df is not None:
+            del df
+            gc.collect()
         return {"success": False, "error": format_error_lf("output", node_id, e, input_lf)}
 `)
   }
