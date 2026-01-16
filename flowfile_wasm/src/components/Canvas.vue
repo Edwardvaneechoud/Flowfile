@@ -141,9 +141,9 @@
       />
     </DraggablePanel>
 
-    <!-- Data Preview Panel -->
+    <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
     <DraggablePanel
-      v-if="selectedNodeId !== null"
+      v-if="selectedNodeId !== null && selectedNode?.type !== 'explore_data'"
       title="Table Preview"
       panel-id="data-preview-panel"
       initial-position="bottom"
