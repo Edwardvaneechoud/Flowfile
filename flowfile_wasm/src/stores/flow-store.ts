@@ -664,6 +664,22 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function selectNode(id: number | null) {
+    const previousId = selectedNodeId.value
+
+    // Clear preview data from previously selected node to free memory
+    // (keeps schema and success status, just removes the large data array)
+    if (previousId !== null && previousId !== id) {
+      const prevResult = nodeResults.value.get(previousId)
+      if (prevResult?.data) {
+        nodeResults.value.set(previousId, {
+          ...prevResult,
+          data: undefined  // Clear the large preview data
+        })
+      }
+      // Also clear from preview cache
+      previewCache.value.delete(previousId)
+    }
+
     selectedNodeId.value = id
 
     // Auto-fetch preview when selecting a node that has data
@@ -671,8 +687,9 @@ export const useFlowStore = defineStore('flow', () => {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
         // Use more rows for explore_data nodes (Preview Settings)
+        // Limited to 1000 to prevent UI lag with large datasets
         const node = nodes.value.get(id)
-        const maxRows = node?.type === 'explore_data' ? 10000 : 100
+        const maxRows = node?.type === 'explore_data' ? 1000 : 100
         fetchNodePreview(id, { maxRows })
       }
     }
@@ -1587,8 +1604,9 @@ result
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
           // Use more rows for explore_data nodes (Preview Settings)
+          // Limited to 1000 to prevent UI lag with large datasets
           const node = nodes.value.get(selectedNodeId.value)
-          const maxRows = node?.type === 'explore_data' ? 10000 : 100
+          const maxRows = node?.type === 'explore_data' ? 1000 : 100
           await fetchNodePreview(selectedNodeId.value, { maxRows })
         }
       }
