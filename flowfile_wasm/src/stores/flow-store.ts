@@ -670,7 +670,10 @@ export const useFlowStore = defineStore('flow', () => {
     if (id !== null) {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
-        fetchNodePreview(id)
+        // Use more rows for explore_data nodes (Preview Settings)
+        const node = nodes.value.get(id)
+        const maxRows = node?.type === 'explore_data' ? 10000 : 100
+        fetchNodePreview(id, { maxRows })
       }
     }
   }
@@ -1583,7 +1586,10 @@ result
       if (selectedNodeId.value !== null) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
-          await fetchNodePreview(selectedNodeId.value)
+          // Use more rows for explore_data nodes (Preview Settings)
+          const node = nodes.value.get(selectedNodeId.value)
+          const maxRows = node?.type === 'explore_data' ? 10000 : 100
+          await fetchNodePreview(selectedNodeId.value, { maxRows })
         }
       }
 
