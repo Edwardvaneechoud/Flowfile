@@ -12,6 +12,7 @@ import { NodeApi, ExpressionsApi } from "../api";
 import { useFlowStore } from "./flow-store";
 import { useResultsStore } from "./results-store";
 import { useEditorStore } from "./editor-store";
+import { useHistoryStore } from "./history-store";
 
 export const useNodeStore = defineStore("node", {
   state: () => ({
@@ -264,6 +265,7 @@ export const useNodeStore = defineStore("node", {
     // ========== Node Settings Updates ==========
     async updateSettingsDirectly(inputData: any): Promise<any> {
       const flowStore = useFlowStore();
+      const historyStore = useHistoryStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.node_id)) as Node;
@@ -274,6 +276,9 @@ export const useNodeStore = defineStore("node", {
           node.data.nodeTemplate.item,
           inputData,
         );
+
+        // Refresh history status after settings update
+        await historyStore.refreshStatus(flowStore.flowId);
 
         const downstreamNodeIds = await NodeApi.getDownstreamNodeIds(
           flowStore.flowId,
@@ -292,6 +297,7 @@ export const useNodeStore = defineStore("node", {
 
     async updateUserDefinedSettings(inputData: any): Promise<any> {
       const flowStore = useFlowStore();
+      const historyStore = useHistoryStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node;
@@ -300,6 +306,9 @@ export const useNodeStore = defineStore("node", {
         inputData.value.pos_y = node.position.y;
 
         const response = await NodeApi.updateUserDefinedSettings(nodeType, inputData.value);
+
+        // Refresh history status after settings update
+        await historyStore.refreshStatus(flowStore.flowId);
 
         const downstreamNodeIds = await NodeApi.getDownstreamNodeIds(
           flowStore.flowId,
@@ -318,6 +327,7 @@ export const useNodeStore = defineStore("node", {
 
     async updateSettings(inputData: any, inputNodeType?: string): Promise<any> {
       const flowStore = useFlowStore();
+      const historyStore = useHistoryStore();
 
       try {
         const node = flowStore.vueFlowInstance?.findNode(String(inputData.value.node_id)) as Node;
@@ -327,6 +337,9 @@ export const useNodeStore = defineStore("node", {
         inputData.value.pos_y = node.position.y;
 
         const response = await NodeApi.updateSettingsDirectly(nodeType, inputData.value);
+
+        // Refresh history status after settings update
+        await historyStore.refreshStatus(flowStore.flowId);
 
         const downstreamNodeIds = await NodeApi.getDownstreamNodeIds(
           flowStore.flowId,
