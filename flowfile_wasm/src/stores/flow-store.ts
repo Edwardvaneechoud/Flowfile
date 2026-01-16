@@ -24,6 +24,10 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
+// Preview cache limits to prevent memory bloat
+const PREVIEW_CACHE_MAX_SIZE = 20  // Max number of cached previews in TypeScript
+const PREVIEW_CACHE_MAX_AGE_MS = 5 * 60 * 1000  // 5 minutes max age
+
 // Fields to exclude from setting_input when exporting (matches flowfile_core)
 const SETTING_INPUT_EXCLUDE = new Set([
   'flow_id',
@@ -716,6 +720,8 @@ current_node_ids = {${nodeIdList}} if ${currentNodeIds.size} > 0 else set()
 orphaned_ids = [nid for nid in list(_lazyframes.keys()) if nid not in current_node_ids]
 for nid in orphaned_ids:
     clear_node(nid)
+# Force garbage collection after cleanup
+gc.collect()
 `)
     }
   }
@@ -1054,6 +1060,33 @@ for nid in orphaned_ids:
   // =============================================================================
 
   /**
+   * Evict old entries from previewCache to prevent memory bloat.
+   * Uses LRU-style eviction: removes oldest entries first.
+   */
+  function evictPreviewCacheIfNeeded() {
+    const now = Date.now()
+    const entries = Array.from(previewCache.value.entries())
+
+    // First, evict expired entries
+    for (const [nodeId, entry] of entries) {
+      if (now - entry.timestamp > PREVIEW_CACHE_MAX_AGE_MS) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+
+    // Then, if still over limit, evict oldest entries
+    if (previewCache.value.size > PREVIEW_CACHE_MAX_SIZE) {
+      const sortedEntries = Array.from(previewCache.value.entries())
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+
+      const toEvict = sortedEntries.slice(0, previewCache.value.size - PREVIEW_CACHE_MAX_SIZE)
+      for (const [nodeId] of toEvict) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+  }
+
+  /**
    * Build downstream dependency graph
    */
   function buildDownstreamGraph(): Record<number, number[]> {
@@ -1199,6 +1232,9 @@ result
           timestamp: Date.now(),
           loading: false
         })
+
+        // Evict old entries to prevent memory bloat
+        evictPreviewCacheIfNeeded()
 
         // Also update nodeResults with the preview data for display
         const existingResult = nodeResults.value.get(nodeId)
@@ -1550,6 +1586,9 @@ result
           await fetchNodePreview(selectedNodeId.value)
         }
       }
+
+      // Force garbage collection after flow execution
+      await pyodideStore.runPython('gc.collect()')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
