@@ -22,7 +22,7 @@
           <span class="material-icons">open_in_full</span>
         </button>
       </div>
-      <div class="table-container" ref="tableContainerRef">
+      <div class="table-container">
         <ag-grid-vue
           :default-col-def="defaultColDef"
           :column-defs="columnDefs"
@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useFlowStore } from '../../stores/flow-store'
 import type { BaseNodeSettings, NodeResult, ColumnSchema } from '../../types'
 import { AgGridVue } from "@ag-grid-community/vue3"
@@ -120,7 +120,6 @@ const expandedGridApi = ref<GridApi | null>(null)
 const gridHeight = ref('250px')
 const isLoading = ref(false)
 const isExpanded = ref(false)
-const tableContainerRef = ref<HTMLElement | null>(null)
 
 const result = computed<NodeResult | undefined>(() => {
   return flowStore.getNodeResult(props.nodeId)
@@ -182,23 +181,6 @@ const rowData = computed(() => {
 
 const onGridReady = (params: { api: GridApi }) => {
   gridApi.value = params.api
-  console.log('[AG Grid] Grid ready, API:', params.api)
-
-  // Log grid dimensions
-  nextTick(() => {
-    const gridElement = tableContainerRef.value?.querySelector('.ag-root-wrapper')
-    const viewport = tableContainerRef.value?.querySelector('.ag-body-viewport')
-    console.log('[AG Grid] Grid element:', gridElement)
-    console.log('[AG Grid] Viewport element:', viewport)
-    console.log('[AG Grid] Grid height setting:', gridHeight.value)
-    console.log('[AG Grid] Row count:', rowData.value.length)
-
-    if (viewport) {
-      console.log('[AG Grid] Viewport scrollHeight:', viewport.scrollHeight)
-      console.log('[AG Grid] Viewport clientHeight:', viewport.clientHeight)
-      console.log('[AG Grid] Viewport offsetHeight:', (viewport as HTMLElement).offsetHeight)
-    }
-  })
 }
 
 const onExpandedGridReady = (params: { api: GridApi }) => {
@@ -231,108 +213,9 @@ const calculateGridHeight = () => {
   gridHeight.value = `${Math.min(Math.max(calculatedHeight, minHeight), maxHeight)}px`
 }
 
-// Debug: track scroll events
-const setupScrollDebugListeners = () => {
-  nextTick(() => {
-    const container = tableContainerRef.value
-    if (!container) {
-      console.log('[Debug] tableContainerRef not available yet')
-      return
-    }
-
-    console.log('[Debug] Setting up scroll debug listeners on container:', container)
-
-    // Listen for wheel events on the container
-    container.addEventListener('wheel', (e: WheelEvent) => {
-      console.log('[Debug] Wheel event on container:', {
-        deltaY: e.deltaY,
-        deltaX: e.deltaX,
-        target: e.target,
-        currentTarget: e.currentTarget,
-        defaultPrevented: e.defaultPrevented
-      })
-    }, { passive: true })
-
-    // Listen for scroll events on the container
-    container.addEventListener('scroll', (e: Event) => {
-      console.log('[Debug] Scroll event on container:', {
-        scrollTop: (e.target as HTMLElement).scrollTop,
-        target: e.target
-      })
-    })
-
-    // Find and listen to the AG Grid viewport
-    const viewport = container.querySelector('.ag-body-viewport')
-    if (viewport) {
-      console.log('[Debug] Found AG Grid viewport:', viewport)
-
-      viewport.addEventListener('wheel', (e: Event) => {
-        const wheelEvent = e as WheelEvent
-        console.log('[Debug] Wheel event on viewport:', {
-          deltaY: wheelEvent.deltaY,
-          scrollTop: (viewport as HTMLElement).scrollTop,
-          scrollHeight: (viewport as HTMLElement).scrollHeight,
-          clientHeight: (viewport as HTMLElement).clientHeight
-        })
-      }, { passive: true })
-
-      viewport.addEventListener('scroll', (e: Event) => {
-        console.log('[Debug] Scroll event on viewport:', {
-          scrollTop: (e.target as HTMLElement).scrollTop,
-          scrollHeight: (e.target as HTMLElement).scrollHeight,
-          clientHeight: (e.target as HTMLElement).clientHeight
-        })
-      })
-    } else {
-      console.log('[Debug] AG Grid viewport not found')
-    }
-
-    // Also check parent elements for scroll
-    let parent = container.parentElement
-    let level = 0
-    while (parent && level < 5) {
-      const currentParent = parent
-      const computedStyle = window.getComputedStyle(currentParent)
-      console.log(`[Debug] Parent ${level}:`, {
-        className: currentParent.className,
-        overflow: computedStyle.overflow,
-        overflowY: computedStyle.overflowY,
-        height: computedStyle.height,
-        maxHeight: computedStyle.maxHeight
-      })
-
-      currentParent.addEventListener('scroll', (e: Event) => {
-        console.log(`[Debug] Scroll event on parent ${currentParent.className}:`, {
-          scrollTop: (e.target as HTMLElement).scrollTop
-        })
-      })
-
-      parent = currentParent.parentElement
-      level++
-    }
-  })
-}
-
-// Watch for rowData changes that might affect scroll
-watch(rowData, (newData, oldData) => {
-  console.log('[Debug] rowData changed:', {
-    oldLength: oldData?.length,
-    newLength: newData?.length
-  })
-}, { deep: false })
-
-// Watch for gridHeight changes
-watch(gridHeight, (newHeight, oldHeight) => {
-  console.log('[Debug] gridHeight changed:', { oldHeight, newHeight })
-})
-
 onMounted(() => {
-  console.log('[Debug] Component mounted')
   calculateGridHeight()
   window.addEventListener('resize', calculateGridHeight)
-
-  // Setup scroll debug listeners after a short delay to ensure AG Grid is rendered
-  setTimeout(setupScrollDebugListeners, 500)
 })
 
 onUnmounted(() => {

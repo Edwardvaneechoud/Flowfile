@@ -167,7 +167,7 @@
               <span class="material-icons" style="font-size: 14px;">fit_screen</span>
             </button>
           </div>
-          <div class="preview-grid-container" ref="previewGridContainerRef">
+          <div class="preview-grid-container">
             <AgGridVue
               class="ag-theme-balham"
               :rowData="rowData"
@@ -217,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core'
 import type { Node, Edge, Connection, NodeChange, EdgeChange } from '@vue-flow/core'
 import { MiniMap } from '@vue-flow/minimap'
@@ -275,7 +275,6 @@ const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
-const previewGridContainerRef = ref<HTMLElement | null>(null)
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -628,7 +627,6 @@ const rowData = computed(() => {
     return cachedRowData
   }
 
-  console.log('[Debug] rowData actually recomputing - data reference changed')
   cachedDataRef = result.data.data
   const columns = result.data.columns
   cachedRowData = result.data.data.map((row: any[]) => {
@@ -653,94 +651,7 @@ const defaultColDef: ColDef = {
 // AG Grid event handlers
 function onGridReady(params: GridReadyEvent) {
   gridApi.value = params.api
-  console.log('[AG Grid Canvas] Grid ready')
-
-  // Setup scroll debug listeners
-  nextTick(() => {
-    setupScrollDebugListeners()
-  })
 }
-
-// Debug: track scroll events on the preview grid
-function setupScrollDebugListeners() {
-  const container = previewGridContainerRef.value
-  if (!container) {
-    console.log('[Debug] previewGridContainerRef not available')
-    return
-  }
-
-  console.log('[Debug] Setting up scroll debug listeners')
-
-  // Find AG Grid viewport
-  const viewport = container.querySelector('.ag-body-viewport') as HTMLElement
-  const agRoot = container.querySelector('.ag-root-wrapper') as HTMLElement
-
-  if (viewport) {
-    console.log('[Debug] AG Grid viewport found:', {
-      scrollHeight: viewport.scrollHeight,
-      clientHeight: viewport.clientHeight,
-      offsetHeight: viewport.offsetHeight
-    })
-
-    viewport.addEventListener('scroll', (e: Event) => {
-      const target = e.target as HTMLElement
-      console.log('[Debug] Viewport scroll:', {
-        scrollTop: target.scrollTop,
-        scrollHeight: target.scrollHeight,
-        clientHeight: target.clientHeight,
-        canScrollMore: target.scrollTop + target.clientHeight < target.scrollHeight
-      })
-    })
-
-    viewport.addEventListener('wheel', (e: WheelEvent) => {
-      console.log('[Debug] Viewport wheel:', {
-        deltaY: e.deltaY,
-        scrollTop: viewport.scrollTop,
-        scrollHeight: viewport.scrollHeight,
-        clientHeight: viewport.clientHeight
-      })
-    }, { passive: true })
-  } else {
-    console.log('[Debug] AG Grid viewport NOT found')
-  }
-
-  // Check parent elements
-  let parent = container.parentElement
-  let level = 0
-  while (parent && level < 6) {
-    const el = parent
-    const style = window.getComputedStyle(el)
-    console.log(`[Debug] Parent ${level}:`, {
-      className: el.className,
-      overflow: style.overflow,
-      overflowY: style.overflowY,
-      height: style.height,
-      scrollHeight: el.scrollHeight,
-      clientHeight: el.clientHeight
-    })
-
-    el.addEventListener('scroll', () => {
-      console.log(`[Debug] PARENT SCROLL on ${el.className}:`, {
-        scrollTop: el.scrollTop
-      })
-    })
-
-    parent = el.parentElement
-    level++
-  }
-}
-
-// Watch for rowData changes
-watch(rowData, (newData, oldData) => {
-  console.log('[Debug] rowData changed:', {
-    oldLength: oldData?.length,
-    newLength: newData?.length
-  })
-  // Re-setup listeners when data changes
-  nextTick(() => {
-    setupScrollDebugListeners()
-  })
-})
 
 // Auto-size columns to fit content
 function autoSizeColumns() {
