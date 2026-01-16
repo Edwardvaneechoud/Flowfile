@@ -129,7 +129,7 @@ def get_cached_preview(node_id: int) -> Optional[Dict]:
     return _preview_cache.get(node_id)
 
 
-def materialize_preview(node_id: int, max_rows: int = 100) -> Dict:
+def materialize_preview(node_id: int, max_rows: int = 10000) -> Dict:
     """
     Materialize a preview for a node (on-demand).
     This is the expensive operation - only called when user clicks to view.
@@ -163,7 +163,7 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> Dict:
         return {"error": str(e)}
 
 
-def fetch_preview(node_id: int, max_rows: int = 100, force_refresh: bool = False) -> Dict:
+def fetch_preview(node_id: int, max_rows: int = 10000, force_refresh: bool = False) -> Dict:
     """
     Fetch preview data for a node. Called when user clicks to view.
     """
@@ -306,7 +306,7 @@ def prepare_node_for_export(node: Dict) -> Dict:
         result["setting_input"] = clean_setting_input(result["setting_input"])
     return result
 
-def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> Dict:
+def df_to_preview(df: pl.DataFrame, max_rows: int = 10000) -> Dict:
     """Convert dataframe to preview format"""
     preview_df = df.head(max_rows)
     return {
