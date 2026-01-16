@@ -661,12 +661,8 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     if flow is None:
         raise HTTPException(404, 'could not find the flow')
 
-    # Capture history snapshot before making changes
-    flow.capture_history_snapshot(
-        HistoryActionType.UPDATE_SETTINGS,
-        f"Update {node_type} settings",
-        node_id=node_id,
-    )
+    # Capture snapshot BEFORE making changes (for comparison)
+    pre_snapshot = flow.get_flowfile_data()
 
     add_func = getattr(flow, 'add_' + node_type)
     parsed_input = None
@@ -684,6 +680,13 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
         raise HTTPException(404, 'could not find the interface')
     try:
         add_func(parsed_input)
+        # Only add to history if state actually changed
+        flow.capture_history_if_changed(
+            pre_snapshot,
+            HistoryActionType.UPDATE_SETTINGS,
+            f"Update {node_type} settings",
+            node_id=node_id,
+        )
     except Exception as e:
         logger.error(e)
         raise HTTPException(419, str(f'error: {e}'))

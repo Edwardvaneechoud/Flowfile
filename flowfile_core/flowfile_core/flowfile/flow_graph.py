@@ -349,6 +349,31 @@ class FlowGraph:
         """
         self._history_manager.capture_snapshot(self, action_type, description, node_id)
 
+    def capture_history_if_changed(
+        self,
+        pre_snapshot: schemas.FlowfileData,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int | None = None,
+    ) -> bool:
+        """Add a pre-captured snapshot to history only if the state has changed.
+
+        Call this AFTER making changes, with a snapshot captured BEFORE changes.
+        Only adds to history if the state actually changed.
+
+        Args:
+            pre_snapshot: Snapshot captured BEFORE the change was made.
+            action_type: The type of action that was performed.
+            description: Human-readable description of the action.
+            node_id: Optional node ID if the action involves a specific node.
+
+        Returns:
+            True if snapshot was added to history, False if no change detected.
+        """
+        return self._history_manager.capture_if_changed(
+            self, pre_snapshot, action_type, description, node_id
+        )
+
     def undo(self) -> UndoRedoResult:
         """Undo the last action.
 

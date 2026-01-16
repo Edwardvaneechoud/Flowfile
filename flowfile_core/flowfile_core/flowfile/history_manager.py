@@ -81,38 +81,72 @@ class HistoryManager:
             redo_count=self.redo_count,
         )
 
+    def _snapshots_equal(self, snapshot1: FlowfileData, snapshot2: FlowfileData) -> bool:
+        """Compare two snapshots to check if they represent the same state.
+
+        Uses Pydantic's model_dump() for deep comparison of all fields.
+
+        Args:
+            snapshot1: First snapshot to compare.
+            snapshot2: Second snapshot to compare.
+
+        Returns:
+            True if snapshots are identical, False otherwise.
+        """
+        try:
+            # Compare using model_dump for deep equality check
+            # Exclude timestamp-like fields that might change between captures
+            dump1 = snapshot1.model_dump()
+            dump2 = snapshot2.model_dump()
+            return dump1 == dump2
+        except Exception as e:
+            logger.warning(f"History: Error comparing snapshots: {e}")
+            # If comparison fails, assume they're different to be safe
+            return False
+
     def capture_snapshot(
         self,
         flow_graph: "FlowGraph",
         action_type: HistoryActionType,
         description: str,
         node_id: Optional[int] = None,
-    ) -> None:
+    ) -> bool:
         """Capture the current flow state before making changes.
 
         This method should be called BEFORE modifying the flow graph.
         The snapshot captures the state that can be restored via undo.
+        Only captures if the state has actually changed from the last snapshot.
 
         Args:
             flow_graph: The FlowGraph instance to capture.
             action_type: The type of action about to be performed.
             description: Human-readable description of the action.
             node_id: Optional node ID if the action involves a specific node.
+
+        Returns:
+            True if snapshot was captured, False if skipped (no change or disabled).
         """
         logger.info(f"History: capture_snapshot called - action_type={action_type}, description='{description}', node_id={node_id}")
 
         if not self.config.enabled:
             logger.info("History: Skipping capture - history is disabled")
-            return
+            return False
 
         if self._is_restoring:
             logger.info("History: Skipping capture - currently restoring")
-            return
+            return False
 
         try:
             logger.info(f"History: Getting flowfile data for snapshot...")
             snapshot = flow_graph.get_flowfile_data()
             logger.info(f"History: Snapshot contains {len(snapshot.nodes)} nodes")
+
+            # Check if state has actually changed from the last snapshot
+            if self._undo_stack:
+                last_snapshot = self._undo_stack[-1].snapshot
+                if self._snapshots_equal(snapshot, last_snapshot):
+                    logger.info(f"History: Skipping capture - no changes detected for '{description}'")
+                    return False
 
             entry = HistoryEntry(
                 snapshot=snapshot,
@@ -125,8 +159,10 @@ class HistoryManager:
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
             logger.info(f"History: Captured snapshot for '{description}' (undo stack size: {len(self._undo_stack)}, redo stack cleared)")
+            return True
         except Exception as e:
             logger.error(f"History: Failed to capture snapshot: {e}", exc_info=True)
+            return False
 
     def undo(self, flow_graph: "FlowGraph") -> UndoRedoResult:
         """Undo the last action by restoring the previous state.
@@ -255,6 +291,67 @@ class HistoryManager:
             )
         finally:
             self._is_restoring = False
+
+    def capture_if_changed(
+        self,
+        flow_graph: "FlowGraph",
+        pre_snapshot: FlowfileData,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: Optional[int] = None,
+    ) -> bool:
+        """Add a pre-captured snapshot to history only if the state has changed.
+
+        This method should be called AFTER modifying the flow graph, with a
+        snapshot that was captured BEFORE the modification. It compares the
+        pre-change snapshot with the current state to determine if a real
+        change occurred.
+
+        Args:
+            flow_graph: The FlowGraph instance (current state after change).
+            pre_snapshot: Snapshot captured BEFORE the change was made.
+            action_type: The type of action that was performed.
+            description: Human-readable description of the action.
+            node_id: Optional node ID if the action involves a specific node.
+
+        Returns:
+            True if snapshot was added to history, False if skipped (no change).
+        """
+        logger.info(f"History: capture_if_changed called - action_type={action_type}, description='{description}'")
+
+        if not self.config.enabled:
+            logger.info("History: Skipping capture - history is disabled")
+            return False
+
+        if self._is_restoring:
+            logger.info("History: Skipping capture - currently restoring")
+            return False
+
+        try:
+            # Get the current state (after the change)
+            current_snapshot = flow_graph.get_flowfile_data()
+
+            # Compare pre and post states
+            if self._snapshots_equal(pre_snapshot, current_snapshot):
+                logger.info(f"History: Skipping capture - no actual changes for '{description}'")
+                return False
+
+            # State changed - add pre-snapshot to history so undo restores it
+            entry = HistoryEntry(
+                snapshot=pre_snapshot,
+                action_type=action_type,
+                description=description,
+                timestamp=time(),
+                node_id=node_id,
+            )
+            self._undo_stack.append(entry)
+            # Clear redo stack when new action is performed
+            self._redo_stack.clear()
+            logger.info(f"History: Captured snapshot for '{description}' (undo stack size: {len(self._undo_stack)}, redo stack cleared)")
+            return True
+        except Exception as e:
+            logger.error(f"History: Failed to capture snapshot: {e}", exc_info=True)
+            return False
 
     def clear(self) -> None:
         """Clear all history entries."""

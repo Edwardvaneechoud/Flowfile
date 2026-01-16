@@ -12,6 +12,7 @@ from flowfile_core import flow_file_handler
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
+from flowfile_core.schemas.history_schema import HistoryActionType
 from flowfile_core.configs.node_store import (
     CUSTOM_NODE_STORE,
     add_to_custom_node_store,
@@ -70,18 +71,28 @@ def update_user_defined_node(input_data: Dict[str, Any], node_type: str, current
     input_data['user_id'] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
-    logger.info(f'Updating the data for flow: {flow_id}, node {input_data["node_id"]}')
+    node_id = int(input_data.get('node_id'))
+    logger.info(f'Updating the data for flow: {flow_id}, node {node_id}')
     flow = flow_file_handler.get_flow(flow_id)
     user_defined_model = CUSTOM_NODE_STORE.get(node_type)
     if not user_defined_model:
         raise HTTPException(status_code=404, detail=f"Node type '{node_type}' not found")
-    print('adding user defined node')
-    print(input_data)
-    print('-----')
+
+    # Capture snapshot BEFORE making changes (for comparison)
+    pre_snapshot = flow.get_flowfile_data()
+
     user_defined_node_settings = input_schema.UserDefinedNode.model_validate(input_data)
     initialized_model = user_defined_model.from_settings(user_defined_node_settings.settings)
 
     flow.add_user_defined_node(custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings)
+
+    # Only add to history if state actually changed
+    flow.capture_history_if_changed(
+        pre_snapshot,
+        HistoryActionType.UPDATE_SETTINGS,
+        f"Update {node_type} settings",
+        node_id=node_id,
+    )
 
 
 @router.post("/save-custom-node", summary="Save a custom node definition")
