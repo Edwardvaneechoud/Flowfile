@@ -202,8 +202,9 @@ const autoSizeColumns = () => {
 // Calculate dynamic grid height
 const calculateGridHeight = () => {
   const rowCount = rowData.value.length
-  const headerHeight = 40
-  const rowHeight = 28
+  // These values must match the AG Grid CSS variables in main.css
+  const headerHeight = 36  // --ag-header-height
+  const rowHeight = 32     // --ag-row-height
   const paginationHeight = 48
   const maxHeight = 300
   const minHeight = 150

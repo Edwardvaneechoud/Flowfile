@@ -610,18 +610,33 @@ const columnDefs = computed<ColDef[]>(() => {
 })
 
 // AG Grid row data - convert from array of arrays to array of objects
+// Use caching to prevent unnecessary re-renders that reset scroll position
+let cachedDataRef: any[] | null = null
+let cachedRowData: Record<string, any>[] = []
+
 const rowData = computed(() => {
   const result = selectedNodeResult.value
-  if (!result?.data?.data || !result?.data?.columns) return []
+  if (!result?.data?.data || !result?.data?.columns) {
+    cachedDataRef = null
+    cachedRowData = []
+    return []
+  }
 
+  // Only recompute if the underlying data array reference changed
+  if (result.data.data === cachedDataRef) {
+    return cachedRowData
+  }
+
+  cachedDataRef = result.data.data
   const columns = result.data.columns
-  return result.data.data.map((row: any[]) => {
+  cachedRowData = result.data.data.map((row: any[]) => {
     const obj: Record<string, any> = {}
     columns.forEach((colName: string, index: number) => {
       obj[colName] = row[index]
     })
     return obj
   })
+  return cachedRowData
 })
 
 // AG Grid default column definitions

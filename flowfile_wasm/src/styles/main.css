@@ -348,6 +348,8 @@ html, body, #app {
 .ag-theme-balham {
   max-width: 100%;
   position: relative;
+  /* Prevent scroll chaining to parent containers */
+  overscroll-behavior: contain;
   --ag-background-color: var(--color-background-primary);
   --ag-odd-row-background-color: var(--color-background-primary);
   --ag-row-background-color: var(--color-background-primary);
@@ -386,6 +388,11 @@ html, body, #app {
 /* AG Grid cell styling */
 .ag-theme-balham .ag-cell {
   line-height: 30px;
+}
+
+/* AG Grid viewport - prevent scroll chaining to parent containers */
+.ag-theme-balham .ag-body-viewport {
+  overscroll-behavior: contain;
 }
 
 /* AG Grid filter styling */
