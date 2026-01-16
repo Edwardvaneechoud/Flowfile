@@ -4,6 +4,7 @@ import { useVueFlow, Node, Position } from "@vue-flow/core"
 import { ref, watch, markRaw, nextTick } from "vue"
 import type { NodeTemplate, NodeInput, VueFlowInput, NodeCopyInput, NodePromise, MultiNodeCopyValue, EdgeCopyValue, NodeConnection } from "../types"
 import { FlowApi } from "../api"
+import { useHistoryStore } from "../stores/history-store"
 
 // Dynamic component imports using import.meta.glob for Vite compatibility
 // This creates a map of all node components that can be dynamically loaded
@@ -273,7 +274,11 @@ export default function useDragAndDrop() {
         pos_y: node.posY,
         cache_results: true,
       };
-      FlowApi.copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise);
+      FlowApi.copyNode(node.nodeIdToCopyFrom, node.flowIdToCopyFrom, nodePromise).then(() => {
+        // Refresh history status after copying node
+        const historyStore = useHistoryStore();
+        historyStore.refreshStatus(node.flowId);
+      });
 
       addNodes(newNode);
     });
@@ -399,7 +404,11 @@ export default function useDragAndDrop() {
           off();
         });
 
-        FlowApi.insertNode(flowId, nodeId, nodeData.item);
+        FlowApi.insertNode(flowId, nodeId, nodeData.item).then(() => {
+          // Refresh history status after inserting node
+          const historyStore = useHistoryStore();
+          historyStore.refreshStatus(flowId);
+        });
         addNodes(newNode);
       })
       .catch((error) => {
@@ -523,6 +532,10 @@ export default function useDragAndDrop() {
 
     // Wait for all connections to be created
     await Promise.all(connectionPromises)
+
+    // Refresh history status after all operations
+    const historyStore = useHistoryStore();
+    await historyStore.refreshStatus(flowId);
   }
 
   return {
