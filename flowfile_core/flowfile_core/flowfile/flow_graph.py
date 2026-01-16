@@ -390,6 +390,81 @@ class FlowGraph:
         """
         return self._history_manager.redo(self)
 
+    def _restore_node_settings(
+        self,
+        node_data: NodeData,
+        node_input_map: dict[int, tuple[list[int], int | None, int | None]],
+    ) -> bool:
+        """Restore settings for a single node from snapshot data.
+
+        Handles various formats of setting_input (dict, Pydantic model, etc.)
+        and ensures proper restoration of node configuration.
+
+        Args:
+            node_data: The node data from the snapshot.
+            node_input_map: Map of node IDs to their input connections.
+
+        Returns:
+            True if settings were restored successfully, False otherwise.
+        """
+        from pydantic import BaseModel
+
+        settings_class = schemas.get_settings_class_for_node_type(node_data.type)
+        if settings_class is None:
+            logger.debug(f"No settings class found for node type: {node_data.type}")
+            return False
+
+        try:
+            setting_input = node_data.setting_input
+
+            # Convert setting_input to a dict if it's a Pydantic model
+            if isinstance(setting_input, BaseModel):
+                settings_dict = setting_input.model_dump()
+            elif isinstance(setting_input, dict):
+                settings_dict = dict(setting_input)
+            else:
+                logger.warning(f"Unexpected setting_input type for node {node_data.id}: {type(setting_input)}")
+                return False
+
+            # Ensure required fields are present
+            settings_dict["flow_id"] = self.flow_id
+            settings_dict["node_id"] = node_data.id
+            settings_dict["pos_x"] = node_data.x_position or 0
+            settings_dict["pos_y"] = node_data.y_position or 0
+            if node_data.description:
+                settings_dict["description"] = node_data.description
+
+            # Handle depending_on_id for nodes with inputs
+            main_inputs, left_input, right_input = node_input_map.get(node_data.id, ([], None, None))
+            if main_inputs and "depending_on_id" not in settings_dict:
+                settings_dict["depending_on_id"] = main_inputs[0]
+            if main_inputs and "depending_on_ids" not in settings_dict:
+                settings_dict["depending_on_ids"] = main_inputs
+
+            # Handle left/right inputs for join-type nodes
+            if left_input is not None and "left_input_id" not in settings_dict:
+                settings_dict["left_input_id"] = left_input
+            if right_input is not None and "right_input_id" not in settings_dict:
+                settings_dict["right_input_id"] = right_input
+
+            # Validate and create settings
+            node_settings = settings_class.model_validate(settings_dict)
+
+            # Find and call the appropriate add method
+            add_method_name = f"add_{node_data.type}"
+            if hasattr(self, add_method_name):
+                add_method = getattr(self, add_method_name)
+                add_method(node_settings)
+                logger.debug(f"Restored settings for node {node_data.id} ({node_data.type})")
+                return True
+            else:
+                logger.warning(f"No add method found for node type: {node_data.type}")
+                return False
+
+        except Exception as e:
+            logger.warning(f"Failed to restore settings for node {node_data.id} ({node_data.type}): {e}")
+            return False
+
     def restore_from_snapshot(self, snapshot: schemas.FlowfileData) -> None:
         """Restore the flow graph from a snapshot.
 
@@ -445,38 +520,7 @@ class FlowGraph:
         # Second pass: Apply settings and restore connections
         for node_data in snapshot.nodes:
             if node_data.setting_input is not None:
-                # Get the settings class for this node type
-                settings_class = schemas.get_settings_class_for_node_type(node_data.type)
-                if settings_class is not None:
-                    try:
-                        # Prepare settings data with required fields
-                        settings_dict = node_data.setting_input
-                        if isinstance(settings_dict, dict):
-                            settings_dict = dict(settings_dict)
-                            settings_dict["flow_id"] = self.flow_id
-                            settings_dict["node_id"] = node_data.id
-                            settings_dict["pos_x"] = node_data.x_position or 0
-                            settings_dict["pos_y"] = node_data.y_position or 0
-                            if node_data.description:
-                                settings_dict["description"] = node_data.description
-
-                            # Handle depending_on_id for single input nodes
-                            main_inputs, left_input, right_input = node_input_map.get(node_data.id, ([], None, None))
-                            if main_inputs and "depending_on_id" not in settings_dict:
-                                settings_dict["depending_on_id"] = main_inputs[0]
-                            if main_inputs and "depending_on_ids" not in settings_dict:
-                                settings_dict["depending_on_ids"] = main_inputs
-
-                            # Validate and create settings
-                            node_settings = settings_class.model_validate(settings_dict)
-
-                            # Find and call the appropriate add method
-                            add_method_name = f"add_{node_data.type}"
-                            if hasattr(self, add_method_name):
-                                add_method = getattr(self, add_method_name)
-                                add_method(node_settings)
-                    except Exception as e:
-                        logger.warning(f"Failed to restore settings for node {node_data.id} ({node_data.type}): {e}")
+                self._restore_node_settings(node_data, node_input_map)
 
         # Third pass: Restore connections
         for node_data in snapshot.nodes:
