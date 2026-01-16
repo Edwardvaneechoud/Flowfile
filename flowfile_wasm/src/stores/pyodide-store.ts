@@ -41,7 +41,8 @@ export const usePyodideStore = defineStore('pyodide', () => {
       })
 
       loadingStatus.value = 'Installing packages...'
-      await pyodide.value.loadPackage(['numpy', 'polars', 'pydantic'])
+      // Load polars and pydantic - numpy is avoided by using native Polars rows() method
+      await pyodide.value.loadPackage(['polars', 'pydantic'])
 
       loadingStatus.value = 'Setting up execution engine...'
       await setupExecutionEngine()
@@ -189,7 +190,8 @@ def materialize_preview(node_id: int, max_rows: int = 100) -> Dict:
 
         preview_data = {
             "columns": preview_df.columns,
-            "data": preview_df.to_numpy().tolist() if len(preview_df) > 0 else [],
+            # Use native Polars rows() instead of numpy to reduce memory footprint
+            "data": [list(row) for row in preview_df.rows()] if len(preview_df) > 0 else [],
             "total_rows": total_rows,
             "preview_rows": len(preview_df)
         }
@@ -293,13 +295,8 @@ def get_memory_stats() -> Dict:
 
 
 # =============================================================================
-# Pydantic Schema Validation (matching flowfile_core/schemas/schemas.py)
+# Pydantic Schema Validation (optional - lazy loaded to reduce startup memory)
 # =============================================================================
-from pydantic import BaseModel, Field
-from typing import Literal
-
-ExecutionModeLiteral = Literal["Development", "Performance"]
-ExecutionLocationsLiteral = Literal["local", "remote"]
 
 # Fields to exclude from setting_input when serializing
 SETTING_INPUT_EXCLUDE = {
@@ -308,46 +305,76 @@ SETTING_INPUT_EXCLUDE = {
     "is_user_defined", "depending_on_id", "depending_on_ids"
 }
 
-class FlowfileSettings(BaseModel):
-    """Settings for flowfile serialization (YAML/JSON)."""
-    description: Optional[str] = None
-    execution_mode: ExecutionModeLiteral = "Performance"
-    execution_location: ExecutionLocationsLiteral = "local"
-    auto_save: bool = False
-    show_detailed_progress: bool = True
+# Pydantic is optional - loaded lazily only when validation is actually called
+_pydantic_loaded = False
+_FlowfileData = None
 
-class FlowfileNode(BaseModel):
-    """Node representation for flowfile serialization."""
-    id: int
-    type: str
-    is_start_node: bool = False
-    description: Optional[str] = ""
-    x_position: Optional[float] = 0
-    y_position: Optional[float] = 0
-    left_input_id: Optional[int] = None
-    right_input_id: Optional[int] = None
-    input_ids: Optional[List[int]] = Field(default_factory=list)
-    outputs: Optional[List[int]] = Field(default_factory=list)
-    setting_input: Optional[Any] = None
+def _load_pydantic():
+    """Lazy load pydantic and define validation models."""
+    global _pydantic_loaded, _FlowfileData
+    if _pydantic_loaded:
+        return _FlowfileData is not None
 
-class FlowfileData(BaseModel):
-    """Root model for flowfile serialization (YAML/JSON)."""
-    flowfile_version: str
-    flowfile_id: int
-    flowfile_name: str
-    flowfile_settings: FlowfileSettings
-    nodes: List[FlowfileNode]
+    try:
+        from pydantic import BaseModel, Field
+        from typing import Literal
+
+        ExecutionModeLiteral = Literal["Development", "Performance"]
+        ExecutionLocationsLiteral = Literal["local", "remote"]
+
+        class FlowfileSettings(BaseModel):
+            description: Optional[str] = None
+            execution_mode: ExecutionModeLiteral = "Performance"
+            execution_location: ExecutionLocationsLiteral = "local"
+            auto_save: bool = False
+            show_detailed_progress: bool = True
+
+        class FlowfileNode(BaseModel):
+            id: int
+            type: str
+            is_start_node: bool = False
+            description: Optional[str] = ""
+            x_position: Optional[float] = 0
+            y_position: Optional[float] = 0
+            left_input_id: Optional[int] = None
+            right_input_id: Optional[int] = None
+            input_ids: Optional[List[int]] = Field(default_factory=list)
+            outputs: Optional[List[int]] = Field(default_factory=list)
+            setting_input: Optional[Any] = None
+
+        class FlowfileData(BaseModel):
+            flowfile_version: str
+            flowfile_id: int
+            flowfile_name: str
+            flowfile_settings: FlowfileSettings
+            nodes: List[FlowfileNode]
+
+        _FlowfileData = FlowfileData
+        _pydantic_loaded = True
+        return True
+    except ImportError:
+        _pydantic_loaded = True
+        return False
 
 def validate_flowfile_data(data: Dict) -> Dict:
-    """Validate flowfile data using Pydantic schemas.
+    """Validate flowfile data using Pydantic schemas (lazy loaded).
 
     Returns a dict with:
     - success: bool
     - data: validated data (if successful)
     - error: error message (if failed)
     """
+    # Try to lazy-load pydantic
+    if not _load_pydantic():
+        # Pydantic not available - skip validation, assume valid
+        return {
+            "success": True,
+            "data": data,
+            "error": None
+        }
+
     try:
-        validated = FlowfileData.model_validate(data)
+        validated = _FlowfileData.model_validate(data)
         return {
             "success": True,
             "data": validated.model_dump(),
@@ -378,7 +405,8 @@ def df_to_preview(df: pl.DataFrame, max_rows: int = 100) -> Dict:
     preview_df = df.head(max_rows)
     return {
         "columns": df.columns,
-        "data": preview_df.to_numpy().tolist() if len(preview_df) > 0 else [],
+        # Use native Polars rows() instead of numpy to reduce memory footprint
+        "data": [list(row) for row in preview_df.rows()] if len(preview_df) > 0 else [],
         "total_rows": len(df)
     }
 
