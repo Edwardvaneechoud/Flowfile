@@ -116,3 +116,14 @@ class UndoRedoResult(BaseModel):
     action_description: Optional[str] = Field(default=None, description="Description of the action performed")
     error_message: Optional[str] = Field(default=None, description="Error message if operation failed")
     new_state: Optional[HistoryState] = Field(default=None, description="Updated history state after operation")
+
+
+class ActionResponse(BaseModel):
+    """Response for actions that modify the flow graph.
+
+    Includes the history state so the frontend doesn't need to poll for it.
+    """
+
+    success: bool = Field(default=True, description="Whether the action succeeded")
+    message: Optional[str] = Field(default=None, description="Optional message")
+    history_state: Optional[HistoryState] = Field(default=None, description="Current history state after action")
