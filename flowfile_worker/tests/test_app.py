@@ -1,4 +1,4 @@
-import base64
+from base64 import b64decode
 from io import BytesIO
 
 import polars as pl
@@ -66,14 +66,14 @@ def create_fuzzy_data() -> models.FuzzyJoinInput:
         schema=['name_right', 'city_right']
     )
 
-    # Serialize DataFrames
+    # Serialize DataFrames - use raw bytes, Pydantic handles base64 for JSON transport
     left_serializable_object = models.PolarsOperation(
-        operation=base64.encodebytes(left_df.serialize()),
-        flow_id=1
+        operation=left_df.serialize(),
+        flowfile_flow_id=1
     )
     right_serializable_object = models.PolarsOperation(
-        operation=base64.encodebytes(right_df.serialize()),
-        flow_id=1
+        operation=right_df.serialize(),
+        flowfile_flow_id=1
     )
 
     # Return the FuzzyJoinInput
@@ -97,8 +97,14 @@ def create_grouper_data():
 
 def test_external_package(create_grouper_data):
     df = create_grouper_data
-    load = models.PolarsScript(operation=base64.encodebytes(df.serialize()), operation_type='store')
-    v = client.post('/submit_query', data=load.json())
+    # Send raw bytes with metadata in headers
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Operation-Type": "store",
+        "X-Flow-Id": "1",
+        "X-Node-Id": "-1",
+    }
+    v = client.post('/submit_query/', content=df.serialize(), headers=headers)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -106,14 +112,15 @@ def test_external_package(create_grouper_data):
     status = models.Status.model_validate(r.json())
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
-    lf_test = base64.decodebytes(status.results.encode())
-    result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
+    # Results are base64-encoded string in JSON response, decode once
+    result_df = pl.LazyFrame.deserialize(BytesIO(b64decode(status.results))).collect()
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
 
 
 def test_add_fuzzy_join(create_fuzzy_data):
     load = create_fuzzy_data
-    v = client.post('/add_fuzzy_join', data=load.json())
+    # Use model_dump_json() - Pydantic handles single base64 encoding for bytes in JSON
+    v = client.post('/add_fuzzy_join', data=load.model_dump_json())
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -121,16 +128,21 @@ def test_add_fuzzy_join(create_fuzzy_data):
     status = models.Status.model_validate(r.json())
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
-    lf_test = base64.decodebytes(status.results.encode())
-    pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
+    # Results are base64-encoded string in JSON response, decode once
+    pl.LazyFrame.deserialize(BytesIO(b64decode(status.results))).collect()
 
 
 def test_sample():
     lf = pl.LazyFrame({'value': [i for i in range(1000)]})
-    serialized_df = lf.serialize()
-    polars_script = models.PolarsScriptSample(operation=base64.encodebytes(serialized_df),
-                                              operation_type='store_sample', sample_size=10)
-    v = client.post('/store_sample', data=polars_script.json())
+    # Send raw bytes with metadata in headers
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Operation-Type": "store_sample",
+        "X-Sample-Size": "10",
+        "X-Flow-Id": "1",
+        "X-Node-Id": "-1",
+    }
+    v = client.post('/store_sample/', content=lf.serialize(), headers=headers)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -146,9 +158,14 @@ def test_polars_transformation():
     df = (pl.DataFrame([{'a': 1, 'b': 2}, {'a': 3, 'b': 4}]).lazy()
           .select((pl.col('a') + pl.col('b')).alias('total'))
           )
-    serialized_df = df.serialize()
-    load = models.PolarsScript(operation=base64.encodebytes(serialized_df), operation_type='store')
-    v = client.post('/submit_query', data=load.json())
+    # Send raw bytes with metadata in headers
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Operation-Type": "store",
+        "X-Flow-Id": "1",
+        "X-Node-Id": "-1",
+    }
+    v = client.post('/submit_query/', content=df.serialize(), headers=headers)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -156,8 +173,8 @@ def test_polars_transformation():
     status = models.Status.model_validate(r.json())
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
-    lf_test = base64.decodebytes(status.results.encode())
-    result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
+    # Results are base64-encoded string in JSON response, decode once
+    result_df = pl.LazyFrame.deserialize(BytesIO(b64decode(status.results))).collect()
     assert result_df.equals(df.collect()), f'Expected:\n{df.collect()}\n\nResult:\n{result_df}'
 
 
@@ -185,22 +202,25 @@ def test_create_func():
     status = models.Status.model_validate(r.json())
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
-    lf_test = base64.decodebytes(status.results.encode())
+    # Results are base64-encoded string in JSON response, decode once
     try:
-        result_df = pl.LazyFrame.deserialize(BytesIO(lf_test))
-    except:
+        result_df = pl.LazyFrame.deserialize(BytesIO(b64decode(status.results)))
+    except Exception:
         raise Exception('Error with deserializing the DataFrame')
 
 
 def test_write_output_csv():
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    s = base64.encodebytes(lf.serialize())
-    data = {
-        'operation': s.decode(),
-        'data_type': 'csv', 'path': "flowfile_core/tests/inputFile/Mall_Customers.csv",
-        'write_mode': 'overwrite', 'sheet_name': 'Sheet1', 'delimiter': ','}
-    v = client.post('/write_results/', json=data)
-    polars_script_write = models.PolarsScriptWrite(**data)
+    # Use raw bytes - Pydantic model handles JSON serialization with single base64 encoding
+    polars_script_write = models.PolarsScriptWrite(
+        operation=lf.serialize(),
+        data_type='csv',
+        path="flowfile_core/tests/inputFile/Mall_Customers.csv",
+        write_mode='overwrite',
+        sheet_name='Sheet1',
+        delimiter=','
+    )
+    v = client.post('/write_results/', data=polars_script_write.model_dump_json())
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
@@ -227,24 +247,29 @@ def test_store_sql_result(pw):
     if status.error_message is not None:
         raise Exception(f'Error message: {status.error_message}')
     assert status.status == 'Completed', 'Expected status to be Completed'
+    # Results are base64-encoded string in JSON response, decode once
     try:
-        lf_test = base64.decodebytes(status.results.encode())
-    except:
+        result_df = pl.LazyFrame.deserialize(BytesIO(b64decode(status.results))).collect()
+    except Exception:
         raise Exception('Error with deserializing the DataFrame')
-    result_df = pl.LazyFrame.deserialize(BytesIO(lf_test)).collect()
     assert result_df.shape[0] > 0, 'Expected to get some data from the database'
 
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_database(pw):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    s = base64.encodebytes(lf.serialize())
-    settings_data = {'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
-                                    'database': 'testdb', 'database_type': 'postgresql', 'url': None},
-                     'table_name': 'public.test_output', 'if_exists': 'replace', 'flowfile_flow_id': 1,
-                     'flowfile_node_id': -1,
-                     'operation': s.decode()}
-    v = client.post('/store_database_write_result', json=settings_data)
+    # Use raw bytes - Base64Bytes will encode to base64 string for JSON
+    from base64 import b64encode
+    settings_data = {
+        'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
+                       'database': 'testdb', 'database_type': 'postgresql', 'url': None},
+        'table_name': 'public.test_output',
+        'if_exists': 'replace',
+        'flowfile_flow_id': 1,
+        'flowfile_node_id': -1,
+        'operation': b64encode(lf.serialize()).decode('ascii')  # Base64 string for JSON
+    }
+    v = client.post('/store_database_write_result/', json=settings_data)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status = models.Status.model_validate(v.json())
@@ -260,7 +285,7 @@ def test_store_in_database(pw):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_cloud_storage(cloud_storage_connection_settings):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    s = base64.encodebytes(lf.serialize())
+    # Create model - Base64Bytes type handles encoding automatically
     cloud_write_settings = models.CloudStorageScriptWrite(
         connection=cloud_storage_connection_settings,
         write_settings=WriteSettings(
@@ -269,13 +294,17 @@ def test_store_in_cloud_storage(cloud_storage_connection_settings):
             write_mode="overwrite",
             parquet_compression="snappy"
         ),
-        operation=s
+        operation=lf.serialize()
     )
+    # Use model_dump and manually handle SecretStr to preserve secret values
+    # Note: operation is already base64-encoded by Base64Bytes serializer
     settings_data = cloud_write_settings.model_dump()
     settings_data["connection"]["aws_secret_access_key"] = (
-        settings_data)["connection"]["aws_secret_access_key"].get_secret_value()
-    settings_data["operation"] = settings_data["operation"].decode()
-    v = client.post('/write_data_to_cloud', json=settings_data)
+        settings_data["connection"]["aws_secret_access_key"].get_secret_value()
+        if hasattr(settings_data["connection"]["aws_secret_access_key"], 'get_secret_value')
+        else settings_data["connection"]["aws_secret_access_key"]
+    )
+    v = client.post('/write_data_to_cloud/', json=settings_data)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())

@@ -1,9 +1,8 @@
 import os
 import uuid
-from base64 import encodebytes
 
 import polars as pl
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 
 from flowfile_worker import CACHE_DIR, PROCESS_MEMORY_USAGE, models, status_dict, status_dict_lock
 from flowfile_worker.configs import logger
@@ -23,32 +22,45 @@ def create_and_get_default_cache_dir(flowfile_flow_id: int) -> str:
 
 
 @router.post("/submit_query/")
-def submit_query(polars_script: models.PolarsScript, background_tasks: BackgroundTasks) -> models.Status:
-    logger.info(f"Processing query with operation: {polars_script.operation_type}")
-
+async def submit_query(request: Request, background_tasks: BackgroundTasks) -> models.Status:
+    """Accept raw binary data with metadata in headers for efficient transfer."""
     try:
-        polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
-        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
+        # Read raw bytes directly from request body - no base64 decoding needed
+        polars_serializable_object = await request.body()
 
-        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else default_cache_dir
-        polars_serializable_object = polars_script.polars_serializable_object()
-        file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
-        result_type = "polars" if polars_script.operation_type == "store" else "other"
+        # Get metadata from headers
+        task_id = request.headers.get("X-Task-Id") or str(uuid.uuid4())
+        operation_type = request.headers.get("X-Operation-Type", "store")
+        flow_id = int(request.headers.get("X-Flow-Id", "1"))
+        node_id = request.headers.get("X-Node-Id", "-1")
+        # Try to parse node_id as int, fall back to string
+        try:
+            node_id = int(node_id)
+        except ValueError:
+            pass
+
+        logger.info(f"Processing query with operation: {operation_type}")
+
+        default_cache_dir = create_and_get_default_cache_dir(flow_id)
+        file_path = os.path.join(default_cache_dir, f"{task_id}.arrow")
+        result_type = "polars" if operation_type == "store" else "other"
+
         status = models.Status(
-            background_task_id=polars_script.task_id, status="Starting", file_ref=file_path, result_type=result_type
+            background_task_id=task_id, status="Starting", file_ref=file_path, result_type=result_type
         )
-        status_dict[polars_script.task_id] = status
+        status_dict[task_id] = status
+
         background_tasks.add_task(
             start_process,
             polars_serializable_object=polars_serializable_object,
-            task_id=polars_script.task_id,
-            operation=polars_script.operation_type,
+            task_id=task_id,
+            operation=operation_type,
             file_ref=file_path,
-            flowfile_flow_id=polars_script.flowfile_flow_id,
-            flowfile_node_id=polars_script.flowfile_node_id,
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
             kwargs={},
         )
-        logger.info(f"Started background task: {polars_script.task_id}")
+        logger.info(f"Started background task: {task_id}")
         return status
 
     except Exception as e:
@@ -57,32 +69,44 @@ def submit_query(polars_script: models.PolarsScript, background_tasks: Backgroun
 
 
 @router.post("/store_sample/")
-def store_sample(polars_script: models.PolarsScriptSample, background_tasks: BackgroundTasks) -> models.Status:
-    logger.info(f"Processing sample storage with size: {polars_script.sample_size}")
-
+async def store_sample(request: Request, background_tasks: BackgroundTasks) -> models.Status:
+    """Accept raw binary data with metadata in headers for efficient transfer."""
     try:
-        default_cache_dir = create_and_get_default_cache_dir(polars_script.flowfile_flow_id)
-        polars_script.task_id = str(uuid.uuid4()) if polars_script.task_id is None else polars_script.task_id
-        polars_script.cache_dir = polars_script.cache_dir if polars_script.cache_dir is not None else default_cache_dir
-        polars_serializable_object = polars_script.polars_serializable_object()
+        # Read raw bytes directly from request body - no base64 decoding needed
+        polars_serializable_object = await request.body()
 
-        file_path = os.path.join(polars_script.cache_dir, f"{polars_script.task_id}.arrow")
+        # Get metadata from headers
+        task_id = request.headers.get("X-Task-Id") or str(uuid.uuid4())
+        sample_size = int(request.headers.get("X-Sample-Size", "100"))
+        flow_id = int(request.headers.get("X-Flow-Id", "1"))
+        node_id = request.headers.get("X-Node-Id", "-1")
+        # Try to parse node_id as int, fall back to string
+        try:
+            node_id = int(node_id)
+        except ValueError:
+            pass
+
+        logger.info(f"Processing sample storage with size: {sample_size}")
+
+        default_cache_dir = create_and_get_default_cache_dir(flow_id)
+        file_path = os.path.join(default_cache_dir, f"{task_id}.arrow")
+
         status = models.Status(
-            background_task_id=polars_script.task_id, status="Starting", file_ref=file_path, result_type="other"
+            background_task_id=task_id, status="Starting", file_ref=file_path, result_type="other"
         )
-        status_dict[polars_script.task_id] = status
+        status_dict[task_id] = status
 
         background_tasks.add_task(
             start_process,
             polars_serializable_object=polars_serializable_object,
-            task_id=polars_script.task_id,
-            operation=polars_script.operation_type,
+            task_id=task_id,
+            operation="store_sample",
             file_ref=file_path,
-            flowfile_flow_id=polars_script.flowfile_flow_id,
-            flowfile_node_id=polars_script.flowfile_node_id,
-            kwargs={"sample_size": polars_script.sample_size},
+            flowfile_flow_id=flow_id,
+            flowfile_node_id=node_id,
+            kwargs={"sample_size": sample_size},
         )
-        logger.info(f"Started sample storage task: {polars_script.task_id}")
+        logger.info(f"Started sample storage task: {task_id}")
 
         return status
 
@@ -373,7 +397,8 @@ async def fetch_results(task_id: str):
         raise HTTPException(status_code=404, detail=f"An error occurred during processing: {status.error_message}")
     try:
         lf = pl.scan_parquet(status.file_ref)
-        return {"task_id": task_id, "result": encodebytes(lf.serialize()).decode()}
+        # Return raw bytes - Pydantic/FastAPI will handle serialization
+        return {"task_id": task_id, "result": lf.serialize()}
     except Exception as e:
         logger.error(f"Error reading results: {str(e)}")
         raise HTTPException(status_code=500, detail="Error reading results")

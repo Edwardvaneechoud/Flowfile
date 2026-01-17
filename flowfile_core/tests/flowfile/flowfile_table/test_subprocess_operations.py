@@ -1,5 +1,3 @@
-import base64
-
 import polars as pl
 import pytest
 
@@ -86,15 +84,13 @@ def test_external_database_fetcher_not_wait_on_completion(pw):
 
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_external_database_writer(pw):
-
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    s = base64.encodebytes(lf.serialize())
-
+    # Use raw bytes - the DatabaseExternalWriteSettings model handles serialization
     settings_data = {'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
                                     'database': 'testdb', 'database_type': 'postgresql', 'url': None},
                      'table_name': 'public.test_output', 'if_exists': 'replace', 'flowfile_flow_id': 1,
                      'flowfile_node_id': -1,
-                     'operation': s.decode(),}
+                     'operation': lf.serialize()}
     database_external_read_settings = DatabaseExternalWriteSettings(**settings_data)
     external_database_fetcher = ExternalDatabaseWriter(database_external_read_settings, wait_on_completion=False)
     assert external_database_fetcher.result is None, "Do not expect a result yet"

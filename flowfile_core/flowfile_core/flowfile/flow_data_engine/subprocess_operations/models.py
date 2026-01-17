@@ -1,13 +1,30 @@
-from typing import Any, Literal
+from base64 import b64decode, b64encode
+from typing import Annotated, Any, Literal
 
 from pl_fuzzy_frame_match.models import FuzzyMapping
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, PlainSerializer
 
 OperationType = Literal["store", "calculate_schema", "calculate_number_of_records", "write_output", "store_sample"]
 
 
+# Custom type for bytes that serializes to/from base64 string in JSON
+def _decode_bytes(v: Any) -> bytes:
+    if isinstance(v, bytes):
+        return v
+    if isinstance(v, str):
+        return b64decode(v)
+    raise ValueError(f"Expected bytes or base64 string, got {type(v)}")
+
+
+Base64Bytes = Annotated[
+    bytes,
+    BeforeValidator(_decode_bytes),
+    PlainSerializer(lambda x: b64encode(x).decode('ascii'), return_type=str),
+]
+
+
 class PolarsOperation(BaseModel):
-    operation: bytes
+    operation: Base64Bytes  # Automatically encodes/decodes base64 for JSON
 
 
 class PolarsScript(PolarsOperation):
