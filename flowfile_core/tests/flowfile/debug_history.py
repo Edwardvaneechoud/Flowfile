@@ -70,7 +70,7 @@ def main():
 
     # Step 1: Add a manual input node
     print("\n>>> Adding manual input node (id=1)...")
-    flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "Add manual_input node", node_id=1)
+    pre_snapshot = flow.get_flowfile_data()
 
     node_promise = input_schema.NodePromise(flow_id=1, node_id=1, node_type='manual_input')
     flow.add_node_promise(node_promise)
@@ -86,11 +86,14 @@ def main():
         raw_data_format=input_schema.RawData.from_pylist(sample_data)
     )
     flow.add_manual_input(input_settings)
+
+    # Capture history AFTER the change (using pre-snapshot for undo)
+    flow.capture_history_if_changed(pre_snapshot, HistoryActionType.ADD_NODE, "Add manual_input node", node_id=1)
     print_state(flow, "After adding manual input node")
 
     # Step 2: Add a filter node
     print("\n>>> Adding filter node (id=2)...")
-    flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "Add filter node", node_id=2)
+    pre_snapshot = flow.get_flowfile_data()
 
     node_promise2 = input_schema.NodePromise(flow_id=1, node_id=2, node_type='filter')
     flow.add_node_promise(node_promise2)
@@ -109,11 +112,14 @@ def main():
         )
     )
     flow.add_filter(filter_settings)
+
+    # Capture history AFTER the change
+    flow.capture_history_if_changed(pre_snapshot, HistoryActionType.ADD_NODE, "Add filter node", node_id=2)
     print_state(flow, "After adding filter node")
 
     # Step 3: Add connection
     print("\n>>> Adding connection 1 -> 2...")
-    flow.capture_history_snapshot(HistoryActionType.ADD_CONNECTION, "Connect 1 -> 2")
+    pre_snapshot = flow.get_flowfile_data()
 
     connection = input_schema.NodeConnection.create_from_simple_input(
         from_id=1,
@@ -121,14 +127,20 @@ def main():
         input_type='main'
     )
     add_connection(flow, connection)
+
+    # Capture history AFTER the change
+    flow.capture_history_if_changed(pre_snapshot, HistoryActionType.ADD_CONNECTION, "Connect 1 -> 2")
     print_state(flow, "After adding connection")
 
     # Step 4: Add a sample node
     print("\n>>> Adding sample node (id=3)...")
-    flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "Add sample node", node_id=3)
+    pre_snapshot = flow.get_flowfile_data()
 
     node_promise3 = input_schema.NodePromise(flow_id=1, node_id=3, node_type='sample')
     flow.add_node_promise(node_promise3)
+
+    # Capture history AFTER the change
+    flow.capture_history_if_changed(pre_snapshot, HistoryActionType.ADD_NODE, "Add sample node", node_id=3)
     print_state(flow, "After adding sample node")
 
     # Now test UNDO
@@ -179,9 +191,10 @@ def main():
     print(f"\nRedo stack has {flow.get_history_state().redo_count} entries")
 
     print("\n>>> Adding new node (id=4)...")
-    flow.capture_history_snapshot(HistoryActionType.ADD_NODE, "Add new select node", node_id=4)
+    pre_snapshot = flow.get_flowfile_data()
     node_promise4 = input_schema.NodePromise(flow_id=1, node_id=4, node_type='select')
     flow.add_node_promise(node_promise4)
+    flow.capture_history_if_changed(pre_snapshot, HistoryActionType.ADD_NODE, "Add new select node", node_id=4)
 
     print(f"Redo stack now has {flow.get_history_state().redo_count} entries (should be 0)")
     print_state(flow, "After adding new node (redo stack should be cleared)")
