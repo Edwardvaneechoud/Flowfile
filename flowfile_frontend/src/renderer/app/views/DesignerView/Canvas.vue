@@ -31,6 +31,7 @@ import DataPreview from "../../features/designer/dataPreview.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
+import UndoRedoControls from "./UndoRedoControls.vue";
 import { NodeCopyInput, NodeCopyValue, MultiNodeCopyValue, EdgeCopyValue, ContextMenuAction, CursorPosition } from "./types";
 import { applyStandardLayout } from "./editorLayoutInterface";
 
@@ -57,6 +58,7 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
+const undoRedoControls = ref<InstanceType<typeof UndoRedoControls> | null>(null);
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -133,6 +135,8 @@ const loadFlow = async () => {
   await importFlow(vueFlowInput);
   await nextTick();
   restoreViewport();
+  // Refresh history state after loading flow
+  undoRedoControls.value?.refreshHistoryState();
 };
 
 const selectNodeExternally = (nodeId: number) => {
@@ -159,6 +163,8 @@ async function onConnect(params: any) {
     };
     await connectNode(nodeStore.flow_id, nodeConnection);
     addEdges([params]);
+    // Refresh history state after connecting nodes
+    undoRedoControls.value?.refreshHistoryState();
   }
 }
 
@@ -194,11 +200,17 @@ const setNodeTableView = (nodeId: number) => {
 
 const handleNodeChange = (nodeChangesEvent: any) => {
   const nodeChanges = nodeChangesEvent as NodeChange[];
+  let hasRemovals = false;
   for (const nodeChange of nodeChanges) {
     if (nodeChange.type === "remove") {
       const nodeChangeId = Number(nodeChange.id);
       deleteNode(nodeStore.flow_id, nodeChangeId);
+      hasRemovals = true;
     }
+  }
+  // Refresh history state after deleting nodes
+  if (hasRemovals) {
+    undoRedoControls.value?.refreshHistoryState();
   }
 };
 
@@ -221,17 +233,25 @@ const handleEdgeChange = (edgeChangesEvent: any) => {
     console.log("Edge changes length is 2 so coming from a node change event");
     return;
   }
+  let hasRemovals = false;
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "remove") {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
       deleteConnection(nodeStore.flow_id, nodeConnection);
+      hasRemovals = true;
     }
+  }
+  // Refresh history state after deleting connections
+  if (hasRemovals) {
+    undoRedoControls.value?.refreshHistoryState();
   }
 };
 
-const handleDrop = (event: DragEvent) => {
+const handleDrop = async (event: DragEvent) => {
   if (!nodeStore.isRunning) {
-    onDrop(event, nodeStore.flow_id);
+    await onDrop(event, nodeStore.flow_id);
+    // Refresh history state after adding a node
+    undoRedoControls.value?.refreshHistoryState();
   }
 };
 
@@ -333,6 +353,8 @@ const copyValue = async (x: number, y: number) => {
   if (copiedMultiNodesStr) {
     const multiNodeCopyValue: MultiNodeCopyValue = JSON.parse(copiedMultiNodesStr);
     await createMultiCopyNodes(multiNodeCopyValue, flowPosition.x, flowPosition.y, nodeStore.flow_id);
+    // Refresh history state after pasting nodes
+    undoRedoControls.value?.refreshHistoryState();
     return;
   }
 
@@ -348,7 +370,9 @@ const copyValue = async (x: number, y: number) => {
     posY: flowPosition.y,
     flowId: nodeStore.flow_id,
   };
-  createCopyNode(nodeCopyInput);
+  await createCopyNode(nodeCopyInput);
+  // Refresh history state after pasting node
+  undoRedoControls.value?.refreshHistoryState();
 };
 
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
@@ -366,7 +390,8 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
 
 const handleResetLayoutGraph = async () => {
   await applyStandardLayout(nodeStore.flow_id);
-  loadFlow();
+  await loadFlow();
+  // loadFlow already refreshes history state
 };
 
 const hideLogViewer = () => {
@@ -529,6 +554,7 @@ defineExpose({
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />
+      <UndoRedoControls ref="undoRedoControls" @refresh-flow="loadFlow" />
     </main>
     <draggable-item
       id="dataActions"

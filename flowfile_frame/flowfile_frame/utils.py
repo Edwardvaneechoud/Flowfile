@@ -99,7 +99,12 @@ def create_flow_graph(flow_id: int = None) -> FlowGraph:
     """
     if flow_id is None:
         flow_id = _generate_id()
-    flow_settings = schemas.FlowSettings(flow_id=flow_id, name=f"Flow_{flow_id}", path=f"flow_{flow_id}")
+    flow_settings = schemas.FlowSettings(
+        flow_id=flow_id,
+        name=f"Flow_{flow_id}",
+        path=f"flow_{flow_id}",
+        track_history=False,  # Disable undo/redo history for flowfile_frame
+    )
     flow_graph = FlowGraph(flow_settings=flow_settings)
     flow_graph.flow_settings.execution_location = (
         "local"  # always create a local frame so that the run time does not attempt to use the flowfile_worker process

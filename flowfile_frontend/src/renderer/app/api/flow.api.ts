@@ -8,6 +8,8 @@ import type {
   LocalFileInfo,
   NodeConnection,
   NodePromise,
+  HistoryState,
+  UndoRedoResult,
 } from "../types";
 
 export class FlowApi {
@@ -262,6 +264,43 @@ export class FlowApi {
    */
   static async deleteConnection(flowId: number, nodeConnection: NodeConnection): Promise<any> {
     const response = await axios.post("/editor/delete_connection/", nodeConnection, {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  // ============================================================================
+  // History/Undo-Redo Operations
+  // ============================================================================
+
+  /**
+   * Undo the last action on the flow graph
+   */
+  static async undo(flowId: number): Promise<UndoRedoResult> {
+    const response = await axios.post<UndoRedoResult>("/editor/undo/", null, {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Redo the last undone action on the flow graph
+   */
+  static async redo(flowId: number): Promise<UndoRedoResult> {
+    const response = await axios.post<UndoRedoResult>("/editor/redo/", null, {
+      params: { flow_id: flowId },
+      headers: { accept: "application/json" },
+    });
+    return response.data;
+  }
+
+  /**
+   * Get the current state of the history system for a flow
+   */
+  static async getHistoryStatus(flowId: number): Promise<HistoryState> {
+    const response = await axios.get<HistoryState>("/editor/history_status/", {
       params: { flow_id: flowId },
       headers: { accept: "application/json" },
     });
