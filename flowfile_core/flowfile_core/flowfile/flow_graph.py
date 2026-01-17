@@ -90,6 +90,18 @@ yaml.add_representer(list, represent_list_json)
 
 
 def add_generic_settings_executor(flow: "FlowGraph", add_func: Callable, parsed_input: any, node_type: str, node_id: int):
+    """Execute a settings update with automatic history capture.
+
+    This helper captures the state before applying settings, executes the
+    update function, and records history only if the state actually changed.
+
+    Args:
+        flow: The FlowGraph instance to update.
+        add_func: The function to call to apply the settings (e.g., flow.add_filter).
+        parsed_input: The parsed settings input to pass to add_func.
+        node_type: The type of node being updated (for history description).
+        node_id: The ID of the node being updated.
+    """
     pre_snapshot = flow.get_flowfile_data()
 
     add_func(parsed_input)
