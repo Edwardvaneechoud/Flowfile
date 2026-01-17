@@ -427,6 +427,7 @@ export interface FlowNode {
   leftInputId?: number
   rightInputId?: number
   description?: string
+  nodeReference?: string  // Custom variable name for code generation
 }
 
 export interface FlowEdge {

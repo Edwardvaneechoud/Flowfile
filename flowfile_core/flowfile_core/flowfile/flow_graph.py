@@ -1927,6 +1927,29 @@ class FlowGraph:
 
         return list(self._node_db.values())
 
+    def validate_node_references(self) -> None:
+        """Validates that all node_reference values are unique within the flow.
+
+        This method checks that no two nodes share the same custom node_reference.
+        Node references are used in code generation as variable names, so they
+        must be unique to avoid conflicts.
+
+        Raises:
+            ValueError: If duplicate node_reference values are found.
+        """
+        references: dict[str, int] = {}  # Maps reference -> node_id
+
+        for node in self.nodes:
+            ref = getattr(node.setting_input, "node_reference", None)
+            if ref is not None and ref != "":
+                if ref in references:
+                    raise ValueError(
+                        f"Duplicate node_reference '{ref}' found in nodes "
+                        f"{references[ref]} and {node.node_id}. "
+                        "Each node_reference must be unique within a flow."
+                    )
+                references[ref] = node.node_id
+
     @property
     def execution_mode(self) -> schemas.ExecutionModeLiteral:
         """Gets the current execution mode ('Development' or 'Performance')."""

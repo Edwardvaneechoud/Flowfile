@@ -2885,5 +2885,407 @@ def test_external_source_adds_to_unsupported():
     assert "external_source" in converter.unsupported_nodes[0][1].lower()
 
 
+# =============================================================================
+# Node Reference Tests
+# =============================================================================
+
+
+class TestNodeReferenceValidation:
+    """Tests for node_reference field validation."""
+
+    def test_valid_reference_accepted(self):
+        """Valid Python identifiers should be accepted."""
+        node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=1,
+            depending_on_id=0,
+            node_reference="customers_filtered",
+            filter_input=transform_schema.FilterInput(filter_type="basic"),
+        )
+        assert node.node_reference == "customers_filtered"
+
+    def test_valid_reference_with_underscore_prefix(self):
+        """Reference starting with underscore should be accepted."""
+        node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=1,
+            depending_on_id=0,
+            node_reference="_private_data",
+            filter_input=transform_schema.FilterInput(filter_type="basic"),
+        )
+        assert node.node_reference == "_private_data"
+
+    def test_valid_reference_with_numbers(self):
+        """Reference with numbers (not at start) should be accepted."""
+        node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=1,
+            depending_on_id=0,
+            node_reference="data_v2",
+            filter_input=transform_schema.FilterInput(filter_type="basic"),
+        )
+        assert node.node_reference == "data_v2"
+
+    def test_none_reference_accepted(self):
+        """None reference should be accepted."""
+        node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=1,
+            depending_on_id=0,
+            node_reference=None,
+            filter_input=transform_schema.FilterInput(filter_type="basic"),
+        )
+        assert node.node_reference is None
+
+    def test_empty_string_converted_to_none(self):
+        """Empty string should be converted to None."""
+        node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=1,
+            depending_on_id=0,
+            node_reference="",
+            filter_input=transform_schema.FilterInput(filter_type="basic"),
+        )
+        assert node.node_reference is None
+
+    def test_invalid_reference_starts_with_digit(self):
+        """References starting with digits should be rejected."""
+        with pytest.raises(ValueError, match="not a valid Python identifier"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="123_invalid",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+    def test_invalid_reference_with_spaces(self):
+        """References with spaces should be rejected."""
+        with pytest.raises(ValueError, match="not a valid Python identifier"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="invalid name",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+    def test_invalid_reference_with_special_chars(self):
+        """References with special characters should be rejected."""
+        with pytest.raises(ValueError, match="not a valid Python identifier"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="invalid-name",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+    def test_invalid_reference_python_keyword(self):
+        """Python keywords should be rejected."""
+        with pytest.raises(ValueError, match="reserved keyword"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="import",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+    def test_invalid_reference_reserved_prefix_df(self):
+        """References starting with 'df_' should be rejected."""
+        with pytest.raises(ValueError, match="reserved prefix"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="df_custom",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+    def test_invalid_reference_reserved_prefix_pl(self):
+        """References starting with 'pl' should be rejected."""
+        with pytest.raises(ValueError, match="reserved prefix"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="pl_data",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+    def test_invalid_reference_reserved_prefix_polars(self):
+        """References starting with 'polars' should be rejected."""
+        with pytest.raises(ValueError, match="reserved prefix"):
+            input_schema.NodeFilter(
+                flow_id=1,
+                node_id=1,
+                depending_on_id=0,
+                node_reference="polars_df",
+                filter_input=transform_schema.FilterInput(filter_type="basic"),
+            )
+
+
+class TestNodeReferenceCodeGeneration:
+    """Tests for node_reference in code generation."""
+
+    def test_custom_reference_used_in_output(self):
+        """Custom reference should appear as variable name in generated code."""
+        flow = create_basic_flow()
+
+        # Add manual input with custom reference
+        manual_input = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="raw_customers",
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                ],
+                data=[[1, 2], ["Alice", "Bob"]],
+            ),
+        )
+        flow.add_manual_input(manual_input)
+
+        code = export_flow_to_polars(flow)
+
+        # Custom reference should appear in code
+        assert "raw_customers = pl.LazyFrame" in code
+        # Default df_1 should not appear
+        assert "df_1" not in code
+
+    def test_downstream_nodes_use_custom_reference(self):
+        """Downstream nodes should reference the custom variable name."""
+        flow = create_basic_flow()
+
+        # Add manual input with custom reference
+        manual_input = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="customers",
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="name", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="age", data_type="Integer"),
+                ],
+                data=[[1, 2], ["Alice", "Bob"], [25, 30]],
+            ),
+        )
+        flow.add_manual_input(manual_input)
+
+        # Add filter node with custom reference
+        filter_node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            node_reference="adult_customers",
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[age] >= 18"
+            ),
+        )
+        flow.add_filter(filter_node)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_polars(flow)
+
+        # Both custom references should appear
+        assert "customers = pl.LazyFrame" in code
+        assert "adult_customers = customers.filter" in code
+        # Default names should not appear
+        assert "df_1" not in code
+        assert "df_2" not in code
+
+    def test_mixed_custom_and_default_references(self):
+        """Flow with some custom and some default references should work correctly."""
+        flow = create_basic_flow()
+
+        # Add manual input with custom reference
+        manual_input = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="source_data",
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="id", data_type="Integer"),
+                    input_schema.MinimalFieldInfo(name="value", data_type="Integer"),
+                ],
+                data=[[1, 2], [100, 200]],
+            ),
+        )
+        flow.add_manual_input(manual_input)
+
+        # Add filter node WITHOUT custom reference (should use default df_2)
+        filter_node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[value] > 50"
+            ),
+        )
+        flow.add_filter(filter_node)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_polars(flow)
+
+        # Custom reference and default reference should both appear
+        assert "source_data = pl.LazyFrame" in code
+        assert "df_2 = source_data.filter" in code
+
+    def test_duplicate_references_rejected(self):
+        """Duplicate node_reference values in same flow should raise error."""
+        flow = create_basic_flow()
+
+        # Add first manual input with reference "data"
+        manual_input1 = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="data",
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[1]],
+            ),
+        )
+        flow.add_manual_input(manual_input1)
+
+        # Add second manual input with same reference "data" (duplicate!)
+        manual_input2 = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=2,
+            node_reference="data",
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[2]],
+            ),
+        )
+        flow.add_manual_input(manual_input2)
+
+        with pytest.raises(ValueError, match="Duplicate node_reference"):
+            export_flow_to_polars(flow)
+
+    def test_generated_code_with_references_executes_correctly(self):
+        """Generated code with custom references should execute and produce correct results."""
+        flow = create_basic_flow()
+
+        # Add manual input with custom reference
+        manual_input = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="sales_data",
+            raw_data_format=input_schema.RawData(
+                columns=[
+                    input_schema.MinimalFieldInfo(name="product", data_type="String"),
+                    input_schema.MinimalFieldInfo(name="amount", data_type="Integer"),
+                ],
+                data=[["A", "B", "C"], [100, 200, 150]],
+            ),
+        )
+        flow.add_manual_input(manual_input)
+
+        # Add filter node with custom reference
+        filter_node = input_schema.NodeFilter(
+            flow_id=1,
+            node_id=2,
+            depending_on_id=1,
+            node_reference="high_sales",
+            filter_input=transform_schema.FilterInput(
+                filter_type="advanced", advanced_filter="[amount] > 100"
+            ),
+        )
+        flow.add_filter(filter_node)
+        add_connection(flow, input_schema.NodeConnection.create_from_simple_input(1, 2))
+
+        code = export_flow_to_polars(flow)
+
+        # Code should execute without errors
+        verify_if_execute(code)
+
+        # Result should match expected output
+        result = get_result_from_generated_code(code)
+        expected = pl.LazyFrame({"product": ["B", "C"], "amount": [200, 150]})
+        assert_frame_equal(result.collect(), expected.collect())
+
+
+class TestFlowGraphValidateNodeReferences:
+    """Tests for FlowGraph.validate_node_references method."""
+
+    def test_validate_unique_references_passes(self):
+        """Validation should pass when all references are unique."""
+        flow = create_basic_flow()
+
+        manual_input1 = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="data_a",
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[1]],
+            ),
+        )
+        flow.add_manual_input(manual_input1)
+
+        manual_input2 = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=2,
+            node_reference="data_b",
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[2]],
+            ),
+        )
+        flow.add_manual_input(manual_input2)
+
+        # Should not raise any error
+        flow.validate_node_references()
+
+    def test_validate_with_no_references_passes(self):
+        """Validation should pass when no nodes have custom references."""
+        flow = create_basic_flow()
+
+        manual_input = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[1]],
+            ),
+        )
+        flow.add_manual_input(manual_input)
+
+        # Should not raise any error
+        flow.validate_node_references()
+
+    def test_validate_duplicate_references_fails(self):
+        """Validation should fail when duplicate references exist."""
+        flow = create_basic_flow()
+
+        manual_input1 = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=1,
+            node_reference="duplicate_name",
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[1]],
+            ),
+        )
+        flow.add_manual_input(manual_input1)
+
+        manual_input2 = input_schema.NodeManualInput(
+            flow_id=1,
+            node_id=2,
+            node_reference="duplicate_name",
+            raw_data_format=input_schema.RawData(
+                columns=[input_schema.MinimalFieldInfo(name="id", data_type="Integer")],
+                data=[[2]],
+            ),
+        )
+        flow.add_manual_input(manual_input2)
+
+        with pytest.raises(ValueError, match="Duplicate node_reference"):
+            flow.validate_node_references()
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

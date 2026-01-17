@@ -62,7 +62,11 @@ class FlowGraphToPolarsConverter:
         Raises:
             UnsupportedNodeError: If the graph contains nodes that cannot be converted
                 to standalone code (e.g., database nodes, explore_data, external_source).
+            ValueError: If duplicate node_reference values are found.
         """
+        # Validate unique node references before generating code
+        self.flow_graph.validate_node_references()
+
         # Get execution order
         execution_order = determine_execution_order(
             all_nodes=[node for node in self.flow_graph.nodes if node.is_correct],
@@ -103,7 +107,12 @@ class FlowGraphToPolarsConverter:
             self._add_comment(f"# Skipping uninitialized node: {node.node_id}")
             return
         # Create variable name for this node's output
-        var_name = f"df_{node.node_id}"
+        # Use custom node_reference if available, otherwise use default df_{node_id}
+        custom_ref = getattr(settings, "node_reference", None)
+        if custom_ref:
+            var_name = custom_ref
+        else:
+            var_name = f"df_{node.node_id}"
         self.node_var_mapping[node.node_id] = var_name
         self.handle_output_node(node, var_name)
         if node.node_template.output > 0:

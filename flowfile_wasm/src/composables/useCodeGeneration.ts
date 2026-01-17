@@ -81,6 +81,9 @@ class FlowToPolarsConverter {
   }
 
   convert(): string {
+    // Validate unique node references before generating code
+    this.validateNodeReferences()
+
     // Get execution order (topological sort)
     const executionOrder = this.determineExecutionOrder()
 
@@ -104,6 +107,24 @@ class FlowToPolarsConverter {
 
     // Build final code
     return this.buildFinalCode()
+  }
+
+  private validateNodeReferences(): void {
+    const references = new Map<string, number>()  // Maps reference -> nodeId
+
+    for (const [nodeId, node] of this.nodes) {
+      const ref = node.nodeReference
+      if (ref) {
+        const existingNodeId = references.get(ref)
+        if (existingNodeId !== undefined) {
+          throw new Error(
+            `Duplicate nodeReference '${ref}' found in nodes ${existingNodeId} and ${nodeId}. ` +
+            `Each nodeReference must be unique within a flow.`
+          )
+        }
+        references.set(ref, nodeId)
+      }
+    }
   }
 
   private determineExecutionOrder(): number[] {
@@ -160,7 +181,8 @@ class FlowToPolarsConverter {
   }
 
   private generateNodeCode(node: FlowNode): void {
-    const varName = `df_${node.id}`
+    // Use custom nodeReference if available, otherwise use default df_{id}
+    const varName = node.nodeReference || `df_${node.id}`
     this.nodeVarMapping.set(node.id, varName)
     this.lastNodeVar = varName
 

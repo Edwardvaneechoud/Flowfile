@@ -1,4 +1,6 @@
+import keyword
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -337,6 +339,31 @@ class NodeBase(BaseModel):
     user_id: int | None = None
     is_flow_output: bool | None = False
     is_user_defined: bool | None = False  # Indicator if the node is a user defined node
+    node_reference: str | None = None  # Custom variable name for code generation
+
+    @field_validator("node_reference")
+    @classmethod
+    def validate_node_reference(cls, v: str | None) -> str | None:
+        """Validate that node_reference is a valid Python identifier."""
+        if v is None or v == "":
+            return None
+        # Check if valid Python identifier
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", v):
+            raise ValueError(
+                f"node_reference '{v}' is not a valid Python identifier. "
+                "Must start with a letter or underscore, followed by letters, digits, or underscores."
+            )
+        # Check if not a reserved keyword
+        if keyword.iskeyword(v):
+            raise ValueError(f"node_reference '{v}' is a Python reserved keyword.")
+        # Check if not a builtin that would shadow important names
+        reserved_prefixes = ("df_", "pl", "polars")
+        if v.startswith(reserved_prefixes):
+            raise ValueError(
+                f"node_reference '{v}' starts with a reserved prefix {reserved_prefixes}. "
+                "Choose a different name."
+            )
+        return v
 
 
 class NodeSingleInput(NodeBase):
