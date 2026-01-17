@@ -41,9 +41,6 @@ const historyState = reactive<HistoryState>({
   redo_count: 0,
 });
 
-// Polling interval reference
-let pollInterval: ReturnType<typeof setInterval> | null = null;
-
 const refreshHistoryState = async () => {
   if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
 
@@ -122,20 +119,6 @@ const handleKeyDown = (event: KeyboardEvent) => {
   }
 };
 
-// Start polling for history state
-const startPolling = () => {
-  if (pollInterval) return;
-  pollInterval = setInterval(refreshHistoryState, 1000); // Poll every second
-};
-
-// Stop polling
-const stopPolling = () => {
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
-  }
-};
-
 // Watch for flow_id changes
 watch(
   () => nodeStore.flow_id,
@@ -151,12 +134,10 @@ onMounted(async () => {
   if (nodeStore.flow_id && nodeStore.flow_id > 0) {
     await refreshHistoryState();
   }
-  startPolling();
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
-  stopPolling();
 });
 
 // Expose refresh method so parent can call it after operations
