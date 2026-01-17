@@ -454,6 +454,9 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if not hasattr(fs, "show_detailed_progress"):
         fs.show_detailed_progress = True
 
+    if not hasattr(fs, "track_history"):
+        fs.track_history = True
+
     return flow_storage_obj
 
 

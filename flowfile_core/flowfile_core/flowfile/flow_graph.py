@@ -108,20 +108,23 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
     """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
-        def wrapper(self: "FlowGraph", settings_input, *args, **kwargs):
+        def wrapper(self: "FlowGraph", *args, **kwargs):
             # Skip history capture if tracking is disabled
             if not self.flow_settings.track_history:
-                return func(self, settings_input, *args, **kwargs)
+                return func(self, *args, **kwargs)
+
+            # Get the first argument (settings input) from args or kwargs
+            settings_input = args[0] if args else next(iter(kwargs.values()), None)
 
             # Extract node info from the settings input
-            node_id = getattr(settings_input, 'node_id', None)
-            node_type = getattr(settings_input, 'node_type', func.__name__.replace('add_', ''))
+            node_id = getattr(settings_input, 'node_id', None) if settings_input else None
+            node_type = getattr(settings_input, 'node_type', func.__name__.replace('add_', '')) if settings_input else func.__name__.replace('add_', '')
 
             # Capture state before the operation
             pre_snapshot = self.get_flowfile_data()
 
             # Execute the actual method
-            result = func(self, settings_input, *args, **kwargs)
+            result = func(self, *args, **kwargs)
 
             # Record history if state changed
             self._history_manager.capture_if_changed(
@@ -459,6 +462,10 @@ class FlowGraph:
         Returns:
             The result of the operation (if any).
         """
+        # Skip history capture if tracking is disabled for this flow
+        if not self.flow_settings.track_history:
+            return operation()
+
         pre_snapshot = self.get_flowfile_data()
         result = operation()
         self._history_manager.capture_if_changed(
