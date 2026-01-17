@@ -13,6 +13,7 @@ from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.history_manager import HistoryManager
 from flowfile_core.schemas import input_schema, schemas
 from flowfile_core.schemas.history_schema import (
+    CompressedSnapshot,
     HistoryActionType,
     HistoryConfig,
     HistoryEntry,
@@ -141,8 +142,10 @@ class TestSnapshotComparison:
         snapshot1 = flow_graph.get_flowfile_data().model_dump()
         snapshot2 = flow_graph.get_flowfile_data().model_dump()
 
-        manager = flow_graph._history_manager
-        assert manager._snapshots_equal(snapshot1, snapshot2) is True
+        # Use CompressedSnapshot for comparison
+        hash1 = CompressedSnapshot._compute_hash(snapshot1)
+        hash2 = CompressedSnapshot._compute_hash(snapshot2)
+        assert hash1 == hash2
 
     def test_different_snapshots_are_not_equal(self, flow_graph, sample_data):
         """Test that different snapshots are detected as different."""
@@ -158,8 +161,84 @@ class TestSnapshotComparison:
         flow_graph.add_node_promise(node_promise)
         snapshot2 = flow_graph.get_flowfile_data().model_dump()
 
-        manager = flow_graph._history_manager
-        assert manager._snapshots_equal(snapshot1, snapshot2) is False
+        # Use CompressedSnapshot for comparison
+        hash1 = CompressedSnapshot._compute_hash(snapshot1)
+        hash2 = CompressedSnapshot._compute_hash(snapshot2)
+        assert hash1 != hash2
+
+
+class TestCompression:
+    """Tests for snapshot compression functionality."""
+
+    def test_compression_reduces_size(self, flow_graph, sample_data):
+        """Test that compression significantly reduces snapshot size."""
+        add_manual_input_node(flow_graph, sample_data, node_id=1)
+
+        # Add more nodes for a larger snapshot
+        for i in range(5):
+            node_promise = input_schema.NodePromise(
+                flow_id=flow_graph.flow_id,
+                node_id=i + 10,
+                node_type='filter'
+            )
+            flow_graph.add_node_promise(node_promise)
+
+        snapshot = flow_graph.get_flowfile_data().model_dump()
+
+        # Create compressed snapshot
+        compressed = CompressedSnapshot(snapshot, compression_level=6)
+
+        # Calculate uncompressed size (approximate)
+        import pickle
+        uncompressed_size = len(pickle.dumps(snapshot))
+        compressed_size = compressed.compressed_size
+
+        # Compression should reduce size (typically 60-80%)
+        assert compressed_size < uncompressed_size
+        compression_ratio = compressed_size / uncompressed_size
+        assert compression_ratio < 0.8  # At least 20% reduction
+
+    def test_decompression_restores_original(self, flow_graph, sample_data):
+        """Test that decompression restores the original snapshot."""
+        add_manual_input_node(flow_graph, sample_data, node_id=1)
+        snapshot = flow_graph.get_flowfile_data().model_dump()
+
+        # Compress and decompress
+        compressed = CompressedSnapshot(snapshot, compression_level=6)
+        restored = compressed.decompress()
+
+        # Should be identical
+        assert restored == snapshot
+
+    def test_compressed_snapshots_equality(self, flow_graph, sample_data):
+        """Test that equal compressed snapshots compare equal."""
+        add_manual_input_node(flow_graph, sample_data, node_id=1)
+        snapshot = flow_graph.get_flowfile_data().model_dump()
+
+        compressed1 = CompressedSnapshot(snapshot, compression_level=6)
+        compressed2 = CompressedSnapshot(snapshot, compression_level=6)
+
+        assert compressed1 == compressed2
+        assert compressed1.hash == compressed2.hash
+
+    def test_memory_usage_tracking(self, flow_graph, sample_data):
+        """Test that memory usage can be tracked."""
+        add_manual_input_node(flow_graph, sample_data, node_id=1)
+
+        # Capture some history
+        flow_graph.capture_history_snapshot(
+            HistoryActionType.ADD_NODE,
+            "Add node"
+        )
+
+        # Get memory usage
+        usage = flow_graph._history_manager.get_memory_usage()
+
+        assert "undo_stack_entries" in usage
+        assert "undo_stack_bytes" in usage
+        assert "total_bytes" in usage
+        assert usage["undo_stack_entries"] == 1
+        assert usage["undo_stack_bytes"] > 0
 
 
 class TestCaptureSnapshot:
