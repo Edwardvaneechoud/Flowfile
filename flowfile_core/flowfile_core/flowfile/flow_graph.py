@@ -303,7 +303,9 @@ class FlowGraph:
 
         # Initialize history manager for undo/redo support
         from flowfile_core.flowfile.history_manager import HistoryManager
-        self._history_manager = HistoryManager()
+        from flowfile_core.schemas.history_schema import HistoryConfig
+        history_config = HistoryConfig(enabled=flow_settings.track_history)
+        self._history_manager = HistoryManager(config=history_config)
 
         if path_ref is not None:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
