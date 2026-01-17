@@ -285,8 +285,7 @@ def test_store_in_database(pw):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_cloud_storage(cloud_storage_connection_settings):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    # Create model and serialize manually to preserve SecretStr values
-    from base64 import b64encode
+    # Create model - Base64Bytes type handles encoding automatically
     cloud_write_settings = models.CloudStorageScriptWrite(
         connection=cloud_storage_connection_settings,
         write_settings=WriteSettings(
@@ -298,13 +297,13 @@ def test_store_in_cloud_storage(cloud_storage_connection_settings):
         operation=lf.serialize()
     )
     # Use model_dump and manually handle SecretStr to preserve secret values
+    # Note: operation is already base64-encoded by Base64Bytes serializer
     settings_data = cloud_write_settings.model_dump()
     settings_data["connection"]["aws_secret_access_key"] = (
         settings_data["connection"]["aws_secret_access_key"].get_secret_value()
         if hasattr(settings_data["connection"]["aws_secret_access_key"], 'get_secret_value')
         else settings_data["connection"]["aws_secret_access_key"]
     )
-    settings_data["operation"] = b64encode(settings_data["operation"]).decode('ascii')
     v = client.post('/write_data_to_cloud/', json=settings_data)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
