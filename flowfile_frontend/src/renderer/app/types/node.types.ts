@@ -647,6 +647,7 @@ export interface NodeBase {
   is_setup?: boolean;
   description?: string;
   is_user_defined?: boolean;
+  node_reference?: string;  // Custom variable name for code generation
 }
 
 export interface NodeSingleInput extends NodeBase {

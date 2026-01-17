@@ -9,6 +9,34 @@
         <div class="settings-section">
           <div class="setting-group">
             <div class="setting-header">
+              <span class="setting-title">Node Reference</span>
+              <div class="setting-description-wrapper">
+                <span class="setting-description">
+                  Custom variable name used when generating code. Must be a valid Python identifier.
+                  <el-tooltip
+                    effect="dark"
+                    content="If not set, the default 'df_{node_id}' pattern will be used in generated code"
+                    placement="top"
+                  >
+                    <el-icon class="info-icon">
+                      <InfoFilled />
+                    </el-icon>
+                  </el-tooltip>
+                </span>
+              </div>
+            </div>
+            <el-input
+              v-model="localSettings.node_reference"
+              placeholder="e.g., customers_filtered, sales_data"
+              :class="{ 'is-error': nodeReferenceError }"
+              @input="validateNodeReference"
+              @change="handleSettingChange"
+            />
+            <span v-if="nodeReferenceError" class="error-message">{{ nodeReferenceError }}</span>
+          </div>
+
+          <div class="setting-group">
+            <div class="setting-header">
               <span class="setting-title">Cache Results</span>
               <div class="setting-description-wrapper">
                 <span class="setting-description">
@@ -66,10 +94,23 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref("main");
+const nodeReferenceError = ref<string | null>(null);
 
-const localSettings = ref<Pick<NodeBase, "cache_results" | "description">>({
+// Python reserved keywords
+const PYTHON_KEYWORDS = new Set([
+  "False", "None", "True", "and", "as", "assert", "async", "await",
+  "break", "class", "continue", "def", "del", "elif", "else", "except",
+  "finally", "for", "from", "global", "if", "import", "in", "is",
+  "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+  "while", "with", "yield"
+]);
+
+const RESERVED_PREFIXES = ["df_", "pl", "polars"];
+
+const localSettings = ref<Pick<NodeBase, "cache_results" | "description" | "node_reference">>({
   cache_results: props.modelValue?.cache_results ?? false,
   description: props.modelValue?.description ?? "",
+  node_reference: props.modelValue?.node_reference ?? "",
 });
 
 watch(
@@ -79,19 +120,66 @@ watch(
       localSettings.value = {
         cache_results: newValue.cache_results,
         description: newValue.description ?? "",
+        node_reference: newValue.node_reference ?? "",
       };
+      // Re-validate when value changes externally
+      if (newValue.node_reference) {
+        validateNodeReference(newValue.node_reference);
+      } else {
+        nodeReferenceError.value = null;
+      }
     }
   },
   { deep: true },
 );
 
+const validateNodeReference = (value: string) => {
+  // Empty is valid (will use default)
+  if (!value || value.trim() === "") {
+    nodeReferenceError.value = null;
+    return true;
+  }
+
+  // Check if valid Python identifier
+  const identifierRegex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+  if (!identifierRegex.test(value)) {
+    nodeReferenceError.value = "Must be a valid Python identifier (letters, digits, underscores; cannot start with a digit)";
+    return false;
+  }
+
+  // Check if not a reserved keyword
+  if (PYTHON_KEYWORDS.has(value)) {
+    nodeReferenceError.value = `'${value}' is a Python reserved keyword`;
+    return false;
+  }
+
+  // Check if not starting with reserved prefixes
+  for (const prefix of RESERVED_PREFIXES) {
+    if (value.startsWith(prefix)) {
+      nodeReferenceError.value = `Cannot start with reserved prefix '${prefix}'`;
+      return false;
+    }
+  }
+
+  nodeReferenceError.value = null;
+  return true;
+};
+
 const handleSettingChange = () => {
+  // Only emit if node_reference is valid or empty
+  const refValue = localSettings.value.node_reference?.trim() || "";
+  if (refValue && !validateNodeReference(refValue)) {
+    return;
+  }
+
   emit("update:modelValue", {
     ...props.modelValue,
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
+    node_reference: refValue || undefined,
   });
 };
+
 const handleDescriptionChange = (value: string) => {
   nodeStore.updateNodeDescription(props.modelValue.node_id, value);
   handleSettingChange();
@@ -151,5 +239,16 @@ const handleDescriptionChange = (value: string) => {
 
 .setting-description {
   flex-grow: 1;
+}
+
+.error-message {
+  display: block;
+  color: var(--el-color-danger);
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+:deep(.el-input.is-error .el-input__wrapper) {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 </style>
