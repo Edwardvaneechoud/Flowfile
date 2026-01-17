@@ -372,9 +372,6 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
 
-    # Capture state BEFORE adding the node
-    pre_snapshot = flow.get_flowfile_data()
-
     node = flow.get_node(node_id)
     if node is not None:
         flow.delete_node(node_id)
@@ -383,25 +380,10 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
                                             node_type=node_type)
     if node_type == 'explore_data':
         flow.add_initial_node_analysis(node_promise)
-        # Capture history after adding explore_data node
-        flow.capture_history_if_changed(
-            pre_snapshot,
-            HistoryActionType.ADD_NODE,
-            f"Add {node_type} node",
-            node_id=node_id
-        )
         return
     else:
         logger.info("Adding node")
         flow.add_node_promise(node_promise)
-
-    # Capture history AFTER adding the node (only if state changed)
-    flow.capture_history_if_changed(
-        pre_snapshot,
-        HistoryActionType.ADD_NODE,
-        f"Add {node_type} node",
-        node_id=node_id
-    )
 
     if check_if_has_default_setting(node_type):
         logger.info(f'Found standard settings for {node_type}, trying to upload them')

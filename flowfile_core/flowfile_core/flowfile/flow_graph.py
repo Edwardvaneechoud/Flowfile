@@ -391,6 +391,34 @@ class FlowGraph:
         """
         return self._history_manager.get_state()
 
+    def _execute_with_history(
+        self,
+        operation: Callable[[], Any],
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int = None,
+    ) -> Any:
+        """Execute an operation with automatic history capture.
+
+        This helper captures the state before the operation, executes it,
+        and records history only if the state actually changed.
+
+        Args:
+            operation: A callable that performs the actual operation.
+            action_type: The type of action being performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            The result of the operation (if any).
+        """
+        pre_snapshot = self.get_flowfile_data()
+        result = operation()
+        self._history_manager.capture_if_changed(
+            self, pre_snapshot, action_type, description, node_id
+        )
+        return result
+
     def restore_from_snapshot(self, snapshot: schemas.FlowfileData) -> None:
         """Clear current state and rebuild from a snapshot.
 
@@ -508,39 +536,51 @@ class FlowGraph:
         if node.node_id not in {self_node.node_id for self_node in self._flow_starts}:
             self._flow_starts.append(node)
 
-    def add_node_promise(self, node_promise: input_schema.NodePromise):
+    def add_node_promise(self, node_promise: input_schema.NodePromise, track_history: bool = True):
         """Adds a placeholder node to the graph that is not yet fully configured.
 
         Useful for building the graph structure before all settings are available.
+        Automatically captures history for undo/redo support.
 
         Args:
             node_promise: A promise object containing basic node information.
+            track_history: Whether to track this change in history (default True).
         """
+        def _do_add():
+            def placeholder(n: FlowNode = None):
+                if n is None:
+                    return FlowDataEngine()
+                return n
 
-        def placeholder(n: FlowNode = None):
-            if n is None:
-                return FlowDataEngine()
-            return n
+            self.add_node_step(
+                node_id=node_promise.node_id,
+                node_type=node_promise.node_type,
+                function=placeholder,
+                setting_input=node_promise,
+            )
+            if node_promise.is_user_defined:
+                node_needs_settings: bool
+                custom_node = CUSTOM_NODE_STORE.get(node_promise.node_type)
+                if custom_node is None:
+                    raise Exception(f"Custom node type '{node_promise.node_type}' not found in registry.")
+                settings_schema = custom_node.model_fields["settings_schema"].default
+                node_needs_settings = settings_schema is not None and not settings_schema.is_empty()
+                if not node_needs_settings:
+                    user_defined_node_settings = input_schema.UserDefinedNode(settings={}, **node_promise.model_dump())
+                    initialized_model = custom_node()
+                    self.add_user_defined_node(
+                        custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings
+                    )
 
-        self.add_node_step(
-            node_id=node_promise.node_id,
-            node_type=node_promise.node_type,
-            function=placeholder,
-            setting_input=node_promise,
-        )
-        if node_promise.is_user_defined:
-            node_needs_settings: bool
-            custom_node = CUSTOM_NODE_STORE.get(node_promise.node_type)
-            if custom_node is None:
-                raise Exception(f"Custom node type '{node_promise.node_type}' not found in registry.")
-            settings_schema = custom_node.model_fields["settings_schema"].default
-            node_needs_settings = settings_schema is not None and not settings_schema.is_empty()
-            if not node_needs_settings:
-                user_defined_node_settings = input_schema.UserDefinedNode(settings={}, **node_promise.model_dump())
-                initialized_model = custom_node()
-                self.add_user_defined_node(
-                    custom_node=initialized_model, user_defined_node_settings=user_defined_node_settings
-                )
+        if track_history:
+            self._execute_with_history(
+                _do_add,
+                HistoryActionType.ADD_NODE,
+                f"Add {node_promise.node_type} node",
+                node_id=node_promise.node_id,
+            )
+        else:
+            _do_add()
 
     def apply_layout(self, y_spacing: int = 150, x_spacing: int = 200, initial_y: int = 100):
         """Calculates and applies a layered layout to all nodes in the graph.
@@ -827,14 +867,28 @@ class FlowGraph:
             input_node_ids=union_settings.depending_on_ids,
         )
 
-    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise):
+    def add_initial_node_analysis(self, node_promise: input_schema.NodePromise, track_history: bool = True):
         """Adds a data exploration/analysis node based on a node promise.
+
+        Automatically captures history for undo/redo support.
 
         Args:
             node_promise: The promise representing the node to be analyzed.
+            track_history: Whether to track this change in history (default True).
         """
-        node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
-        self.add_explore_data(node_analysis)
+        def _do_add():
+            node_analysis = create_graphic_walker_node_from_node_promise(node_promise)
+            self.add_explore_data(node_analysis)
+
+        if track_history:
+            self._execute_with_history(
+                _do_add,
+                HistoryActionType.ADD_NODE,
+                f"Add {node_promise.node_type} node",
+                node_id=node_promise.node_id,
+            )
+        else:
+            _do_add()
 
     def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
         """Adds a specialized node for data exploration and visualization.
