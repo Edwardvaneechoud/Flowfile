@@ -454,8 +454,11 @@ def ensure_flow_settings(flow_storage_obj: schemas.FlowInformation, flow_path: s
     if not hasattr(fs, "show_detailed_progress"):
         fs.show_detailed_progress = True
 
-    if not hasattr(fs, "track_history"):
-        fs.track_history = True
+    # For track_history, we need to handle legacy pickled objects that were
+    # serialized before this field existed. Use object.__setattr__ to bypass
+    # Pydantic validation which would reject adding a new field.
+    if "track_history" not in fs.__dict__:
+        object.__setattr__(fs, '__dict__', {**fs.__dict__, 'track_history': True})
 
     return flow_storage_obj
 
