@@ -44,6 +44,7 @@ from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, schemas, output_model
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
@@ -273,6 +274,13 @@ def apply_standard_layout(flow_id: int):
         raise HTTPException(status_code=404, detail="Flow not found")
     if flow.flow_settings.is_running:
         raise HTTPException(422, "Flow is running")
+
+    # Capture history before making changes
+    flow.capture_history_snapshot(
+        HistoryActionType.APPLY_LAYOUT,
+        "Apply standard layout"
+    )
+
     flow.apply_layout()
 
 
@@ -330,6 +338,13 @@ def copy_node(node_id_to_copy_from: int, flow_id_to_copy_from: int, node_promise
         if flow.flow_settings.is_running:
             raise HTTPException(422, "Flow is running")
 
+        # Capture history before making changes
+        flow.capture_history_snapshot(
+            HistoryActionType.COPY_NODE,
+            f"Copy {node_promise.node_type} node",
+            node_id=node_promise.node_id
+        )
+
         if flow.get_node(node_promise.node_id) is not None:
             flow.delete_node(node_promise.node_id)
 
@@ -359,6 +374,14 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
     logger.info(f'Adding a promise for {node_type}')
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
+
+    # Capture history before making changes
+    flow.capture_history_snapshot(
+        HistoryActionType.ADD_NODE,
+        f"Add {node_type} node",
+        node_id=node_id
+    )
+
     node = flow.get_node(node_id)
     if node is not None:
         flow.delete_node(node_id)
@@ -389,6 +412,18 @@ def delete_node(flow_id: Optional[int], node_id: int):
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
+
+    # Get node type for history description
+    node = flow.get_node(node_id)
+    node_type = node.node_type if node else "unknown"
+
+    # Capture history before making changes
+    flow.capture_history_snapshot(
+        HistoryActionType.DELETE_NODE,
+        f"Delete {node_type} node",
+        node_id=node_id
+    )
+
     flow.delete_node(node_id)
 
 
@@ -401,6 +436,13 @@ def delete_node_connection(flow_id: int, node_connection: input_schema.NodeConne
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
+
+    # Capture history before making changes
+    flow.capture_history_snapshot(
+        HistoryActionType.DELETE_CONNECTION,
+        f"Delete connection {node_connection.output_connection.node_id} → {node_connection.input_connection.node_id}"
+    )
+
     delete_connection(flow, node_connection)
 
 
@@ -453,7 +495,88 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection):
         raise HTTPException(404, 'could not find the flow')
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
+
+    # Capture history before making changes
+    flow.capture_history_snapshot(
+        HistoryActionType.ADD_CONNECTION,
+        f"Connect {node_connection.output_connection.node_id} → {node_connection.input_connection.node_id}"
+    )
+
     add_connection(flow, node_connection)
+
+
+# =====================================================================
+# History Management (Undo/Redo) Endpoints
+# =====================================================================
+
+
+@router.post('/editor/undo/', tags=['editor'], response_model=UndoRedoResult)
+def undo_action(flow_id: int) -> UndoRedoResult:
+    """Undo the last action on the flow graph.
+
+    Args:
+        flow_id: The ID of the flow to undo on.
+
+    Returns:
+        An UndoRedoResult indicating success or failure.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'Could not find the flow')
+    if flow.flow_settings.is_running:
+        raise HTTPException(422, 'Flow is running')
+    return flow.undo()
+
+
+@router.post('/editor/redo/', tags=['editor'], response_model=UndoRedoResult)
+def redo_action(flow_id: int) -> UndoRedoResult:
+    """Redo the last undone action on the flow graph.
+
+    Args:
+        flow_id: The ID of the flow to redo on.
+
+    Returns:
+        An UndoRedoResult indicating success or failure.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'Could not find the flow')
+    if flow.flow_settings.is_running:
+        raise HTTPException(422, 'Flow is running')
+    return flow.redo()
+
+
+@router.get('/editor/history_status/', tags=['editor'], response_model=HistoryState)
+def get_history_status(flow_id: int) -> HistoryState:
+    """Get the current history state (undo/redo availability).
+
+    Args:
+        flow_id: The ID of the flow.
+
+    Returns:
+        A HistoryState object with undo/redo information.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'Could not find the flow')
+    return flow.get_history_state()
+
+
+@router.post('/editor/history_clear/', tags=['editor'])
+def clear_history(flow_id: int):
+    """Clear all history for a flow.
+
+    Args:
+        flow_id: The ID of the flow.
+
+    Returns:
+        A success message.
+    """
+    flow = flow_file_handler.get_flow(flow_id)
+    if flow is None:
+        raise HTTPException(404, 'Could not find the flow')
+    flow.clear_history()
+    return {"message": "History cleared"}
 
 
 @router.get('/editor/expression_doc', tags=['editor'], response_model=List[output_model.ExpressionsOverview])
@@ -527,7 +650,8 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     input_data['user_id'] = current_user.id
     node_type = camel_case_to_snake_case(node_type)
     flow_id = int(input_data.get('flow_id'))
-    logger.info(f'Updating the data for flow: {flow_id}, node {input_data["node_id"]}')
+    node_id = int(input_data.get('node_id'))
+    logger.info(f'Updating the data for flow: {flow_id}, node {node_id}')
     flow = flow_file_handler.get_flow(flow_id)
     if flow.flow_settings.is_running:
         raise HTTPException(422, 'Flow is running')
@@ -547,11 +671,23 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
         raise HTTPException(421, str(e))
     if parsed_input is None:
         raise HTTPException(404, 'could not find the interface')
+
+    # Capture pre-snapshot for change detection
+    pre_snapshot = flow.get_pre_snapshot()
+
     try:
         add_func(parsed_input)
     except Exception as e:
         logger.error(e)
         raise HTTPException(419, str(f'error: {e}'))
+
+    # Only add to history if state actually changed
+    flow.capture_history_if_changed(
+        pre_snapshot,
+        HistoryActionType.UPDATE_SETTINGS,
+        f"Update {node_type} settings",
+        node_id=node_id
+    )
 
 
 @router.get('/files/available_flow_files', tags=['editor'], response_model=List[FileInfo])
