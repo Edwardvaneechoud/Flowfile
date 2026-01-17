@@ -89,6 +89,19 @@ def represent_list_json(dumper, data):
 yaml.add_representer(list, represent_list_json)
 
 
+def add_generic_settings_executor(flow: "FlowGraph", add_func: Callable, parsed_input: any, node_type: str, node_id: int):
+    pre_snapshot = flow.get_flowfile_data()
+
+    add_func(parsed_input)
+
+    flow.capture_history_if_changed(
+        pre_snapshot,
+        HistoryActionType.UPDATE_SETTINGS,
+        f"Update {node_type} settings",
+        node_id=node_id
+    )
+
+
 def get_xlsx_schema(
     engine: str,
     file_path: str,

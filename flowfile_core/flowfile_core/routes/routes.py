@@ -11,45 +11,50 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, UploadFile, BackgroundTasks, HTTPException, status, Body, Depends
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, Response
+
 # External dependencies
 from polars_expr_transformer.function_overview import get_all_expressions, get_expression_overview
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
+from flowfile_core.flowfile.flow_graph import add_generic_settings_executor
+
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
 from flowfile_core.configs import logger
-from flowfile_core.configs.node_store import nodes_list, check_if_has_default_setting
+from flowfile_core.configs.node_store import check_if_has_default_setting, nodes_list
 from flowfile_core.database.connection import get_db
+
 # File handling
 from flowfile_core.fileExplorer.funcs import (
-    SecureFileExplorer,
     FileInfo,
+    SecureFileExplorer,
     get_files_from_directory,
     validate_file_path,
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
 from flowfile_core.flowfile.code_generator.code_generator import export_flow_to_polars
-from flowfile_core.flowfile.database_connection_manager.db_connections import (store_database_connection,
-                                                                               get_database_connection,
-                                                                               delete_database_connection,
-                                                                               get_all_database_connections_interface)
+from flowfile_core.flowfile.database_connection_manager.db_connections import (
+    delete_database_connection,
+    get_all_database_connections_interface,
+    get_database_connection,
+    store_database_connection,
+)
 from flowfile_core.flowfile.extensions import get_instant_func_results
 from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
-from flowfile_core.schemas import input_schema, schemas, output_model
+from flowfile_core.schemas import input_schema, output_model, schemas
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.storage_config import storage
-
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -657,19 +662,9 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     if parsed_input is None:
         raise HTTPException(404, 'could not find the interface')
     try:
-        # Capture state BEFORE the update for change detection
-        pre_snapshot = flow.get_flowfile_data()
 
-        # Apply the update
-        add_func(parsed_input)
-
-        # Only add to history if state actually changed
-        flow.capture_history_if_changed(
-            pre_snapshot,
-            HistoryActionType.UPDATE_SETTINGS,
-            f"Update {node_type} settings",
-            node_id=node_id
-        )
+        add_generic_settings_executor(flow=flow, add_func=add_func, parsed_input=parsed_input,
+                                      node_type=node_type, node_id=node_id)
     except Exception as e:
         logger.error(e)
         raise HTTPException(419, str(f'error: {e}'))
