@@ -134,37 +134,6 @@ def with_history_capture(action_type: "HistoryActionType", description_template:
     return decorator
 
 
-def add_generic_settings_executor(flow: "FlowGraph", add_func: Callable, parsed_input: any, node_type: str, node_id: int):
-    """Execute a settings update with automatic history capture.
-
-    This helper captures the state before applying settings, executes the
-    update function, and records history only if the state actually changed.
-    Respects the flow's track_history setting.
-
-    Args:
-        flow: The FlowGraph instance to update.
-        add_func: The function to call to apply the settings (e.g., flow.add_filter).
-        parsed_input: The parsed settings input to pass to add_func.
-        node_type: The type of node being updated (for history description).
-        node_id: The ID of the node being updated.
-    """
-    # Skip history capture if tracking is disabled
-    if not flow.flow_settings.track_history:
-        add_func(parsed_input)
-        return
-
-    pre_snapshot = flow.get_flowfile_data()
-
-    add_func(parsed_input)
-
-    flow.capture_history_if_changed(
-        pre_snapshot,
-        HistoryActionType.UPDATE_SETTINGS,
-        f"Update {node_type} settings",
-        node_id=node_id
-    )
-
-
 def get_xlsx_schema(
     engine: str,
     file_path: str,
@@ -880,6 +849,7 @@ class FlowGraph:
             node = self.get_node(user_defined_node_settings.node_id)
             self.add_node_to_starting_list(node)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_pivot(self, pivot_settings: input_schema.NodePivot):
         """Adds a pivot node to the graph.
 
@@ -908,6 +878,7 @@ class FlowGraph:
 
         node.schema_callback = schema_callback
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_unpivot(self, unpivot_settings: input_schema.NodeUnpivot):
         """Adds an unpivot node to the graph.
 
@@ -926,6 +897,7 @@ class FlowGraph:
             input_node_ids=[unpivot_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_union(self, union_settings: input_schema.NodeUnion):
         """Adds a union node to combine multiple data streams.
 
@@ -968,6 +940,7 @@ class FlowGraph:
         else:
             _do_add()
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_explore_data(self, node_analysis: input_schema.NodeExploreData):
         """Adds a specialized node for data exploration and visualization.
 
@@ -1012,6 +985,7 @@ class FlowGraph:
         )
         node = self.get_node(node_analysis.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_group_by(self, group_by_settings: input_schema.NodeGroupBy):
         """Adds a group-by aggregation node to the graph.
 
@@ -1044,6 +1018,7 @@ class FlowGraph:
 
         node.schema_callback = schema_callback
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_filter(self, filter_settings: input_schema.NodeFilter):
         """Adds a filter node to the graph.
 
@@ -1193,6 +1168,7 @@ class FlowGraph:
             input_node_ids=[filter_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_count(self, node_number_of_records: input_schema.NodeRecordCount):
         """Adds a filter node to the graph.
 
@@ -1211,6 +1187,7 @@ class FlowGraph:
             input_node_ids=[node_number_of_records.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_polars_code(self, node_polars_code: input_schema.NodePolarsCode):
         """Adds a node that executes custom Polars code.
 
@@ -1255,6 +1232,7 @@ class FlowGraph:
             node_id=node_promise.node_id, node_type=node_promise.node_type, function=_func, setting_input=node_promise
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_unique(self, unique_settings: input_schema.NodeUnique):
         """Adds a node to find and remove duplicate rows.
 
@@ -1274,6 +1252,7 @@ class FlowGraph:
             input_node_ids=[unique_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_graph_solver(self, graph_solver_settings: input_schema.NodeGraphSolver):
         """Adds a node that solves graph-like problems within the data.
 
@@ -1297,6 +1276,7 @@ class FlowGraph:
             input_node_ids=[graph_solver_settings.depending_on_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_formula(self, function_settings: input_schema.NodeFormula):
         """Adds a node that applies a formula to create or modify a column.
 
@@ -1339,6 +1319,7 @@ class FlowGraph:
         else:
             return True, ""
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cross_join(self, cross_join_settings: input_schema.NodeCrossJoin) -> "FlowGraph":
         """Adds a cross join node to the graph.
 
@@ -1371,6 +1352,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_join(self, join_settings: input_schema.NodeJoin) -> "FlowGraph":
         """Adds a join node to combine two data streams based on key columns.
 
@@ -1403,6 +1385,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_fuzzy_match(self, fuzzy_settings: input_schema.NodeFuzzyMatch) -> "FlowGraph":
         """Adds a fuzzy matching node to join data on approximate string matches.
 
@@ -1456,6 +1439,7 @@ class FlowGraph:
 
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_text_to_rows(self, node_text_to_rows: input_schema.NodeTextToRows) -> "FlowGraph":
         """Adds a node that splits cell values into multiple rows.
 
@@ -1482,6 +1466,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sort(self, sort_settings: input_schema.NodeSort) -> "FlowGraph":
         """Adds a node to sort the data based on one or more columns.
 
@@ -1504,6 +1489,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_sample(self, sample_settings: input_schema.NodeSample) -> "FlowGraph":
         """Adds a node to take a random or top-N sample of the data.
 
@@ -1526,6 +1512,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_record_id(self, record_id_settings: input_schema.NodeRecordId) -> "FlowGraph":
         """Adds a node to create a new column with a unique ID for each record.
 
@@ -1549,6 +1536,7 @@ class FlowGraph:
         )
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_select(self, select_settings: input_schema.NodeSelect) -> "FlowGraph":
         """Adds a node to select, rename, reorder, or drop columns.
 
@@ -1735,6 +1723,7 @@ class FlowGraph:
                 self._output_cols.append(column)
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_output(self, output_file: input_schema.NodeOutput):
         """Adds an output node to write the final data to a destination.
 
@@ -1768,6 +1757,7 @@ class FlowGraph:
             input_node_ids=[input_node_id],
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_writer(self, node_database_writer: input_schema.NodeDatabaseWriter):
         """Adds a node to write data to a database.
 
@@ -1829,6 +1819,7 @@ class FlowGraph:
         )
         node = self.get_node(node_database_writer.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_database_reader(self, node_database_reader: input_schema.NodeDatabaseReader):
         """Adds a node to read data from a database.
 
@@ -1931,6 +1922,7 @@ class FlowGraph:
         logger.info("Adding sql source")
         self.add_external_source(external_source_input)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_writer(self, node_cloud_storage_writer: input_schema.NodeCloudStorageWriter) -> None:
         """Adds a node to write data to a cloud storage provider.
 
@@ -1993,6 +1985,7 @@ class FlowGraph:
 
         node = self.get_node(node_cloud_storage_writer.node_id)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_cloud_storage_reader(self, node_cloud_storage_reader: input_schema.NodeCloudStorageReader) -> None:
         """Adds a cloud storage read node to the flow graph.
 
@@ -2026,6 +2019,7 @@ class FlowGraph:
         )
         self.add_node_to_starting_list(node)
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_external_source(self, external_source_input: input_schema.NodeExternalSource):
         """Adds a node for a custom external data source.
 
@@ -2098,6 +2092,7 @@ class FlowGraph:
             setting_input=external_source_input,
         )
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_read(self, input_file: input_schema.NodeRead):
         """Adds a node to read data from a local file (e.g., CSV, Parquet, Excel).
 
@@ -2185,6 +2180,7 @@ class FlowGraph:
             node.user_provided_schema_callback = schema_callback
         return self
 
+    @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
     def add_datasource(self, input_file: input_schema.NodeDatasource | input_schema.NodeManualInput) -> "FlowGraph":
         """Adds a data source node to the graph.
 

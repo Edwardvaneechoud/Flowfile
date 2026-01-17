@@ -21,7 +21,6 @@ from polars_expr_transformer.function_overview import get_all_expressions, get_e
 from sqlalchemy.orm import Session
 
 from flowfile_core import flow_file_handler
-from flowfile_core.flowfile.flow_graph import add_generic_settings_executor
 
 # Core modules
 from flowfile_core.auth.jwt import get_current_active_user
@@ -662,9 +661,8 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     if parsed_input is None:
         raise HTTPException(404, 'could not find the interface')
     try:
-
-        add_generic_settings_executor(flow=flow, add_func=add_func, parsed_input=parsed_input,
-                                      node_type=node_type, node_id=node_id)
+        # History capture is handled by the decorator on each add_* method
+        add_func(parsed_input)
     except Exception as e:
         logger.error(e)
         raise HTTPException(419, str(f'error: {e}'))
