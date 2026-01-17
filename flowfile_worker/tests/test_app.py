@@ -258,17 +258,18 @@ def test_store_sql_result(pw):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_database(pw):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    # Use raw bytes - Pydantic model handles JSON serialization with single base64 encoding
-    database_script_write = models.DatabaseScriptWrite(
-        connection={'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
-                    'database': 'testdb', 'database_type': 'postgresql', 'url': None},
-        table_name='public.test_output',
-        if_exists='replace',
-        flowfile_flow_id=1,
-        flowfile_node_id=-1,
-        operation=lf.serialize()
-    )
-    v = client.post('/store_database_write_result/', data=database_script_write.model_dump_json())
+    # Use raw bytes - Base64Bytes will encode to base64 string for JSON
+    from base64 import b64encode
+    settings_data = {
+        'connection': {'username': 'testuser', 'password': pw, 'host': 'localhost', 'port': 5433,
+                       'database': 'testdb', 'database_type': 'postgresql', 'url': None},
+        'table_name': 'public.test_output',
+        'if_exists': 'replace',
+        'flowfile_flow_id': 1,
+        'flowfile_node_id': -1,
+        'operation': b64encode(lf.serialize()).decode('ascii')  # Base64 string for JSON
+    }
+    v = client.post('/store_database_write_result/', json=settings_data)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status = models.Status.model_validate(v.json())
@@ -284,7 +285,8 @@ def test_store_in_database(pw):
 @pytest.mark.skipif(not is_docker_available(), reason="Docker is not available or not running")
 def test_store_in_cloud_storage(cloud_storage_connection_settings):
     lf = pl.LazyFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
-    # Use raw bytes - Pydantic model handles JSON serialization with single base64 encoding
+    # Create model and serialize manually to preserve SecretStr values
+    from base64 import b64encode
     cloud_write_settings = models.CloudStorageScriptWrite(
         connection=cloud_storage_connection_settings,
         write_settings=WriteSettings(
@@ -295,8 +297,15 @@ def test_store_in_cloud_storage(cloud_storage_connection_settings):
         ),
         operation=lf.serialize()
     )
-    # Use model_dump_json() for proper serialization with base64 for bytes
-    v = client.post('/write_data_to_cloud/', data=cloud_write_settings.model_dump_json())
+    # Use model_dump and manually handle SecretStr to preserve secret values
+    settings_data = cloud_write_settings.model_dump()
+    settings_data["connection"]["aws_secret_access_key"] = (
+        settings_data["connection"]["aws_secret_access_key"].get_secret_value()
+        if hasattr(settings_data["connection"]["aws_secret_access_key"], 'get_secret_value')
+        else settings_data["connection"]["aws_secret_access_key"]
+    )
+    settings_data["operation"] = b64encode(settings_data["operation"]).decode('ascii')
+    v = client.post('/write_data_to_cloud/', json=settings_data)
     assert v.status_code == 200, v.text
     assert models.Status.model_validate(v.json()), 'Error with parsing the response to Status'
     status: models.Status = models.Status.model_validate(v.json())
