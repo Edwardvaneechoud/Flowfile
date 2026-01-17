@@ -69,6 +69,7 @@ from flowfile_core.schemas.cloud_storage_schemas import (
 )
 from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformation
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
 
@@ -299,6 +300,11 @@ class FlowGraph:
         self.cache_results = cache_results
         self.__name__ = name if name else "flow_" + str(id(self))
         self.depends_on = {}
+
+        # Initialize history manager for undo/redo support
+        from flowfile_core.flowfile.history_manager import HistoryManager
+        self._history_manager = HistoryManager()
+
         if path_ref is not None:
             self.add_datasource(input_schema.NodeDatasource(file_path=path_ref))
         elif input_flow is not None:
@@ -315,6 +321,183 @@ class FlowGraph:
         ):
             self.reset()
         self._flow_settings = flow_settings
+
+    # ==================== History Management Methods ====================
+
+    def capture_history_snapshot(
+        self,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int = None,
+    ) -> bool:
+        """Capture the current state before a change for undo support.
+
+        Args:
+            action_type: The type of action being performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            True if snapshot was captured, False if skipped.
+        """
+        return self._history_manager.capture_snapshot(self, action_type, description, node_id)
+
+    def capture_history_if_changed(
+        self,
+        pre_snapshot: schemas.FlowfileData,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: int = None,
+    ) -> bool:
+        """Capture history only if the flow state actually changed.
+
+        Use this for settings updates where the change might be a no-op.
+        Call this AFTER the change is applied.
+
+        Args:
+            pre_snapshot: The FlowfileData captured BEFORE the change.
+            action_type: The type of action that was performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            True if a change was detected and snapshot was captured.
+        """
+        return self._history_manager.capture_if_changed(
+            self, pre_snapshot, action_type, description, node_id
+        )
+
+    def undo(self) -> UndoRedoResult:
+        """Undo the last action by restoring to the previous state.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        return self._history_manager.undo(self)
+
+    def redo(self) -> UndoRedoResult:
+        """Redo the last undone action.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        return self._history_manager.redo(self)
+
+    def get_history_state(self) -> HistoryState:
+        """Get the current state of the history system.
+
+        Returns:
+            HistoryState with information about available undo/redo operations.
+        """
+        return self._history_manager.get_state()
+
+    def restore_from_snapshot(self, snapshot: schemas.FlowfileData) -> None:
+        """Clear current state and rebuild from a snapshot.
+
+        This method is used internally by undo/redo to restore a previous state.
+
+        Args:
+            snapshot: The FlowfileData snapshot to restore from.
+        """
+        from flowfile_core.flowfile.manage.io_flowfile import (
+            _flowfile_data_to_flow_information,
+            determine_insertion_order,
+        )
+
+        # Preserve the current flow_id
+        original_flow_id = self._flow_id
+
+        # Convert snapshot to FlowInformation
+        flow_info = _flowfile_data_to_flow_information(snapshot)
+
+        # Clear current state
+        self._node_db.clear()
+        self._node_ids.clear()
+        self._flow_starts.clear()
+        self._results = None
+
+        # Restore flow settings (preserve original flow_id)
+        self._flow_settings = flow_info.flow_settings
+        self._flow_settings.flow_id = original_flow_id
+        self._flow_id = original_flow_id
+        self.__name__ = flow_info.flow_name or self.__name__
+
+        # Determine node insertion order
+        ingestion_order = determine_insertion_order(flow_info)
+
+        # First pass: Create all nodes as promises
+        for node_id in ingestion_order:
+            node_info = flow_info.data[node_id]
+            node_promise = input_schema.NodePromise(
+                flow_id=original_flow_id,
+                node_id=node_info.id,
+                pos_x=node_info.x_position or 0,
+                pos_y=node_info.y_position or 0,
+                node_type=node_info.type,
+            )
+            if hasattr(node_info.setting_input, "cache_results"):
+                node_promise.cache_results = node_info.setting_input.cache_results
+            self.add_node_promise(node_promise)
+
+        # Second pass: Apply settings using add_<node_type> methods
+        for node_id in ingestion_order:
+            node_info = flow_info.data[node_id]
+            if node_info.is_setup and node_info.setting_input is not None:
+                # Update flow_id in setting_input
+                if hasattr(node_info.setting_input, "flow_id"):
+                    node_info.setting_input.flow_id = original_flow_id
+
+                if hasattr(node_info.setting_input, "is_user_defined") and node_info.setting_input.is_user_defined:
+                    if node_info.type in CUSTOM_NODE_STORE:
+                        user_defined_node_class = CUSTOM_NODE_STORE[node_info.type]
+                        self.add_user_defined_node(
+                            custom_node=user_defined_node_class.from_settings(node_info.setting_input.settings),
+                            user_defined_node_settings=node_info.setting_input,
+                        )
+                else:
+                    add_method = getattr(self, "add_" + node_info.type, None)
+                    if add_method:
+                        add_method(node_info.setting_input)
+
+        # Third pass: Restore connections
+        for node_id in ingestion_order:
+            node_info = flow_info.data[node_id]
+            from_node = self.get_node(node_id)
+            if from_node is None:
+                continue
+
+            for output_node_id in node_info.outputs or []:
+                to_node = self.get_node(output_node_id)
+                if to_node is None:
+                    continue
+
+                output_node_info = flow_info.data.get(output_node_id)
+                if output_node_info is None:
+                    continue
+
+                # Determine connection type
+                is_left_input = (output_node_info.left_input_id == node_id) and (
+                    to_node.left_input is None or to_node.left_input.node_id != node_id
+                )
+                is_right_input = (output_node_info.right_input_id == node_id) and (
+                    to_node.right_input is None or to_node.right_input.node_id != node_id
+                )
+                is_main_input = node_id in (output_node_info.input_ids or [])
+
+                if is_left_input:
+                    insert_type = "left"
+                elif is_right_input:
+                    insert_type = "right"
+                elif is_main_input:
+                    insert_type = "main"
+                else:
+                    continue
+
+                to_node.add_node_connection(from_node, insert_type)
+
+        logger.info(f"Restored flow from snapshot with {len(self._node_db)} nodes")
+
+    # ==================== End History Management Methods ====================
 
     def add_node_to_starting_list(self, node: FlowNode) -> None:
         """Adds a node to the list of starting nodes for the flow if not already present.

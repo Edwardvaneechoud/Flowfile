@@ -1,0 +1,366 @@
+"""
+History Manager for undo/redo functionality in flow graphs.
+
+This module provides the HistoryManager class which manages undo/redo stacks
+and enables users to revert or reapply changes to their flow graphs.
+"""
+
+from collections import deque
+from time import time
+from typing import TYPE_CHECKING, Optional
+
+from flowfile_core.configs import logger
+from flowfile_core.schemas.history_schema import (
+    HistoryActionType,
+    HistoryConfig,
+    HistoryEntry,
+    HistoryState,
+    UndoRedoResult,
+)
+from flowfile_core.schemas.schemas import FlowfileData
+
+if TYPE_CHECKING:
+    from flowfile_core.flowfile.flow_graph import FlowGraph
+
+
+class HistoryManager:
+    """Manages undo/redo history for a FlowGraph.
+
+    Uses two deques (undo_stack and redo_stack) to track state changes.
+    Snapshots are captured BEFORE changes occur, so undo restores to that state.
+    """
+
+    def __init__(self, config: Optional[HistoryConfig] = None):
+        """Initialize the HistoryManager.
+
+        Args:
+            config: Optional configuration for history behavior.
+        """
+        self._config = config or HistoryConfig()
+        self._undo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
+        self._redo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
+        self._is_restoring: bool = False
+        self._last_snapshot_hash: Optional[str] = None
+
+    @property
+    def config(self) -> HistoryConfig:
+        """Get the history configuration."""
+        return self._config
+
+    @config.setter
+    def config(self, config: HistoryConfig):
+        """Set the history configuration.
+
+        Note: Changing max_stack_size won't resize existing stacks.
+        """
+        self._config = config
+
+    def _get_snapshot_hash(self, snapshot_dict: dict) -> str:
+        """Generate a hash string for snapshot comparison.
+
+        Uses a simplified comparison approach based on node count,
+        node IDs, and settings to detect meaningful changes.
+        """
+        import hashlib
+        import json
+
+        # Create a deterministic string representation
+        # Sort nodes by ID for consistent ordering
+        nodes = snapshot_dict.get("nodes", [])
+        sorted_nodes = sorted(nodes, key=lambda n: n.get("id", 0))
+
+        # Create a simplified representation for hashing
+        hash_data = {
+            "flowfile_id": snapshot_dict.get("flowfile_id"),
+            "flowfile_settings": snapshot_dict.get("flowfile_settings"),
+            "nodes": sorted_nodes,
+        }
+
+        hash_str = json.dumps(hash_data, sort_keys=True, default=str)
+        return hashlib.md5(hash_str.encode()).hexdigest()
+
+    def _snapshots_equal(self, snapshot1: dict, snapshot2: dict) -> bool:
+        """Compare two snapshots for equality.
+
+        Args:
+            snapshot1: First snapshot dictionary.
+            snapshot2: Second snapshot dictionary.
+
+        Returns:
+            True if the snapshots are functionally equivalent.
+        """
+        return self._get_snapshot_hash(snapshot1) == self._get_snapshot_hash(snapshot2)
+
+    def capture_snapshot(
+        self,
+        flow_graph: "FlowGraph",
+        action_type: HistoryActionType,
+        description: str,
+        node_id: Optional[int] = None,
+    ) -> bool:
+        """Capture the current state of the flow graph BEFORE a change.
+
+        Args:
+            flow_graph: The FlowGraph to capture.
+            action_type: The type of action being performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            True if snapshot was captured, False if skipped (disabled or restoring).
+        """
+        if not self._config.enabled:
+            return False
+
+        if self._is_restoring:
+            return False
+
+        try:
+            # Get the current state as FlowfileData
+            flowfile_data = flow_graph.get_flowfile_data()
+            snapshot_dict = flowfile_data.model_dump()
+
+            # Check if this snapshot is different from the last one
+            current_hash = self._get_snapshot_hash(snapshot_dict)
+            if self._last_snapshot_hash == current_hash:
+                logger.debug(f"Skipping duplicate snapshot for action: {description}")
+                return False
+
+            # Create the history entry
+            entry = HistoryEntry(
+                snapshot=snapshot_dict,
+                action_type=action_type,
+                description=description,
+                timestamp=time(),
+                node_id=node_id,
+            )
+
+            # Add to undo stack
+            self._undo_stack.append(entry)
+            self._last_snapshot_hash = current_hash
+
+            # Clear redo stack when new action is performed
+            self._redo_stack.clear()
+
+            logger.debug(f"Captured history snapshot: {description}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to capture history snapshot: {e}")
+            return False
+
+    def capture_if_changed(
+        self,
+        flow_graph: "FlowGraph",
+        pre_snapshot: FlowfileData,
+        action_type: HistoryActionType,
+        description: str,
+        node_id: Optional[int] = None,
+    ) -> bool:
+        """Capture history only if the flow state actually changed.
+
+        Use this for settings updates where the change might be a no-op.
+        Call this AFTER the change is applied.
+
+        Args:
+            flow_graph: The FlowGraph after the change.
+            pre_snapshot: The FlowfileData captured BEFORE the change.
+            action_type: The type of action that was performed.
+            description: Human-readable description of the action.
+            node_id: Optional ID of the affected node.
+
+        Returns:
+            True if a change was detected and snapshot was captured.
+        """
+        if not self._config.enabled:
+            return False
+
+        if self._is_restoring:
+            return False
+
+        try:
+            # Get the current (post-change) state
+            current_snapshot = flow_graph.get_flowfile_data()
+            current_dict = current_snapshot.model_dump()
+            pre_dict = pre_snapshot.model_dump()
+
+            # Compare to see if anything actually changed
+            if self._snapshots_equal(pre_dict, current_dict):
+                logger.debug(f"No change detected for action: {description}")
+                return False
+
+            # State changed - capture the BEFORE state
+            entry = HistoryEntry(
+                snapshot=pre_dict,
+                action_type=action_type,
+                description=description,
+                timestamp=time(),
+                node_id=node_id,
+            )
+
+            # Add to undo stack
+            self._undo_stack.append(entry)
+            self._last_snapshot_hash = self._get_snapshot_hash(current_dict)
+
+            # Clear redo stack when new action is performed
+            self._redo_stack.clear()
+
+            logger.debug(f"Captured history snapshot after change detection: {description}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to capture history snapshot: {e}")
+            return False
+
+    def undo(self, flow_graph: "FlowGraph") -> UndoRedoResult:
+        """Undo the last action by restoring to the previous state.
+
+        Args:
+            flow_graph: The FlowGraph to restore.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        if not self._undo_stack:
+            return UndoRedoResult(
+                success=False,
+                error_message="Nothing to undo",
+            )
+
+        try:
+            # Set flag to prevent capturing during restore
+            self._is_restoring = True
+
+            # Get the entry to restore from
+            entry = self._undo_stack.pop()
+
+            # Save current state to redo stack BEFORE restoring
+            current_snapshot = flow_graph.get_flowfile_data()
+            redo_entry = HistoryEntry(
+                snapshot=current_snapshot.model_dump(),
+                action_type=entry.action_type,
+                description=entry.description,
+                timestamp=time(),
+                node_id=entry.node_id,
+            )
+            self._redo_stack.append(redo_entry)
+
+            # Restore the flow graph from the snapshot
+            snapshot_data = FlowfileData.model_validate(entry.snapshot)
+            flow_graph.restore_from_snapshot(snapshot_data)
+
+            # Update last snapshot hash
+            self._last_snapshot_hash = self._get_snapshot_hash(entry.snapshot)
+
+            logger.info(f"Undo successful: {entry.description}")
+            return UndoRedoResult(
+                success=True,
+                action_description=entry.description,
+            )
+
+        except Exception as e:
+            logger.error(f"Undo failed: {e}")
+            return UndoRedoResult(
+                success=False,
+                error_message=str(e),
+            )
+
+        finally:
+            self._is_restoring = False
+
+    def redo(self, flow_graph: "FlowGraph") -> UndoRedoResult:
+        """Redo the last undone action.
+
+        Args:
+            flow_graph: The FlowGraph to restore.
+
+        Returns:
+            UndoRedoResult indicating success or failure.
+        """
+        if not self._redo_stack:
+            return UndoRedoResult(
+                success=False,
+                error_message="Nothing to redo",
+            )
+
+        try:
+            # Set flag to prevent capturing during restore
+            self._is_restoring = True
+
+            # Get the entry to restore from
+            entry = self._redo_stack.pop()
+
+            # Save current state to undo stack BEFORE restoring
+            current_snapshot = flow_graph.get_flowfile_data()
+            undo_entry = HistoryEntry(
+                snapshot=current_snapshot.model_dump(),
+                action_type=entry.action_type,
+                description=entry.description,
+                timestamp=time(),
+                node_id=entry.node_id,
+            )
+            self._undo_stack.append(undo_entry)
+
+            # Restore the flow graph from the snapshot
+            snapshot_data = FlowfileData.model_validate(entry.snapshot)
+            flow_graph.restore_from_snapshot(snapshot_data)
+
+            # Update last snapshot hash
+            self._last_snapshot_hash = self._get_snapshot_hash(entry.snapshot)
+
+            logger.info(f"Redo successful: {entry.description}")
+            return UndoRedoResult(
+                success=True,
+                action_description=entry.description,
+            )
+
+        except Exception as e:
+            logger.error(f"Redo failed: {e}")
+            return UndoRedoResult(
+                success=False,
+                error_message=str(e),
+            )
+
+        finally:
+            self._is_restoring = False
+
+    def get_state(self) -> HistoryState:
+        """Get the current state of the history system.
+
+        Returns:
+            HistoryState with information about available undo/redo operations.
+        """
+        can_undo = len(self._undo_stack) > 0
+        can_redo = len(self._redo_stack) > 0
+
+        undo_description = None
+        if can_undo:
+            undo_description = self._undo_stack[-1].description
+
+        redo_description = None
+        if can_redo:
+            redo_description = self._redo_stack[-1].description
+
+        return HistoryState(
+            can_undo=can_undo,
+            can_redo=can_redo,
+            undo_description=undo_description,
+            redo_description=redo_description,
+            undo_count=len(self._undo_stack),
+            redo_count=len(self._redo_stack),
+        )
+
+    def clear(self) -> None:
+        """Clear all history entries."""
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._last_snapshot_hash = None
+        logger.debug("History cleared")
+
+    def is_restoring(self) -> bool:
+        """Check if a restore operation is currently in progress.
+
+        Returns:
+            True if undo/redo is in progress.
+        """
+        return self._is_restoring
