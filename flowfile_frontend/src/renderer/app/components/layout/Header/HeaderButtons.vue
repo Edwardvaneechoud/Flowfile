@@ -1,22 +1,5 @@
 <template>
   <div class="action-buttons">
-    <button
-      class="action-btn icon-only"
-      :disabled="!historyState.can_undo"
-      :title="historyState.undo_description ? `Undo: ${historyState.undo_description} (Ctrl+Z)` : 'Nothing to undo'"
-      @click="handleUndo"
-    >
-      <span class="material-icons btn-icon">undo</span>
-    </button>
-    <button
-      class="action-btn icon-only"
-      :disabled="!historyState.can_redo"
-      :title="historyState.redo_description ? `Redo: ${historyState.redo_description} (Ctrl+Shift+Z)` : 'Nothing to redo'"
-      @click="handleRedo"
-    >
-      <span class="material-icons btn-icon">redo</span>
-    </button>
-    <div class="button-separator"></div>
     <button class="action-btn" data-tutorial="save-btn" @click="openSaveModal">
       <span class="material-icons btn-icon">save</span>
       <span class="btn-text">Save</span>
@@ -151,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, watch } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { ElMessage } from "element-plus";
 
 import { saveFlow } from "./utils";
@@ -162,8 +145,6 @@ import { FLOWFILE_EXTENSIONS, ALLOWED_SAVE_EXTENSIONS } from "../../common/FileB
 import { useNodeStore } from "../../../stores/column-store";
 import { useEditorStore } from "../../../stores/editor-store";
 import { useTutorialStore } from "../../../stores/tutorial-store";
-import { FlowApi } from "../../../api";
-import type { HistoryState } from "../../../types";
 import {
   createFlow,
   getFlowSettings,
@@ -183,16 +164,6 @@ const modalVisibleForSave = ref(false);
 const modalVisibleForCreate = ref(false);
 const modalVisibleForQuickCreate = ref(false);
 const modalVisibleForSettings = ref(false);
-
-// History state for undo/redo buttons
-const historyState = reactive<HistoryState>({
-  can_undo: false,
-  can_redo: false,
-  undo_description: null,
-  redo_description: null,
-  undo_count: 0,
-  redo_count: 0,
-});
 
 const flowSettings = ref<FlowSettings | null>(null);
 const savePath = ref<string | undefined>(undefined);
@@ -359,84 +330,6 @@ const toggleCodeGenerator = () => {
   }
 };
 
-// ============================================================================
-// Undo/Redo Functions
-// ============================================================================
-
-const refreshHistoryState = async () => {
-  if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
-
-  try {
-    const state = await FlowApi.getHistoryStatus(nodeStore.flow_id);
-    Object.assign(historyState, state);
-  } catch (error) {
-    // Reset to default if error
-    Object.assign(historyState, {
-      can_undo: false,
-      can_redo: false,
-      undo_description: null,
-      redo_description: null,
-      undo_count: 0,
-      redo_count: 0,
-    });
-  }
-};
-
-const handleUndo = async () => {
-  if (!historyState.can_undo || !nodeStore.flow_id) return;
-
-  try {
-    const result = await FlowApi.undo(nodeStore.flow_id);
-    if (result.success) {
-      emit("refreshFlow");
-      await refreshHistoryState();
-    } else if (result.error_message) {
-      ElMessage.warning(result.error_message);
-    }
-  } catch (error: any) {
-    ElMessage.error(error.message || "Failed to undo");
-  }
-};
-
-const handleRedo = async () => {
-  if (!historyState.can_redo || !nodeStore.flow_id) return;
-
-  try {
-    const result = await FlowApi.redo(nodeStore.flow_id);
-    if (result.success) {
-      emit("refreshFlow");
-      await refreshHistoryState();
-    } else if (result.error_message) {
-      ElMessage.warning(result.error_message);
-    }
-  } catch (error: any) {
-    ElMessage.error(error.message || "Failed to redo");
-  }
-};
-
-// Keyboard shortcut handler
-const handleKeyDown = (event: KeyboardEvent) => {
-  // Check for Ctrl+Z (Windows/Linux) or Cmd+Z (Mac)
-  const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-  const ctrlOrCmd = isMac ? event.metaKey : event.ctrlKey;
-
-  if (ctrlOrCmd && event.key.toLowerCase() === "z") {
-    if (event.shiftKey) {
-      // Ctrl+Shift+Z or Cmd+Shift+Z = Redo
-      event.preventDefault();
-      handleRedo();
-    } else {
-      // Ctrl+Z or Cmd+Z = Undo
-      event.preventDefault();
-      handleUndo();
-    }
-  } else if (ctrlOrCmd && event.key.toLowerCase() === "y") {
-    // Ctrl+Y = Redo (Windows convention)
-    event.preventDefault();
-    handleRedo();
-  }
-};
-
 const handleCreateAction = async (flowPath: string) => {
   if (!isValidSaveExtension(flowPath)) {
     ElMessage.error({
@@ -480,7 +373,6 @@ watch(
   async (newId, oldId) => {
     if (newId !== oldId && newId > 0) {
       await loadFlowSettings();
-      await refreshHistoryState();
     }
   },
 );
@@ -492,24 +384,12 @@ defineExpose({
   openOpenDialog: () => (modalVisibleForOpen.value = true),
   openSaveModal: () => (modalVisibleForSave.value = true),
   runFlow,
-  refreshHistoryState,
-  handleUndo,
-  handleRedo,
 });
 
 onMounted(async () => {
-  // Add keyboard shortcut listener
-  window.addEventListener("keydown", handleKeyDown);
-
   if (nodeStore.flow_id && nodeStore.flow_id > 0) {
     await loadFlowSettings();
-    await refreshHistoryState();
   }
-});
-
-onUnmounted(() => {
-  // Remove keyboard shortcut listener
-  window.removeEventListener("keydown", handleKeyDown);
 });
 </script>
 
@@ -548,28 +428,6 @@ onUnmounted(() => {
 .action-btn:active {
   transform: translateY(1px);
   box-shadow: none;
-}
-
-.action-btn.icon-only {
-  padding: var(--spacing-2);
-  min-width: 34px;
-}
-
-.action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.action-btn:disabled:hover {
-  background-color: var(--color-background-primary);
-  border-color: var(--color-border-light);
-}
-
-.button-separator {
-  width: 1px;
-  height: 20px;
-  background-color: var(--color-border-light);
-  margin: 0 var(--spacing-1);
 }
 
 .action-btn.active {

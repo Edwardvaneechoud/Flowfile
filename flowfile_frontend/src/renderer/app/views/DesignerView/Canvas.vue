@@ -31,6 +31,7 @@ import DataPreview from "../../features/designer/dataPreview.vue";
 import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
+import UndoRedoControls from "./UndoRedoControls.vue";
 import { NodeCopyInput, NodeCopyValue, MultiNodeCopyValue, EdgeCopyValue, ContextMenuAction, CursorPosition } from "./types";
 import { applyStandardLayout } from "./editorLayoutInterface";
 
@@ -57,6 +58,7 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
+const undoRedoControls = ref<InstanceType<typeof UndoRedoControls> | null>(null);
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -500,6 +502,7 @@ defineExpose({
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />
+      <UndoRedoControls ref="undoRedoControls" @refresh-flow="loadFlow" />
     </main>
     <draggable-item
       id="dataActions"
