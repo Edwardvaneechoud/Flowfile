@@ -131,6 +131,8 @@ const loadFlow = async () => {
   const vueFlowInput = await getFlowData(nodeStore.flow_id);
   await nextTick();
   await importFlow(vueFlowInput);
+  await nextTick();
+  restoreViewport();
 };
 
 const selectNodeExternally = (nodeId: number) => {
@@ -448,6 +450,32 @@ const handleSelectionEnd = () => {
   document.body.style.userSelect = "";
 };
 
+// Viewport persistence helpers
+const getViewportStorageKey = (flowId: number) => `flowfile_viewport_${flowId}`;
+
+const saveViewport = () => {
+  const viewport = instance.getViewport();
+  const key = getViewportStorageKey(nodeStore.flow_id);
+  sessionStorage.setItem(key, JSON.stringify(viewport));
+};
+
+const restoreViewport = () => {
+  const key = getViewportStorageKey(nodeStore.flow_id);
+  const saved = sessionStorage.getItem(key);
+  if (saved) {
+    try {
+      const viewport = JSON.parse(saved);
+      instance.setViewport(viewport);
+    } catch (e) {
+      console.error("Failed to restore viewport:", e);
+    }
+  }
+};
+
+const handleMoveEnd = () => {
+  saveViewport();
+};
+
 onMounted(async () => {
   availableHeight.value = window.innerHeight - 50;
   tablePreviewHeight.value = availableHeight.value * 0.25; // 30% of the available height
@@ -488,6 +516,7 @@ defineExpose({
         @click="closeContextMenu"
         @selection-start="handleSelectionStart"
         @selection-end="handleSelectionEnd"
+        @move-end="handleMoveEnd"
       >
         <MiniMap />
       </VueFlow>
