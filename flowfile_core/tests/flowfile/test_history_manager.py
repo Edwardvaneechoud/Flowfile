@@ -11,7 +11,7 @@ from time import sleep
 from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.history_manager import HistoryManager
-from flowfile_core.schemas import input_schema, schemas
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 from flowfile_core.schemas.history_schema import (
     CompressedSnapshot,
     HistoryActionType,
@@ -93,15 +93,13 @@ def add_filter_node(graph: FlowGraph, node_id: int, input_node_id: int):
         flow_id=graph.flow_id,
         node_id=node_id,
         depending_on_id=input_node_id,
-        filter_input=input_schema.FilterInput(
-            filters=[
-                input_schema.FilterSingleInput(
-                    column='name',
-                    filter_value='John',
-                    operator='equals'
-                )
-            ],
-            keep_filter_results=True
+        filter_input=transform_schema.FilterInput(
+            mode="basic",
+            basic_filter=transform_schema.BasicFilter(
+                field='name',
+                operator='equals',
+                value='John'
+            )
         )
     )
     graph.add_filter(filter_settings)
@@ -285,7 +283,17 @@ class TestCaptureSnapshot:
         flow_graph.undo()
         assert len(flow_graph._history_manager._redo_stack) > 0
 
-        # Capture new snapshot - should clear redo stack
+        # Add a DIFFERENT node (node 3) to change the state
+        # This is necessary because duplicate detection would skip capture
+        # if the state hasn't actually changed
+        node_promise3 = input_schema.NodePromise(
+            flow_id=flow_graph.flow_id,
+            node_id=3,
+            node_type='sample'
+        )
+        flow_graph.add_node_promise(node_promise3)
+
+        # Now capture new snapshot - should clear redo stack
         flow_graph.capture_history_snapshot(
             HistoryActionType.ADD_NODE,
             "New action",
