@@ -1,4 +1,5 @@
 import datetime
+import functools
 import json
 import os
 from collections.abc import Callable
@@ -89,11 +90,56 @@ def represent_list_json(dumper, data):
 yaml.add_representer(list, represent_list_json)
 
 
+def with_history_capture(action_type: "HistoryActionType", description_template: str = "Update {node_type} settings"):
+    """Decorator to automatically capture history for FlowGraph methods.
+
+    Wraps a method to capture state before execution and record history
+    only if the state actually changed. Respects the flow's track_history setting.
+
+    Args:
+        action_type: The type of history action (e.g., HistoryActionType.UPDATE_SETTINGS).
+        description_template: Template string for the history description.
+            Can use {node_type} placeholder which will be replaced with the actual node type.
+
+    Example:
+        @with_history_capture(HistoryActionType.UPDATE_SETTINGS)
+        def add_filter(self, filter_settings: input_schema.NodeFilter):
+            # ... implementation
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(self: "FlowGraph", settings_input, *args, **kwargs):
+            # Skip history capture if tracking is disabled
+            if not self.flow_settings.track_history:
+                return func(self, settings_input, *args, **kwargs)
+
+            # Extract node info from the settings input
+            node_id = getattr(settings_input, 'node_id', None)
+            node_type = getattr(settings_input, 'node_type', func.__name__.replace('add_', ''))
+
+            # Capture state before the operation
+            pre_snapshot = self.get_flowfile_data()
+
+            # Execute the actual method
+            result = func(self, settings_input, *args, **kwargs)
+
+            # Record history if state changed
+            self._history_manager.capture_if_changed(
+                self, pre_snapshot, action_type,
+                description_template.format(node_type=node_type),
+                node_id
+            )
+            return result
+        return wrapper
+    return decorator
+
+
 def add_generic_settings_executor(flow: "FlowGraph", add_func: Callable, parsed_input: any, node_type: str, node_id: int):
     """Execute a settings update with automatic history capture.
 
     This helper captures the state before applying settings, executes the
     update function, and records history only if the state actually changed.
+    Respects the flow's track_history setting.
 
     Args:
         flow: The FlowGraph instance to update.
@@ -102,6 +148,11 @@ def add_generic_settings_executor(flow: "FlowGraph", add_func: Callable, parsed_
         node_type: The type of node being updated (for history description).
         node_id: The ID of the node being updated.
     """
+    # Skip history capture if tracking is disabled
+    if not flow.flow_settings.track_history:
+        add_func(parsed_input)
+        return
+
     pre_snapshot = flow.get_flowfile_data()
 
     add_func(parsed_input)
