@@ -273,6 +273,24 @@ export const useFlowStore = defineStore('flow', () => {
     // Add all edges at once
     edges.value.push(...derivedEdges)
     console.log('[deriveEdgesFromNodes] Created edges:', derivedEdges.map(e => `${e.source}->${e.target}`))
+
+    // Sync node properties (leftInputId, rightInputId) from derived edges
+    // This ensures the node properties match what addEdge() would set
+    for (const edge of derivedEdges) {
+      const targetId = parseInt(edge.target)
+      const sourceId = parseInt(edge.source)
+      const targetNode = nodes.value.get(targetId)
+
+      if (targetNode) {
+        if (edge.targetHandle === 'input-0' || !edge.targetHandle) {
+          // input-0 is the default/left input - set leftInputId
+          targetNode.leftInputId = sourceId
+        } else if (edge.targetHandle === 'input-1') {
+          // input-1 is the right input (for join nodes)
+          targetNode.rightInputId = sourceId
+        }
+      }
+    }
   }
 
   // Save state to session storage using FlowfileData format (flowfile_core compatible)
