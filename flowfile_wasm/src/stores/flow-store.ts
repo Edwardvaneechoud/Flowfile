@@ -459,8 +459,11 @@ export const useFlowStore = defineStore('flow', () => {
 
   const getLeftInputSchema = (nodeId: number): ColumnSchema[] => {
     const node = nodes.value.get(nodeId)
-    if (!node?.leftInputId) return []
-    const result = nodeResults.value.get(node.leftInputId)
+    // Use leftInputId if set, otherwise fall back to inputIds[0] (main input)
+    // In flowfile_core, join nodes use main input as the left table
+    const leftId = node?.leftInputId ?? node?.inputIds[0]
+    if (!leftId) return []
+    const result = nodeResults.value.get(leftId)
     return result?.schema || []
   }
 
