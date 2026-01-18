@@ -24,6 +24,10 @@ import type {
 const STORAGE_KEY = 'flowfile_wasm_state'
 const STORAGE_VERSION = '2'  // Increment when storage format changes
 
+// Preview cache limits to prevent memory bloat
+const PREVIEW_CACHE_MAX_SIZE = 20  // Max number of cached previews in TypeScript
+const PREVIEW_CACHE_MAX_AGE_MS = 5 * 60 * 1000  // 5 minutes max age
+
 // Fields to exclude from setting_input when exporting (matches flowfile_core)
 const SETTING_INPUT_EXCLUDE = new Set([
   'flow_id',
@@ -660,13 +664,33 @@ export const useFlowStore = defineStore('flow', () => {
   }
 
   function selectNode(id: number | null) {
+    const previousId = selectedNodeId.value
+
+    // Clear preview data from previously selected node to free memory
+    // (keeps schema and success status, just removes the large data array)
+    if (previousId !== null && previousId !== id) {
+      const prevResult = nodeResults.value.get(previousId)
+      if (prevResult?.data) {
+        nodeResults.value.set(previousId, {
+          ...prevResult,
+          data: undefined  // Clear the large preview data
+        })
+      }
+      // Also clear from preview cache
+      previewCache.value.delete(previousId)
+    }
+
     selectedNodeId.value = id
 
     // Auto-fetch preview when selecting a node that has data
     if (id !== null) {
       const result = nodeResults.value.get(id)
       if (result?.success && !hasPreviewCached(id)) {
-        fetchNodePreview(id)
+        // Use more rows for explore_data nodes (Preview Settings)
+        // Limited to 1000 to prevent UI lag with large datasets
+        const node = nodes.value.get(id)
+        const maxRows = node?.type === 'explore_data' ? 1000 : 100
+        fetchNodePreview(id, { maxRows })
       }
     }
   }
@@ -716,6 +740,8 @@ current_node_ids = {${nodeIdList}} if ${currentNodeIds.size} > 0 else set()
 orphaned_ids = [nid for nid in list(_lazyframes.keys()) if nid not in current_node_ids]
 for nid in orphaned_ids:
     clear_node(nid)
+# Force garbage collection after cleanup
+gc.collect()
 `)
     }
   }
@@ -1054,6 +1080,33 @@ for nid in orphaned_ids:
   // =============================================================================
 
   /**
+   * Evict old entries from previewCache to prevent memory bloat.
+   * Uses LRU-style eviction: removes oldest entries first.
+   */
+  function evictPreviewCacheIfNeeded() {
+    const now = Date.now()
+    const entries = Array.from(previewCache.value.entries())
+
+    // First, evict expired entries
+    for (const [nodeId, entry] of entries) {
+      if (now - entry.timestamp > PREVIEW_CACHE_MAX_AGE_MS) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+
+    // Then, if still over limit, evict oldest entries
+    if (previewCache.value.size > PREVIEW_CACHE_MAX_SIZE) {
+      const sortedEntries = Array.from(previewCache.value.entries())
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+
+      const toEvict = sortedEntries.slice(0, previewCache.value.size - PREVIEW_CACHE_MAX_SIZE)
+      for (const [nodeId] of toEvict) {
+        previewCache.value.delete(nodeId)
+      }
+    }
+  }
+
+  /**
    * Build downstream dependency graph
    */
   function buildDownstreamGraph(): Record<number, number[]> {
@@ -1199,6 +1252,9 @@ result
           timestamp: Date.now(),
           loading: false
         })
+
+        // Evict old entries to prevent memory bloat
+        evictPreviewCacheIfNeeded()
 
         // Also update nodeResults with the preview data for display
         const existingResult = nodeResults.value.get(nodeId)
@@ -1547,9 +1603,16 @@ result
       if (selectedNodeId.value !== null) {
         const result = nodeResults.value.get(selectedNodeId.value)
         if (result?.success) {
-          await fetchNodePreview(selectedNodeId.value)
+          // Use more rows for explore_data nodes (Preview Settings)
+          // Limited to 1000 to prevent UI lag with large datasets
+          const node = nodes.value.get(selectedNodeId.value)
+          const maxRows = node?.type === 'explore_data' ? 1000 : 100
+          await fetchNodePreview(selectedNodeId.value, { maxRows })
         }
       }
+
+      // Force garbage collection after flow execution
+      await pyodideStore.runPython('gc.collect()')
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       executionError.value = errorMessage
