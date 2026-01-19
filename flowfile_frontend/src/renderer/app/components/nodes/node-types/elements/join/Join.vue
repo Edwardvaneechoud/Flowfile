@@ -41,7 +41,6 @@
                 />
                 <div class="action-buttons">
                   <button
-                    v-if="index !== (nodeJoin?.join_input.join_mapping.length ?? 0) - 1"
                     class="action-button remove-button"
                     @click="removeJoinCondition(index)"
                   >
@@ -194,7 +193,7 @@ defineExpose({
 
 /* Join Mapping Section */
 .table-wrapper {
-  border: 1px solid #eee;
+  border: 1px solid var(--color-border-primary);
   border-radius: 6px;
   overflow: hidden;
   margin: 5px;
@@ -204,15 +203,15 @@ defineExpose({
   display: flex;
   justify-content: space-between;
   padding: 8px 16px;
-  background-color: #fafafa;
-  border-bottom: 1px solid #eee;
+  background-color: var(--color-background-muted);
+  border-bottom: 1px solid var(--color-border-primary);
 }
 
 .selectors-title {
   flex: 1;
   text-align: center;
   font-size: 12px;
-  color: #666;
+  color: var(--color-text-secondary);
   font-weight: 500;
 }
 
@@ -253,7 +252,7 @@ defineExpose({
   width: 24px;
   height: 24px;
   border-radius: 4px;
-  border: 1px solid #ddd;
+  border: 1px solid var(--color-border-primary);
   background-color: var(--color-background-primary);
   display: flex;
   align-items: center;
@@ -262,24 +261,28 @@ defineExpose({
   transition: all 0.2s ease;
 }
 
-.add-join-button {
-  color: #45a049;
-  border-color: #45a049;
+.add-join-button,
+.add-button {
+  color: var(--color-success);
+  border-color: var(--color-success);
 }
 
-.add-join-button:hover {
-  background-color: #45a049;
-  color: #fff;
+.add-join-button:hover,
+.add-button:hover {
+  background-color: var(--color-success);
+  color: var(--color-text-inverse);
 }
 
-.remove-join-button {
-  color: #d32f2f;
-  border-color: #d32f2f;
+.remove-join-button,
+.remove-button {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
 }
 
-.remove-join-button:hover {
-  background-color: #d32f2f;
-  color: #fff;
+.remove-join-button:hover,
+.remove-button:hover {
+  background-color: var(--color-danger);
+  color: var(--color-text-inverse);
 }
 
 /* Custom scrollbar */
@@ -292,11 +295,11 @@ defineExpose({
 }
 
 .selectors-container::-webkit-scrollbar-thumb {
-  background-color: rgba(0, 0, 0, 0.1);
+  background-color: var(--color-border-primary);
   border-radius: 4px;
 }
 
 .selectors-container::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(0, 0, 0, 0.2);
+  background-color: var(--color-border-secondary);
 }
 </style>
