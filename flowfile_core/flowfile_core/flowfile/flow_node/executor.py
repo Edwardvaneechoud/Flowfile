@@ -124,6 +124,7 @@ class NodeExecutor:
         # Override for wide transforms when optimizing for downstream
         if (decision.should_run
             and decision.strategy == ExecutionStrategy.LOCAL_WITH_SAMPLING
+            and self.node.node_default
             and self.node.node_default.transform_type == "wide"
             and optimize_for_downstream
             and run_location != "local"):
@@ -214,7 +215,7 @@ class NodeExecutor:
             return ExecutionStrategy.REMOTE
 
         # Wide transforms benefit from full materialization
-        if self.node.node_default.transform_type == "wide":
+        if self.node.node_default and self.node.node_default.transform_type == "wide":
             return ExecutionStrategy.REMOTE
 
         # Default for remote location: local execution with sampling
