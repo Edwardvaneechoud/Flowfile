@@ -39,23 +39,17 @@ export const useEditorStore = defineStore("editor", {
   },
 
   actions: {
-    // ========== Drawer Management ==========
     async executeDrawCloseFunction() {
-      console.log("[EditorStore] executeDrawCloseFunction called, hasFunction:", !!this.drawCloseFunction);
       if (this.drawCloseFunction) {
-        console.log("[EditorStore] Calling drawCloseFunction");
         this.drawCloseFunction();
-        console.log("[EditorStore] drawCloseFunction completed");
       }
     },
 
     setCloseFunction(f: () => void): void {
-      console.log("[EditorStore] setCloseFunction called");
       this.drawCloseFunction = f;
     },
 
     clearCloseFunction(): void {
-      console.log("[EditorStore] clearCloseFunction called, hadFunction:", !!this.drawCloseFunction);
       this.drawCloseFunction = null;
     },
 

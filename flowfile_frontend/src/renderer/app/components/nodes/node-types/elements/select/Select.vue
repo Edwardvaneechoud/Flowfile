@@ -64,8 +64,6 @@ const loadNodeData = async (nodeId: number) => {
 };
 
 const pushNodeData = async () => {
-  console.log("[Select] pushNodeData called for node:", nodeStore.node_id);
-  console.log("[Select] Stack trace:", new Error().stack);
   nodeSelect.value.select_input.sort((a, b) => a.position - b.position);
   const originalData = nodeStore.getCurrentNodeData();
   const newColumnSettings = nodeSelect.value.select_input;
@@ -84,9 +82,7 @@ const pushNodeData = async () => {
       }
     });
   }
-  console.log("[Select] About to call updateSettings");
   await nodeStore.updateSettings(nodeSelect);
-  console.log("[Select] updateSettings completed");
 };
 const updateSelectInputsHandler = (updatedInputs: SelectInput[]) => {
   nodeSelect.value.select_input = updatedInputs;

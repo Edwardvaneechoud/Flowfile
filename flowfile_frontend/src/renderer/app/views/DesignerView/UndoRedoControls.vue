@@ -46,34 +46,21 @@ const fetchHistoryState = async () => {
   }
 };
 
-// Close any open panels WITHOUT saving to prevent auto-save during undo/redo
 const closeOpenPanelsWithoutSave = () => {
-  console.log("[UndoRedo] closeOpenPanelsWithoutSave - current nodeId:", nodeStore.nodeId);
-  // Clear the close function to prevent auto-save
   nodeStore.clearCloseFunction();
-  console.log("[UndoRedo] Cleared close function");
-  // Close the drawer by resetting node selection
   nodeStore.nodeId = -1;
   editorStore.activeDrawerComponent = null;
-  console.log("[UndoRedo] Set nodeId to -1 and cleared activeDrawerComponent");
 };
 
 const handleUndo = async () => {
   if (!flowStore.canUndo || !flowStore.flowId) return;
 
-  console.log("[UndoRedo] handleUndo started, canRedo before:", flowStore.canRedo);
   try {
-    // Close panels WITHOUT saving to prevent auto-save interference
     closeOpenPanelsWithoutSave();
-    console.log("[UndoRedo] Panels closed without save");
-
     const result = await FlowApi.undo(flowStore.flowId);
-    console.log("[UndoRedo] Undo API result:", result);
     if (result.success) {
       emit("refreshFlow");
-      // Fetch updated history state after undo
       await fetchHistoryState();
-      console.log("[UndoRedo] After undo - canUndo:", flowStore.canUndo, "canRedo:", flowStore.canRedo);
     }
   } catch (error: any) {
     console.error("Failed to undo:", error);
@@ -83,19 +70,12 @@ const handleUndo = async () => {
 const handleRedo = async () => {
   if (!flowStore.canRedo || !flowStore.flowId) return;
 
-  console.log("[UndoRedo] handleRedo started, canUndo before:", flowStore.canUndo);
   try {
-    // Close panels WITHOUT saving to prevent auto-save interference
     closeOpenPanelsWithoutSave();
-    console.log("[UndoRedo] Panels closed without save");
-
     const result = await FlowApi.redo(flowStore.flowId);
-    console.log("[UndoRedo] Redo API result:", result);
     if (result.success) {
       emit("refreshFlow");
-      // Fetch updated history state after redo
       await fetchHistoryState();
-      console.log("[UndoRedo] After redo - canUndo:", flowStore.canUndo, "canRedo:", flowStore.canRedo);
     }
   } catch (error: any) {
     console.error("Failed to redo:", error);
