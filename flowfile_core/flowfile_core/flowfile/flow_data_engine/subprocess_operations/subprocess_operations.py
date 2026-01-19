@@ -1,7 +1,7 @@
 # Standard library imports
 import io
 import threading
-from base64 import decodebytes, encodebytes
+from base64 import b64decode
 from time import sleep
 from typing import Any, Literal
 from uuid import uuid4
@@ -30,15 +30,15 @@ from flowfile_core.utils.arrow_reader import read
 def trigger_df_operation(
     flow_id: int, node_id: int | str, lf: pl.LazyFrame, file_ref: str, operation_type: OperationType = "store"
 ) -> Status:
-    encoded_operation = encodebytes(lf.serialize()).decode()
-    _json = {
-        "task_id": file_ref,
-        "operation": encoded_operation,
-        "operation_type": operation_type,
-        "flowfile_flow_id": flow_id,
-        "flowfile_node_id": node_id,
+    # Send raw bytes directly - no base64 encoding overhead
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Task-Id": file_ref,
+        "X-Operation-Type": operation_type,
+        "X-Flow-Id": str(flow_id),
+        "X-Node-Id": str(node_id),
     }
-    v = requests.post(url=f"{WORKER_URL}/submit_query/", json=_json)
+    v = requests.post(url=f"{WORKER_URL}/submit_query/", data=lf.serialize(), headers=headers)
     if not v.ok:
         raise Exception(f"trigger_df_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -47,16 +47,16 @@ def trigger_df_operation(
 def trigger_sample_operation(
     lf: pl.LazyFrame, file_ref: str, flow_id: int, node_id: str | int, sample_size: int = 100
 ) -> Status:
-    encoded_operation = encodebytes(lf.serialize()).decode()
-    _json = {
-        "task_id": file_ref,
-        "operation": encoded_operation,
-        "operation_type": "store_sample",
-        "sample_size": sample_size,
-        "flowfile_flow_id": flow_id,
-        "flowfile_node_id": node_id,
+    # Send raw bytes directly - no base64 encoding overhead
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "X-Task-Id": file_ref,
+        "X-Operation-Type": "store_sample",
+        "X-Sample-Size": str(sample_size),
+        "X-Flow-Id": str(flow_id),
+        "X-Node-Id": str(node_id),
     }
-    v = requests.post(url=f"{WORKER_URL}/store_sample/", json=_json)
+    v = requests.post(url=f"{WORKER_URL}/store_sample/", data=lf.serialize(), headers=headers)
     if not v.ok:
         raise Exception(f"trigger_sample_operation: Could not cache the data, {v.text}")
     return Status(**v.json())
@@ -70,8 +70,9 @@ def trigger_fuzzy_match_operation(
     flow_id: int,
     node_id: int | str,
 ) -> Status:
-    left_serializable_object = PolarsOperation(operation=encodebytes(left_df.serialize()))
-    right_serializable_object = PolarsOperation(operation=encodebytes(right_df.serialize()))
+    # Use raw bytes - Pydantic will handle single base64 encoding for JSON transport
+    left_serializable_object = PolarsOperation(operation=left_df.serialize())
+    right_serializable_object = PolarsOperation(operation=right_df.serialize())
     fuzzy_join_input = FuzzyJoinInput(
         left_df_operation=left_serializable_object,
         right_df_operation=right_serializable_object,
@@ -80,7 +81,6 @@ def trigger_fuzzy_match_operation(
         flowfile_flow_id=flow_id,
         flowfile_node_id=node_id,
     )
-    print("fuzzy join input", fuzzy_join_input)
     v = requests.post(f"{WORKER_URL}/add_fuzzy_join", data=fuzzy_join_input.model_dump_json())
     if not v.ok:
         raise Exception(f"trigger_fuzzy_match_operation: Could not cache the data, {v.text}")
@@ -181,9 +181,9 @@ def clear_task_from_worker(file_ref: str) -> bool:
         return False
 
 
-def get_df_result(encoded_df: str) -> pl.LazyFrame:
-    r = decodebytes(encoded_df.encode())
-    return pl.LazyFrame.deserialize(io.BytesIO(r))
+def get_df_result(result_b64: str) -> pl.LazyFrame:
+    # Results are base64-encoded string from JSON response, decode once
+    return pl.LazyFrame.deserialize(io.BytesIO(b64decode(result_b64)))
 
 
 def get_external_df_result(file_ref: str) -> pl.LazyFrame | None:
