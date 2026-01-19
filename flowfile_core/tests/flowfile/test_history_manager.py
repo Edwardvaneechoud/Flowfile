@@ -866,3 +866,253 @@ class TestHistoryWithSettingsUpdates:
         # History should not have changed
         assert result is False
         assert len(flow_graph._history_manager._undo_stack) == initial_count
+
+
+# ==================== Select Node Redo Tests ====================
+
+
+def add_select_node(graph: FlowGraph, node_id: int, input_node_id: int, select_columns: list[str] = None):
+    """Add a select node to the graph.
+
+    Args:
+        graph: The FlowGraph to add the node to.
+        node_id: The ID for the select node.
+        input_node_id: The ID of the input node to connect to.
+        select_columns: List of column names to select. If None, uses default ['name'].
+    """
+    node_promise = input_schema.NodePromise(
+        flow_id=graph.flow_id,
+        node_id=node_id,
+        node_type='select'
+    )
+    graph.add_node_promise(node_promise)
+
+    # Create select input for each column
+    if select_columns is None:
+        select_columns = ['name']
+
+    select_input = [
+        transform_schema.SelectInput(old_name=col, keep=True)
+        for col in select_columns
+    ]
+
+    select_settings = input_schema.NodeSelect(
+        flow_id=graph.flow_id,
+        node_id=node_id,
+        depending_on_id=input_node_id,
+        select_input=select_input,
+    )
+    graph.add_select(select_settings)
+    return graph
+
+
+class TestSelectNodeRedo:
+    """Tests for redo functionality with select nodes."""
+
+    def test_redo_after_select_settings_update(self, flow_graph_no_auto_history, sample_data):
+        """Test that redo works correctly after updating select node settings.
+
+        This test verifies the fix for the bug where redo doesn't work for select tool:
+        1. Add a select node with initial settings
+        2. Update the settings (change column selection)
+        3. Undo the settings change
+        4. Redo the settings change - should restore the updated settings
+        """
+        # Step 1: Add manual input node as data source
+        add_manual_input_node(flow_graph_no_auto_history, sample_data, node_id=1)
+
+        # Step 2: Add select node with initial settings (select 'name' column)
+        add_select_node(
+            flow_graph_no_auto_history,
+            node_id=2,
+            input_node_id=1,
+            select_columns=['name']
+        )
+
+        # Verify initial state
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert select_node is not None
+        initial_select_input = select_node.setting_input.select_input
+        assert len(initial_select_input) == 1
+        assert initial_select_input[0].old_name == 'name'
+
+        # Step 3: Capture history before updating settings
+        flow_graph_no_auto_history.capture_history_snapshot(
+            HistoryActionType.UPDATE_SETTINGS,
+            "Before select settings update",
+            node_id=2
+        )
+
+        # Step 4: Update select settings to select different columns
+        updated_select_input = [
+            transform_schema.SelectInput(old_name='name', keep=True),
+            transform_schema.SelectInput(old_name='city', keep=True),
+            transform_schema.SelectInput(old_name='age', keep=True),
+        ]
+        updated_settings = input_schema.NodeSelect(
+            flow_id=flow_graph_no_auto_history.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=updated_select_input,
+        )
+        flow_graph_no_auto_history.add_select(updated_settings)
+
+        # Verify update was applied
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert len(select_node.setting_input.select_input) == 3
+
+        # Step 5: Undo the settings change
+        undo_result = flow_graph_no_auto_history.undo()
+        assert undo_result.success is True
+        assert undo_result.action_description == "Before select settings update"
+
+        # Verify undo restored original settings (1 column)
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert len(select_node.setting_input.select_input) == 1
+        assert select_node.setting_input.select_input[0].old_name == 'name'
+
+        # Step 6: Redo the settings change - THIS IS THE KEY TEST
+        redo_result = flow_graph_no_auto_history.redo()
+        assert redo_result.success is True, f"Redo should succeed but got: {redo_result.error_message}"
+
+        # Verify redo restored the updated settings (3 columns)
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert len(select_node.setting_input.select_input) == 3, \
+            f"Expected 3 columns after redo, but got {len(select_node.setting_input.select_input)}"
+
+    def test_multiple_undo_redo_on_select_settings(self, flow_graph_no_auto_history, sample_data):
+        """Test multiple undo/redo cycles on select node settings."""
+        # Setup: Add data source and select node
+        add_manual_input_node(flow_graph_no_auto_history, sample_data, node_id=1)
+        add_select_node(flow_graph_no_auto_history, node_id=2, input_node_id=1, select_columns=['name'])
+
+        # Make multiple changes with history capture
+        for i, cols in enumerate([['name', 'city'], ['name', 'city', 'age'], ['age']]):
+            flow_graph_no_auto_history.capture_history_snapshot(
+                HistoryActionType.UPDATE_SETTINGS,
+                f"Select update {i + 1}",
+                node_id=2
+            )
+            select_input = [transform_schema.SelectInput(old_name=col, keep=True) for col in cols]
+            settings = input_schema.NodeSelect(
+                flow_id=flow_graph_no_auto_history.flow_id,
+                node_id=2,
+                depending_on_id=1,
+                select_input=select_input,
+            )
+            flow_graph_no_auto_history.add_select(settings)
+
+        # Final state: ['age'] only
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert len(select_node.setting_input.select_input) == 1
+        assert select_node.setting_input.select_input[0].old_name == 'age'
+
+        # Undo all changes
+        for i in range(3):
+            result = flow_graph_no_auto_history.undo()
+            assert result.success is True, f"Undo {i + 1} should succeed"
+
+        # Should be back to original: ['name']
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert len(select_node.setting_input.select_input) == 1
+        assert select_node.setting_input.select_input[0].old_name == 'name'
+
+        # Redo all changes
+        for i in range(3):
+            result = flow_graph_no_auto_history.redo()
+            assert result.success is True, f"Redo {i + 1} should succeed but got: {result.error_message}"
+
+        # Should be back to final: ['age']
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert len(select_node.setting_input.select_input) == 1
+        assert select_node.setting_input.select_input[0].old_name == 'age'
+
+    def test_redo_preserves_select_column_order(self, flow_graph_no_auto_history, sample_data):
+        """Test that redo preserves the exact column order in select settings."""
+        # Setup
+        add_manual_input_node(flow_graph_no_auto_history, sample_data, node_id=1)
+        add_select_node(flow_graph_no_auto_history, node_id=2, input_node_id=1, select_columns=['name'])
+
+        # Capture and update with specific column order
+        flow_graph_no_auto_history.capture_history_snapshot(
+            HistoryActionType.UPDATE_SETTINGS,
+            "Before reorder",
+            node_id=2
+        )
+
+        # Set specific column order: age, city, name (reverse alphabetical)
+        select_input = [
+            transform_schema.SelectInput(old_name='age', keep=True),
+            transform_schema.SelectInput(old_name='city', keep=True),
+            transform_schema.SelectInput(old_name='name', keep=True),
+        ]
+        settings = input_schema.NodeSelect(
+            flow_id=flow_graph_no_auto_history.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=select_input,
+        )
+        flow_graph_no_auto_history.add_select(settings)
+
+        # Undo
+        flow_graph_no_auto_history.undo()
+
+        # Redo
+        result = flow_graph_no_auto_history.redo()
+        assert result.success is True
+
+        # Verify exact column order is preserved
+        select_node = flow_graph_no_auto_history.get_node(2)
+        columns = [s.old_name for s in select_node.setting_input.select_input]
+        assert columns == ['age', 'city', 'name'], \
+            f"Column order should be ['age', 'city', 'name'] but got {columns}"
+
+    def test_redo_after_new_action_clears_redo_stack(self, flow_graph_no_auto_history, sample_data):
+        """Test that performing a new action after undo clears the redo stack."""
+        # Setup
+        add_manual_input_node(flow_graph_no_auto_history, sample_data, node_id=1)
+        add_select_node(flow_graph_no_auto_history, node_id=2, input_node_id=1, select_columns=['name'])
+
+        # Capture and update
+        flow_graph_no_auto_history.capture_history_snapshot(
+            HistoryActionType.UPDATE_SETTINGS,
+            "First update",
+            node_id=2
+        )
+
+        select_input = [transform_schema.SelectInput(old_name='name', keep=True),
+                       transform_schema.SelectInput(old_name='city', keep=True)]
+        settings = input_schema.NodeSelect(
+            flow_id=flow_graph_no_auto_history.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=select_input,
+        )
+        flow_graph_no_auto_history.add_select(settings)
+
+        # Undo
+        flow_graph_no_auto_history.undo()
+
+        # Verify redo is available
+        state = flow_graph_no_auto_history.get_history_state()
+        assert state.can_redo is True
+
+        # Make a different change (this should clear redo stack)
+        flow_graph_no_auto_history.capture_history_snapshot(
+            HistoryActionType.UPDATE_SETTINGS,
+            "Different update",
+            node_id=2
+        )
+
+        select_input = [transform_schema.SelectInput(old_name='age', keep=True)]
+        settings = input_schema.NodeSelect(
+            flow_id=flow_graph_no_auto_history.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=select_input,
+        )
+        flow_graph_no_auto_history.add_select(settings)
+
+        # Verify redo is no longer available (redo stack was cleared)
+        state = flow_graph_no_auto_history.get_history_state()
+        assert state.can_redo is False, "Redo stack should be cleared after new action"
