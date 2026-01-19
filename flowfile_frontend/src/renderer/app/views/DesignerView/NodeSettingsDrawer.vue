@@ -32,8 +32,10 @@ const lastExecutedState = ref({
 const executeCleanup = async () => {
   // Check if we actually need to execute cleanup
   if (lastExecutedState.value.componentInstance) {
-    console.log(`executing cleanup for node ${lastExecutedState.value.nodeId}`);
+    console.log(`[NodeSettingsDrawer] Executing cleanup for node ${lastExecutedState.value.nodeId}`);
+    console.log("[NodeSettingsDrawer] Stack trace:", new Error().stack);
     await nodeStore.executeDrawCloseFunction();
+    console.log("[NodeSettingsDrawer] Cleanup completed");
   }
 };
 
@@ -55,10 +57,12 @@ const setupNewNode = () => {
 watch(
   [() => drawerComponentInstance.value, () => nodeStore.node_id],
   async ([newInstance, newNodeId], [, oldNodeId]) => {
+    console.log(`[NodeSettingsDrawer] Watcher triggered: newNodeId=${newNodeId}, oldNodeId=${oldNodeId}, hasInstance=${!!newInstance}`);
     // Only execute cleanup when node ID changes (not on initial mount or instance changes)
     const nodeIdChanged = newNodeId !== oldNodeId;
     // Execute cleanup only when node ID changes and we have a previous valid state
     if (nodeIdChanged && oldNodeId !== -1 && lastExecutedState.value.componentInstance) {
+      console.log("[NodeSettingsDrawer] Watcher: Executing cleanup due to node change");
       await executeCleanup();
       // Reset the tracked state after cleanup
       lastExecutedState.value = {
@@ -69,12 +73,14 @@ watch(
 
     // Handle node deselection
     if (newNodeId === -1) {
+      console.log("[NodeSettingsDrawer] Watcher: Node deselected, closing drawer");
       editorStore.isDrawerOpen = false;
       return;
     }
 
     // Setup new node if we have a valid instance
     if (newInstance) {
+      console.log("[NodeSettingsDrawer] Watcher: Setting up new node");
       await nextTick(); // Ensure component is fully mounted
       setupNewNode();
     }
