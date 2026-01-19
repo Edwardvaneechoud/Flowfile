@@ -1116,3 +1116,64 @@ class TestSelectNodeRedo:
         # Verify redo is no longer available (redo stack was cleared)
         state = flow_graph_no_auto_history.get_history_state()
         assert state.can_redo is False, "Redo stack should be cleared after new action"
+
+    def test_redo_preserves_data_type_change(self, flow_graph_no_auto_history, sample_data):
+        """Test that redo preserves data_type changes in select settings.
+
+        This is a regression test for the bug where data_type was lost during
+        undo/redo because SelectInput.to_yaml_dict() only included data_type
+        when data_type_change was True.
+        """
+        # Setup: Add data source and select node
+        add_manual_input_node(flow_graph_no_auto_history, sample_data, node_id=1)
+        add_select_node(flow_graph_no_auto_history, node_id=2, input_node_id=1, select_columns=['name'])
+
+        # Capture history before changing data_type
+        flow_graph_no_auto_history.capture_history_snapshot(
+            HistoryActionType.UPDATE_SETTINGS,
+            "Before data_type change",
+            node_id=2
+        )
+
+        # Change data_type from default to Float64
+        select_input_with_type = [
+            transform_schema.SelectInput(
+                old_name='name',
+                keep=True,
+                data_type='Float64',
+                data_type_change=True
+            )
+        ]
+        settings = input_schema.NodeSelect(
+            flow_id=flow_graph_no_auto_history.flow_id,
+            node_id=2,
+            depending_on_id=1,
+            select_input=select_input_with_type,
+        )
+        flow_graph_no_auto_history.add_select(settings)
+
+        # Verify data_type is set
+        select_node = flow_graph_no_auto_history.get_node(2)
+        assert select_node.setting_input.select_input[0].data_type == 'Float64', \
+            "data_type should be Float64 after update"
+
+        # Undo
+        undo_result = flow_graph_no_auto_history.undo()
+        assert undo_result.success is True
+
+        # Verify undo restored original (no data_type)
+        select_node = flow_graph_no_auto_history.get_node(2)
+        original_data_type = select_node.setting_input.select_input[0].data_type
+        # Original might be None or unchanged - the key is it should NOT be Float64
+        assert original_data_type != 'Float64', \
+            f"After undo, data_type should not be Float64, but got {original_data_type}"
+
+        # Redo - THIS IS THE KEY TEST
+        redo_result = flow_graph_no_auto_history.redo()
+        assert redo_result.success is True, f"Redo should succeed but got: {redo_result.error_message}"
+
+        # Verify redo restored the Float64 data_type
+        select_node = flow_graph_no_auto_history.get_node(2)
+        restored_data_type = select_node.setting_input.select_input[0].data_type
+        assert restored_data_type == 'Float64', \
+            f"After redo, data_type should be Float64, but got {restored_data_type}"

@@ -184,7 +184,9 @@ class SelectInput(BaseModel):
             result["new_name"] = self.new_name
         if not self.keep:
             result["keep"] = self.keep
-        if self.data_type_change and self.data_type:
+        # Always include data_type if it's set, not just when data_type_change is True
+        # This ensures undo/redo snapshots preserve the data_type field
+        if self.data_type:
             result["data_type"] = self.data_type
         return result
 
