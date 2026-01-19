@@ -104,10 +104,9 @@ class HistoryManager:
     ) -> bool:
         """Capture the current state of the flow graph BEFORE a change.
 
-        This method captures state BEFORE an operation, so we don't do duplicate
-        detection here (we can't know if the operation will change anything).
-        Duplicate detection is done in capture_if_changed() which is called AFTER
-        an operation completes.
+        This method captures state BEFORE an operation. We detect duplicates by
+        comparing against the last CAPTURED snapshot (top of undo stack), not
+        against _last_snapshot_hash (which tracks the post-operation state).
 
         Args:
             flow_graph: The FlowGraph to capture.
@@ -133,15 +132,23 @@ class HistoryManager:
             flowfile_data = flow_graph.get_flowfile_data()
             snapshot_dict = flowfile_data.model_dump()
 
-            # Create compressed entry - no duplicate detection for pre-change snapshots
-            # since we don't know if the operation will change anything yet
+            # Compute hash for duplicate detection
+            current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
+
+            # Compare against the LAST CAPTURED snapshot (top of undo stack), not _last_snapshot_hash
+            # This correctly detects if we're capturing the same pre-state twice,
+            # without being confused by post-operation hash updates from capture_if_changed
+            if self._undo_stack:
+                last_entry_hash = self._undo_stack[-1].snapshot_hash
+                if last_entry_hash == current_hash:
+                    logger.info(f"History: Skipping duplicate snapshot for: {description}")
+                    return False
+
+            # Create compressed entry
             entry = self._create_entry(snapshot_dict, action_type, description, node_id)
 
             # Add to undo stack
             self._undo_stack.append(entry)
-
-            # Update hash to current state (will be compared against post-change state later if needed)
-            self._last_snapshot_hash = CompressedSnapshot._compute_hash(snapshot_dict)
 
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
