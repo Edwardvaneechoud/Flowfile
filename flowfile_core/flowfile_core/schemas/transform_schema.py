@@ -195,13 +195,17 @@ class SelectInput(BaseModel):
         """Load from slim YAML format."""
         old_name = data["old_name"]
         new_name = data.get("new_name", old_name)
+        data_type = data.get("data_type")
+        # is_altered should be True if either name was changed OR data_type was explicitly set
+        # This ensures updateNodeSelect in the frontend won't overwrite user-specified data_type
+        is_altered = (old_name != new_name) or (data_type is not None)
         return cls(
             old_name=old_name,
             new_name=new_name,
             keep=data.get("keep", True),
-            data_type=data.get("data_type"),
-            data_type_change=data.get("data_type") is not None,
-            is_altered=old_name != new_name,
+            data_type=data_type,
+            data_type_change=data_type is not None,
+            is_altered=is_altered,
         )
 
     @model_validator(mode="after")
