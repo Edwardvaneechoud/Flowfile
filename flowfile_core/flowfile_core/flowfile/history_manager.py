@@ -104,6 +104,11 @@ class HistoryManager:
     ) -> bool:
         """Capture the current state of the flow graph BEFORE a change.
 
+        This method captures state BEFORE an operation, so we don't do duplicate
+        detection here (we can't know if the operation will change anything).
+        Duplicate detection is done in capture_if_changed() which is called AFTER
+        an operation completes.
+
         Args:
             flow_graph: The FlowGraph to capture.
             action_type: The type of action being performed.
@@ -113,12 +118,14 @@ class HistoryManager:
         Returns:
             True if snapshot was captured, False if skipped (disabled or restoring).
         """
+        logger.info(f"History: capture_snapshot called for '{description}' (enabled={self._config.enabled}, restoring={self._is_restoring})")
+
         if not self._config.enabled:
-            logger.debug(f"History: Skipping '{description}' - history disabled")
+            logger.info(f"History: Skipping '{description}' - history disabled")
             return False
 
         if self._is_restoring:
-            logger.debug(f"History: Skipping '{description}' - currently restoring")
+            logger.info(f"History: Skipping '{description}' - currently restoring")
             return False
 
         try:
@@ -126,19 +133,15 @@ class HistoryManager:
             flowfile_data = flow_graph.get_flowfile_data()
             snapshot_dict = flowfile_data.model_dump()
 
-            # Compute hash for duplicate detection (fast, no JSON serialization)
-            current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
-
-            if self._last_snapshot_hash == current_hash:
-                logger.debug(f"History: Skipping duplicate snapshot for: {description}")
-                return False
-
-            # Create compressed entry
+            # Create compressed entry - no duplicate detection for pre-change snapshots
+            # since we don't know if the operation will change anything yet
             entry = self._create_entry(snapshot_dict, action_type, description, node_id)
 
             # Add to undo stack
             self._undo_stack.append(entry)
-            self._last_snapshot_hash = current_hash
+
+            # Update hash to current state (will be compared against post-change state later if needed)
+            self._last_snapshot_hash = CompressedSnapshot._compute_hash(snapshot_dict)
 
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
