@@ -229,8 +229,8 @@ defineExpose({
   gap: 12px;
   margin-bottom: 8px;
   width: 100%;
-  display: flex;
   justify-content: space-between;
+  align-items: center;
 }
 
 .selectors-row:last-child {
@@ -243,6 +243,7 @@ defineExpose({
   gap: 4px;
   width: 56px;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .action-button,
