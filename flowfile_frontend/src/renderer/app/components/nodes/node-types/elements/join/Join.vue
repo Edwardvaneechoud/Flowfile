@@ -241,8 +241,8 @@ defineExpose({
 .action-buttons {
   display: flex;
   gap: 4px;
-  min-width: 60px;
-  justify-content: center;
+  width: 56px;
+  justify-content: flex-end;
 }
 
 .action-button,
