@@ -207,3 +207,14 @@ class UndoRedoResult(BaseModel):
     error_message: Optional[str] = Field(
         default=None, description="Error message if the operation failed"
     )
+
+
+class OperationResponse(BaseModel):
+    """Standard response for operations that modify the flow graph.
+
+    Includes the current history state so the frontend can update its UI.
+    """
+
+    success: bool = Field(default=True, description="Whether the operation succeeded")
+    message: Optional[str] = Field(default=None, description="Optional message")
+    history: HistoryState = Field(..., description="Current history state after the operation")

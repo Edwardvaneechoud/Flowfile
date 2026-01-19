@@ -2,16 +2,16 @@
   <div class="undo-redo-controls">
     <button
       class="control-btn"
-      :disabled="!historyState.can_undo"
-      :title="historyState.undo_description ? `Undo: ${historyState.undo_description}` : 'Nothing to undo'"
+      :disabled="!flowStore.canUndo"
+      :title="flowStore.undoDescription ? `Undo: ${flowStore.undoDescription}` : 'Nothing to undo'"
       @click="handleUndo"
     >
       <span class="material-icons">undo</span>
     </button>
     <button
       class="control-btn"
-      :disabled="!historyState.can_redo"
-      :title="historyState.redo_description ? `Redo: ${historyState.redo_description}` : 'Nothing to redo'"
+      :disabled="!flowStore.canRedo"
+      :title="flowStore.redoDescription ? `Redo: ${flowStore.redoDescription}` : 'Nothing to redo'"
       @click="handleRedo"
     >
       <span class="material-icons">redo</span>
@@ -20,54 +20,37 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, onMounted, onUnmounted, watch } from "vue";
+import { onMounted, onUnmounted, watch } from "vue";
 import { FlowApi } from "../../api";
-import type { HistoryState } from "../../types";
-import { useNodeStore } from "../../stores/column-store";
+import { useFlowStore } from "../../stores/flow-store";
 
-const nodeStore = useNodeStore();
+const flowStore = useFlowStore();
 
 const emit = defineEmits<{
   (e: "refreshFlow"): void;
 }>();
 
-// History state for undo/redo buttons
-const historyState = reactive<HistoryState>({
-  can_undo: false,
-  can_redo: false,
-  undo_description: null,
-  redo_description: null,
-  undo_count: 0,
-  redo_count: 0,
-});
-
-const refreshHistoryState = async () => {
-  if (!(nodeStore.flow_id && nodeStore.flow_id > 0)) return;
+// Fetch history state from API (used on mount and flow change)
+const fetchHistoryState = async () => {
+  if (!(flowStore.flowId && flowStore.flowId > 0)) return;
 
   try {
-    const state = await FlowApi.getHistoryStatus(nodeStore.flow_id);
-    Object.assign(historyState, state);
+    const state = await FlowApi.getHistoryStatus(flowStore.flowId);
+    flowStore.updateHistoryState(state);
   } catch (error) {
-    // Reset to default if error
-    Object.assign(historyState, {
-      can_undo: false,
-      can_redo: false,
-      undo_description: null,
-      redo_description: null,
-      undo_count: 0,
-      redo_count: 0,
-    });
+    flowStore.resetHistoryState();
   }
 };
 
 const handleUndo = async () => {
-  if (!historyState.can_undo || !nodeStore.flow_id) return;
+  if (!flowStore.canUndo || !flowStore.flowId) return;
 
   try {
-    const result = await FlowApi.undo(nodeStore.flow_id);
+    const result = await FlowApi.undo(flowStore.flowId);
     if (result.success) {
       emit("refreshFlow");
-      await refreshHistoryState();
+      // Fetch updated history state after undo
+      await fetchHistoryState();
     }
   } catch (error: any) {
     console.error("Failed to undo:", error);
@@ -75,13 +58,14 @@ const handleUndo = async () => {
 };
 
 const handleRedo = async () => {
-  if (!historyState.can_redo || !nodeStore.flow_id) return;
+  if (!flowStore.canRedo || !flowStore.flowId) return;
 
   try {
-    const result = await FlowApi.redo(nodeStore.flow_id);
+    const result = await FlowApi.redo(flowStore.flowId);
     if (result.success) {
       emit("refreshFlow");
-      await refreshHistoryState();
+      // Fetch updated history state after redo
+      await fetchHistoryState();
     }
   } catch (error: any) {
     console.error("Failed to redo:", error);
@@ -119,32 +103,25 @@ const handleKeyDown = (event: KeyboardEvent) => {
   }
 };
 
-// Watch for flow_id changes
+// Watch for flowId changes
 watch(
-  () => nodeStore.flow_id,
+  () => flowStore.flowId,
   async (newId, oldId) => {
     if (newId !== oldId && newId > 0) {
-      await refreshHistoryState();
+      await fetchHistoryState();
     }
   },
 );
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown);
-  if (nodeStore.flow_id && nodeStore.flow_id > 0) {
-    await refreshHistoryState();
+  if (flowStore.flowId && flowStore.flowId > 0) {
+    await fetchHistoryState();
   }
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeyDown);
-});
-
-// Expose refresh method so parent can call it after operations
-defineExpose({
-  refreshHistoryState,
-  handleUndo,
-  handleRedo,
 });
 </script>
 

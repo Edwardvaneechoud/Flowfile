@@ -16,6 +16,7 @@ import CodeGenerator from "./CodeGenerator/CodeGenerator.vue";
 import NodeList from "./NodeList.vue";
 import { useNodeStore } from "../../stores/column-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useFlowStore } from "../../stores/flow-store";
 import NodeSettingsDrawer from "./NodeSettingsDrawer.vue";
 import {
   getFlowData,
@@ -24,6 +25,7 @@ import {
   connectNode,
   NodeConnection,
 } from "./backendInterface";
+import { FlowApi } from "../../api";
 import DraggableItem from "../../components/common/DraggableItem/DraggableItem.vue";
 import layoutControls from "../../components/common/DraggableItem/layoutControls.vue";
 import { useItemStore } from "../../components/common/DraggableItem/stateStore";
@@ -39,6 +41,7 @@ const itemStore = useItemStore();
 const availableHeight = ref(0);
 const nodeStore = useNodeStore();
 const editorStore = useEditorStore();
+const flowStore = useFlowStore();
 const rawCustomNode = markRaw(CustomNode);
 const { updateEdge, addEdges, fitView, screenToFlowCoordinate, addSelectedNodes } = useVueFlow();
 const vueFlow = ref<InstanceType<typeof VueFlow>>();
@@ -58,7 +61,6 @@ const selectedNodeIdInTable = ref(0);
 const showContextMenu = ref(false);
 const clickedPosition = ref<CursorPosition>({ x: 0, y: 0 });
 const contextMenuTarget = ref({ type: "pane", id: "" });
-const undoRedoControls = ref<InstanceType<typeof UndoRedoControls> | null>(null);
 const emit = defineEmits<{
   (e: "save", flowId: number): void;
   (e: "run", flowId: number): void;
@@ -130,13 +132,18 @@ function onEdgeUpdate({ edge, connection }: { edge: any; connection: any }) {
 }
 
 const loadFlow = async () => {
-  const vueFlowInput = await getFlowData(nodeStore.flow_id);
+  const vueFlowInput = await getFlowData(flowStore.flowId);
   await nextTick();
   await importFlow(vueFlowInput);
   await nextTick();
   restoreViewport();
-  // Refresh history state after loading flow
-  undoRedoControls.value?.refreshHistoryState();
+  // Fetch history state after loading flow
+  try {
+    const historyState = await FlowApi.getHistoryStatus(flowStore.flowId);
+    flowStore.updateHistoryState(historyState);
+  } catch (error) {
+    console.error("Failed to fetch history state:", error);
+  }
 };
 
 const selectNodeExternally = (nodeId: number) => {
@@ -161,10 +168,12 @@ async function onConnect(params: any) {
         connection_class: params.sourceHandle,
       },
     };
-    await connectNode(nodeStore.flow_id, nodeConnection);
+    const response = await connectNode(flowStore.flowId, nodeConnection);
     addEdges([params]);
-    // Refresh history state after connecting nodes
-    undoRedoControls.value?.refreshHistoryState();
+    // Update history state from response
+    if (response?.history) {
+      flowStore.updateHistoryState(response.history);
+    }
   }
 }
 
@@ -198,19 +207,18 @@ const setNodeTableView = (nodeId: number) => {
   }
 };
 
-const handleNodeChange = (nodeChangesEvent: any) => {
+const handleNodeChange = async (nodeChangesEvent: any) => {
   const nodeChanges = nodeChangesEvent as NodeChange[];
-  let hasRemovals = false;
+  let lastResponse: Awaited<ReturnType<typeof deleteNode>> | undefined;
   for (const nodeChange of nodeChanges) {
     if (nodeChange.type === "remove") {
       const nodeChangeId = Number(nodeChange.id);
-      deleteNode(nodeStore.flow_id, nodeChangeId);
-      hasRemovals = true;
+      lastResponse = await deleteNode(flowStore.flowId, nodeChangeId);
     }
   }
-  // Refresh history state after deleting nodes
-  if (hasRemovals) {
-    undoRedoControls.value?.refreshHistoryState();
+  // Update history state from the last response
+  if (lastResponse?.history) {
+    flowStore.updateHistoryState(lastResponse.history);
   }
 };
 
@@ -227,31 +235,32 @@ const convertEdgeChangeToNodeConnection = (edgeChange: EdgeChange): NodeConnecti
   };
 };
 
-const handleEdgeChange = (edgeChangesEvent: any) => {
+const handleEdgeChange = async (edgeChangesEvent: any) => {
   const edgeChanges = edgeChangesEvent as EdgeChange[];
   if (edgeChanges.length >= 2) {
     console.log("Edge changes length is 2 so coming from a node change event");
     return;
   }
-  let hasRemovals = false;
+  let lastResponse: Awaited<ReturnType<typeof deleteConnection>> | undefined;
   for (const edgeChange of edgeChanges) {
     if (edgeChange.type === "remove") {
       const nodeConnection = convertEdgeChangeToNodeConnection(edgeChange);
-      deleteConnection(nodeStore.flow_id, nodeConnection);
-      hasRemovals = true;
+      lastResponse = await deleteConnection(flowStore.flowId, nodeConnection);
     }
   }
-  // Refresh history state after deleting connections
-  if (hasRemovals) {
-    undoRedoControls.value?.refreshHistoryState();
+  // Update history state from the last response
+  if (lastResponse?.history) {
+    flowStore.updateHistoryState(lastResponse.history);
   }
 };
 
 const handleDrop = async (event: DragEvent) => {
   if (!nodeStore.isRunning) {
-    await onDrop(event, nodeStore.flow_id);
-    // Refresh history state after adding a node
-    undoRedoControls.value?.refreshHistoryState();
+    const response = await onDrop(event, flowStore.flowId);
+    // Update history state from response
+    if (response?.history) {
+      flowStore.updateHistoryState(response.history);
+    }
   }
 };
 
@@ -283,7 +292,7 @@ const copySelectedNodes = () => {
       numberOfOutputs: node.data.outputs.length,
       typeSnakeCase:
         node.data.nodeTemplate?.item || toSnakeCase(node.data.component?.__name || "unknown"),
-      flowIdToCopyFrom: nodeStore.flow_id,
+      flowIdToCopyFrom: flowStore.flowId,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
     };
@@ -310,7 +319,7 @@ const copySelectedNodes = () => {
       numberOfOutputs: node.data.outputs.length,
       typeSnakeCase:
         node.data.nodeTemplate?.item || toSnakeCase(node.data.component?.__name || "unknown"),
-      flowIdToCopyFrom: nodeStore.flow_id,
+      flowIdToCopyFrom: flowStore.flowId,
       multi: node.data.nodeTemplate?.multi,
       nodeTemplate: node.data.nodeTemplate,
       relativeX: node.position.x - minX,
@@ -334,7 +343,7 @@ const copySelectedNodes = () => {
     const multiNodeCopyValue: MultiNodeCopyValue = {
       nodes,
       edges,
-      flowIdToCopyFrom: nodeStore.flow_id,
+      flowIdToCopyFrom: flowStore.flowId,
     };
 
     localStorage.setItem("copiedMultiNodes", JSON.stringify(multiNodeCopyValue));
@@ -352,9 +361,11 @@ const copyValue = async (x: number, y: number) => {
   const copiedMultiNodesStr = localStorage.getItem("copiedMultiNodes");
   if (copiedMultiNodesStr) {
     const multiNodeCopyValue: MultiNodeCopyValue = JSON.parse(copiedMultiNodesStr);
-    await createMultiCopyNodes(multiNodeCopyValue, flowPosition.x, flowPosition.y, nodeStore.flow_id);
-    // Refresh history state after pasting nodes
-    undoRedoControls.value?.refreshHistoryState();
+    const response = await createMultiCopyNodes(multiNodeCopyValue, flowPosition.x, flowPosition.y, flowStore.flowId);
+    // Update history state from response
+    if (response?.history) {
+      flowStore.updateHistoryState(response.history);
+    }
     return;
   }
 
@@ -368,11 +379,13 @@ const copyValue = async (x: number, y: number) => {
     ...nodeCopyValue,
     posX: flowPosition.x,
     posY: flowPosition.y,
-    flowId: nodeStore.flow_id,
+    flowId: flowStore.flowId,
   };
-  await createCopyNode(nodeCopyInput);
-  // Refresh history state after pasting node
-  undoRedoControls.value?.refreshHistoryState();
+  const response = await createCopyNode(nodeCopyInput);
+  // Update history state from response
+  if (response?.history) {
+    flowStore.updateHistoryState(response.history);
+  }
 };
 
 const handleContextMenuAction = async (actionData: ContextMenuAction) => {
@@ -389,9 +402,9 @@ const handleContextMenuAction = async (actionData: ContextMenuAction) => {
 };
 
 const handleResetLayoutGraph = async () => {
-  await applyStandardLayout(nodeStore.flow_id);
+  await applyStandardLayout(flowStore.flowId);
   await loadFlow();
-  // loadFlow already refreshes history state
+  // loadFlow already fetches history state
 };
 
 const hideLogViewer = () => {
@@ -433,17 +446,17 @@ const handleKeyDown = (event: KeyboardEvent) => {
     event.preventDefault();
     emit("new");
   } else if (eventKeyClicked && key === "s") {
-    if (nodeStore.flow_id) {
+    if (flowStore.flowId) {
       event.preventDefault();
-      emit("save", nodeStore.flow_id);
+      emit("save", flowStore.flowId);
     }
   } else if (eventKeyClicked && key === "e") {
-    if (nodeStore.flow_id) {
+    if (flowStore.flowId) {
       event.preventDefault();
-      emit("run", nodeStore.flow_id);
+      emit("run", flowStore.flowId);
     }
   } else if (eventKeyClicked && key === "g") {
-    if (nodeStore.flow_id) {
+    if (flowStore.flowId) {
       event.preventDefault();
       nodeStore.toggleCodeGenerator();
     }
@@ -480,12 +493,12 @@ const getViewportStorageKey = (flowId: number) => `flowfile_viewport_${flowId}`;
 
 const saveViewport = () => {
   const viewport = instance.getViewport();
-  const key = getViewportStorageKey(nodeStore.flow_id);
+  const key = getViewportStorageKey(flowStore.flowId);
   sessionStorage.setItem(key, JSON.stringify(viewport));
 };
 
 const restoreViewport = () => {
-  const key = getViewportStorageKey(nodeStore.flow_id);
+  const key = getViewportStorageKey(flowStore.flowId);
   const saved = sessionStorage.getItem(key);
   if (saved) {
     try {
@@ -554,7 +567,7 @@ defineExpose({
         :on-close="closeContextMenu"
         @action="handleContextMenuAction"
       />
-      <UndoRedoControls ref="undoRedoControls" @refresh-flow="loadFlow" />
+      <UndoRedoControls @refresh-flow="loadFlow" />
     </main>
     <draggable-item
       id="dataActions"

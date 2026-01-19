@@ -65,6 +65,12 @@ export interface UndoRedoResult {
   error_message: string | null;
 }
 
+export interface OperationResponse {
+  success: boolean;
+  message: string | null;
+  history: HistoryState;
+}
+
 // ============================================================================
 // Local File Types
 // ============================================================================
