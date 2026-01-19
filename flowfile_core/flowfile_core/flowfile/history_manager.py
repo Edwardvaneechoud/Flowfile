@@ -114,9 +114,11 @@ class HistoryManager:
             True if snapshot was captured, False if skipped (disabled or restoring).
         """
         if not self._config.enabled:
+            logger.debug(f"History: Skipping '{description}' - history disabled")
             return False
 
         if self._is_restoring:
+            logger.debug(f"History: Skipping '{description}' - currently restoring")
             return False
 
         try:
@@ -128,7 +130,7 @@ class HistoryManager:
             current_hash = CompressedSnapshot._compute_hash(snapshot_dict)
 
             if self._last_snapshot_hash == current_hash:
-                logger.debug(f"Skipping duplicate snapshot for action: {description}")
+                logger.debug(f"History: Skipping duplicate snapshot for: {description}")
                 return False
 
             # Create compressed entry
@@ -141,14 +143,14 @@ class HistoryManager:
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
 
-            logger.debug(
-                f"Captured history snapshot: {description} "
-                f"(compressed size: {entry.compressed_size} bytes)"
+            logger.info(
+                f"History: Captured '{description}' "
+                f"(undo_stack={len(self._undo_stack)}, redo_stack={len(self._redo_stack)})"
             )
             return True
 
         except Exception as e:
-            logger.error(f"Failed to capture history snapshot: {e}")
+            logger.error(f"History: Failed to capture snapshot for '{description}': {e}")
             return False
 
     def capture_if_changed(
@@ -175,9 +177,11 @@ class HistoryManager:
             True if a change was detected and snapshot was captured.
         """
         if not self._config.enabled:
+            logger.debug(f"History: Skipping '{description}' (if_changed) - history disabled")
             return False
 
         if self._is_restoring:
+            logger.debug(f"History: Skipping '{description}' (if_changed) - currently restoring")
             return False
 
         try:
@@ -191,7 +195,7 @@ class HistoryManager:
             current_hash = CompressedSnapshot._compute_hash(current_dict)
 
             if pre_hash == current_hash:
-                logger.debug(f"No change detected for action: {description}")
+                logger.debug(f"History: No change detected for: {description}")
                 return False
 
             # State changed - capture the BEFORE state (compressed)
@@ -204,14 +208,14 @@ class HistoryManager:
             # Clear redo stack when new action is performed
             self._redo_stack.clear()
 
-            logger.debug(
-                f"Captured history snapshot after change detection: {description} "
-                f"(compressed size: {entry.compressed_size} bytes)"
+            logger.info(
+                f"History: Captured '{description}' (after change detection) "
+                f"(undo_stack={len(self._undo_stack)}, redo_stack={len(self._redo_stack)})"
             )
             return True
 
         except Exception as e:
-            logger.error(f"Failed to capture history snapshot: {e}")
+            logger.error(f"History: Failed to capture snapshot for '{description}': {e}")
             return False
 
     def undo(self, flow_graph: "FlowGraph") -> UndoRedoResult:

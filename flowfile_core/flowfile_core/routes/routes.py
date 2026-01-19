@@ -393,18 +393,42 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
     if node_type == 'explore_data':
         flow.add_initial_node_analysis(node_promise)
     else:
+        # Capture state BEFORE adding node (for batched history)
+        pre_snapshot = flow.get_flowfile_data() if flow.flow_settings.track_history else None
+
         logger.info("Adding node")
-        flow.add_node_promise(node_promise)
+        # Add node without individual history tracking
+        flow.add_node_promise(node_promise, track_history=False)
 
         if check_if_has_default_setting(node_type):
             logger.info(f'Found standard settings for {node_type}, trying to upload them')
             setting_name_ref = 'node' + node_type.replace('_', '')
             node_model = get_node_model(setting_name_ref)
-            add_func = getattr(flow, 'add_' + node_type)
-            initial_settings = node_model(flow_id=flow_id, node_id=node_id, cache_results=False,
-                                          pos_x=pos_x, pos_y=pos_y, node_type=node_type)
-            add_func(initial_settings)
 
+            # Temporarily disable history tracking for initial settings
+            original_track_history = flow.flow_settings.track_history
+            flow.flow_settings.track_history = False
+            try:
+                add_func = getattr(flow, 'add_' + node_type)
+                initial_settings = node_model(flow_id=flow_id, node_id=node_id, cache_results=False,
+                                              pos_x=pos_x, pos_y=pos_y, node_type=node_type)
+                add_func(initial_settings)
+            finally:
+                flow.flow_settings.track_history = original_track_history
+
+        # Capture batched history entry for the whole add_node operation
+        if pre_snapshot is not None and flow.flow_settings.track_history:
+            from flowfile_core.schemas.history_schema import HistoryActionType
+            flow._history_manager.capture_if_changed(
+                flow,
+                pre_snapshot,
+                HistoryActionType.ADD_NODE,
+                f"Add {node_type} node",
+                node_id,
+            )
+            logger.info(f"History: Captured batched 'Add {node_type} node' entry")
+
+    logger.info(f"History state after add_node: {flow.get_history_state()}")
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
