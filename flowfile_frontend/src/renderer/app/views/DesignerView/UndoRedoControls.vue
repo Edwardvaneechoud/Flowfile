@@ -23,8 +23,12 @@
 import { onMounted, onUnmounted, watch } from "vue";
 import { FlowApi } from "../../api";
 import { useFlowStore } from "../../stores/flow-store";
+import { useNodeStore } from "../../stores/column-store";
+import { useEditorStore } from "../../stores/editor-store";
 
 const flowStore = useFlowStore();
+const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const emit = defineEmits<{
   (e: "refreshFlow"): void;
@@ -42,10 +46,22 @@ const fetchHistoryState = async () => {
   }
 };
 
+// Close any open panels WITHOUT saving to prevent auto-save during undo/redo
+const closeOpenPanelsWithoutSave = () => {
+  // Clear the close function to prevent auto-save
+  nodeStore.clearCloseFunction();
+  // Close the drawer by resetting node selection
+  nodeStore.nodeId = -1;
+  editorStore.activeDrawerComponent = null;
+};
+
 const handleUndo = async () => {
   if (!flowStore.canUndo || !flowStore.flowId) return;
 
   try {
+    // Close panels WITHOUT saving to prevent auto-save interference
+    closeOpenPanelsWithoutSave();
+
     const result = await FlowApi.undo(flowStore.flowId);
     if (result.success) {
       emit("refreshFlow");
@@ -61,6 +77,9 @@ const handleRedo = async () => {
   if (!flowStore.canRedo || !flowStore.flowId) return;
 
   try {
+    // Close panels WITHOUT saving to prevent auto-save interference
+    closeOpenPanelsWithoutSave();
+
     const result = await FlowApi.redo(flowStore.flowId);
     if (result.success) {
       emit("refreshFlow");

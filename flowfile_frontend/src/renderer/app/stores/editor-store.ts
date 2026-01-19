@@ -51,6 +51,10 @@ export const useEditorStore = defineStore("editor", {
       this.drawCloseFunction = f;
     },
 
+    clearCloseFunction(): void {
+      this.drawCloseFunction = null;
+    },
+
     openDrawer(
       component: Component,
       nodeTitleInfo: NodeTitleInfo,
