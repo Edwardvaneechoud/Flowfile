@@ -27,18 +27,22 @@
                 :key="index"
                 class="selectors-row"
               >
-                <drop-down
-                  v-model="selector.left_col"
-                  :value="selector.left_col"
-                  :column-options="result?.main_input?.columns"
-                  @update:value="(value: string) => handleChange(value, index, 'left')"
-                />
-                <drop-down
-                  v-model="selector.right_col"
-                  :value="selector.right_col"
-                  :column-options="result?.right_input?.columns"
-                  @update:value="(value: string) => handleChange(value, index, 'right')"
-                />
+                <div class="selector-wrapper">
+                  <drop-down
+                    v-model="selector.left_col"
+                    :value="selector.left_col"
+                    :column-options="result?.main_input?.columns"
+                    @update:value="(value: string) => handleChange(value, index, 'left')"
+                  />
+                </div>
+                <div class="selector-wrapper">
+                  <drop-down
+                    v-model="selector.right_col"
+                    :value="selector.right_col"
+                    :column-options="result?.right_input?.columns"
+                    @update:value="(value: string) => handleChange(value, index, 'right')"
+                  />
+                </div>
                 <div class="action-buttons">
                   <button
                     class="action-button remove-button"
@@ -235,6 +239,11 @@ defineExpose({
 
 .selectors-row:last-child {
   margin-bottom: 0;
+}
+
+.selector-wrapper {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Action Buttons */
