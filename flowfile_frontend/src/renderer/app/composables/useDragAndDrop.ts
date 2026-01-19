@@ -399,7 +399,7 @@ export default function useDragAndDrop() {
           off();
         });
 
-        FlowApi.insertNode(flowId, nodeId, nodeData.item);
+        FlowApi.insertNode(flowId, nodeId, nodeData.item, position.x, position.y);
         addNodes(newNode);
       })
       .catch((error) => {
