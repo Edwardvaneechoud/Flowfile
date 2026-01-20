@@ -24,6 +24,7 @@ from flowfile_core.flowfile.flow_node.models import (
     NodeStepSettings,
     NodeStepStats,
 )
+from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from flowfile_core.flowfile.utils import get_hash
@@ -613,6 +614,15 @@ class FlowNode:
                             except Exception as e:
                                 raise e
                         fl.set_streamable(self.node_settings.streamable)
+
+                        # Apply output field configuration if enabled
+                        if hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config:
+                            try:
+                                fl = apply_output_field_config(fl, self._setting_input.output_field_config)
+                            except Exception as e:
+                                logger.error(f"Error applying output field config for node {self.node_id}: {e}")
+                                raise
+
                         self.results.resulting_data = fl
                         self.node_schema.result_schema = fl.schema
                     except Exception as e:

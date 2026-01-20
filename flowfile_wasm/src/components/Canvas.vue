@@ -132,13 +132,41 @@
         :title="getNodeDescription(selectedNode.type).title"
         :intro="getNodeDescription(selectedNode.type).intro"
       />
-      <component
-        :is="getSettingsComponent(selectedNode.type)"
-        :key="selectedNode.id"
-        :node-id="selectedNode.id"
-        :settings="selectedNode.settings"
-        @update:settings="updateSettings"
-      />
+
+      <!-- Tabs -->
+      <div class="settings-tabs">
+        <button
+          :class="['tab-button', { active: activeSettingsTab === 'settings' }]"
+          @click="activeSettingsTab = 'settings'"
+        >
+          Settings
+        </button>
+        <button
+          :class="['tab-button', { active: activeSettingsTab === 'output-schema' }]"
+          @click="activeSettingsTab = 'output-schema'"
+        >
+          Output Schema
+        </button>
+      </div>
+
+      <!-- Tab content -->
+      <div v-show="activeSettingsTab === 'settings'" class="tab-content">
+        <component
+          :is="getSettingsComponent(selectedNode.type)"
+          :key="selectedNode.id"
+          :node-id="selectedNode.id"
+          :settings="selectedNode.settings"
+          @update:settings="updateSettings"
+        />
+      </div>
+
+      <div v-show="activeSettingsTab === 'output-schema'" class="tab-content">
+        <OutputFieldConfig
+          :node-id="selectedNode.id"
+          :config="selectedNode.settings.output_field_config"
+          @update:config="updateOutputFieldConfig"
+        />
+      </div>
     </DraggablePanel>
 
     <!-- Data Preview Panel (hidden for explore_data nodes which have their own preview) -->
@@ -254,6 +282,7 @@ import CodeGenerator from './CodeGenerator.vue'
 import PivotSettings from './nodes/PivotSettings.vue'
 import UnpivotSettings from './nodes/UnpivotSettings.vue'
 import OutputSettings from './nodes/OutputSettings.vue'
+import OutputFieldConfig from './nodes/OutputFieldConfig.vue'
 import { getNodeDescription } from '../config/nodeDescriptions'
 import MissingFilesModal from './MissingFilesModal.vue'
 import DemoButton from './DemoButton.vue'
@@ -275,6 +304,7 @@ const showCodeGenerator = ref(false)
 const pendingNodeAdjustment = ref<number | null>(null)
 const showMissingFilesModal = ref(false)
 const missingFiles = ref<Array<{nodeId: number, fileName: string}>>([])
+const activeSettingsTab = ref<'settings' | 'output-schema'>('settings')
 
 // Node types for Vue Flow
 const nodeTypes: Record<string, any> = {
@@ -532,6 +562,19 @@ async function handleRunNode(nodeId: number) {
 function updateSettings(settings: NodeSettings) {
   if (selectedNodeId.value !== null) {
     flowStore.updateNodeSettings(selectedNodeId.value, settings)
+  }
+}
+
+// Update output field configuration
+function updateOutputFieldConfig(config: any) {
+  if (selectedNodeId.value !== null) {
+    const currentSettings = flowStore.nodes.find(n => n.id === selectedNodeId.value)?.settings
+    if (currentSettings) {
+      flowStore.updateNodeSettings(selectedNodeId.value, {
+        ...currentSettings,
+        output_field_config: config
+      })
+    }
   }
 }
 
@@ -958,5 +1001,50 @@ onUnmounted(() => {
 .ag-theme-balham .ag-popup {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
+}
+
+/* Settings tabs */
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 12px;
+}
+
+.tab-button {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  background: #f5f5f5;
+  color: #666;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 500;
+  transition: all 0.2s;
+  border-bottom: 3px solid transparent;
+}
+
+.tab-button:hover {
+  background: #ebebeb;
+  color: #333;
+}
+
+.tab-button.active {
+  background: white;
+  color: #4CAF50;
+  border-bottom-color: #4CAF50;
+}
+
+.tab-content {
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 </style>

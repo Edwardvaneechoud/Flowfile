@@ -25,6 +25,7 @@ from flowfile_core.schemas.yaml_types import (
     NodeSelectYaml,
     OutputSettingsYaml,
 )
+from flowfile_core.types import DataTypeStr
 from flowfile_core.utils.utils import ensure_similarity_dicts, standardize_col_dtype
 
 SecretRef = Annotated[
@@ -78,6 +79,22 @@ class MinimalFieldInfo(BaseModel):
 
     name: str
     data_type: str = "String"
+
+
+class OutputFieldInfo(BaseModel):
+    """Field information with optional default value for output field configuration."""
+
+    name: str
+    data_type: DataTypeStr = "String"
+    default_value: str | None = None  # Can be a literal value or expression
+
+
+class OutputFieldConfig(BaseModel):
+    """Configuration for output field validation and transformation behavior."""
+
+    enabled: bool = False
+    vm_behavior: Literal["add_missing", "raise_on_missing", "select_only"] = "select_only"
+    fields: list[OutputFieldInfo] = Field(default_factory=list)
 
 
 class InputTableBase(BaseModel):
@@ -337,6 +354,7 @@ class NodeBase(BaseModel):
     user_id: int | None = None
     is_flow_output: bool | None = False
     is_user_defined: bool | None = False  # Indicator if the node is a user defined node
+    output_field_config: OutputFieldConfig | None = None
 
 
 class NodeSingleInput(NodeBase):
@@ -360,12 +378,26 @@ class NodeSelect(NodeSingleInput):
 
     def to_yaml_dict(self) -> NodeSelectYaml:
         """Converts the select node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeSelectYaml = {
             "cache_results": self.cache_results,
             "keep_missing": self.keep_missing,
             "select_input": [s.to_yaml_dict() for s in self.select_input],
             "sorted_by": self.sorted_by,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "vm_behavior": self.output_field_config.vm_behavior,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeFilter(NodeSingleInput):
@@ -410,7 +442,7 @@ class NodeJoin(NodeMultiInput):
 
     def to_yaml_dict(self) -> NodeJoinYaml:
         """Converts the join node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeJoinYaml = {
             "cache_results": self.cache_results,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
@@ -419,6 +451,20 @@ class NodeJoin(NodeMultiInput):
             "auto_keep_right": self.auto_keep_right,
             "auto_keep_left": self.auto_keep_left,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "vm_behavior": self.output_field_config.vm_behavior,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeCrossJoin(NodeMultiInput):
@@ -433,7 +479,7 @@ class NodeCrossJoin(NodeMultiInput):
 
     def to_yaml_dict(self) -> NodeCrossJoinYaml:
         """Converts the cross join node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeCrossJoinYaml = {
             "cache_results": self.cache_results,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
@@ -442,6 +488,20 @@ class NodeCrossJoin(NodeMultiInput):
             "auto_keep_right": self.auto_keep_right,
             "auto_keep_left": self.auto_keep_left,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "vm_behavior": self.output_field_config.vm_behavior,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeFuzzyMatch(NodeJoin):
@@ -451,7 +511,7 @@ class NodeFuzzyMatch(NodeJoin):
 
     def to_yaml_dict(self) -> NodeFuzzyMatchYaml:
         """Converts the fuzzy match node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeFuzzyMatchYaml = {
             "cache_results": self.cache_results,
             "auto_generate_selection": self.auto_generate_selection,
             "verify_integrity": self.verify_integrity,
@@ -460,6 +520,20 @@ class NodeFuzzyMatch(NodeJoin):
             "auto_keep_right": self.auto_keep_right,
             "auto_keep_left": self.auto_keep_left,
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "vm_behavior": self.output_field_config.vm_behavior,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeDatasource(NodeBase):
@@ -691,10 +765,24 @@ class NodeOutput(NodeSingleInput):
 
     def to_yaml_dict(self) -> NodeOutputYaml:
         """Converts the output node settings to a dictionary for YAML serialization."""
-        return {
+        result: NodeOutputYaml = {
             "cache_results": self.cache_results,
             "output_settings": self.output_settings.to_yaml_dict(),
         }
+        if self.output_field_config:
+            result["output_field_config"] = {
+                "enabled": self.output_field_config.enabled,
+                "vm_behavior": self.output_field_config.vm_behavior,
+                "fields": [
+                    {
+                        "name": f.name,
+                        "data_type": f.data_type,
+                        "default_value": f.default_value,
+                    }
+                    for f in self.output_field_config.fields
+                ],
+            }
+        return result
 
 
 class NodeOutputConnection(BaseModel):

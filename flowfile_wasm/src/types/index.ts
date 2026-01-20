@@ -243,9 +243,49 @@ export interface SampleInput {
 // MANUAL INPUT / RAW DATA SCHEMAS (matches flowfile_core/schemas/input_schema.py)
 // =============================================================================
 
+export type DataTypeStr =
+  | 'Int8'
+  | 'Int16'
+  | 'Int32'
+  | 'Int64'
+  | 'UInt8'
+  | 'UInt16'
+  | 'UInt32'
+  | 'UInt64'
+  | 'Float32'
+  | 'Float64'
+  | 'Decimal'
+  | 'String'
+  | 'Date'
+  | 'Datetime'
+  | 'Time'
+  | 'Duration'
+  | 'Boolean'
+  | 'Binary'
+  | 'List'
+  | 'Struct'
+  | 'Array'
+  | 'Integer'
+  | 'Double'
+  | 'Utf8'
+
 export interface MinimalFieldInfo {
   name: string
   data_type: string
+}
+
+export interface OutputFieldInfo {
+  name: string
+  data_type: DataTypeStr
+  default_value?: string | null
+}
+
+export type VMBehavior = 'add_missing' | 'raise_on_missing' | 'select_only'
+
+export interface OutputFieldConfig {
+  enabled: boolean
+  vm_behavior: VMBehavior
+  fields: OutputFieldInfo[]
 }
 
 export interface RawData {
