@@ -78,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onUnmounted, nextTick } from 'vue'
+import { computed, ref, onUnmounted, nextTick, watch } from 'vue'
 import { Handle, Position } from '@vue-flow/core'
 import type { NodeResult } from '../../types'
 import { useFlowStore } from '../../stores/flow-store'
@@ -121,10 +121,32 @@ const emit = defineEmits<{
 
 const flowStore = useFlowStore()
 
-// Description editing
+// Description editing - initialize from store
 const description = ref('')
 const editMode = ref(false)
 const CHAR_LIMIT = 100
+
+// Initialize description from store node data
+function initDescription() {
+  const node = flowStore.getNode(props.data.id)
+  if (node) {
+    // Get description from node level (primary) or settings (fallback)
+    description.value = node.description || (node.settings as any)?.description || ''
+  }
+}
+
+// Initialize on component mount
+initDescription()
+
+// Watch for external changes to the node (e.g., import from YAML)
+watch(
+  () => flowStore.getNode(props.data.id)?.description,
+  (newDesc) => {
+    if (!editMode.value && newDesc !== undefined) {
+      description.value = newDesc || ''
+    }
+  }
+)
 
 // Context menu state
 const menuVisible = ref(false)
@@ -184,7 +206,15 @@ const contextMenuStyle = computed(() => ({
 
 // Methods
 function toggleEditMode(state: boolean) {
+  // Save description when exiting edit mode
+  if (!state && editMode.value) {
+    saveDescription()
+  }
   editMode.value = state
+}
+
+function saveDescription() {
+  flowStore.updateNodeDescription(props.data.id, description.value)
 }
 
 function onClick() {
