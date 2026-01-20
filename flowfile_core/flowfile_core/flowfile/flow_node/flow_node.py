@@ -347,6 +347,9 @@ class FlowNode:
         if is_manual_input:
             _ = self.hash
         self._setting_input = setting_input
+        # Copy cache_results from setting_input to node_settings
+        if hasattr(setting_input, "cache_results"):
+            self.node_settings.cache_results = setting_input.cache_results
         self.set_node_information()
         if is_manual_input:
             if self.hash != self.calculate_hash(setting_input) or not self.node_stats.has_run_with_current_setup:
