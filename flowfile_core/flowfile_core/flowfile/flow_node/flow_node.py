@@ -990,6 +990,19 @@ class FlowNode:
             finally:
                 self._fetch_cached_df = None
 
+    # Backward-compatible aliases for renamed methods
+    def execute_full_local(self, performance_mode: bool = False) -> None:
+        """Backward-compatible alias for _do_execute_full_local."""
+        return self._do_execute_full_local(performance_mode)
+
+    def execute_local(self, flow_id: int, performance_mode: bool = False):
+        """Backward-compatible alias for _do_execute_local_with_sampling."""
+        return self._do_execute_local_with_sampling(performance_mode, flow_id)
+
+    def execute_remote(self, performance_mode: bool = False, node_logger: NodeLogger = None):
+        """Backward-compatible alias for _do_execute_remote."""
+        return self._do_execute_remote(performance_mode, node_logger)
+
     def prepare_before_run(self):
         """Resets results and errors before a new execution."""
 
