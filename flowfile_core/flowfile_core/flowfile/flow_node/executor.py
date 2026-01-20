@@ -211,21 +211,20 @@ class NodeExecutor:
         self,
         run_location: schemas.ExecutionLocationsLiteral,
     ) -> ExecutionStrategy:
-        """Determine the execution strategy based on location and node settings."""
+        """Determine the execution strategy based on location and node settings.
+
+        This matches the original execute_node behavior:
+        - local → FULL_LOCAL (execute_full_local)
+        - remote → REMOTE (execute_remote)
+        """
         # Local execution mode (e.g., WASM, no worker available)
         if run_location == "local":
             return ExecutionStrategy.FULL_LOCAL
 
-        # Node explicitly wants caching via remote
-        if self.node.node_settings.cache_results:
-            return ExecutionStrategy.REMOTE
-
-        # Wide transforms benefit from full materialization
-        if self.node.node_default and self.node.node_default.transform_type == "wide":
-            return ExecutionStrategy.REMOTE
-
-        # Default for remote location: local execution with sampling
-        return ExecutionStrategy.LOCAL_WITH_SAMPLING
+        # Remote execution: use REMOTE strategy
+        # This matches original behavior where run_location == "remote"
+        # always triggered execute_remote
+        return ExecutionStrategy.REMOTE
 
     def _execute_with_strategy(
         self,
