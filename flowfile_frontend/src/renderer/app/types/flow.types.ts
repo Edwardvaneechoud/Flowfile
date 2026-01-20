@@ -47,6 +47,31 @@ export interface RunInformationDictionary {
 }
 
 // ============================================================================
+// History/Undo-Redo Types
+// ============================================================================
+
+export interface HistoryState {
+  can_undo: boolean;
+  can_redo: boolean;
+  undo_description: string | null;
+  redo_description: string | null;
+  undo_count: number;
+  redo_count: number;
+}
+
+export interface UndoRedoResult {
+  success: boolean;
+  action_description: string | null;
+  error_message: string | null;
+}
+
+export interface OperationResponse {
+  success: boolean;
+  message: string | null;
+  history: HistoryState;
+}
+
+// ============================================================================
 // Local File Types
 // ============================================================================
 

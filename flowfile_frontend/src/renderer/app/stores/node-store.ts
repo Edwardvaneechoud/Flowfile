@@ -504,6 +504,12 @@ export const useNodeStore = defineStore("node", {
       return editorStore.executeDrawCloseFunction();
     },
 
+    /** @deprecated Use `useEditorStore().clearCloseFunction()` directly instead. */
+    clearCloseFunction() {
+      const editorStore = useEditorStore();
+      editorStore.clearCloseFunction();
+    },
+
     /** @deprecated Use `useEditorStore().toggleCodeGenerator()` directly instead. */
     toggleCodeGenerator() {
       const editorStore = useEditorStore();

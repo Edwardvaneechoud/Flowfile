@@ -143,6 +143,7 @@ class FlowSettings(FlowGraphConfig):
         show_detailed_progress (bool): Flag to show detailed progress during execution.
         is_running (bool): Indicates if the flow is currently running.
         is_canceled (bool): Indicates if the flow execution has been canceled.
+        track_history (bool): Flag to enable or disable undo/redo history tracking.
     """
 
     auto_save: bool = False
@@ -150,6 +151,7 @@ class FlowSettings(FlowGraphConfig):
     show_detailed_progress: bool = True
     is_running: bool = False
     is_canceled: bool = False
+    track_history: bool = True
 
     @classmethod
     def from_flow_settings_input(cls, flow_graph_config: FlowGraphConfig):
