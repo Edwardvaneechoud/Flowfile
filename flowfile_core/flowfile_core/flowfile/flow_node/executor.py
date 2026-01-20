@@ -139,17 +139,23 @@ class NodeExecutor:
         strategy_str = decision.strategy.name
         node_logger.info(f"Starting to run {self.node.__name__} ({reason_str} -> {strategy_str})")
 
+        # Override performance_mode when cache_results is enabled
+        # This ensures example data is generated even in Performance mode
+        effective_performance_mode = performance_mode
+        if self.node.node_settings.cache_results:
+            effective_performance_mode = False
+
         # Prepare and execute
         self._prepare_for_execution(state)
         self.node.reset()
 
         try:
-            self._execute_with_strategy(state, decision.strategy, performance_mode, node_logger)
+            self._execute_with_strategy(state, decision.strategy, effective_performance_mode, node_logger)
             self._update_source_file_info(state)
             self._sync_state_to_legacy(state)
             self.state_provider.save_state(self.node.node_id, self.node.parent_uuid, state)
         except Exception as e:
-            self._handle_error(state, e, run_location, performance_mode, retry, node_logger)
+            self._handle_error(state, e, run_location, effective_performance_mode, retry, node_logger)
 
     def _decide_execution(
         self,
