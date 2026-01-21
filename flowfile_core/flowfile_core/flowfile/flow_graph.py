@@ -1673,8 +1673,30 @@ class FlowGraph:
         # Wrap schema_callback with output_field_config support
         # If the node has output_field_config enabled, use it for schema prediction
         output_field_config = getattr(setting_input, 'output_field_config', None) if setting_input else None
+
+        logger.info(
+            f"add_node_step: node_id={node_id}, node_type={node_type}, "
+            f"has_setting_input={setting_input is not None}, "
+            f"has_output_field_config={output_field_config is not None}, "
+            f"config_enabled={output_field_config.enabled if output_field_config else False}, "
+            f"has_schema_callback={schema_callback is not None}"
+        )
+
+        # IMPORTANT: Always create wrapped callback if output_field_config exists (even if enabled=False)
+        # This ensures nodes like PolarsCode get a schema callback when output_field_config is defined
         if output_field_config:
+            if output_field_config.enabled:
+                logger.info(
+                    f"add_node_step: Creating/wrapping schema_callback for node {node_id} with output_field_config "
+                    f"(vm_behavior={output_field_config.vm_behavior}, {len(output_field_config.fields)} fields, "
+                    f"base_callback={'present' if schema_callback else 'None'})"
+                )
+            else:
+                logger.debug(f"add_node_step: output_field_config present for node {node_id} but disabled")
+
+            # Even if schema_callback is None, create a wrapped one for output_field_config
             schema_callback = create_schema_callback_with_output_config(schema_callback, output_field_config)
+            logger.info(f"add_node_step: schema_callback {'created' if schema_callback else 'failed'} for node {node_id}")
 
         existing_node = self.get_node(node_id)
         if existing_node is not None:

@@ -535,23 +535,60 @@ class FlowNode:
         Returns:
             A list of FlowfileColumn objects representing the predicted schema.
         """
+        logger.info(
+            f"get_predicted_schema: node_id={self.node_id}, node_type={self.node_type}, force={force}, "
+            f"has_predicted_schema={self.node_schema.predicted_schema is not None}, "
+            f"has_schema_callback={self.schema_callback is not None}, "
+            f"has_output_field_config={hasattr(self._setting_input, 'output_field_config') and self._setting_input.output_field_config is not None if self._setting_input else False}"
+        )
 
         if self.node_schema.predicted_schema and not force:
+            logger.debug(f"get_predicted_schema: node_id={self.node_id} - returning cached predicted_schema")
             return self.node_schema.predicted_schema
+
         if self.schema_callback is not None and (self.node_schema.predicted_schema is None or force):
             self.print("Getting the data from a schema callback")
+            logger.info(f"get_predicted_schema: node_id={self.node_id} - invoking schema_callback")
             if force:
                 # Force the schema callback to reset, so that it will be executed again
+                logger.debug(f"get_predicted_schema: node_id={self.node_id} - forcing schema_callback reset")
                 self.schema_callback.reset()
-            schema = self.schema_callback()
+
+            try:
+                schema = self.schema_callback()
+                logger.info(
+                    f"get_predicted_schema: node_id={self.node_id} - schema_callback returned "
+                    f"{len(schema) if schema else 0} columns: {[c.name for c in schema] if schema else []}"
+                )
+            except Exception as e:
+                logger.error(f"get_predicted_schema: node_id={self.node_id} - schema_callback raised exception: {e}")
+                schema = None
+
             if schema is not None and len(schema) > 0:
                 self.print("Calculating the schema based on the schema callback")
                 self.node_schema.predicted_schema = schema
+                logger.info(f"get_predicted_schema: node_id={self.node_id} - set predicted_schema from schema_callback")
                 return self.node_schema.predicted_schema
+            else:
+                logger.warning(f"get_predicted_schema: node_id={self.node_id} - schema_callback returned empty/None schema")
+        else:
+            logger.debug(f"get_predicted_schema: node_id={self.node_id} - no schema_callback available")
+
+        logger.debug(f"get_predicted_schema: node_id={self.node_id} - falling back to _predicted_data_getter")
         predicted_data = self._predicted_data_getter()
         if predicted_data is not None and predicted_data.schema is not None:
             self.print("Calculating the schema based on the predicted resulting data")
+            logger.info(
+                f"get_predicted_schema: node_id={self.node_id} - using schema from predicted_data "
+                f"({len(predicted_data.schema)} columns)"
+            )
             self.node_schema.predicted_schema = self._predicted_data_getter().schema
+        else:
+            logger.warning(
+                f"get_predicted_schema: node_id={self.node_id} - no schema available from any source "
+                f"(predicted_data={'None' if predicted_data is None else 'has_data'}, "
+                f"schema={'None' if predicted_data is None or predicted_data.schema is None else 'has_schema'})"
+            )
 
         return self.node_schema.predicted_schema
 
