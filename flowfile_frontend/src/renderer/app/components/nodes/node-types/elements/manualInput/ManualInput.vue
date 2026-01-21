@@ -120,7 +120,7 @@
 
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
 import { createManualInput } from "./manualInputLogic";
 import type {
   NodeManualInput,

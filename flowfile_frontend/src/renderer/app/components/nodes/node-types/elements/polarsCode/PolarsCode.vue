@@ -20,7 +20,7 @@
 <script lang="ts" setup>
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";

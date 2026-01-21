@@ -65,7 +65,7 @@ import {
   InputExcelTable,
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";

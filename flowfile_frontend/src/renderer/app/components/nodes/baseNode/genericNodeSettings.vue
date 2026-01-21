@@ -207,7 +207,7 @@
 <script lang="ts" setup>
 import { ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig, OutputFieldInfo } from "./nodeInput";
-import { useNodeStore } from "../../../stores/column-store";
+import { useNodeStore } from "../../../stores/node-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 
 const nodeStore = useNodeStore();

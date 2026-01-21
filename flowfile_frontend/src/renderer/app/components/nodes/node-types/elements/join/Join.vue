@@ -92,7 +92,7 @@
 <script lang="ts" setup>
 import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import { NodeJoin } from "./joinInterfaces";
