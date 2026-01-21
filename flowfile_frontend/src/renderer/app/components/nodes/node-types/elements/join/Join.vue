@@ -1,6 +1,6 @@
 <template>
   <div v-if="dataLoaded && nodeJoin" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeJoin">
+    <generic-node-settings v-model="nodeJoin" @requestSave="pushNodeData">
       <div class="listbox-subtitle">Join columns</div>
       <div class="join-content">
         <div class="join-type-selector">

@@ -3,6 +3,7 @@
     <generic-node-settings
       :model-value="nodePolarsCode"
       @update:modelValue="handleGenericSettingsUpdate"
+      @requestSave="pushNodeData"
     >
       <pythonEditor
         v-if="showEditor && nodePolarsCode"

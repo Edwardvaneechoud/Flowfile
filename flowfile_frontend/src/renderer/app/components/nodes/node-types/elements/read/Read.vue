@@ -3,6 +3,7 @@
     <generic-node-settings
       :model-value="nodeRead"
       @update:modelValue="handleGenericSettingsUpdate"
+      @requestSave="pushNodeData"
     >
       <div class="listbox-wrapper">
         <div class="file-upload-container">

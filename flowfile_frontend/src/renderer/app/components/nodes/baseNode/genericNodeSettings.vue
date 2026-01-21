@@ -218,9 +218,18 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: NodeBase): void;
+  (e: "requestSave"): void;
 }>();
 
 const activeTab = ref("main");
+
+// Watch for tab changes to trigger save when switching to Output Schema
+watch(activeTab, (newTab, oldTab) => {
+  // When switching to Output Schema tab from any other tab, request a save
+  if (newTab === "output-schema" && oldTab !== "output-schema") {
+    emit("requestSave");
+  }
+});
 
 const localSettings = ref<Pick<NodeBase, "cache_results" | "description">>({
   cache_results: props.modelValue?.cache_results ?? false,
@@ -294,12 +303,11 @@ const loadFieldsFromSchema = async () => {
       return;
     }
 
-    // First, save the current node state to ensure we get the latest schema
-    // Use updateSettingsDirectly since we have a plain object, not a ref
-    await nodeStore.updateSettingsDirectly(props.modelValue);
+    // Request parent component to save current state
+    emit("requestSave");
 
     // Give the backend a moment to process and update the schema
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 150));
 
     // Get the node data from the store with updated schema
     const nodeData = await nodeStore.getNodeData(props.modelValue.node_id);
