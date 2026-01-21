@@ -121,6 +121,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { createManualInput } from "./manualInputLogic";
 import type {
   NodeManualInput,
@@ -427,14 +428,18 @@ const updateTableFromRawData = () => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeManualInput.value) {
-    // Always save in the new format
-    nodeManualInput.value.raw_data_format = rawDataFormat.value;
-    await nodeStore.updateSettings(nodeManualInput);
-  }
-  dataLoaded.value = false;
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeManualInput,
+  beforeSave: () => {
+    if (nodeManualInput.value) {
+      // Always save in the new format
+      nodeManualInput.value.raw_data_format = rawDataFormat.value;
+    }
+  },
+  afterSave: () => {
+    dataLoaded.value = false;
+  },
+});
 
 // Watchers
 watch(rawData, (newVal) => {
@@ -444,6 +449,7 @@ watch(rawData, (newVal) => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

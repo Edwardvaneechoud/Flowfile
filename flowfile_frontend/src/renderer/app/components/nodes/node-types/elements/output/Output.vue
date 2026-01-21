@@ -111,6 +111,7 @@ import {
   createExcelTableSettings,
 } from "./defaultValues";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import axios, { AxiosError } from "axios";
 import CsvTableConfig from "./outputCsv.vue";
 import ExcelTableConfig from "./outputExcel.vue";
@@ -274,16 +275,22 @@ async function loadNodeData(nodeId: number) {
   dataLoaded.value = true;
 }
 
-async function pushNodeData() {
-  if (nodeOutput.value?.output_settings) {
-    await nodeStore.updateSettings(nodeOutput);
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeOutput,
+  beforeSave: () => {
+    if (!nodeOutput.value?.output_settings) {
+      throw new Error("Cannot save: output settings not available");
+    }
+  },
+  afterSave: () => {
     dataLoaded.value = false;
-  }
-}
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

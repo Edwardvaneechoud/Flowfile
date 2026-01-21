@@ -29,6 +29,7 @@ import { CodeLoader } from "vue-content-loader";
 import { get_template_source_type } from "./createTemplateExternalSource";
 import { SampleUsers, NodeExternalSource } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { WatchStopHandle } from "vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
@@ -78,31 +79,33 @@ const loadTemplateValue = () => {
   }
 };
 
-const pushNodeDataAction = async () => {
-  if (nodeExternalSource.value && isDirty.value) {
-    nodeExternalSource.value.is_setup = true;
-    nodeExternalSource.value.source_settings.fields = [];
-    isDirty.value = false;
-  }
-  await nodeStore.updateSettings(nodeExternalSource);
-  if (nodeExternalSource.value) {
-    await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
-  }
-};
-
-const pushNodeData = async () => {
-  // Your existing code to handle the operation
-  // await insertSelect(nodeSelect.value)
-  dataLoaded.value = false;
-  if (nodeExternalSource.value)
-    if (isDirty.value || nodeExternalSource.value.identifier) {
-      await pushNodeDataAction();
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeExternalSource,
+  beforeSave: () => {
+    dataLoaded.value = false;
+    if (!nodeExternalSource.value) {
+      throw new Error("Cannot save: external source data not available");
     }
-};
+    if (!(isDirty.value || nodeExternalSource.value.identifier)) {
+      throw new Error("No changes to save");
+    }
+    if (nodeExternalSource.value && isDirty.value) {
+      nodeExternalSource.value.is_setup = true;
+      nodeExternalSource.value.source_settings.fields = [];
+      isDirty.value = false;
+    }
+  },
+  afterSave: async () => {
+    if (nodeExternalSource.value) {
+      await nodeStore.getNodeData(Number(nodeExternalSource.value.node_id), false);
+    }
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

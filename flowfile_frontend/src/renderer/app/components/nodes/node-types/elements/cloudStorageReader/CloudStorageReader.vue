@@ -171,6 +171,7 @@ import { ref } from "vue";
 import { NodeCloudStorageReader } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/CloudConnectionView/api";
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
@@ -301,15 +302,18 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeCloudStorageReader.value || !nodeCloudStorageReader.value.cloud_storage_settings) {
-    console.log("Returning without pushing");
-    return;
-  }
-  nodeCloudStorageReader.value.is_setup = true;
-  nodeStore.updateSettings(nodeCloudStorageReader);
-  dataLoaded.value = false;
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeCloudStorageReader,
+  beforeSave: () => {
+    if (!nodeCloudStorageReader.value || !nodeCloudStorageReader.value.cloud_storage_settings) {
+      throw new Error("Cannot save: cloud storage settings not available");
+    }
+    nodeCloudStorageReader.value.is_setup = true;
+  },
+  afterSave: () => {
+    dataLoaded.value = false;
+  },
+});
 
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
@@ -326,6 +330,7 @@ const fetchConnections = async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

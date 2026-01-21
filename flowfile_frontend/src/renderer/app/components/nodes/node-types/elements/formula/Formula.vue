@@ -32,6 +32,7 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import DropDownGeneric from "../../../baseNode/page_objects/dropDownGeneric.vue";
 import { createFormulaNode } from "./formula";
@@ -78,18 +79,22 @@ const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = true;
 };
 
-const pushNodeData = async () => {
-  if (!nodeFormula.value || !formulaInput.value) {
-    return;
-  }
-  nodeFormula.value.is_setup = true;
-  nodeFormula.value.function.function = nodeStore.inputCode;
-  nodeStore.updateSettings(nodeFormula);
-  showEditor.value = false;
-  dataLoaded.value = false;
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeFormula,
+  beforeSave: () => {
+    if (!nodeFormula.value || !formulaInput.value) {
+      throw new Error("Cannot save: formula data not available");
+    }
+    nodeFormula.value.is_setup = true;
+    nodeFormula.value.function.function = nodeStore.inputCode;
+  },
+  afterSave: () => {
+    showEditor.value = false;
+    dataLoaded.value = false;
+  },
+});
 
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>
 
 <style lang="scss" scoped>

@@ -96,6 +96,7 @@
 import { ref, computed } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import { NodeJoin } from "./joinInterfaces";
@@ -167,15 +168,14 @@ const handleChange = (newValue: string, index: number, side: string) => {
   }
 };
 
-const pushNodeData = async () => {
-  console.log("Pushing node data");
-  nodeStore.updateSettings(nodeJoin);
-  //dataLoaded.value = false
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeJoin,
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

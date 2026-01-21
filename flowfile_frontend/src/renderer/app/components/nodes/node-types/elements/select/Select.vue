@@ -28,6 +28,7 @@ import {
 import { NodeSelect } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -63,7 +64,7 @@ const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = true;
 };
 
-const pushNodeData = async () => {
+const prepareSelectData = () => {
   nodeSelect.value.select_input.sort((a, b) => a.position - b.position);
   const originalData = nodeStore.getCurrentNodeData();
   const newColumnSettings = nodeSelect.value.select_input;
@@ -82,8 +83,13 @@ const pushNodeData = async () => {
       }
     });
   }
-  await nodeStore.updateSettings(nodeSelect);
 };
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeSelect,
+  beforeSave: prepareSelectData,
+});
+
 const updateSelectInputsHandler = (updatedInputs: SelectInput[]) => {
   nodeSelect.value.select_input = updatedInputs;
 };
@@ -91,5 +97,6 @@ const updateSelectInputsHandler = (updatedInputs: SelectInput[]) => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>

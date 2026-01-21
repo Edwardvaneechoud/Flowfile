@@ -30,6 +30,7 @@ import {
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
@@ -163,26 +164,27 @@ const instantValidate = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  dataLoaded.value = false;
-  setUniqueColumns();
-  console.log("doing this");
-  console.log(nodeUnique.value?.is_setup);
-  console.log(nodeUnique.value);
-  if (nodeUnique.value?.is_setup) {
-    nodeUnique.value.is_setup = true;
-  }
-
-  nodeStore.updateSettings(nodeUnique);
-  await instantValidate();
-  if (nodeUnique.value?.unique_input) {
-    nodeStore.setNodeValidateFunc(nodeUnique.value?.node_id, validateNode);
-  }
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeUnique,
+  beforeSave: () => {
+    dataLoaded.value = false;
+    setUniqueColumns();
+    if (nodeUnique.value?.is_setup) {
+      nodeUnique.value.is_setup = true;
+    }
+  },
+  afterSave: async () => {
+    await instantValidate();
+    if (nodeUnique.value?.unique_input) {
+      nodeStore.setNodeValidateFunc(nodeUnique.value?.node_id, validateNode);
+    }
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

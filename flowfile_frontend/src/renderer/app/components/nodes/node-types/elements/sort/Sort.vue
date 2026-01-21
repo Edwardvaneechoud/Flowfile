@@ -90,6 +90,7 @@ import { ref, computed } from "vue";
 import { NodeSort } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { CodeLoader } from "vue-content-loader";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
@@ -179,13 +180,14 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  nodeStore.updateSettings(nodeSort);
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeSort,
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

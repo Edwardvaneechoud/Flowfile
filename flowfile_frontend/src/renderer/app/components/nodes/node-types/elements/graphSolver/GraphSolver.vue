@@ -64,6 +64,7 @@ import { ref, onMounted, onUnmounted, computed, nextTick, defineProps } from "vu
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { GraphSolverInput, NodeGraphSolver } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -212,15 +213,14 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (nodeGraphSolver.value) {
-    nodeStore.updateSettings(nodeGraphSolver);
-  }
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeGraphSolver,
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

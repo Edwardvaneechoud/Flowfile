@@ -60,6 +60,7 @@ import {
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
 
@@ -188,30 +189,26 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  try {
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeRead,
+  beforeSave: () => {
     dataLoaded.value = false;
-
     if (!nodeRead.value || !receivedTable.value) {
-      console.warn("No node read value available");
       dataLoaded.value = true;
-      return;
+      throw new Error("No node read value available");
     }
-
     nodeRead.value.is_setup = true;
     nodeRead.value.received_file = receivedTable.value;
-
-    await nodeStore.updateSettings(nodeRead);
-  } catch (error) {
-    console.error("Error pushing node data:", error);
-  } finally {
+  },
+  afterSave: () => {
     dataLoaded.value = true;
-  }
-};
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

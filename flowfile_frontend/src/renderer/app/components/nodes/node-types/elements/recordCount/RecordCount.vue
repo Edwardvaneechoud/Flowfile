@@ -16,6 +16,7 @@ import { ref, onMounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeBase } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
@@ -29,15 +30,14 @@ const loadNodeData = async (nodeId: number) => {
   dataLoaded.value = true;
 };
 
-const pushNodeData = async () => {
-  if (nodeRecordCount.value) {
-    nodeStore.updateSettings(nodeRecordCount);
-  }
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeRecordCount,
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

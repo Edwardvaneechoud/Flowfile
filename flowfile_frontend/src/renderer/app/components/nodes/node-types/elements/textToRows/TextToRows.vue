@@ -90,6 +90,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, nextTick, computed } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeTextToRows, TextToRowsInput } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
@@ -140,17 +141,20 @@ const handleChange = (newValue: string, type: "columnToSplit" | "splitValueColum
     }
 };
 
-const pushNodeData = async () => {
-  isLoaded.value = false;
-  if (nodeTextToRows.value) {
-    nodeTextToRows.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeTextToRows);
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeTextToRows,
+  beforeSave: () => {
+    isLoaded.value = false;
+    if (nodeTextToRows.value) {
+      nodeTextToRows.value.is_setup = true;
+    }
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
   hasInvalidFields,
 });
 

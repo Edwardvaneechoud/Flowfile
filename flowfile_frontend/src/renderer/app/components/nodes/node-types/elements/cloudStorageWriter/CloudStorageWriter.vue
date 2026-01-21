@@ -165,6 +165,7 @@ import { ref } from "vue";
 import { NodeCloudStorageWriter } from "../../../baseNode/nodeInput";
 import { createNodeCloudStorageWriter } from "./utils"; // Import the new utility function
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { fetchCloudStorageConnectionsInterfaces } from "../../../../../views/CloudConnectionView/api";
 import { FullCloudStorageConnectionInterface } from "../../../../../views/CloudConnectionView/CloudConnectionTypes";
 import { ElMessage } from "element-plus";
@@ -292,15 +293,18 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeCloudStorageWriter.value || !nodeCloudStorageWriter.value.cloud_storage_settings) {
-    return;
-  }
-  console.log(nodeCloudStorageWriter);
-  nodeCloudStorageWriter.value.is_setup = true;
-  nodeStore.updateSettings(nodeCloudStorageWriter);
-  dataLoaded.value = false;
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeCloudStorageWriter,
+  beforeSave: () => {
+    if (!nodeCloudStorageWriter.value || !nodeCloudStorageWriter.value.cloud_storage_settings) {
+      throw new Error("Cannot save: cloud storage settings not available");
+    }
+    nodeCloudStorageWriter.value.is_setup = true;
+  },
+  afterSave: () => {
+    dataLoaded.value = false;
+  },
+});
 
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
@@ -317,6 +321,7 @@ const fetchConnections = async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

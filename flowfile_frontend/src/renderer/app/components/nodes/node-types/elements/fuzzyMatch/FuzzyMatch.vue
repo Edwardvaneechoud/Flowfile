@@ -173,6 +173,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, nextTick, computed } from "vue";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeJoin, FuzzyJoinSettings, SelectInput, FuzzyMap } from "../../../baseNode/nodeInput";
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
@@ -298,27 +299,32 @@ const handleChange = (newValue: string, index: number, side: string) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeFuzzyJoin.value) {
-    nodeFuzzyJoin.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeFuzzyJoin);
-  if (hasInvalidFields.value && nodeFuzzyJoin.value) {
-    nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
-      isValid: false,
-      error: "Join fields are not valid",
-    });
-  } else if (nodeFuzzyJoin.value) {
-    nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
-      isValid: true,
-      error: "",
-    });
-  }
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeFuzzyJoin,
+  beforeSave: () => {
+    if (nodeFuzzyJoin.value) {
+      nodeFuzzyJoin.value.is_setup = true;
+    }
+  },
+  afterSave: () => {
+    if (hasInvalidFields.value && nodeFuzzyJoin.value) {
+      nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
+        isValid: false,
+        error: "Join fields are not valid",
+      });
+    } else if (nodeFuzzyJoin.value) {
+      nodeStore.setNodeValidation(nodeFuzzyJoin.value.node_id, {
+        isValid: true,
+        error: "",
+      });
+    }
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
   hasInvalidFields,
 });
 

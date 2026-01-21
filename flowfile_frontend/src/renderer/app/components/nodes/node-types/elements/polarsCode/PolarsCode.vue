@@ -17,6 +17,7 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
@@ -65,15 +66,19 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
-    return;
-  }
-  nodePolarsCode.value.is_setup = true;
-  nodeStore.updateSettings(nodePolarsCode);
-  showEditor.value = false;
-  dataLoaded.value = false;
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodePolarsCode,
+  beforeSave: () => {
+    if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
+      throw new Error("Cannot save: polars code data not available");
+    }
+    nodePolarsCode.value.is_setup = true;
+  },
+  afterSave: () => {
+    showEditor.value = false;
+    dataLoaded.value = false;
+  },
+});
 
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>

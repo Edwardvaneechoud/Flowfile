@@ -19,6 +19,7 @@ import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeSample } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
@@ -55,17 +56,22 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (nodeSample.value) {
-    nodeSample.value.sample_size = sampleSize.value;
-  }
-  nodeStore.updateSettings(nodeSample);
-  dataLoaded.value = false;
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeSample,
+  beforeSave: () => {
+    if (nodeSample.value) {
+      nodeSample.value.sample_size = sampleSize.value;
+    }
+  },
+  afterSave: () => {
+    dataLoaded.value = false;
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

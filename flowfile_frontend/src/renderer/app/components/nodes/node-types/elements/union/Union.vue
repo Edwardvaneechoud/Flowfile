@@ -11,6 +11,7 @@ import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { UnionInput, NodeUnion } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
@@ -43,15 +44,14 @@ const handleClickOutside = (event: MouseEvent) => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (unionInput.value) {
-    nodeStore.updateSettings(nodeUnion);
-  }
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeUnion,
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {
