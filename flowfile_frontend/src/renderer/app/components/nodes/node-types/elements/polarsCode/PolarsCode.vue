@@ -26,6 +26,7 @@ import { createPolarsCodeNode } from "./utils";
 
 import { NodePolarsCode } from "../../../baseNode/nodeInput";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
+import { useGenericNodeSettings } from "../../../../../composables/useGenericNodeSettings";
 
 const showEditor = ref<boolean>(false);
 const nodeStore = useNodeStore();
@@ -46,14 +47,8 @@ const handleEditorUpdate = (newCode: string) => {
   }
 };
 
-const handleGenericSettingsUpdate = (updatedNode: NodePolarsCode) => {
-  // Merge the updated settings from genericNodeSettings back into nodePolarsCode
-  if (nodePolarsCode.value) {
-    nodePolarsCode.value.cache_results = updatedNode.cache_results;
-    nodePolarsCode.value.description = updatedNode.description;
-    nodePolarsCode.value.output_field_config = updatedNode.output_field_config;
-  }
-};
+// Use composable for automatic NodeBase property syncing
+const { handleGenericSettingsUpdate } = useGenericNodeSettings(nodePolarsCode);
 
 const loadNodeData = async (nodeId: number) => {
   try {
