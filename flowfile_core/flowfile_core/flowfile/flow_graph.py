@@ -50,6 +50,7 @@ from flowfile_core.flowfile.graph_tree.graph_tree import (
     draw_standalone_paths,
     group_nodes_by_depth,
 )
+from flowfile_core.flowfile.flow_node.schema_utils import create_schema_callback_with_output_config
 from flowfile_core.flowfile.node_designer.custom_node import CustomNodeBase
 from flowfile_core.flowfile.schema_callbacks import calculate_fuzzy_match_schema, pre_calculate_pivot_schema
 from flowfile_core.flowfile.sources import external_sources
@@ -1669,6 +1670,12 @@ class FlowGraph:
         Returns:
             The created or updated FlowNode object.
         """
+        # Wrap schema_callback with output_field_config support
+        # If the node has output_field_config enabled, use it for schema prediction
+        output_field_config = getattr(setting_input, 'output_field_config', None) if setting_input else None
+        if output_field_config:
+            schema_callback = create_schema_callback_with_output_config(schema_callback, output_field_config)
+
         existing_node = self.get_node(node_id)
         if existing_node is not None:
             if existing_node.node_type != node_type:
