@@ -45,15 +45,157 @@
           </div>
         </div>
       </el-tab-pane>
+
+      <el-tab-pane label="Output Schema" name="output-schema">
+        <div class="settings-section">
+          <div class="setting-group">
+            <div class="setting-header">
+              <span class="setting-title">Enable Output Field Configuration</span>
+              <span class="setting-description">
+                Define and enforce the output schema for predictable dataframe outputs
+              </span>
+            </div>
+            <el-switch v-model="outputFieldConfig.enabled" @change="handleOutputConfigChange" />
+          </div>
+
+          <template v-if="outputFieldConfig.enabled">
+            <div class="setting-group">
+              <div class="setting-header">
+                <span class="setting-title">VM Behavior</span>
+                <span class="setting-description">
+                  How to handle output fields
+                </span>
+              </div>
+              <el-select
+                v-model="outputFieldConfig.vm_behavior"
+                @change="handleOutputConfigChange"
+                style="width: 100%"
+              >
+                <el-option
+                  label="Select Only - Keep only specified fields"
+                  value="select_only"
+                />
+                <el-option
+                  label="Add Missing - Add missing fields with defaults"
+                  value="add_missing"
+                />
+                <el-option
+                  label="Raise on Missing - Error if fields are missing"
+                  value="raise_on_missing"
+                />
+              </el-select>
+            </div>
+
+            <div class="setting-group">
+              <div class="setting-header">
+                <span class="setting-title">Output Fields</span>
+                <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem">
+                  <el-button size="small" @click="loadFieldsFromSchema">
+                    Load from Schema
+                  </el-button>
+                  <el-button size="small" type="primary" @click="addField">
+                    Add Field
+                  </el-button>
+                </div>
+              </div>
+
+              <div v-if="outputFieldConfig.fields.length === 0" class="no-fields">
+                No output fields configured. Click "Add Field" or "Load from Schema" to get started.
+              </div>
+
+              <el-table
+                v-else
+                :data="outputFieldConfig.fields"
+                style="width: 100%; margin-top: 1rem"
+                size="small"
+              >
+                <el-table-column width="50">
+                  <template #default="{ $index }">
+                    <el-icon style="cursor: move">
+                      <DCaret />
+                    </el-icon>
+                  </template>
+                </el-table-column>
+
+                <el-table-column label="Field Name" prop="name">
+                  <template #default="{ row }">
+                    <el-input
+                      v-model="row.name"
+                      size="small"
+                      @change="handleOutputConfigChange"
+                    />
+                  </template>
+                </el-table-column>
+
+                <el-table-column label="Data Type" prop="data_type" width="150">
+                  <template #default="{ row }">
+                    <el-select
+                      v-model="row.data_type"
+                      size="small"
+                      @change="handleOutputConfigChange"
+                    >
+                      <el-option label="String" value="String" />
+                      <el-option label="Int64" value="Int64" />
+                      <el-option label="Int32" value="Int32" />
+                      <el-option label="Float64" value="Float64" />
+                      <el-option label="Float32" value="Float32" />
+                      <el-option label="Boolean" value="Boolean" />
+                      <el-option label="Date" value="Date" />
+                      <el-option label="Datetime" value="Datetime" />
+                      <el-option label="Time" value="Time" />
+                      <el-option label="List" value="List" />
+                      <el-option label="Decimal" value="Decimal" />
+                    </el-select>
+                  </template>
+                </el-table-column>
+
+                <el-table-column label="Default Value" prop="default_value">
+                  <template #default="{ row }">
+                    <el-input
+                      v-model="row.default_value"
+                      size="small"
+                      placeholder="null or expression"
+                      @change="handleOutputConfigChange"
+                    />
+                  </template>
+                </el-table-column>
+
+                <el-table-column width="60">
+                  <template #default="{ $index }">
+                    <el-button
+                      type="danger"
+                      size="small"
+                      text
+                      @click="removeField($index)"
+                    >
+                      <el-icon><Delete /></el-icon>
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <el-alert
+                v-if="outputFieldConfig.fields.length > 0"
+                type="info"
+                :closable="false"
+                style="margin-top: 1rem"
+              >
+                <strong>Tip:</strong> Default values can be literals (e.g., "0", "Unknown") or
+                Polars expressions (e.g., "pl.lit(0)").
+              </el-alert>
+            </div>
+          </template>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, watch } from "vue";
-import type { NodeBase } from "./nodeInput";
+import { ref, watch, reactive } from "vue";
+import type { NodeBase, OutputFieldConfig, OutputFieldInfo } from "./nodeInput";
 import { useNodeStore } from "../../../stores/column-store";
-import { InfoFilled } from "@element-plus/icons-vue";
+import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 
 const nodeStore = useNodeStore();
 
@@ -72,6 +214,14 @@ const localSettings = ref<Pick<NodeBase, "cache_results" | "description">>({
   description: props.modelValue?.description ?? "",
 });
 
+const outputFieldConfig = reactive<OutputFieldConfig>(
+  props.modelValue?.output_field_config ?? {
+    enabled: false,
+    vm_behavior: "select_only",
+    fields: [],
+  }
+);
+
 watch(
   () => props.modelValue,
   (newValue) => {
@@ -80,6 +230,11 @@ watch(
         cache_results: newValue.cache_results,
         description: newValue.description ?? "",
       };
+
+      // Update output field config if it exists
+      if (newValue.output_field_config) {
+        Object.assign(outputFieldConfig, newValue.output_field_config);
+      }
     }
   },
   { deep: true },
@@ -90,11 +245,50 @@ const handleSettingChange = () => {
     ...props.modelValue,
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
+    output_field_config: outputFieldConfig.enabled ? outputFieldConfig : null,
   });
 };
+
 const handleDescriptionChange = (value: string) => {
   nodeStore.updateNodeDescription(props.modelValue.node_id, value);
   handleSettingChange();
+};
+
+const handleOutputConfigChange = () => {
+  handleSettingChange();
+};
+
+const addField = () => {
+  outputFieldConfig.fields.push({
+    name: "",
+    data_type: "String",
+    default_value: null,
+  });
+  handleOutputConfigChange();
+};
+
+const removeField = (index: number) => {
+  outputFieldConfig.fields.splice(index, 1);
+  handleOutputConfigChange();
+};
+
+const loadFieldsFromSchema = async () => {
+  try {
+    // Get the node data from the store
+    const nodeData = await nodeStore.getNodeData(props.modelValue.node_id);
+
+    if (nodeData?.main_output?.table_schema) {
+      // Load fields from the schema
+      outputFieldConfig.fields = nodeData.main_output.table_schema.map((col: any) => ({
+        name: col.name,
+        data_type: col.data_type,
+        default_value: null,
+      }));
+      handleOutputConfigChange();
+    }
+  } catch (error) {
+    console.error("Error loading schema:", error);
+  }
 };
 </script>
 
