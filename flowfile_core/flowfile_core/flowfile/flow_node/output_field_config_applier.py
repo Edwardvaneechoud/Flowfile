@@ -86,8 +86,9 @@ def apply_output_field_config(
         # Update the data frame in the flow data engine
         flow_data_engine.data_frame = df
 
-        # Update schema information
-        flow_data_engine.update_schema()
+        # Force schema recalculation by clearing the cached schema
+        # The schema property will recalculate when accessed next time
+        flow_data_engine._schema = None
 
         logger.info(
             f"Applied output field config: behavior={output_field_config.vm_behavior}, "
