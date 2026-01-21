@@ -93,8 +93,9 @@ class OutputFieldConfig(BaseModel):
     """Configuration for output field validation and transformation behavior."""
 
     enabled: bool = False
-    vm_behavior: Literal["add_missing", "raise_on_missing", "select_only"] = "select_only"
+    validation_mode_behavior: Literal["add_missing", "raise_on_missing", "select_only"] = "select_only"
     fields: list[OutputFieldInfo] = Field(default_factory=list)
+    validate_data_types: bool = False  # Enable data type validation without casting
 
 
 class InputTableBase(BaseModel):
@@ -387,7 +388,8 @@ class NodeSelect(NodeSingleInput):
         if self.output_field_config:
             result["output_field_config"] = {
                 "enabled": self.output_field_config.enabled,
-                "vm_behavior": self.output_field_config.vm_behavior,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
                 "fields": [
                     {
                         "name": f.name,
@@ -454,7 +456,8 @@ class NodeJoin(NodeMultiInput):
         if self.output_field_config:
             result["output_field_config"] = {
                 "enabled": self.output_field_config.enabled,
-                "vm_behavior": self.output_field_config.vm_behavior,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
                 "fields": [
                     {
                         "name": f.name,
@@ -491,7 +494,8 @@ class NodeCrossJoin(NodeMultiInput):
         if self.output_field_config:
             result["output_field_config"] = {
                 "enabled": self.output_field_config.enabled,
-                "vm_behavior": self.output_field_config.vm_behavior,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
                 "fields": [
                     {
                         "name": f.name,
@@ -523,7 +527,8 @@ class NodeFuzzyMatch(NodeJoin):
         if self.output_field_config:
             result["output_field_config"] = {
                 "enabled": self.output_field_config.enabled,
-                "vm_behavior": self.output_field_config.vm_behavior,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
                 "fields": [
                     {
                         "name": f.name,
@@ -772,7 +777,8 @@ class NodeOutput(NodeSingleInput):
         if self.output_field_config:
             result["output_field_config"] = {
                 "enabled": self.output_field_config.enabled,
-                "vm_behavior": self.output_field_config.vm_behavior,
+                "validation_mode_behavior": self.output_field_config.validation_mode_behavior,
+                "validate_data_types": self.output_field_config.validate_data_types,
                 "fields": [
                     {
                         "name": f.name,

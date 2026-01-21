@@ -1688,7 +1688,7 @@ class FlowGraph:
             if output_field_config.enabled:
                 logger.info(
                     f"add_node_step: Creating/wrapping schema_callback for node {node_id} with output_field_config "
-                    f"(vm_behavior={output_field_config.vm_behavior}, {len(output_field_config.fields)} fields, "
+                    f"(validation_mode={output_field_config.validation_mode_behavior}, {len(output_field_config.fields)} fields, "
                     f"base_callback={'present' if schema_callback else 'None'})"
                 )
             else:

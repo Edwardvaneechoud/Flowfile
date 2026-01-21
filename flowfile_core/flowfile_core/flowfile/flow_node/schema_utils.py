@@ -59,7 +59,7 @@ def create_schema_callback_with_output_config(
         if output_field_config and output_field_config.enabled and output_field_config.fields:
             logger.info(
                 f"wrapped_schema_callback: Using output_field_config for schema prediction "
-                f"(vm_behavior={output_field_config.vm_behavior}, {len(output_field_config.fields)} fields)"
+                f"(validation_mode={output_field_config.validation_mode_behavior}, {len(output_field_config.fields)} fields)"
             )
             return create_schema_from_output_field_config(output_field_config)
 

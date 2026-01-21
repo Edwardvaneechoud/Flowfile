@@ -31,8 +31,9 @@ class OutputFieldInfoYaml(TypedDict, total=False):
 
 class OutputFieldConfigYaml(TypedDict, total=False):
     enabled: bool
-    vm_behavior: str  # "add_missing", "raise_on_missing", or "select_only"
+    validation_mode_behavior: str  # "add_missing", "raise_on_missing", or "select_only"
     fields: list[OutputFieldInfoYaml]
+    validate_data_types: bool  # Enable data type validation
 
 
 class JoinInputsYaml(TypedDict):

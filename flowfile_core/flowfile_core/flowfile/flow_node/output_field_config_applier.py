@@ -6,6 +6,59 @@ from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEng
 from flowfile_core.schemas.input_schema import OutputFieldConfig
 
 
+def polars_dtype_to_data_type_str(polars_dtype: str) -> str:
+    """Map Polars dtype string to our DataTypeStr format.
+
+    Args:
+        polars_dtype: String representation of Polars dtype (e.g., "Int64", "Utf8")
+
+    Returns:
+        Corresponding DataTypeStr value
+    """
+    # Normalize the dtype string
+    dtype_lower = polars_dtype.lower()
+
+    # Map common Polars dtypes to our format
+    dtype_map = {
+        "int8": "Int8",
+        "int16": "Int16",
+        "int32": "Int32",
+        "int64": "Int64",
+        "uint8": "UInt8",
+        "uint16": "UInt16",
+        "uint32": "UInt32",
+        "uint64": "UInt64",
+        "float32": "Float32",
+        "float64": "Float64",
+        "utf8": "String",
+        "str": "String",
+        "string": "String",
+        "bool": "Boolean",
+        "boolean": "Boolean",
+        "date": "Date",
+        "datetime": "Datetime",
+        "time": "Time",
+        "duration": "Duration",
+        "list": "List",
+        "struct": "Struct",
+        "categorical": "Categorical",
+        "null": "Null",
+    }
+
+    # Try exact match first
+    if dtype_lower in dtype_map:
+        return dtype_map[dtype_lower]
+
+    # Try partial matches for complex types
+    for key, value in dtype_map.items():
+        if key in dtype_lower:
+            return value
+
+    # Default to String if unknown
+    logger.warning(f"Unknown Polars dtype '{polars_dtype}', treating as String")
+    return "String"
+
+
 def apply_output_field_config(
     flow_data_engine: FlowDataEngine, output_field_config: OutputFieldConfig
 ) -> FlowDataEngine:
@@ -37,8 +90,8 @@ def apply_output_field_config(
         current_columns = set(df.columns)
         expected_columns = set(expected_fields.keys())
 
-        # Handle behavior based on vm_behavior setting
-        if output_field_config.vm_behavior == "raise_on_missing":
+        # Handle behavior based on validation_mode_behavior setting
+        if output_field_config.validation_mode_behavior == "raise_on_missing":
             # Raise error if any expected columns are missing
             missing_columns = expected_columns - current_columns
             if missing_columns:
@@ -47,7 +100,7 @@ def apply_output_field_config(
             # Select only the expected columns in the specified order
             df = df.select([field.name for field in output_field_config.fields])
 
-        elif output_field_config.vm_behavior == "add_missing":
+        elif output_field_config.validation_mode_behavior == "add_missing":
             # Add missing columns with default values
             for field in output_field_config.fields:
                 if field.name not in current_columns:
@@ -77,11 +130,33 @@ def apply_output_field_config(
             # Select only the expected columns in the specified order
             df = df.select([field.name for field in output_field_config.fields])
 
-        elif output_field_config.vm_behavior == "select_only":
+        elif output_field_config.validation_mode_behavior == "select_only":
             # Only select columns that exist
             columns_to_select = [field.name for field in output_field_config.fields if field.name in current_columns]
             if columns_to_select:
                 df = df.select(columns_to_select)
+
+        # Validate data types if enabled
+        if output_field_config.validate_data_types:
+            mismatches = []
+            for field in output_field_config.fields:
+                if field.name in df.columns:
+                    actual_dtype_polars = str(df[field.name].dtype)
+                    actual_dtype = polars_dtype_to_data_type_str(actual_dtype_polars)
+                    expected_dtype = field.data_type
+
+                    # Check if types match (case-insensitive comparison)
+                    if actual_dtype.lower() != expected_dtype.lower():
+                        mismatches.append(
+                            f"Column '{field.name}': expected {expected_dtype}, got {actual_dtype} (Polars: {actual_dtype_polars})"
+                        )
+
+            if mismatches:
+                error_msg = "Data type validation failed:\n" + "\n".join(f"  - {m}" for m in mismatches)
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            logger.info(f"Data type validation passed for {len(output_field_config.fields)} fields")
 
         # Update the data frame in the flow data engine
         flow_data_engine.data_frame = df
@@ -91,8 +166,8 @@ def apply_output_field_config(
         flow_data_engine._schema = None
 
         logger.info(
-            f"Applied output field config: behavior={output_field_config.vm_behavior}, "
-            f"fields={len(output_field_config.fields)}"
+            f"Applied output field config: behavior={output_field_config.validation_mode_behavior}, "
+            f"fields={len(output_field_config.fields)}, validate_data_types={output_field_config.validate_data_types}"
         )
 
     except Exception as e:

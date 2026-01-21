@@ -61,13 +61,13 @@
           <template v-if="outputFieldConfig.enabled">
             <div class="setting-group">
               <div class="setting-header">
-                <span class="setting-title">VM Behavior</span>
+                <span class="setting-title">Validation Mode</span>
                 <span class="setting-description">
                   How to handle output fields
                 </span>
               </div>
               <el-select
-                v-model="outputFieldConfig.vm_behavior"
+                v-model="outputFieldConfig.validation_mode_behavior"
                 @change="handleOutputConfigChange"
                 style="width: 100%"
               >
@@ -84,6 +84,19 @@
                   value="raise_on_missing"
                 />
               </el-select>
+            </div>
+
+            <div class="setting-group">
+              <div class="setting-header">
+                <span class="setting-title">Validate Data Types</span>
+                <span class="setting-description">
+                  Raise an error if actual data types don't match the configured types (does not cast)
+                </span>
+              </div>
+              <el-switch
+                v-model="outputFieldConfig.validate_data_types"
+                @change="handleOutputConfigChange"
+              />
             </div>
 
             <div class="setting-group">
@@ -217,8 +230,9 @@ const localSettings = ref<Pick<NodeBase, "cache_results" | "description">>({
 const outputFieldConfig = reactive<OutputFieldConfig>(
   props.modelValue?.output_field_config ?? {
     enabled: false,
-    vm_behavior: "select_only",
+    validation_mode_behavior: "select_only",
     fields: [],
+    validate_data_types: false,
   }
 );
 
