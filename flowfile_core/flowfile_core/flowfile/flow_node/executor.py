@@ -203,7 +203,12 @@ class NodeExecutor:
         if not performance_mode and cache_exists:
             return ExecutionDecision(False, ExecutionStrategy.SKIP, None)
 
-        # Default: need to run
+        # Performance mode: always re-run for fresh results
+        if performance_mode:
+            strategy = self._determine_strategy(run_location)
+            return ExecutionDecision(True, strategy, InvalidationReason.PERFORMANCE_MODE)
+
+        # Default: settings changed since last run
         strategy = self._determine_strategy(run_location)
         return ExecutionDecision(True, strategy, InvalidationReason.SETTINGS_CHANGED)
 

@@ -11,7 +11,7 @@ import time
 import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
-from flowfile_core.flowfile.flowfile_handler import FlowfileHandler
+from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.flowfile.flow_node.models import (
     ExecutionDecision,
     ExecutionStrategy,
@@ -91,6 +91,7 @@ class TestInvalidationReason:
         assert InvalidationReason.CACHE_MISSING is not None
         assert InvalidationReason.FORCED_REFRESH is not None
         assert InvalidationReason.OUTPUT_NODE is not None
+        assert InvalidationReason.PERFORMANCE_MODE is not None
 
     def test_reason_values_are_distinct(self):
         """Ensure all reason values are distinct."""
@@ -101,6 +102,7 @@ class TestInvalidationReason:
             InvalidationReason.CACHE_MISSING,
             InvalidationReason.FORCED_REFRESH,
             InvalidationReason.OUTPUT_NODE,
+            InvalidationReason.PERFORMANCE_MODE,
         ]
         assert len(reasons) == len(set(reasons))
 
@@ -115,22 +117,22 @@ class TestExecutionDecision:
     def test_decision_creation(self):
         """Test creating an execution decision."""
         decision = ExecutionDecision(
-            should_execute=True,
+            should_run=True,
             strategy=ExecutionStrategy.REMOTE,
             reason=InvalidationReason.NEVER_RAN,
         )
-        assert decision.should_execute is True
+        assert decision.should_run is True
         assert decision.strategy == ExecutionStrategy.REMOTE
         assert decision.reason == InvalidationReason.NEVER_RAN
 
     def test_skip_decision(self):
         """Test creating a skip decision."""
         decision = ExecutionDecision(
-            should_execute=False,
+            should_run=False,
             strategy=ExecutionStrategy.SKIP,
             reason=None,
         )
-        assert decision.should_execute is False
+        assert decision.should_run is False
         assert decision.strategy == ExecutionStrategy.SKIP
         assert decision.reason is None
 
@@ -207,38 +209,40 @@ class TestNodeExecutionState:
         """Test initial state values."""
         state = NodeExecutionState()
         assert state.has_run_with_current_setup is False
-        assert state.last_successful_hash is None
+        assert state.execution_hash is None
         assert state.source_file_info is None
         assert state.result_schema is None
 
     def test_mark_successful(self):
         """Test marking execution as successful."""
         state = NodeExecutionState()
-        state.mark_successful(current_hash="abc123")
-
-        assert state.has_run_with_current_setup is True
-        assert state.last_successful_hash == "abc123"
-
-    def test_mark_successful_without_hash(self):
-        """Test marking successful without providing hash."""
-        state = NodeExecutionState()
         state.mark_successful()
 
         assert state.has_run_with_current_setup is True
-        assert state.last_successful_hash is None
+        assert state.has_completed_last_run is True
+        assert state.error is None
+
+    def test_mark_failed(self):
+        """Test marking execution as failed."""
+        state = NodeExecutionState()
+        state.mark_failed("Test error")
+
+        assert state.has_run_with_current_setup is False
+        assert state.has_completed_last_run is False
+        assert state.error == "Test error"
 
     def test_reset(self):
         """Test resetting state."""
         state = NodeExecutionState()
-        state.mark_successful(current_hash="abc123")
+        state.mark_successful()
         state.result_schema = ["col1", "col2"]
+        state.execution_hash = "abc123"
 
         state.reset()
 
         assert state.has_run_with_current_setup is False
         assert state.result_schema is None
-        # Hash should be preserved for comparison
-        assert state.last_successful_hash == "abc123"
+        assert state.execution_hash is None
 
     def test_source_file_info_tracking(self):
         """Test tracking source file info."""
@@ -252,6 +256,27 @@ class TestNodeExecutionState:
             info = SourceFileInfo.from_path(temp_path)
             state.source_file_info = info
 
+            assert state.source_file_info is not None
+            assert state.source_file_info.path == temp_path
+        finally:
+            os.unlink(temp_path)
+
+    def test_source_file_info_preserved_on_reset(self):
+        """Test that source_file_info is preserved when resetting state."""
+        state = NodeExecutionState()
+
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"test data")
+            temp_path = f.name
+
+        try:
+            info = SourceFileInfo.from_path(temp_path)
+            state.source_file_info = info
+            state.mark_successful()
+
+            state.reset()
+
+            # source_file_info should NOT be reset (needed for change detection)
             assert state.source_file_info is not None
             assert state.source_file_info.path == temp_path
         finally:
@@ -305,12 +330,13 @@ class TestNodeExecutor:
 
         executor = NodeExecutor(node)
         decision = executor._decide_execution(
+            state=node._execution_state,
             run_location="remote",
-            reset_cache=False,
             performance_mode=False,
+            force_refresh=False,
         )
 
-        assert decision.should_execute is True
+        assert decision.should_run is True
         assert decision.reason == InvalidationReason.NEVER_RAN
 
     def test_decide_execution_forced_refresh(self):
@@ -324,13 +350,34 @@ class TestNodeExecutor:
 
         executor = NodeExecutor(node)
         decision = executor._decide_execution(
+            state=node._execution_state,
             run_location="remote",
-            reset_cache=True,  # Force refresh
             performance_mode=False,
+            force_refresh=True,  # Force refresh
         )
 
-        assert decision.should_execute is True
+        assert decision.should_run is True
         assert decision.reason == InvalidationReason.FORCED_REFRESH
+
+    def test_decide_execution_performance_mode(self):
+        """Test execution decision in performance mode."""
+        graph = create_graph()
+        add_manual_input(graph, [{"a": 1}], node_id=1)
+        node = graph.get_node(1)
+
+        # Mark as already run
+        node._execution_state.has_run_with_current_setup = True
+
+        executor = NodeExecutor(node)
+        decision = executor._decide_execution(
+            state=node._execution_state,
+            run_location="remote",
+            performance_mode=True,  # Performance mode
+            force_refresh=False,
+        )
+
+        assert decision.should_run is True
+        assert decision.reason == InvalidationReason.PERFORMANCE_MODE
 
     def test_node_has_executor_property(self):
         """Test that FlowNode has an executor property."""
@@ -368,18 +415,19 @@ class TestNodeExecutor:
 class TestExecutorIntegration:
     """Integration tests for executor with real nodes."""
 
-    def test_state_updated_after_execution_decision(self):
-        """Test that state is properly considered in decisions."""
+    def test_state_lifecycle(self):
+        """Test state transitions through mark_successful and reset."""
         state = NodeExecutionState()
 
         assert state.has_run_with_current_setup is False
 
-        state.mark_successful(current_hash="hash1")
+        state.mark_successful()
         assert state.has_run_with_current_setup is True
+        assert state.has_completed_last_run is True
 
         state.reset()
         assert state.has_run_with_current_setup is False
-        assert state.last_successful_hash == "hash1"
+        assert state.has_completed_last_run is False
 
     def test_source_file_change_detection_workflow(self):
         """Test the workflow of detecting source file changes."""

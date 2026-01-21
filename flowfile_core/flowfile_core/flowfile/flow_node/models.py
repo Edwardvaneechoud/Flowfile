@@ -30,6 +30,7 @@ class InvalidationReason(Enum):
     CACHE_MISSING = auto()         # Cache enabled but no cached result
     FORCED_REFRESH = auto()        # User requested reset_cache=True
     OUTPUT_NODE = auto()           # Output nodes always execute
+    PERFORMANCE_MODE = auto()      # Running in performance mode (no caching)
 
 
 @dataclass
