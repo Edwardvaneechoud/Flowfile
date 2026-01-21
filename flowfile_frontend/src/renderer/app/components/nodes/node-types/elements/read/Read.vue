@@ -3,7 +3,7 @@
     <generic-node-settings
       :model-value="nodeRead"
       @update:modelValue="handleGenericSettingsUpdate"
-      @requestSave="pushNodeData"
+      @requestSave="saveNodeData"
     >
       <div class="listbox-wrapper">
         <div class="file-upload-container">
@@ -199,20 +199,22 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
+const saveNodeData = async () => {
+  if (!nodeRead.value || !receivedTable.value) {
+    console.warn("No node read value available");
+    return;
+  }
+
+  nodeRead.value.is_setup = true;
+  nodeRead.value.received_file = receivedTable.value;
+
+  await nodeStore.updateSettings(nodeRead);
+};
+
 const pushNodeData = async () => {
   try {
     dataLoaded.value = false;
-
-    if (!nodeRead.value || !receivedTable.value) {
-      console.warn("No node read value available");
-      dataLoaded.value = true;
-      return;
-    }
-
-    nodeRead.value.is_setup = true;
-    nodeRead.value.received_file = receivedTable.value;
-
-    await nodeStore.updateSettings(nodeRead);
+    await saveNodeData();
   } catch (error) {
     console.error("Error pushing node data:", error);
   } finally {

@@ -3,7 +3,7 @@
     <generic-node-settings
       :model-value="nodePolarsCode"
       @update:modelValue="handleGenericSettingsUpdate"
-      @requestSave="pushNodeData"
+      @requestSave="saveNodeData"
     >
       <pythonEditor
         v-if="showEditor && nodePolarsCode"
@@ -73,12 +73,16 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
+const saveNodeData = async () => {
   if (!nodePolarsCode.value || !nodePolarsCode.value.polars_code_input.polars_code) {
     return;
   }
   nodePolarsCode.value.is_setup = true;
-  nodeStore.updateSettings(nodePolarsCode);
+  await nodeStore.updateSettings(nodePolarsCode);
+};
+
+const pushNodeData = async () => {
+  await saveNodeData();
   showEditor.value = false;
   dataLoaded.value = false;
 };
