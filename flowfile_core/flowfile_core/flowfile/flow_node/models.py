@@ -1,8 +1,48 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Literal
 
 import pyarrow as pa
+
+
+class ExecutionStrategy(Enum):
+    """
+    Determines HOW the node will be executed.
+
+    Used by NodeExecutor to dispatch to the correct execution method.
+    """
+    SKIP = auto()                  # Already up-to-date, don't execute
+    FULL_LOCAL = auto()            # 100% in-process (WASM, simple cases)
+    LOCAL_WITH_SAMPLING = auto()   # In-process + external sampler for preview
+    REMOTE = auto()                # Full external worker execution
+
+
+class InvalidationReason(Enum):
+    """
+    Why does this node need to run?
+
+    Used for logging and debugging execution decisions.
+    """
+    NEVER_RAN = auto()             # First execution
+    SETTINGS_CHANGED = auto()      # Node configuration changed
+    SOURCE_FILE_CHANGED = auto()   # Input file modified (read nodes)
+    CACHE_MISSING = auto()         # Cache enabled but no cached result
+    FORCED_REFRESH = auto()        # User requested reset_cache=True
+    OUTPUT_NODE = auto()           # Output nodes always execute
+    PERFORMANCE_MODE = auto()      # Running in performance mode (no caching)
+
+
+@dataclass
+class ExecutionDecision:
+    """
+    Result of deciding whether and how to execute a node.
+
+    Encapsulates the execution decision logic result.
+    """
+    should_run: bool
+    strategy: ExecutionStrategy
+    reason: InvalidationReason | None = None
 
 # Forward declaration for type hints to avoid circular imports
 if False:
