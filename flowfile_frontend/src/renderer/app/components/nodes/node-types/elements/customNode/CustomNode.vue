@@ -101,6 +101,7 @@ import { ref } from "vue";
 import { CustomNodeSchema, SectionComponent } from "./interface";
 import { getCustomNodeSchema } from "./interface";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { NodeUserDefined } from "../../../baseNode/nodeInput";
 import { NodeData, FileColumn } from "../../../baseNode/nodeInterfaces";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -126,6 +127,21 @@ const availableColumns = ref<string[]>([]);
 const currentNodeId = ref<number | null>(null);
 const nodeUserDefined = ref<NodeUserDefined | null>(null);
 const columnTypes = ref<FileColumn[]>([]);
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeUserDefined,
+  isUserDefined: true,
+  beforeSave: () => {
+    if (!nodeData.value || currentNodeId.value === null) {
+      throw new Error("Cannot push data: node data or ID is not available.");
+    }
+    if (nodeUserDefined.value) {
+      nodeUserDefined.value.settings = formData.value;
+      nodeUserDefined.value.is_user_defined = true;
+      nodeUserDefined.value.is_setup = true;
+    }
+  },
+});
 
 // --- Lifecycle Methods (exposed to parent) ---
 
@@ -166,19 +182,6 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeData.value || currentNodeId.value === null) {
-    console.warn("Cannot push data: node data or ID is not available.");
-    return;
-  }
-  if (nodeUserDefined.value) {
-    nodeUserDefined.value.settings = formData.value;
-    nodeUserDefined.value.is_user_defined = true;
-    nodeUserDefined.value.is_setup = true;
-  }
-  nodeStore.updateUserDefinedSettings(nodeUserDefined);
-};
-
 // --- Helper Functions ---
 
 function initializeFormData(schemaData: CustomNodeSchema, savedSettings: any) {
@@ -215,6 +218,7 @@ function initializeFormData(schemaData: CustomNodeSchema, savedSettings: any) {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

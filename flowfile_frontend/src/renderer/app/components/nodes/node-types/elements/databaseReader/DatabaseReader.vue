@@ -138,6 +138,7 @@ import { ref, onMounted } from "vue";
 import { NodeDatabaseReader, ConnectionModeOption } from "../../../baseNode/nodeInput";
 import { createNodeDatabaseReader } from "./utils";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { fetchDatabaseConnectionsInterfaces } from "../../../../../views/DatabaseView/api";
 import { FullDatabaseConnectionInterface } from "../../../../../views/DatabaseView/databaseConnectionTypes";
 import { ElMessage, ElRadio } from "element-plus";
@@ -156,6 +157,25 @@ defineProps<Props>();
 const nodeStore = useNodeStore();
 const nodeDatabaseReader = ref<null | NodeDatabaseReader>(null);
 const dataLoaded = ref(false);
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeDatabaseReader,
+  beforeSave: () => {
+    if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
+      throw new Error("Node data not available");
+    }
+    // Clean up settings based on connection_mode before saving
+    if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
+      nodeDatabaseReader.value.database_settings.database_connection = undefined;
+    } else {
+      nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
+    }
+    nodeDatabaseReader.value.is_setup = true;
+  },
+  afterSave: () => {
+    dataLoaded.value = false;
+  },
+});
 const validationError = ref<string | null>(null);
 const validationSuccess = ref<string | null>(null);
 const isValidating = ref(false);
@@ -251,21 +271,6 @@ const validateDatabaseSettings = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  if (!nodeDatabaseReader.value || !nodeDatabaseReader.value.database_settings) {
-    return;
-  }
-  // Clean up settings based on connection_mode before saving
-  if (nodeDatabaseReader.value.database_settings.connection_mode === "reference") {
-    nodeDatabaseReader.value.database_settings.database_connection = undefined;
-  } else {
-    nodeDatabaseReader.value.database_settings.database_connection_name = undefined;
-  }
-  nodeDatabaseReader.value.is_setup = true;
-  nodeStore.updateSettings(nodeDatabaseReader);
-  dataLoaded.value = false;
-};
-
 const fetchConnections = async () => {
   connectionsAreLoading.value = true;
   try {
@@ -285,6 +290,7 @@ onMounted(async () => {
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 

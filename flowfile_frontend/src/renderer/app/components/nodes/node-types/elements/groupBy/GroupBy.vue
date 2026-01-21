@@ -91,17 +91,18 @@ import { GroupByInput, NodeGroupBy, AggOption, GroupByOption } from "../../../ba
 import { CodeLoader } from "vue-content-loader";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeGroupBy = ref<null | NodeGroupBy>(null);
+const dataLoaded = ref(false);
 const showContextMenu = ref(false);
 const showContextMenuRemove = ref(false);
-const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const contextMenuColumn = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const selectedColumns = ref<string[]>([]);
-const nodeGroupBy = ref<null | NodeGroupBy>(null);
 const nodeData = ref<null | NodeData>(null);
 const aggOptions: (AggOption | GroupByOption)[] = [
   "groupby",
@@ -299,21 +300,26 @@ const instantValidate = async () => {
   }
 };
 
-const pushNodeData = async () => {
-  dataLoaded.value = false;
-  if (nodeGroupBy.value?.is_setup) {
-    nodeGroupBy.value.is_setup = true;
-  }
-  nodeStore.updateSettings(nodeGroupBy);
-  await instantValidate();
-  if (nodeGroupBy.value?.groupby_input) {
-    nodeStore.setNodeValidateFunc(nodeGroupBy.value?.node_id, validateNode);
-  }
-};
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeGroupBy,
+  beforeSave: () => {
+    dataLoaded.value = false;
+    if (nodeGroupBy.value?.is_setup) {
+      nodeGroupBy.value.is_setup = true;
+    }
+  },
+  afterSave: async () => {
+    await instantValidate();
+    if (nodeGroupBy.value?.groupby_input) {
+      nodeStore.setNodeValidateFunc(nodeGroupBy.value?.node_id, validateNode);
+    }
+  },
+});
 
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

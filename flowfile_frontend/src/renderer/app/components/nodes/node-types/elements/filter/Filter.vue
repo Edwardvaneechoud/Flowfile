@@ -80,6 +80,7 @@ import { CodeLoader } from "vue-content-loader";
 
 import ColumnSelector from "../../../baseNode/page_objects/dropDown.vue";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import mainEditorRef from "../../../../../features/designer/editor/fullEditor.vue";
 import { NodeFilter } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
@@ -98,6 +99,28 @@ const isAdvancedFilter = ref<boolean>(false);
 const nodeStore = useNodeStore();
 const nodeFilter = ref<NodeFilter | null>(null);
 const nodeData = ref<NodeData | null>(null);
+
+const updateAdvancedFilter = () => {
+  if (nodeFilter.value) {
+    nodeFilter.value.filter_input.advanced_filter = nodeStore.inputCode;
+  }
+};
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeFilter,
+  beforeSave: () => {
+    if (nodeFilter.value) {
+      if (isAdvancedFilter.value) {
+        updateAdvancedFilter();
+        nodeFilter.value.filter_input.mode = "advanced";
+        nodeFilter.value.filter_input.filter_type = "advanced";
+      } else {
+        nodeFilter.value.filter_input.mode = "basic";
+        nodeFilter.value.filter_input.filter_type = "basic";
+      }
+    }
+  },
+});
 
 interface EditorChildType {
   showHideOptions: () => void;
@@ -244,27 +267,7 @@ const loadNodeData = async (nodeId: number) => {
   isLoaded.value = true;
 };
 
-const updateAdvancedFilter = () => {
-  if (nodeFilter.value) {
-    nodeFilter.value.filter_input.advanced_filter = nodeStore.inputCode;
-  }
-};
-
-const pushNodeData = async () => {
-  if (nodeFilter.value) {
-    if (isAdvancedFilter.value) {
-      updateAdvancedFilter();
-      nodeFilter.value.filter_input.mode = "advanced";
-      nodeFilter.value.filter_input.filter_type = "advanced";
-    } else {
-      nodeFilter.value.filter_input.mode = "basic";
-      nodeFilter.value.filter_input.filter_type = "basic";
-    }
-    nodeStore.updateSettings(nodeFilter);
-  }
-};
-
-defineExpose({ loadNodeData, pushNodeData });
+defineExpose({ loadNodeData, pushNodeData, saveSettings });
 </script>
 
 <style lang="scss" scoped>

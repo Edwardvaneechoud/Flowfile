@@ -69,16 +69,21 @@ import { ref, onMounted, onUnmounted, nextTick, defineExpose } from "vue";
 import { NodeRecordId } from "../../../baseNode/nodeInput";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import ContextMenu from "../pivot/ContextMenu.vue";
 import SettingsSection from "../pivot/SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodeRecordId = ref<null | NodeRecordId>(null);
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeRecordId,
+});
 const showContextMenu = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
 const dataLoaded = ref(false);
 const contextMenuRef = ref<HTMLElement | null>(null);
-const nodeRecordId = ref<null | NodeRecordId>(null);
 const nodeData = ref<null | NodeData>(null);
 const contextMenuOptions = ref<{ label: string; action: string; disabled: boolean }[]>([]);
 const draggedColumnName = ref<string | null>(null);
@@ -191,13 +196,10 @@ const removeColumn = (type: "add", column: string) => {
     }
 };
 
-const pushNodeData = async () => {
-  nodeStore.updateSettings(nodeRecordId);
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

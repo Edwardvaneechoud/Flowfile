@@ -90,6 +90,7 @@ import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { NodeUnpivot, DataTypeSelector, UnpivotInput } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
@@ -114,6 +115,21 @@ const unpivotInput = ref<UnpivotInput>({
 });
 
 const nodeUnpivot = ref<NodeUnpivot | null>(null);
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeUnpivot,
+  beforeSave: () => {
+    if (unpivotInput.value) {
+      // Clean up unused fields based on mode
+      if (unpivotInput.value.data_type_selector_mode === "data_type") {
+        unpivotInput.value.value_columns = [];
+      } else {
+        unpivotInput.value.data_type_selector = null;
+      }
+      nodeUnpivot.value!.unpivot_input = unpivotInput.value;
+    }
+  },
+});
 
 const getColumnClass = (columnName: string): string => {
   return selectedColumns.value.includes(columnName) ? "is-selected" : "";
@@ -251,21 +267,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (unpivotInput.value) {
-    if (unpivotInput.value.data_type_selector_mode === "data_type") {
-      unpivotInput.value.value_columns = [];
-    } else {
-      unpivotInput.value.data_type_selector = null;
-    }
-    nodeUnpivot.value!.unpivot_input = unpivotInput.value;
-    nodeStore.updateSettings(nodeUnpivot);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

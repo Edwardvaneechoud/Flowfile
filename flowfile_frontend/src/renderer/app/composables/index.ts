@@ -11,3 +11,5 @@ export {
   clearNodeTemplatesCache,
   preloadNodeTemplates,
 } from "./useNodes";
+export { useNodeSettings } from "./useNodeSettings";
+export type { UseNodeSettingsOptions, UseNodeSettingsReturn } from "./useNodeSettings";

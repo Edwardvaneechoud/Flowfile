@@ -83,12 +83,24 @@ import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { PivotInput, NodePivot, AggOption } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import ContextMenu from "./ContextMenu.vue";
 import SettingsSection from "./SettingsSection.vue";
 import PivotValidation from "./PivotValidation.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 
 const nodeStore = useNodeStore();
+const nodePivot = ref<NodePivot | null>(null);
+const pivotInput = ref<PivotInput>({
+  index_columns: [],
+  pivot_column: null,
+  value_col: null,
+  aggregations: [],
+});
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodePivot,
+});
 const showContextMenu = ref(false);
 const dataLoaded = ref(false);
 const contextMenuPosition = ref({ x: 0, y: 0 });
@@ -109,15 +121,6 @@ const aggOptions: AggOption[] = [
   "last",
   "concat",
 ];
-
-const pivotInput = ref<PivotInput>({
-  index_columns: [],
-  pivot_column: null,
-  value_col: null,
-  aggregations: [],
-});
-
-const nodePivot = ref<NodePivot | null>(null);
 
 const singleColumnSelected = computed(() => selectedColumns.value.length === 1);
 
@@ -255,15 +258,10 @@ const closeContextMenu = () => {
   showContextMenu.value = false;
 };
 
-const pushNodeData = async () => {
-  if (pivotInput.value) {
-    nodeStore.updateSettings(nodePivot);
-  }
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 
 onMounted(async () => {

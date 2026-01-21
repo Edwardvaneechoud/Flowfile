@@ -29,6 +29,7 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeSettings } from "../../../../../composables";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { SelectInput, NodeCrossJoin } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
@@ -38,6 +39,10 @@ const result = ref<NodeData | null>(null);
 const nodeStore = useNodeStore();
 const dataLoaded = ref(false);
 const nodeCrossJoin = ref<NodeCrossJoin | null>(null);
+
+const { saveSettings, pushNodeData } = useNodeSettings({
+  nodeData: nodeCrossJoin,
+});
 
 const updateSelectInputsHandler = (updatedInputs: SelectInput[], isLeft: boolean) => {
   if (isLeft && nodeCrossJoin.value) {
@@ -57,14 +62,10 @@ const loadNodeData = async (nodeId: number) => {
   }
 };
 
-const pushNodeData = async () => {
-  console.log("Pushing node data");
-  nodeStore.updateSettings(nodeCrossJoin);
-};
-
 defineExpose({
   loadNodeData,
   pushNodeData,
+  saveSettings,
 });
 </script>
 
