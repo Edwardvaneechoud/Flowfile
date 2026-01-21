@@ -288,7 +288,13 @@ const removeField = (index: number) => {
 
 const loadFieldsFromSchema = async () => {
   try {
-    // Get the node data from the store
+    // First, save the current node state to ensure we get the latest schema
+    await nodeStore.updateSettings(props.modelValue);
+
+    // Give the backend a moment to process and update the schema
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Get the node data from the store with updated schema
     const nodeData = await nodeStore.getNodeData(props.modelValue.node_id);
 
     if (nodeData?.main_output?.table_schema) {
