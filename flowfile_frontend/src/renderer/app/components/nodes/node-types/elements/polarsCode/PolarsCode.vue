@@ -1,6 +1,9 @@
 <template>
   <div v-if="dataLoaded && nodePolarsCode" class="listbox-wrapper">
-    <generic-node-settings :model-value="nodePolarsCode">
+    <generic-node-settings
+      :model-value="nodePolarsCode"
+      @update:modelValue="handleGenericSettingsUpdate"
+    >
       <pythonEditor
         v-if="showEditor && nodePolarsCode"
         ref="editorChild"
@@ -40,6 +43,15 @@ const nodeData = ref<null | NodeData>(null);
 const handleEditorUpdate = (newCode: string) => {
   if (nodePolarsCode.value && nodePolarsCode.value.polars_code_input) {
     nodePolarsCode.value.polars_code_input.polars_code = newCode;
+  }
+};
+
+const handleGenericSettingsUpdate = (updatedNode: NodePolarsCode) => {
+  // Merge the updated settings from genericNodeSettings back into nodePolarsCode
+  if (nodePolarsCode.value) {
+    nodePolarsCode.value.cache_results = updatedNode.cache_results;
+    nodePolarsCode.value.description = updatedNode.description;
+    nodePolarsCode.value.output_field_config = updatedNode.output_field_config;
   }
 };
 
