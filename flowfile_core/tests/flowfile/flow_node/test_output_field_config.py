@@ -5,6 +5,7 @@ Run with:
     pytest flowfile_core/tests/flowfile/flow_node/test_output_field_config.py -v
 
 Tests cover:
+- Helper functions (_parse_default_value, _select_columns_in_order, etc.)
 - OutputFieldConfig model creation
 - Validation mode behaviors (select_only, add_missing, raise_on_missing)
 - Data type validation
@@ -16,6 +17,12 @@ import pytest
 
 from flowfile_core.flowfile.flow_graph import FlowGraph
 from flowfile_core.flowfile.flow_node.output_field_config_applier import (
+    _apply_add_missing,
+    _apply_raise_on_missing,
+    _apply_select_only,
+    _parse_default_value,
+    _select_columns_in_order,
+    _validate_data_types,
     apply_output_field_config,
     polars_dtype_to_data_type_str,
 )
@@ -80,6 +87,209 @@ def test_polars_dtype_conversion():
     # Test other types
     assert polars_dtype_to_data_type_str(pl.Boolean) == "Boolean"
     assert polars_dtype_to_data_type_str(pl.Date) == "Date"
+
+
+# =============================================================================
+# Unit Tests: Helper Functions
+# =============================================================================
+
+
+def test_parse_default_value_none():
+    """Test parsing None default value."""
+    field = input_schema.OutputFieldInfo(name="test", data_type="String", default_value=None)
+    expr = _parse_default_value(field)
+
+    # Apply to dataframe and check result
+    df = pl.DataFrame({"dummy": [1, 2]})
+    result = df.with_columns(expr.alias("test"))
+    assert result["test"].to_list() == [None, None]
+
+
+def test_parse_default_value_literal_string():
+    """Test parsing literal string default value."""
+    field = input_schema.OutputFieldInfo(name="test", data_type="String", default_value="hello")
+    expr = _parse_default_value(field)
+
+    df = pl.DataFrame({"dummy": [1, 2]})
+    result = df.with_columns(expr.alias("test"))
+    assert result["test"].to_list() == ["hello", "hello"]
+
+
+def test_parse_default_value_literal_number():
+    """Test parsing literal number default value."""
+    field = input_schema.OutputFieldInfo(name="test", data_type="Int64", default_value="42")
+    expr = _parse_default_value(field)
+
+    df = pl.DataFrame({"dummy": [1, 2]})
+    result = df.with_columns(expr.alias("test"))
+    assert result["test"].to_list() == [42, 42]
+
+
+def test_parse_default_value_polars_expression():
+    """Test parsing Polars expression as default value."""
+    field = input_schema.OutputFieldInfo(name="test", data_type="Int64", default_value="pl.lit(100)")
+    expr = _parse_default_value(field)
+
+    df = pl.DataFrame({"dummy": [1, 2]})
+    result = df.with_columns(expr.alias("test"))
+    assert result["test"].to_list() == [100, 100]
+
+
+def test_parse_default_value_invalid_expression():
+    """Test parsing invalid Polars expression falls back to None."""
+    field = input_schema.OutputFieldInfo(name="test", data_type="String", default_value="pl.invalid_function()")
+    expr = _parse_default_value(field)
+
+    df = pl.DataFrame({"dummy": [1, 2]})
+    result = df.with_columns(expr.alias("test"))
+    assert result["test"].to_list() == [None, None]
+
+
+def test_select_columns_in_order():
+    """Test selecting columns in specified order."""
+    df = pl.DataFrame({"c": [7, 8], "a": [1, 2], "b": [4, 5]})
+    fields = [
+        input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value=None),
+    ]
+
+    result = _select_columns_in_order(df, fields)
+    assert result.columns == ["b", "a", "c"]
+
+
+def test_apply_raise_on_missing_success():
+    """Test _apply_raise_on_missing when all columns present."""
+    df = pl.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]})
+    fields = [
+        input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+    ]
+    current_columns = set(df.columns)
+    expected_columns = {f.name for f in fields}
+
+    result = _apply_raise_on_missing(df, fields, current_columns, expected_columns)
+    assert result.columns == ["b", "a"]
+
+
+def test_apply_raise_on_missing_error():
+    """Test _apply_raise_on_missing raises when columns missing."""
+    df = pl.DataFrame({"a": [1, 2]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+    ]
+    current_columns = set(df.columns)
+    expected_columns = {f.name for f in fields}
+
+    with pytest.raises(ValueError, match="Missing required columns"):
+        _apply_raise_on_missing(df, fields, current_columns, expected_columns)
+
+
+def test_apply_add_missing_with_defaults():
+    """Test _apply_add_missing adds columns with default values."""
+    df = pl.DataFrame({"a": [1, 2]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="b", data_type="String", default_value="default"),
+        input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value="99"),
+    ]
+    current_columns = set(df.columns)
+
+    result = _apply_add_missing(df, fields, current_columns)
+    assert result.columns == ["a", "b", "c"]
+    assert result["b"].to_list() == ["default", "default"]
+    assert result["c"].to_list() == [99, 99]
+
+
+def test_apply_add_missing_with_null_defaults():
+    """Test _apply_add_missing adds null columns when no default specified."""
+    df = pl.DataFrame({"a": [1, 2]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+    ]
+    current_columns = set(df.columns)
+
+    result = _apply_add_missing(df, fields, current_columns)
+    assert result.columns == ["a", "b"]
+    assert result["b"].to_list() == [None, None]
+
+
+def test_apply_select_only_existing_columns():
+    """Test _apply_select_only selects only existing columns."""
+    df = pl.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]})
+    fields = [
+        input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="d", data_type="Int64", default_value=None),  # Missing
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+    ]
+    current_columns = set(df.columns)
+
+    result = _apply_select_only(df, fields, current_columns)
+    # Should only select b and a (d is missing)
+    assert result.columns == ["b", "a"]
+
+
+def test_apply_select_only_no_columns_match():
+    """Test _apply_select_only when no columns match."""
+    df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
+    fields = [
+        input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value=None),
+    ]
+    current_columns = set(df.columns)
+
+    result = _apply_select_only(df, fields, current_columns)
+    # Should return original dataframe when no columns match
+    assert result.columns == ["a", "b"]
+
+
+def test_validate_data_types_success():
+    """Test _validate_data_types passes when types match."""
+    df = pl.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+    ]
+
+    # Should not raise
+    _validate_data_types(df, fields)
+
+
+def test_validate_data_types_error():
+    """Test _validate_data_types raises when types don't match."""
+    df = pl.DataFrame({"a": ["not", "int"], "b": [1, 2]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+    ]
+
+    with pytest.raises(ValueError, match="Data type validation failed"):
+        _validate_data_types(df, fields)
+
+
+def test_validate_data_types_case_insensitive():
+    """Test _validate_data_types is case insensitive."""
+    df = pl.DataFrame({"a": [1, 2]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="int64", default_value=None),  # lowercase
+    ]
+
+    # Should not raise even though case doesn't match
+    _validate_data_types(df, fields)
+
+
+def test_validate_data_types_skip_missing_columns():
+    """Test _validate_data_types skips columns not in dataframe."""
+    df = pl.DataFrame({"a": [1, 2]})
+    fields = [
+        input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+        input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),  # Not in df
+    ]
+
+    # Should not raise - only validates columns present in dataframe
+    _validate_data_types(df, fields)
 
 
 # =============================================================================
