@@ -137,6 +137,14 @@ export const useFlowStore = defineStore('flow', () => {
               delete (settings as any).received_table
             }
 
+            // Get description from FlowfileNode level (this is where flowfile_core stores it)
+            const nodeDescription = flowfileNode.description || ''
+
+            // Sync description to settings for backward compatibility
+            if (settings) {
+              (settings as NodeBase).description = nodeDescription
+            }
+
             const node: FlowNode = {
               id: flowfileNode.id,
               type: nodeType,
@@ -146,7 +154,7 @@ export const useFlowStore = defineStore('flow', () => {
               inputIds: flowfileNode.input_ids || [],
               leftInputId: flowfileNode.left_input_id,
               rightInputId: flowfileNode.right_input_id,
-              description: flowfileNode.description
+              description: nodeDescription  // Set node-level description
             }
             nodes.value.set(flowfileNode.id, node)
           }
@@ -288,11 +296,12 @@ export const useFlowStore = defineStore('flow', () => {
 
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
+      // Read description from node level (primary) with fallback to settings
       flowfileNodes.push({
         id: node.id,
         type: node.type,
         is_start_node: isStartNode,
-        description: (node.settings as NodeBase).description || '',
+        description: node.description || (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
         right_input_id: node.rightInputId,
@@ -492,7 +501,8 @@ export const useFlowStore = defineStore('flow', () => {
       settings: defaultSettings,
       inputIds: [],
       leftInputId: undefined,
-      rightInputId: undefined
+      rightInputId: undefined,
+      description: ''  // Initialize node-level description
     }
 
     nodes.value.set(id, node)
@@ -514,6 +524,24 @@ export const useFlowStore = defineStore('flow', () => {
 
       // Invalidate preview cache for this node and downstream
       invalidatePreviewCache(id)
+    }
+  }
+
+  /**
+   * Update the description for a node
+   * This updates the node-level description (primary storage)
+   * and syncs to settings.description for backward compatibility
+   */
+  function updateNodeDescription(id: number, description: string) {
+    const node = nodes.value.get(id)
+    if (node) {
+      // Update node-level description (primary)
+      node.description = description
+      // Also sync to settings for backward compatibility with flowfile_core
+      if (node.settings) {
+        (node.settings as NodeBase).description = description
+      }
+      nodes.value.set(id, node)
     }
   }
 
@@ -1822,11 +1850,12 @@ result
 
       // In flowfile_core format, left_input_id is always null - inputs are in input_ids
       // Only right_input_id is used (for join nodes' second input)
+      // Read description from node level (primary) with fallback to settings
       const flowfileNode: FlowfileNode = {
         id: node.id,
         type: node.type,
         is_start_node: isStartNode,
-        description: (node.settings as NodeBase).description || '',
+        description: node.description || (node.settings as NodeBase).description || '',
         x_position: Math.round(node.x),  // flowfile_core expects int
         y_position: Math.round(node.y),  // flowfile_core expects int
         right_input_id: node.rightInputId,
@@ -1900,6 +1929,14 @@ result
           delete (settings as any).received_table
         }
 
+        // Get description from FlowfileNode level (this is where flowfile_core stores it)
+        const nodeDescription = flowfileNode.description || ''
+
+        // Sync description to settings for backward compatibility
+        if (settings) {
+          (settings as NodeBase).description = nodeDescription
+        }
+
         const node: FlowNode = {
           id: flowfileNode.id,
           type: nodeType,
@@ -1909,7 +1946,7 @@ result
           inputIds: flowfileNode.input_ids || [],
           leftInputId: flowfileNode.left_input_id,
           rightInputId: flowfileNode.right_input_id,
-          description: flowfileNode.description
+          description: nodeDescription  // Set node-level description
         }
 
         nodes.value.set(flowfileNode.id, node)
@@ -2154,6 +2191,7 @@ result
     addNode,
     updateNode,
     updateNodeSettings,
+    updateNodeDescription,
     removeNode,
     addEdge,
     removeEdge,
