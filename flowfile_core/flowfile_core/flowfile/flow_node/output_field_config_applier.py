@@ -1,9 +1,10 @@
 """Utility module for applying output field configuration to FlowDataEngine results."""
 
+from typing import List, Set
 import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.schemas.input_schema import OutputFieldConfig
+from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
 
 
 def polars_dtype_to_data_type_str(polars_dtype: str) -> str:
@@ -59,6 +60,157 @@ def polars_dtype_to_data_type_str(polars_dtype: str) -> str:
     return "String"
 
 
+def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
+    """Parse default value from field configuration.
+
+    Args:
+        field: Output field info containing default_value
+
+    Returns:
+        Polars expression for the default value
+    """
+    if field.default_value is None:
+        return pl.lit(None)
+
+    # Try to parse as expression if it looks like one
+    if field.default_value.startswith("pl."):
+        try:
+            return eval(field.default_value)
+        except Exception as e:
+            logger.warning(
+                f"Failed to evaluate expression '{field.default_value}' "
+                f"for column '{field.name}': {e}. Using null instead."
+            )
+            return pl.lit(None)
+
+    # Treat as literal value
+    return pl.lit(field.default_value)
+
+
+def _select_columns_in_order(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> pl.DataFrame:
+    """Select columns in the specified field order.
+
+    Args:
+        df: Input dataframe
+        fields: List of fields specifying column order
+
+    Returns:
+        DataFrame with columns selected in specified order
+    """
+    return df.select([field.name for field in fields])
+
+
+def _apply_raise_on_missing(
+    df: pl.DataFrame,
+    fields: List[OutputFieldInfo],
+    current_columns: Set[str],
+    expected_columns: Set[str]
+) -> pl.DataFrame:
+    """Apply raise_on_missing validation mode.
+
+    Raises error if any expected columns are missing, then selects columns in order.
+
+    Args:
+        df: Input dataframe
+        fields: List of expected output fields
+        current_columns: Set of current column names
+        expected_columns: Set of expected column names
+
+    Returns:
+        DataFrame with selected columns in specified order
+
+    Raises:
+        ValueError: If any expected columns are missing
+    """
+    missing_columns = expected_columns - current_columns
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {', '.join(sorted(missing_columns))}")
+
+    return _select_columns_in_order(df, fields)
+
+
+def _apply_add_missing(
+    df: pl.DataFrame,
+    fields: List[OutputFieldInfo],
+    current_columns: Set[str]
+) -> pl.DataFrame:
+    """Apply add_missing validation mode.
+
+    Adds missing columns with default values, then selects columns in order.
+
+    Args:
+        df: Input dataframe
+        fields: List of expected output fields
+        current_columns: Set of current column names
+
+    Returns:
+        DataFrame with missing columns added and all columns in specified order
+    """
+    # Add missing columns with default values
+    for field in fields:
+        if field.name not in current_columns:
+            default_expr = _parse_default_value(field)
+            df = df.with_columns(default_expr.alias(field.name))
+
+    return _select_columns_in_order(df, fields)
+
+
+def _apply_select_only(
+    df: pl.DataFrame,
+    fields: List[OutputFieldInfo],
+    current_columns: Set[str]
+) -> pl.DataFrame:
+    """Apply select_only validation mode.
+
+    Only selects columns that exist in the dataframe.
+
+    Args:
+        df: Input dataframe
+        fields: List of expected output fields
+        current_columns: Set of current column names
+
+    Returns:
+        DataFrame with only existing columns selected in specified order
+    """
+    columns_to_select = [field.name for field in fields if field.name in current_columns]
+    if not columns_to_select:
+        return df
+
+    return df.select(columns_to_select)
+
+
+def _validate_data_types(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> None:
+    """Validate that dataframe column types match expected types.
+
+    Args:
+        df: Input dataframe
+        fields: List of expected output fields with data types
+
+    Raises:
+        ValueError: If any data type mismatches are found
+    """
+    mismatches = []
+    for field in fields:
+        if field.name in df.columns:
+            actual_dtype_polars = str(df[field.name].dtype)
+            actual_dtype = polars_dtype_to_data_type_str(actual_dtype_polars)
+            expected_dtype = field.data_type
+
+            # Check if types match (case-insensitive comparison)
+            if actual_dtype.lower() != expected_dtype.lower():
+                mismatches.append(
+                    f"Column '{field.name}': expected {expected_dtype}, "
+                    f"got {actual_dtype} (Polars: {actual_dtype_polars})"
+                )
+
+    if mismatches:
+        error_msg = "Data type validation failed:\n" + "\n".join(f"  - {m}" for m in mismatches)
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.info(f"Data type validation passed for {len(fields)} fields")
+
+
 def apply_output_field_config(
     flow_data_engine: FlowDataEngine, output_field_config: OutputFieldConfig
 ) -> FlowDataEngine:
@@ -72,7 +224,8 @@ def apply_output_field_config(
         Modified FlowDataEngine with enforced schema
 
     Raises:
-        ValueError: If raise_on_missing behavior is set and required columns are missing
+        ValueError: If raise_on_missing behavior is set and required columns are missing,
+                   or if data type validation fails
     """
     if not output_field_config or not output_field_config.enabled:
         return flow_data_engine
@@ -85,89 +238,31 @@ def apply_output_field_config(
         return flow_data_engine
 
     try:
-        # Get the expected field names and data types
-        expected_fields = {field.name: field for field in output_field_config.fields}
+        # Get column sets for validation
         current_columns = set(df.columns)
-        expected_columns = set(expected_fields.keys())
+        expected_columns = {field.name for field in output_field_config.fields}
 
-        # Handle behavior based on validation_mode_behavior setting
-        if output_field_config.validation_mode_behavior == "raise_on_missing":
-            # Raise error if any expected columns are missing
-            missing_columns = expected_columns - current_columns
-            if missing_columns:
-                raise ValueError(f"Missing required columns: {', '.join(sorted(missing_columns))}")
-
-            # Select only the expected columns in the specified order
-            df = df.select([field.name for field in output_field_config.fields])
-
-        elif output_field_config.validation_mode_behavior == "add_missing":
-            # Add missing columns with default values
-            for field in output_field_config.fields:
-                if field.name not in current_columns:
-                    # Determine the default value
-                    if field.default_value is not None:
-                        # Try to parse as expression if it looks like one
-                        if field.default_value.startswith("pl."):
-                            # This is a polars expression
-                            try:
-                                default_expr = eval(field.default_value)
-                            except Exception as e:
-                                logger.warning(
-                                    f"Failed to evaluate expression '{field.default_value}' "
-                                    f"for column '{field.name}': {e}. Using null instead."
-                                )
-                                default_expr = pl.lit(None)
-                        else:
-                            # Treat as literal value
-                            default_expr = pl.lit(field.default_value)
-                    else:
-                        # No default value specified, use null
-                        default_expr = pl.lit(None)
-
-                    # Add the column with the default value
-                    df = df.with_columns(default_expr.alias(field.name))
-
-            # Select only the expected columns in the specified order
-            df = df.select([field.name for field in output_field_config.fields])
-
-        elif output_field_config.validation_mode_behavior == "select_only":
-            # Only select columns that exist
-            columns_to_select = [field.name for field in output_field_config.fields if field.name in current_columns]
-            if columns_to_select:
-                df = df.select(columns_to_select)
+        # Apply validation mode behavior
+        mode = output_field_config.validation_mode_behavior
+        if mode == "raise_on_missing":
+            df = _apply_raise_on_missing(df, output_field_config.fields, current_columns, expected_columns)
+        elif mode == "add_missing":
+            df = _apply_add_missing(df, output_field_config.fields, current_columns)
+        elif mode == "select_only":
+            df = _apply_select_only(df, output_field_config.fields, current_columns)
 
         # Validate data types if enabled
         if output_field_config.validate_data_types:
-            mismatches = []
-            for field in output_field_config.fields:
-                if field.name in df.columns:
-                    actual_dtype_polars = str(df[field.name].dtype)
-                    actual_dtype = polars_dtype_to_data_type_str(actual_dtype_polars)
-                    expected_dtype = field.data_type
+            _validate_data_types(df, output_field_config.fields)
 
-                    # Check if types match (case-insensitive comparison)
-                    if actual_dtype.lower() != expected_dtype.lower():
-                        mismatches.append(
-                            f"Column '{field.name}': expected {expected_dtype}, got {actual_dtype} (Polars: {actual_dtype_polars})"
-                        )
-
-            if mismatches:
-                error_msg = "Data type validation failed:\n" + "\n".join(f"  - {m}" for m in mismatches)
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-
-            logger.info(f"Data type validation passed for {len(output_field_config.fields)} fields")
-
-        # Update the data frame in the flow data engine
+        # Update the flow data engine
         flow_data_engine.data_frame = df
-
-        # Force schema recalculation by clearing the cached schema
-        # The schema property will recalculate when accessed next time
-        flow_data_engine._schema = None
+        flow_data_engine._schema = None  # Force schema recalculation
 
         logger.info(
-            f"Applied output field config: behavior={output_field_config.validation_mode_behavior}, "
-            f"fields={len(output_field_config.fields)}, validate_data_types={output_field_config.validate_data_types}"
+            f"Applied output field config: behavior={mode}, "
+            f"fields={len(output_field_config.fields)}, "
+            f"validate_data_types={output_field_config.validate_data_types}"
         )
 
     except Exception as e:
