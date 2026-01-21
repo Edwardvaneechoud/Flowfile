@@ -66,12 +66,14 @@ import {
   InputParquetTable,
 } from "../../../baseNode/nodeInput";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import FileBrowser from "../../../../common/FileBrowser/fileBrowser.vue";
 import { FileInfo } from "../../../../common/FileBrowser/types";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";
 import { useGenericNodeSettings } from "../../../../../composables/useGenericNodeSettings";
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const selectedFile = ref<FileInfo | null>(null);
 const nodeRead = ref<null | NodeRead>(null);
 const receivedTable = ref<ReceivedTable | null>(null);
@@ -213,12 +215,11 @@ const saveNodeData = async () => {
 
 const pushNodeData = async () => {
   try {
-    dataLoaded.value = false;
     await saveNodeData();
+    // Trigger drawer close via editor store
+    editorStore.pushNodeData();
   } catch (error) {
     console.error("Error pushing node data:", error);
-  } finally {
-    dataLoaded.value = true;
   }
 };
 

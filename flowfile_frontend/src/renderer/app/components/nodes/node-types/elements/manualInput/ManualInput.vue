@@ -121,6 +121,7 @@
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import { createManualInput } from "./manualInputLogic";
 import type {
   NodeManualInput,
@@ -142,6 +143,7 @@ interface Row {
 }
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const dataLoaded = ref(false);
 const nodeManualInput = ref<NodeManualInput | null>(null);
@@ -437,7 +439,8 @@ const saveNodeData = async () => {
 
 const pushNodeData = async () => {
   await saveNodeData();
-  dataLoaded.value = false;
+  // Trigger drawer close via editor store
+  editorStore.pushNodeData();
 };
 
 // Watchers

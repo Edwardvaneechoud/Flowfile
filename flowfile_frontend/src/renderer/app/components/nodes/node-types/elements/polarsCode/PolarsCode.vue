@@ -21,6 +21,7 @@
 import { ref } from "vue";
 import { CodeLoader } from "vue-content-loader";
 import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import pythonEditor from "../../../../../features/designer/editor/pythonEditor.vue";
 import { NodeData } from "../../../baseNode/nodeInterfaces";
 import { createPolarsCodeNode } from "./utils";
@@ -31,6 +32,7 @@ import { useGenericNodeSettings } from "../../../../../composables/useGenericNod
 
 const showEditor = ref<boolean>(false);
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 const dataLoaded = ref(false);
 
 interface EditorChildType {
@@ -83,8 +85,8 @@ const saveNodeData = async () => {
 
 const pushNodeData = async () => {
   await saveNodeData();
-  showEditor.value = false;
-  dataLoaded.value = false;
+  // Trigger drawer close via editor store
+  editorStore.pushNodeData();
 };
 
 defineExpose({ loadNodeData, pushNodeData });
