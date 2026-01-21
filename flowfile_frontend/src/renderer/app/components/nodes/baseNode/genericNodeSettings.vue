@@ -288,8 +288,15 @@ const removeField = (index: number) => {
 
 const loadFieldsFromSchema = async () => {
   try {
+    // Validate that we have a valid node to work with
+    if (!props.modelValue || !props.modelValue.node_id) {
+      console.error("Cannot load schema: Invalid or missing node data");
+      return;
+    }
+
     // First, save the current node state to ensure we get the latest schema
-    await nodeStore.updateSettings(props.modelValue);
+    // Use updateSettingsDirectly since we have a plain object, not a ref
+    await nodeStore.updateSettingsDirectly(props.modelValue);
 
     // Give the backend a moment to process and update the schema
     await new Promise(resolve => setTimeout(resolve, 100));
