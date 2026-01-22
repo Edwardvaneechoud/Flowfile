@@ -8,6 +8,7 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import Flowfi
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
 
+
 def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
     """Parse default value from field configuration.
 
@@ -22,20 +23,8 @@ def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
 
     # Get target Polars dtype from the field's data_type
     target_dtype = cast_str_to_polars_type(field.data_type)
-
-    # Try to parse as expression if it looks like one
-    if field.default_value.startswith("pl."):
-        try:
-            return eval(field.default_value)
-        except Exception as e:
-            logger.warning(
-                f"Failed to evaluate expression '{field.default_value}' "
-                f"for column '{field.name}': {e}. Using null instead."
-            )
-            return pl.lit(None)
-
     # Treat as literal value and cast to target type
-    return pl.lit(field.default_value).cast(target_dtype)
+    return pl.lit(field.default_value).cast(target_dtype, strict=False, wrap_numerical=True)
 
 
 def _select_columns_in_order(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> pl.DataFrame:
