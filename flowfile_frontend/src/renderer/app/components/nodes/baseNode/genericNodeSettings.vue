@@ -205,6 +205,7 @@
 </template>
 
 <script lang="ts" setup generic="T extends NodeBase">
+/* eslint-disable no-undef */
 import { ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
@@ -220,6 +221,7 @@ const emit = defineEmits<{
   (e: "update:model-value", value: T): void;
   (e: "request-save"): void;
 }>();
+/* eslint-enable no-undef */
 
 const activeTab = ref("main");
 
