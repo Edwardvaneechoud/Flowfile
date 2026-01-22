@@ -189,6 +189,10 @@ def apply_output_field_config(
     if df is None:
         return flow_data_engine
 
+    # Ensure we have a DataFrame, not a LazyFrame
+    if isinstance(df, pl.LazyFrame):
+        df = df.collect()
+
     try:
         # Get column sets for validation
         current_columns = set(df.columns)
