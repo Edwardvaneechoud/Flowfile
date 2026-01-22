@@ -5,6 +5,7 @@ import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
 
 def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
@@ -14,10 +15,13 @@ def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
         field: Output field info containing default_value
 
     Returns:
-        Polars expression for the default value
+        Polars expression for the default value cast to the target data type
     """
     if field.default_value is None:
         return pl.lit(None)
+
+    # Get target Polars dtype from the field's data_type
+    target_dtype = cast_str_to_polars_type(field.data_type)
 
     # Try to parse as expression if it looks like one
     if field.default_value.startswith("pl."):
@@ -30,8 +34,8 @@ def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
             )
             return pl.lit(None)
 
-    # Treat as literal value
-    return pl.lit(field.default_value)
+    # Treat as literal value and cast to target type
+    return pl.lit(field.default_value).cast(target_dtype)
 
 
 def _select_columns_in_order(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> pl.DataFrame:
