@@ -5,8 +5,9 @@ Can be persisted to database/cache for stateless operation.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
@@ -71,14 +72,14 @@ class NodeExecutionState:
     error: str | None = None
 
     # Results (not serialized - too large)
-    resulting_data: "FlowDataEngine | None" = field(default=None, repr=False)
+    resulting_data: FlowDataEngine | None = field(default=None, repr=False)
     example_data_path: str | None = None
     example_data_generator: Callable[[], pa.Table] | None = field(default=None, repr=False)
     warnings: str | None = None
 
     # Schema
-    result_schema: "list[FlowfileColumn] | None" = field(default=None, repr=False)
-    predicted_schema: "list[FlowfileColumn] | None" = field(default=None, repr=False)
+    result_schema: list[FlowfileColumn] | None = field(default=None, repr=False)
+    predicted_schema: list[FlowfileColumn] | None = field(default=None, repr=False)
 
     # Source tracking (for read nodes)
     source_file_info: SourceFileInfo | None = None

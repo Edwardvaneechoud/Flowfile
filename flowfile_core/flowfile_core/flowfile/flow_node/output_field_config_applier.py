@@ -1,14 +1,14 @@
 """Utility module for applying output field configuration to FlowDataEngine results."""
 
-from typing import Dict, List, Set
+
 import polars as pl
+
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
 
-
 # Mapping from Polars DataType to our string representation
-POLARS_TO_STRING: Dict[type, str] = {
+POLARS_TO_STRING: dict[type, str] = {
     pl.String: "String",
     pl.Utf8: "String",
     pl.Int64: "Int64",
@@ -34,7 +34,7 @@ POLARS_TO_STRING: Dict[type, str] = {
 }
 
 # Mapping from our string representation to acceptable Polars DataTypes
-STRING_TO_POLARS: Dict[str, List[type]] = {
+STRING_TO_POLARS: dict[str, list[type]] = {
     "String": [pl.String, pl.Utf8],
     "Int64": [pl.Int64],
     "Int32": [pl.Int32],
@@ -114,7 +114,7 @@ def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
     return pl.lit(field.default_value)
 
 
-def _select_columns_in_order(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> pl.DataFrame:
+def _select_columns_in_order(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> pl.DataFrame:
     """Select columns in the specified field order.
 
     Args:
@@ -129,9 +129,9 @@ def _select_columns_in_order(df: pl.DataFrame, fields: List[OutputFieldInfo]) ->
 
 def _apply_raise_on_missing(
     df: pl.DataFrame,
-    fields: List[OutputFieldInfo],
-    current_columns: Set[str],
-    expected_columns: Set[str]
+    fields: list[OutputFieldInfo],
+    current_columns: set[str],
+    expected_columns: set[str]
 ) -> pl.DataFrame:
     """Apply raise_on_missing validation mode.
 
@@ -158,8 +158,8 @@ def _apply_raise_on_missing(
 
 def _apply_add_missing(
     df: pl.DataFrame,
-    fields: List[OutputFieldInfo],
-    current_columns: Set[str]
+    fields: list[OutputFieldInfo],
+    current_columns: set[str]
 ) -> pl.DataFrame:
     """Apply add_missing validation mode.
 
@@ -184,8 +184,8 @@ def _apply_add_missing(
 
 def _apply_select_only(
     df: pl.DataFrame,
-    fields: List[OutputFieldInfo],
-    current_columns: Set[str]
+    fields: list[OutputFieldInfo],
+    current_columns: set[str]
 ) -> pl.DataFrame:
     """Apply select_only validation mode.
 
@@ -206,7 +206,7 @@ def _apply_select_only(
     return df.select(columns_to_select)
 
 
-def _validate_data_types(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> None:
+def _validate_data_types(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> None:
     """Validate that dataframe column types match expected types.
 
     Args:

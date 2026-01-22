@@ -380,7 +380,7 @@ class NodeSelect(NodeSingleInput):
     def to_yaml_dict(self) -> NodeSelectYaml:
         """Converts the select node settings to a dictionary for YAML serialization."""
         result: NodeSelectYaml = {
-            "cache_results": self.cache_results,
+            "cache_results": bool(self.cache_results),
             "keep_missing": self.keep_missing,
             "select_input": [s.to_yaml_dict() for s in self.select_input],
             "sorted_by": self.sorted_by,

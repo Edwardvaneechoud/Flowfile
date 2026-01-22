@@ -11,7 +11,7 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse, Response
@@ -33,7 +33,6 @@ from flowfile_core.fileExplorer.funcs import (
     FileInfo,
     SecureFileExplorer,
     get_files_from_directory,
-    validate_file_path,
     validate_path_under_cwd,
 )
 from flowfile_core.flowfile.analytics.analytics_processor import AnalyticsProcessor
@@ -49,7 +48,7 @@ from flowfile_core.flowfile.flow_graph import add_connection, delete_connection
 from flowfile_core.flowfile.sources.external_sources.sql_source.sql_source import create_sql_source_from_db_settings
 from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
-from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, UndoRedoResult, OperationResponse
+from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
@@ -124,8 +123,8 @@ async def get_local_files(directory: str) -> list[FileInfo]:
     return files
 
 
-@router.get('/files/tree/', response_model=List[FileInfo], tags=['file manager'])
-async def get_current_files() -> List[FileInfo]:
+@router.get('/files/tree/', response_model=list[FileInfo], tags=['file manager'])
+async def get_current_files() -> list[FileInfo]:
     """Gets the contents of the file explorer's current directory."""
     f = file_explorer.list_contents()
     return f
@@ -158,9 +157,9 @@ async def get_current_path() -> str:
     return str(file_explorer.current_path)
 
 
-@router.get('/files/directory_contents/', response_model=List[FileInfo], tags=['file manager'])
-async def get_directory_contents(directory: str, file_types: List[str] = None,
-                                 include_hidden: bool = False) -> List[FileInfo]:
+@router.get('/files/directory_contents/', response_model=list[FileInfo], tags=['file manager'])
+async def get_directory_contents(directory: str, file_types: list[str] = None,
+                                 include_hidden: bool = False) -> list[FileInfo]:
     """Gets the contents of an arbitrary directory path.
 
     Args:
@@ -179,8 +178,8 @@ async def get_directory_contents(directory: str, file_types: List[str] = None,
         HTTPException(404, 'Could not access the directory')
 
 
-@router.get('/files/current_directory_contents/', response_model=List[FileInfo], tags=['file manager'])
-async def get_current_directory_contents(file_types: List[str] = None, include_hidden: bool = False) -> List[FileInfo]:
+@router.get('/files/current_directory_contents/', response_model=list[FileInfo], tags=['file manager'])
+async def get_current_directory_contents(file_types: list[str] = None, include_hidden: bool = False) -> list[FileInfo]:
     """Gets the contents of the file explorer's current directory."""
     return file_explorer.list_contents(file_types=file_types, show_hidden=include_hidden)
 
@@ -433,7 +432,7 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
 
 
 @router.post('/editor/delete_node/', tags=['editor'], response_model=OperationResponse)
-def delete_node(flow_id: Optional[int], node_id: int) -> OperationResponse:
+def delete_node(flow_id: int | None, node_id: int) -> OperationResponse:
     """Deletes a node from the flow graph.
 
     Returns:
@@ -513,10 +512,10 @@ def delete_db_connection(connection_name: str,
 
 
 @router.get('/db_connection_lib', tags=['db_connections'],
-            response_model=List[input_schema.FullDatabaseConnectionInterface])
+            response_model=list[input_schema.FullDatabaseConnectionInterface])
 def get_db_connections(
         db: Session = Depends(get_db),
-        current_user=Depends(get_current_active_user)) -> List[input_schema.FullDatabaseConnectionInterface]:
+        current_user=Depends(get_current_active_user)) -> list[input_schema.FullDatabaseConnectionInterface]:
     """Retrieves all stored database connections for the current user (without passwords)."""
     return get_all_database_connections_interface(db, current_user.id)
 
@@ -548,14 +547,14 @@ def connect_node(flow_id: int, node_connection: input_schema.NodeConnection) -> 
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
-@router.get('/editor/expression_doc', tags=['editor'], response_model=List[output_model.ExpressionsOverview])
-def get_expression_doc() -> List[output_model.ExpressionsOverview]:
+@router.get('/editor/expression_doc', tags=['editor'], response_model=list[output_model.ExpressionsOverview])
+def get_expression_doc() -> list[output_model.ExpressionsOverview]:
     """Retrieves documentation for available Polars expressions."""
     return get_expression_overview()
 
 
-@router.get('/editor/expressions', tags=['editor'], response_model=List[str])
-def get_expressions() -> List[str]:
+@router.get('/editor/expressions', tags=['editor'], response_model=list[str])
+def get_expressions() -> list[str]:
     """Retrieves a list of all available Flowfile expression names."""
     return get_all_expressions()
 
@@ -681,7 +680,7 @@ def clear_history(flow_id: int):
 
 
 @router.post('/update_settings/', tags=['transform'], response_model=OperationResponse)
-def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)) -> OperationResponse:
+def add_generic_settings(input_data: dict[str, Any], node_type: str, current_user=Depends(get_current_active_user)) -> OperationResponse:
     """A generic endpoint to update the settings of any node.
 
     This endpoint dynamically determines the correct Pydantic model and update
@@ -724,7 +723,7 @@ def add_generic_settings(input_data: Dict[str, Any], node_type: str, current_use
     return OperationResponse(success=True, history=flow.get_history_state())
 
 
-@router.get('/files/available_flow_files', tags=['editor'], response_model=List[FileInfo])
+@router.get('/files/available_flow_files', tags=['editor'], response_model=list[FileInfo])
 def get_list_of_saved_flows(path: str):
     """Scans a directory for saved flow files (`.flowfile`)."""
     try:
@@ -741,8 +740,8 @@ def get_list_of_saved_flows(path: str):
         return []
 
 
-@router.get('/node_list', response_model=List[schemas.NodeTemplate])
-def get_node_list() -> List[schemas.NodeTemplate]:
+@router.get('/node_list', response_model=list[schemas.NodeTemplate])
+def get_node_list() -> list[schemas.NodeTemplate]:
     """Retrieves the list of all available node types and their templates."""
     return nodes_list
 
@@ -790,8 +789,8 @@ def get_table_example(flow_id: int, node_id: int):
     return node.get_table_example(True)
 
 
-@router.get('/node/downstream_node_ids', response_model=List[int], tags=['editor'])
-async def get_downstream_node_ids(flow_id: int, node_id: int) -> List[int]:
+@router.get('/node/downstream_node_ids', response_model=list[int], tags=['editor'])
+async def get_downstream_node_ids(flow_id: int, node_id: int) -> list[int]:
     """Gets a list of all node IDs that are downstream dependencies of a given node."""
     flow = flow_file_handler.get_flow(flow_id)
     node = flow.get_node(node_id)
@@ -818,7 +817,7 @@ def save_flow(flow_id: int, flow_path: str = None):
 
 
 @router.get('/flow_data', tags=['manager'])
-def get_flow_frontend_data(flow_id: Optional[int] = 1):
+def get_flow_frontend_data(flow_id: int | None = 1):
     """Retrieves the data needed to render the flow graph in the frontend."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:
@@ -827,7 +826,7 @@ def get_flow_frontend_data(flow_id: Optional[int] = 1):
 
 
 @router.get('/flow_settings', tags=['manager'], response_model=schemas.FlowSettings)
-def get_flow_settings(flow_id: Optional[int] = 1) -> schemas.FlowSettings:
+def get_flow_settings(flow_id: int | None = 1) -> schemas.FlowSettings:
     """Retrieves the main settings for a flow."""
     flow = flow_file_handler.get_flow(flow_id)
     if flow is None:

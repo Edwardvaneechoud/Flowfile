@@ -6,19 +6,17 @@ Enables stateless execution by accepting external state providers.
 """
 from __future__ import annotations
 
-from typing import Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from flowfile_core.configs import logger
+from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
+    results_exists,
+)
 from flowfile_core.flowfile.flow_node.models import (
-    ExecutionStrategy,
     ExecutionDecision,
+    ExecutionStrategy,
     InvalidationReason,
 )
 from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
-from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
-    results_exists,
-    clear_task_from_worker,
-)
 from flowfile_core.schemas import schemas
 
 if TYPE_CHECKING:

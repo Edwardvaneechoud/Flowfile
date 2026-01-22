@@ -12,7 +12,7 @@ Optimizations:
 
 from collections import deque
 from time import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from flowfile_core.configs import logger
 from flowfile_core.schemas.history_schema import (
@@ -43,7 +43,7 @@ class HistoryManager:
 
     __slots__ = ('_config', '_undo_stack', '_redo_stack', '_is_restoring', '_last_snapshot_hash')
 
-    def __init__(self, config: Optional[HistoryConfig] = None):
+    def __init__(self, config: HistoryConfig | None = None):
         """Initialize the HistoryManager.
 
         Args:
@@ -53,7 +53,7 @@ class HistoryManager:
         self._undo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
         self._redo_stack: deque[HistoryEntry] = deque(maxlen=self._config.max_stack_size)
         self._is_restoring: bool = False
-        self._last_snapshot_hash: Optional[int] = None
+        self._last_snapshot_hash: int | None = None
 
     @property
     def config(self) -> HistoryConfig:
@@ -73,7 +73,7 @@ class HistoryManager:
         snapshot_dict: dict,
         action_type: HistoryActionType,
         description: str,
-        node_id: Optional[int] = None,
+        node_id: int | None = None,
     ) -> HistoryEntry:
         """Create a history entry with the configured compression settings.
 
@@ -100,7 +100,7 @@ class HistoryManager:
         flow_graph: "FlowGraph",
         action_type: HistoryActionType,
         description: str,
-        node_id: Optional[int] = None,
+        node_id: int | None = None,
     ) -> bool:
         """Capture the current state of the flow graph BEFORE a change.
 
@@ -169,7 +169,7 @@ class HistoryManager:
         pre_snapshot: FlowfileData,
         action_type: HistoryActionType,
         description: str,
-        node_id: Optional[int] = None,
+        node_id: int | None = None,
     ) -> bool:
         """Capture history only if the flow state actually changed.
 
