@@ -204,7 +204,7 @@
   </div>
 </template>
 
-<script lang="ts" setup>
+<script lang="ts" setup generic="T extends NodeBase">
 import { ref, watch, reactive } from "vue";
 import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
@@ -213,11 +213,11 @@ import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 const nodeStore = useNodeStore();
 
 const props = defineProps<{
-  modelValue: NodeBase;
+  modelValue: T;
 }>();
 
 const emit = defineEmits<{
-  (e: "update:model-value", value: NodeBase): void;
+  (e: "update:model-value", value: T): void;
   (e: "request-save"): void;
 }>();
 
