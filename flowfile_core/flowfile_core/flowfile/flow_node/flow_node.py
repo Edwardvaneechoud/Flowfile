@@ -17,8 +17,8 @@ from flowfile_core.flowfile.flow_data_engine.subprocess_operations import (
     get_external_df_result,
     results_exists,
 )
+from flowfile_core.flowfile.flow_node.executor import NodeExecutor
 from flowfile_core.flowfile.flow_node.models import (
-    ExecutionStrategy,
     NodeResults,
     NodeSchemaInformation,
     NodeStepInputs,
@@ -27,8 +27,7 @@ from flowfile_core.flowfile.flow_node.models import (
 )
 from flowfile_core.flowfile.flow_node.output_field_config_applier import apply_output_field_config
 from flowfile_core.flowfile.flow_node.schema_callback import SingleExecutionFuture
-from flowfile_core.flowfile.flow_node.state import NodeExecutionState, SourceFileInfo
-from flowfile_core.flowfile.flow_node.executor import NodeExecutor
+from flowfile_core.flowfile.flow_node.state import NodeExecutionState
 from flowfile_core.flowfile.setting_generator import setting_generator, setting_updator
 from flowfile_core.flowfile.utils import get_hash
 from flowfile_core.schemas import input_schema, schemas

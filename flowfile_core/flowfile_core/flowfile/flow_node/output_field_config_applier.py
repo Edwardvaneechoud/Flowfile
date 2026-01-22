@@ -8,7 +8,6 @@ from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry impo
 from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
 
-
 def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
     """Parse default value from field configuration.
 
@@ -36,7 +35,7 @@ def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
     return pl.lit(field.default_value)
 
 
-def _select_columns_in_order(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> pl.DataFrame:
+def _select_columns_in_order(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> pl.DataFrame:
     """Select columns in the specified field order.
 
     Args:
@@ -51,9 +50,9 @@ def _select_columns_in_order(df: pl.DataFrame, fields: List[OutputFieldInfo]) ->
 
 def _apply_raise_on_missing(
     df: pl.DataFrame,
-    fields: List[OutputFieldInfo],
-    current_columns: Set[str],
-    expected_columns: Set[str]
+    fields: list[OutputFieldInfo],
+    current_columns: set[str],
+    expected_columns: set[str]
 ) -> pl.DataFrame:
     """Apply raise_on_missing validation mode.
 
@@ -80,8 +79,8 @@ def _apply_raise_on_missing(
 
 def _apply_add_missing(
     df: pl.DataFrame,
-    fields: List[OutputFieldInfo],
-    current_columns: Set[str]
+    fields: list[OutputFieldInfo],
+    current_columns: set[str]
 ) -> pl.DataFrame:
     """Apply add_missing validation mode.
 
@@ -106,8 +105,8 @@ def _apply_add_missing(
 
 def _apply_select_only(
     df: pl.DataFrame,
-    fields: List[OutputFieldInfo],
-    current_columns: Set[str]
+    fields: list[OutputFieldInfo],
+    current_columns: set[str]
 ) -> pl.DataFrame:
     """Apply select_only validation mode.
 
@@ -128,7 +127,7 @@ def _apply_select_only(
     return df.select(columns_to_select)
 
 
-def _validate_data_types(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> None:
+def _validate_data_types(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> None:
     """Validate that dataframe column types match expected types.
 
     Uses existing FlowfileColumn infrastructure for type conversion.
