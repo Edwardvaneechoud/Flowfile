@@ -130,8 +130,6 @@ def _apply_select_only(
 def _validate_data_types(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> None:
     """Validate that dataframe column types match expected types.
 
-    Uses existing FlowfileColumn infrastructure for type conversion.
-
     Args:
         df: Input dataframe
         fields: List of expected output fields with data types
@@ -144,34 +142,18 @@ def _validate_data_types(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> Non
         if field.name not in df.columns:
             continue
 
+        # Convert actual dtype to string using existing infrastructure
         actual_dtype = df[field.name].dtype
-        expected_type_name = field.data_type
+        actual_type_str = convert_pl_type_to_string(actual_dtype)
 
-        try:
-            # Use existing infrastructure to convert string to Polars type
-            expected_dtype = cast_str_to_polars_type(expected_type_name)
+        # Normalize both strings for comparison (remove "pl." prefix if present)
+        actual_normalized = actual_type_str.replace("pl.", "")
+        expected_normalized = field.data_type.replace("pl.", "")
 
-            # Compare the actual dtype with expected dtype
-            # Handle cases where types might be equivalent (e.g., Utf8 vs String)
-            if actual_dtype != expected_dtype:
-                # Convert actual type to string format for comparison
-                actual_type_str = convert_pl_type_to_string(actual_dtype)
-                expected_type_str = convert_pl_type_to_string(expected_dtype)
-
-                # Normalize type strings for comparison (remove "pl." prefix)
-                actual_normalized = actual_type_str.replace("pl.", "")
-                expected_normalized = expected_type_str.replace("pl.", "")
-
-                # Check if types match after normalization (handles Utf8/String equivalence)
-                if actual_normalized != expected_normalized:
-                    mismatches.append(
-                        f"Column '{field.name}': expected {expected_type_name}, got {actual_normalized}"
-                    )
-        except Exception as e:
-            logger.warning(
-                f"Could not validate type for column '{field.name}' with expected type '{expected_type_name}': {e}"
+        if actual_normalized != expected_normalized:
+            mismatches.append(
+                f"Column '{field.name}': expected {field.data_type}, got {actual_type_str}"
             )
-            continue
 
     if mismatches:
         error_msg = "Data type validation failed:\n" + "\n".join(f"  - {m}" for m in mismatches)
