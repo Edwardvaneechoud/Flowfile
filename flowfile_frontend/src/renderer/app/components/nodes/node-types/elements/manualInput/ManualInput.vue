@@ -161,9 +161,7 @@ const dataTypes = nodeStore.getDataTypes();
  */
 const inferDataType = (values: unknown[]): string => {
   // Filter out null, undefined, and empty strings
-  const validValues = values.filter(
-    (v) => v !== null && v !== undefined && v !== "",
-  );
+  const validValues = values.filter((v) => v !== null && v !== undefined && v !== "");
 
   if (validValues.length === 0) {
     return "String";

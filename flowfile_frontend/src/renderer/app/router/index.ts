@@ -110,7 +110,6 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (!authService.isInElectronMode()) {
-
     if (setupRequired && !isSetupPage) {
       next({ name: "setup" });
       return;

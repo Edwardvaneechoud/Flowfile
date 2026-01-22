@@ -44,10 +44,7 @@
                   />
                 </div>
                 <div class="action-buttons">
-                  <button
-                    class="action-button remove-button"
-                    @click="removeJoinCondition(index)"
-                  >
+                  <button class="action-button remove-button" @click="removeJoinCondition(index)">
                     -
                   </button>
                   <button

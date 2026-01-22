@@ -91,7 +91,7 @@
             >
               <polygon points="5 3 19 12 5 21 5 3"></polygon>
             </svg>
-            <span>{{ isRunning ? 'Running...' : 'Run Now' }}</span>
+            <span>{{ isRunning ? "Running..." : "Run Now" }}</span>
           </div>
           <div class="context-menu-item" @click="toggleCache">
             <svg
@@ -109,7 +109,7 @@
               <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
               <path d="M16 21h5v-5"></path>
             </svg>
-            <span>{{ isCached ? 'Disable Cache' : 'Enable Cache' }}</span>
+            <span>{{ isCached ? "Disable Cache" : "Enable Cache" }}</span>
           </div>
           <div class="context-menu-divider"></div>
           <div class="context-menu-item" @click="copyNode">

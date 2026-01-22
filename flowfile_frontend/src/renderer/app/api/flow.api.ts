@@ -250,7 +250,10 @@ export class FlowApi {
   /**
    * Connect two nodes
    */
-  static async connectNode(flowId: number, nodeConnection: NodeConnection): Promise<OperationResponse> {
+  static async connectNode(
+    flowId: number,
+    nodeConnection: NodeConnection,
+  ): Promise<OperationResponse> {
     const response = await axios.post<OperationResponse>("/editor/connect_node/", nodeConnection, {
       headers: {
         "Content-Type": "application/json",
@@ -264,11 +267,18 @@ export class FlowApi {
   /**
    * Delete a connection between nodes
    */
-  static async deleteConnection(flowId: number, nodeConnection: NodeConnection): Promise<OperationResponse> {
-    const response = await axios.post<OperationResponse>("/editor/delete_connection/", nodeConnection, {
-      params: { flow_id: flowId },
-      headers: { accept: "application/json" },
-    });
+  static async deleteConnection(
+    flowId: number,
+    nodeConnection: NodeConnection,
+  ): Promise<OperationResponse> {
+    const response = await axios.post<OperationResponse>(
+      "/editor/delete_connection/",
+      nodeConnection,
+      {
+        params: { flow_id: flowId },
+        headers: { accept: "application/json" },
+      },
+    );
     return response.data;
   }
 

@@ -34,7 +34,14 @@ import FlowResults from "../../features/designer/editor/results.vue";
 import LogViewer from "./LogViewer/LogViewer.vue";
 import ContextMenu from "./ContextMenu.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
-import { NodeCopyInput, NodeCopyValue, MultiNodeCopyValue, EdgeCopyValue, ContextMenuAction, CursorPosition } from "./types";
+import {
+  NodeCopyInput,
+  NodeCopyValue,
+  MultiNodeCopyValue,
+  EdgeCopyValue,
+  ContextMenuAction,
+  CursorPosition,
+} from "./types";
 import { applyStandardLayout } from "./editorLayoutInterface";
 
 const itemStore = useItemStore();
@@ -53,7 +60,8 @@ const edges = ref([]);
 const instance = useVueFlow();
 const showTablePreview = ref(false);
 const mainContainerRef = ref<HTMLElement | null>(null);
-const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode, createMultiCopyNodes } = useDragAndDrop();
+const { onDrop, onDragOver, onDragStart, importFlow, createCopyNode, createMultiCopyNodes } =
+  useDragAndDrop();
 const dataPreview = ref<InstanceType<typeof DataPreview>>();
 const tablePreviewHeight = ref(0);
 const nodeSettingsHeight = ref(0);
@@ -303,7 +311,8 @@ const copySelectedNodes = () => {
     const selectedNodeIds = new Set(selectedNodes.map((n) => n.data.id));
 
     // Find bounding box of selection
-    let minX = Infinity, minY = Infinity;
+    let minX = Infinity,
+      minY = Infinity;
     for (const node of selectedNodes) {
       minX = Math.min(minX, node.position.x);
       minY = Math.min(minY, node.position.y);
@@ -361,7 +370,12 @@ const copyValue = async (x: number, y: number) => {
   const copiedMultiNodesStr = localStorage.getItem("copiedMultiNodes");
   if (copiedMultiNodesStr) {
     const multiNodeCopyValue: MultiNodeCopyValue = JSON.parse(copiedMultiNodesStr);
-    const response = await createMultiCopyNodes(multiNodeCopyValue, flowPosition.x, flowPosition.y, flowStore.flowId);
+    const response = await createMultiCopyNodes(
+      multiNodeCopyValue,
+      flowPosition.x,
+      flowPosition.y,
+      flowStore.flowId,
+    );
     // Update history state from response
     if (response?.history) {
       flowStore.updateHistoryState(response.history);
@@ -684,7 +698,13 @@ body,
 }
 
 .animated-bg-gradient {
-  background: linear-gradient(122deg, var(--color-gradient-canvas-1), var(--color-gradient-canvas-2), var(--color-gradient-canvas-3), var(--color-gradient-canvas-4));
+  background: linear-gradient(
+    122deg,
+    var(--color-gradient-canvas-1),
+    var(--color-gradient-canvas-2),
+    var(--color-gradient-canvas-3),
+    var(--color-gradient-canvas-4)
+  );
   background-size: 800% 800%;
   -webkit-animation: gradient 4s ease infinite;
   -moz-animation: gradient 4s ease infinite;
