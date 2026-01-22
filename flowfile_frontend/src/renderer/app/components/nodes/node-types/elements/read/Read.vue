@@ -2,8 +2,8 @@
   <div v-if="dataLoaded && nodeRead" class="listbox-wrapper">
     <generic-node-settings
       :model-value="nodeRead"
-      @update:modelValue="handleGenericSettingsUpdate"
-      @requestSave="saveNodeData"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveNodeData"
     >
       <div class="listbox-wrapper">
         <div class="file-upload-container">

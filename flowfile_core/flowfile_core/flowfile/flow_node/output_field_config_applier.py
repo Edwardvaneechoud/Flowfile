@@ -1,90 +1,12 @@
 """Utility module for applying output field configuration to FlowDataEngine results."""
 
-from typing import Dict, List, Set
+from typing import List, Set
 import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
-
-
-# Mapping from Polars DataType to our string representation
-POLARS_TO_STRING: Dict[type, str] = {
-    pl.String: "String",
-    pl.Utf8: "String",
-    pl.Int64: "Int64",
-    pl.Int32: "Int32",
-    pl.Int16: "Int16",
-    pl.Int8: "Int8",
-    pl.UInt64: "UInt64",
-    pl.UInt32: "UInt32",
-    pl.UInt16: "UInt16",
-    pl.UInt8: "UInt8",
-    pl.Float64: "Float64",
-    pl.Float32: "Float32",
-    pl.Boolean: "Boolean",
-    pl.Bool: "Boolean",
-    pl.Date: "Date",
-    pl.Datetime: "Datetime",
-    pl.Time: "Time",
-    pl.Duration: "Duration",
-    pl.List: "List",
-    pl.Struct: "Struct",
-    pl.Categorical: "Categorical",
-    pl.Null: "Null",
-}
-
-# Mapping from our string representation to acceptable Polars DataTypes
-STRING_TO_POLARS: Dict[str, List[type]] = {
-    "String": [pl.String, pl.Utf8],
-    "Int64": [pl.Int64],
-    "Int32": [pl.Int32],
-    "Int16": [pl.Int16],
-    "Int8": [pl.Int8],
-    "UInt64": [pl.UInt64],
-    "UInt32": [pl.UInt32],
-    "UInt16": [pl.UInt16],
-    "UInt8": [pl.UInt8],
-    "Float64": [pl.Float64],
-    "Float32": [pl.Float32],
-    "Boolean": [pl.Boolean, pl.Bool],
-    "Date": [pl.Date],
-    "Datetime": [pl.Datetime],
-    "Time": [pl.Time],
-    "Duration": [pl.Duration],
-    "List": [pl.List],
-    "Struct": [pl.Struct],
-    "Categorical": [pl.Categorical],
-    "Null": [pl.Null],
-}
-
-
-def polars_dtype_to_data_type_str(polars_dtype) -> str:
-    """Map Polars dtype to our DataTypeStr format.
-
-    Args:
-        polars_dtype: Polars DataType object or type
-
-    Returns:
-        Corresponding DataTypeStr value
-    """
-    # Try direct lookup in mapping
-    dtype_type = type(polars_dtype) if not isinstance(polars_dtype, type) else polars_dtype
-
-    if dtype_type in POLARS_TO_STRING:
-        return POLARS_TO_STRING[dtype_type]
-
-    # For complex types like List[Int64], try to extract base type
-    dtype_str = str(polars_dtype).lower()
-    if "list" in dtype_str:
-        return "List"
-    if "struct" in dtype_str:
-        return "Struct"
-    if "datetime" in dtype_str:
-        return "Datetime"
-
-    # Default to String if unknown
-    logger.warning(f"Unknown Polars dtype '{polars_dtype}', treating as String")
-    return "String"
 
 
 def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
@@ -209,6 +131,8 @@ def _apply_select_only(
 def _validate_data_types(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> None:
     """Validate that dataframe column types match expected types.
 
+    Uses existing FlowfileColumn infrastructure for type conversion.
+
     Args:
         df: Input dataframe
         fields: List of expected output fields with data types
@@ -224,25 +148,31 @@ def _validate_data_types(df: pl.DataFrame, fields: List[OutputFieldInfo]) -> Non
         actual_dtype = df[field.name].dtype
         expected_type_name = field.data_type
 
-        # Get acceptable Polars dtypes for the expected type (case-insensitive)
-        expected_dtypes = None
-        for type_name, dtypes in STRING_TO_POLARS.items():
-            if type_name.lower() == expected_type_name.lower():
-                expected_dtypes = dtypes
-                break
+        try:
+            # Use existing infrastructure to convert string to Polars type
+            expected_dtype = cast_str_to_polars_type(expected_type_name)
 
-        if expected_dtypes is None:
-            logger.warning(f"Unknown expected type '{expected_type_name}' for column '{field.name}', skipping validation")
-            continue
+            # Compare the actual dtype with expected dtype
+            # Handle cases where types might be equivalent (e.g., Utf8 vs String)
+            if actual_dtype != expected_dtype:
+                # Convert actual type to string format for comparison
+                actual_type_str = convert_pl_type_to_string(actual_dtype)
+                expected_type_str = convert_pl_type_to_string(expected_dtype)
 
-        # Check if actual dtype matches any acceptable dtype
-        actual_dtype_type = type(actual_dtype)
-        if actual_dtype_type not in expected_dtypes:
-            # Get string representation for error message
-            actual_type_name = POLARS_TO_STRING.get(actual_dtype_type, str(actual_dtype))
-            mismatches.append(
-                f"Column '{field.name}': expected {expected_type_name}, got {actual_type_name}"
+                # Normalize type strings for comparison (remove "pl." prefix)
+                actual_normalized = actual_type_str.replace("pl.", "")
+                expected_normalized = expected_type_str.replace("pl.", "")
+
+                # Check if types match after normalization (handles Utf8/String equivalence)
+                if actual_normalized != expected_normalized:
+                    mismatches.append(
+                        f"Column '{field.name}': expected {expected_type_name}, got {actual_normalized}"
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Could not validate type for column '{field.name}' with expected type '{expected_type_name}': {e}"
             )
+            continue
 
     if mismatches:
         error_msg = "Data type validation failed:\n" + "\n".join(f"  - {m}" for m in mismatches)

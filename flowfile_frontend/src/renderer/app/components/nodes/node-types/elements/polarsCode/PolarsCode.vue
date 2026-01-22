@@ -2,8 +2,8 @@
   <div v-if="dataLoaded && nodePolarsCode" class="listbox-wrapper">
     <generic-node-settings
       :model-value="nodePolarsCode"
-      @update:modelValue="handleGenericSettingsUpdate"
-      @requestSave="saveNodeData"
+      @update:model-value="handleGenericSettingsUpdate"
+      @request-save="saveNodeData"
     >
       <pythonEditor
         v-if="showEditor && nodePolarsCode"

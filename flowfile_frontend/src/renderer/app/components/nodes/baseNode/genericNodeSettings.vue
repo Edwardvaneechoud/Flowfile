@@ -123,7 +123,7 @@
                 size="small"
               >
                 <el-table-column width="50">
-                  <template #default="{ $index }">
+                  <template #default>
                     <el-icon style="cursor: move">
                       <DCaret />
                     </el-icon>
@@ -206,7 +206,7 @@
 
 <script lang="ts" setup>
 import { ref, watch, reactive } from "vue";
-import type { NodeBase, OutputFieldConfig, OutputFieldInfo } from "./nodeInput";
+import type { NodeBase, OutputFieldConfig } from "./nodeInput";
 import { useNodeStore } from "../../../stores/node-store";
 import { InfoFilled, DCaret, Delete } from "@element-plus/icons-vue";
 
@@ -217,8 +217,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: "update:modelValue", value: NodeBase): void;
-  (e: "requestSave"): void;
+  (e: "update:model-value", value: NodeBase): void;
+  (e: "request-save"): void;
 }>();
 
 const activeTab = ref("main");
@@ -227,7 +227,7 @@ const activeTab = ref("main");
 watch(activeTab, (newTab, oldTab) => {
   // When switching to Output Schema tab from any other tab, request a save
   if (newTab === "output-schema" && oldTab !== "output-schema") {
-    emit("requestSave");
+    emit("request-save");
   }
 });
 
@@ -264,7 +264,7 @@ watch(
 );
 
 const handleSettingChange = () => {
-  emit("update:modelValue", {
+  emit("update:model-value", {
     ...props.modelValue,
     cache_results: localSettings.value.cache_results,
     description: localSettings.value.description,
@@ -304,7 +304,7 @@ const loadFieldsFromSchema = async () => {
     }
 
     // Request parent component to save current state
-    emit("requestSave");
+    emit("request-save");
 
     // Give the backend a moment to process and update the schema
     await new Promise(resolve => setTimeout(resolve, 150));

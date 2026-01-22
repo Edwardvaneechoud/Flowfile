@@ -1,6 +1,6 @@
 <template>
   <div v-if="dataLoaded" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeSelect" @requestSave="pushNodeData">
+    <generic-node-settings v-model="nodeSelect" @request-save="pushNodeData">
       <select-dynamic
         v-model:sortedBy="nodeSelect.sorted_by"
         :select-inputs="nodeSelect.select_input"

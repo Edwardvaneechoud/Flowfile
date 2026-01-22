@@ -1,6 +1,6 @@
 <template>
   <div v-if="isLoaded && nodeFilter">
-    <generic-node-settings v-model="nodeFilter" @requestSave="pushNodeData">
+    <generic-node-settings v-model="nodeFilter" @request-save="pushNodeData">
       <div class="listbox-wrapper">
         <div style="border-radius: 20px">
           <el-switch

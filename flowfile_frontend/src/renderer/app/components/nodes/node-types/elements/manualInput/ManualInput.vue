@@ -1,6 +1,6 @@
 <template>
   <div v-if="dataLoaded && nodeManualInput">
-    <generic-node-settings v-model="nodeManualInput" @requestSave="saveNodeData">
+    <generic-node-settings v-model="nodeManualInput" @request-save="saveNodeData">
       <div class="settings-section">
         <!-- Table Controls - Moved to top for better visibility -->
         <div class="controls-section controls-top">

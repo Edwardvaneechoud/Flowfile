@@ -24,7 +24,6 @@ from flowfile_core.flowfile.flow_node.output_field_config_applier import (
     _select_columns_in_order,
     _validate_data_types,
     apply_output_field_config,
-    polars_dtype_to_data_type_str,
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas
@@ -68,41 +67,6 @@ def add_manual_input(graph: FlowGraph, data: dict, node_id: int = 1):
 # =============================================================================
 # Unit Tests: Helper Functions
 # =============================================================================
-
-
-class TestPolarsTypeConversion:
-    """Tests for polars_dtype_to_data_type_str function."""
-
-    def test_string_types(self):
-        """Test conversion of string types."""
-        # Test with actual dtype objects from a dataframe
-        df = pl.DataFrame({"a": ["x"], "b": ["y"]})
-        assert polars_dtype_to_data_type_str(df["a"].dtype) == "String"
-
-    def test_integer_types(self):
-        """Test conversion of integer types."""
-        df = pl.DataFrame({"a": [1], "b": [2]})
-        assert polars_dtype_to_data_type_str(df["a"].dtype) == "Int64"
-
-        df32 = pl.DataFrame({"a": pl.Series([1], dtype=pl.Int32)})
-        assert polars_dtype_to_data_type_str(df32["a"].dtype) == "Int32"
-
-    def test_float_types(self):
-        """Test conversion of float types."""
-        df = pl.DataFrame({"a": [1.0], "b": [2.0]})
-        assert polars_dtype_to_data_type_str(df["a"].dtype) == "Float64"
-
-        df32 = pl.DataFrame({"a": pl.Series([1.0], dtype=pl.Float32)})
-        assert polars_dtype_to_data_type_str(df32["a"].dtype) == "Float32"
-
-    def test_other_types(self):
-        """Test conversion of other common types."""
-        df = pl.DataFrame({
-            "bool_col": [True, False],
-            "date_col": pl.Series([pl.date(2024, 1, 1)], dtype=pl.Date),
-        })
-        assert polars_dtype_to_data_type_str(df["bool_col"].dtype) == "Boolean"
-        assert polars_dtype_to_data_type_str(df["date_col"].dtype) == "Date"
 
 
 class TestParseDefaultValue:
