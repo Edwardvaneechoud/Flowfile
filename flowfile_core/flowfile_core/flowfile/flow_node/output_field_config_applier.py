@@ -4,8 +4,7 @@ from typing import List, Set
 import polars as pl
 from flowfile_core.configs import logger
 from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.type_registry import convert_pl_type_to_string
-from flowfile_core.flowfile.flow_data_engine.flow_file_column.utils import cast_str_to_polars_type
+from flowfile_core.flowfile.flow_data_engine.flow_file_column.main import FlowfileColumn
 from flowfile_core.schemas.input_schema import OutputFieldConfig, OutputFieldInfo
 
 def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
@@ -127,30 +126,29 @@ def _apply_select_only(
     return df.select(columns_to_select)
 
 
-def _validate_data_types(df: pl.DataFrame, fields: list[OutputFieldInfo]) -> None:
+def _validate_data_types(df: pl.DataFrame | pl.LazyFrame, fields: list[OutputFieldInfo]) -> None:
     """Validate that dataframe column types match expected types.
 
     Args:
-        df: Input dataframe
+        df: Input dataframe or lazyframe
         fields: List of expected output fields with data types
 
     Raises:
         ValueError: If any data type mismatches are found
     """
+    # Get schema (works for both DataFrame and LazyFrame)
+    schema = df.schema
+
     mismatches = []
     for field in fields:
-        if field.name not in df.columns:
+        if field.name not in schema:
             continue
 
-        # Convert actual dtype to string using existing infrastructure
-        actual_dtype = df[field.name].dtype
-        actual_type_str = convert_pl_type_to_string(actual_dtype)
+        # Use FlowfileColumn infrastructure to convert dtype to string
+        actual_column = FlowfileColumn.create_from_polars_dtype(field.name, schema[field.name])
+        actual_type_str = actual_column.data_type
 
-        # Normalize both strings for comparison (remove "pl." prefix if present)
-        actual_normalized = actual_type_str.replace("pl.", "")
-        expected_normalized = field.data_type.replace("pl.", "")
-
-        if actual_normalized != expected_normalized:
+        if actual_type_str != field.data_type:
             mismatches.append(
                 f"Column '{field.name}': expected {field.data_type}, got {actual_type_str}"
             )
@@ -189,12 +187,8 @@ def apply_output_field_config(
     if df is None:
         return flow_data_engine
 
-    # Ensure we have a DataFrame, not a LazyFrame
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-
     try:
-        # Get column sets for validation
+        # Get column sets for validation (works for both DataFrame and LazyFrame)
         current_columns = set(df.columns)
         expected_columns = {field.name for field in output_field_config.fields}
 
