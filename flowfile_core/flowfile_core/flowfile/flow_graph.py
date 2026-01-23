@@ -74,6 +74,7 @@ from flowfile_core.schemas.output_model import NodeData, NodeResult, RunInformat
 from flowfile_core.schemas.transform_schema import FuzzyMatchInputManager
 from flowfile_core.secret_manager.secret_manager import decrypt_secret, get_encrypted_secret
 from flowfile_core.utils.arrow_reader import get_read_top_n
+from flowfile_core.utils.file_cache import cache_schema, get_cached_schema
 
 try:
     __version__ = version("Flowfile")
@@ -150,6 +151,9 @@ def get_xlsx_schema(
 ):
     """Calculates the schema of an XLSX file by reading a sample of rows.
 
+    Uses file-based caching to avoid re-reading unchanged files. The cache key
+    includes file path, modification time, size, and all settings.
+
     Args:
         engine: The engine to use for reading ('openpyxl' or 'calamine').
         file_path: The path to the XLSX file.
@@ -163,11 +167,28 @@ def get_xlsx_schema(
     Returns:
         A list of FlowfileColumn objects representing the schema.
     """
+    # Build settings dict for cache key
+    cache_settings = {
+        "engine": engine,
+        "sheet_name": sheet_name,
+        "start_row": start_row,
+        "start_column": start_column,
+        "end_row": end_row,
+        "end_column": end_column,
+        "has_headers": has_headers,
+    }
+
+    # Check cache first
+    cached = get_cached_schema(file_path, "xlsx", cache_settings)
+    if cached is not None:
+        logger.info(f"Using cached schema for xlsx: {file_path}")
+        return cached
+
     try:
         logger.info("Starting to calculate the schema")
         if engine == "openpyxl":
             max_col = end_column if end_column > 0 else None
-            return get_open_xlsx_datatypes(
+            schema = get_open_xlsx_datatypes(
                 file_path=file_path,
                 sheet_name=sheet_name,
                 min_row=start_row + 1,
@@ -177,10 +198,18 @@ def get_xlsx_schema(
                 has_headers=has_headers,
             )
         elif engine == "calamine":
-            return get_calamine_xlsx_data_types(
+            schema = get_calamine_xlsx_data_types(
                 file_path=file_path, sheet_name=sheet_name, start_row=start_row, end_row=end_row
             )
+        else:
+            schema = []
+
+        # Cache the result
+        if schema:
+            cache_schema(file_path, "xlsx", cache_settings, schema)
+
         logger.info("done calculating the schema")
+        return schema
     except Exception as e:
         logger.error(e)
         return []
@@ -2179,10 +2208,40 @@ class FlowGraph:
                         return [FlowfileColumn.from_input(f.name, f.data_type) for f in received_file.fields]
 
                 elif input_file.received_file.file_type in ("csv", "json", "parquet"):
-                    # everything that can be scanned by polars
-                    def schema_callback():
-                        input_data = FlowDataEngine.create_from_path(input_file.received_file)
-                        return input_data.schema
+                    # everything that can be scanned by polars - with file-based caching
+                    file_type = input_file.received_file.file_type
+                    file_path = received_file.file_path
+                    # Build cache settings based on file type
+                    if file_type == "csv":
+                        cache_settings = {
+                            "encoding": received_file.table_settings.encoding,
+                            "delimiter": received_file.table_settings.delimiter,
+                            "has_headers": received_file.table_settings.has_headers,
+                            "starting_from_line": received_file.table_settings.starting_from_line,
+                            "infer_schema_length": received_file.table_settings.infer_schema_length,
+                        }
+                    elif file_type == "parquet":
+                        cache_settings = {}  # Parquet schema doesn't depend on settings
+                    else:
+                        cache_settings = {}
+
+                    def schema_callback(
+                        fp=file_path, ft=file_type, cs=cache_settings, rf=input_file.received_file
+                    ):
+                        # Check cache first
+                        cached = get_cached_schema(fp, ft, cs)
+                        if cached is not None:
+                            logger.info(f"Using cached schema for {ft}: {fp}")
+                            return cached
+
+                        # Read and cache
+                        input_data = FlowDataEngine.create_from_path(rf)
+                        schema = input_data.schema
+
+                        if schema:
+                            cache_schema(fp, ft, cs, schema)
+
+                        return schema
 
                 elif input_file.received_file.file_type in ("xlsx", "excel"):
                     # If the file is an Excel file, we need to use the openpyxl engine to read the schema

@@ -50,6 +50,12 @@ from flowfile_core.run_lock import get_flow_run_lock
 from flowfile_core.schemas import input_schema, output_model, schemas
 from flowfile_core.schemas.history_schema import HistoryActionType, HistoryState, OperationResponse, UndoRedoResult
 from flowfile_core.utils import excel_file_manager
+from flowfile_core.utils.file_cache import (
+    clear_file_cache,
+    get_file_cache_stats,
+    invalidate_file_cache,
+    set_file_cache_debug_mode,
+)
 from flowfile_core.utils.fileManager import create_dir
 from flowfile_core.utils.utils import camel_case_to_snake_case
 from shared.storage_config import storage
@@ -904,3 +910,49 @@ async def validate_db_settings(
         return {"message": "Query settings are valid"}
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# File cache management endpoints
+@router.get('/api/file_cache/stats', tags=['file_cache'])
+async def get_cache_stats() -> dict[str, Any]:
+    """Returns statistics about the file schema cache.
+
+    Returns cache size, hit count, enabled file types, and debug mode status.
+    """
+    return get_file_cache_stats()
+
+
+@router.post('/api/file_cache/clear', tags=['file_cache'])
+async def clear_cache() -> dict[str, str]:
+    """Clears all entries from the file schema cache."""
+    clear_file_cache()
+    return {"message": "File cache cleared"}
+
+
+@router.post('/api/file_cache/invalidate', tags=['file_cache'])
+async def invalidate_cache_for_file(file_path: str) -> dict[str, Any]:
+    """Invalidates all cache entries for a specific file.
+
+    Args:
+        file_path: The path to the file to invalidate.
+
+    Returns:
+        Number of entries invalidated.
+    """
+    validated_path = validate_path_under_cwd(file_path)
+    count = invalidate_file_cache(validated_path)
+    return {"message": f"Invalidated {count} cache entries", "invalidated_count": count}
+
+
+@router.post('/api/file_cache/debug_mode', tags=['file_cache'])
+async def set_cache_debug_mode(enabled: bool) -> dict[str, str]:
+    """Enables or disables debug mode for file caching.
+
+    When debug mode is enabled, caching is applied to all file types,
+    not just xlsx, csv, and parquet.
+
+    Args:
+        enabled: Whether to enable debug mode.
+    """
+    set_file_cache_debug_mode(enabled)
+    return {"message": f"Debug mode {'enabled' if enabled else 'disabled'}"}
