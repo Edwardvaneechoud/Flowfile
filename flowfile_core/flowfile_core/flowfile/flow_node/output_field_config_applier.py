@@ -41,39 +41,37 @@ def _select_columns_in_order(df: pl.DataFrame, fields: list[OutputFieldInfo]) ->
 
 
 def _apply_raise_on_missing(
-    df: pl.DataFrame,
+    flowfile_engine: FlowDataEngine,
     fields: list[OutputFieldInfo],
-    current_columns: set[str],
-    expected_columns: set[str]
-) -> pl.DataFrame:
+) -> FlowDataEngine:
     """Apply raise_on_missing validation mode.
 
     Raises error if any expected columns are missing, then selects columns in order.
 
     Args:
-        df: Input dataframe
+        flowfile_engine: Input flow data engine
         fields: List of expected output fields
-        current_columns: Set of current column names
-        expected_columns: Set of expected column names
 
     Returns:
-        DataFrame with selected columns in specified order
+        Flow Data Engine with columns selected in specified order
 
     Raises:
         ValueError: If any expected columns are missing
     """
-    missing_columns = expected_columns - current_columns
+    cols = [f.name for f in fields]
+    missing_columns = set(cols) - set(flowfile_engine.columns)
     if missing_columns:
         raise ValueError(f"Missing required columns: {', '.join(sorted(missing_columns))}")
-
-    return _select_columns_in_order(df, fields)
+    if flowfile_engine.columns != cols:
+        return FlowDataEngine(_select_columns_in_order(flowfile_engine.data_frame, fields))
+    else:
+        return flowfile_engine
 
 
 def _apply_add_missing(
-    df: pl.DataFrame,
+    engine: FlowDataEngine,
     fields: list[OutputFieldInfo],
-    current_columns: set[str]
-) -> pl.DataFrame:
+) -> FlowDataEngine:
     """Apply add_missing validation mode.
 
     Adds missing columns with default values, then selects columns in order.
@@ -87,12 +85,14 @@ def _apply_add_missing(
         DataFrame with missing columns added and all columns in specified order
     """
     # Add missing columns with default values
-    for field in fields:
-        if field.name not in current_columns:
-            default_expr = _parse_default_value(field)
-            df = df.with_columns(default_expr.alias(field.name))
-
-    return _select_columns_in_order(df, fields)
+    current_columns = set(engine.columns)
+    expressions = [_parse_default_value(field).alias(field.name)
+                   for field in fields if field.name not in current_columns]
+    if expressions:
+        new_df = engine.data_frame.with_columns(expressions)
+    else:
+        new_df = engine.data_frame
+    return FlowDataEngine(_select_columns_in_order(new_df, fields))
 
 
 def _validate_data_types(df: FlowDataEngine, fields: list[OutputFieldInfo]) -> None:
@@ -144,13 +144,12 @@ def apply_output_field_config(
         ValueError: If raise_on_missing behavior is set and required columns are missing,
                    or if data type validation fails
     """
-    breakpoint()
     if not output_field_config or not output_field_config.enabled:
         return flow_data_engine
 
     if not output_field_config.fields:
         return flow_data_engine
-
+    # breakpoint()
     try:
         # Get column sets for validation (works for both DataFrame and LazyFrame)
         current_columns = set(flow_data_engine.columns)
@@ -159,13 +158,15 @@ def apply_output_field_config(
         # Apply validation mode behavior
         mode = output_field_config.validation_mode_behavior
         if mode == "raise_on_missing":
-            df = _apply_raise_on_missing(df, output_field_config.fields, current_columns, expected_columns)
+            new_flow_engine = _apply_raise_on_missing(flow_data_engine, output_field_config.fields)
         elif mode == "add_missing":
-            df = _apply_add_missing(df, output_field_config.fields, current_columns)
+            new_flow_engine = _apply_add_missing(engine=flow_data_engine, fields=output_field_config.fields)
         elif mode == "select_only":
             new_flow_engine = flow_data_engine.select_columns(
                 [field.name for field in output_field_config.fields]
             )
+        else:
+            raise ValueError(f"Unknown validation mode behavior: {mode}")
         # Validate data types if enabled
         if output_field_config.validate_data_types:
             _validate_data_types(new_flow_engine, output_field_config.fields)

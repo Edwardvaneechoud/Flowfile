@@ -26,6 +26,7 @@ from flowfile_core.flowfile.flow_node.output_field_config_applier import (
 )
 from flowfile_core.flowfile.handler import FlowfileHandler
 from flowfile_core.schemas import input_schema, schemas, transform_schema
+from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
 
 
 # =============================================================================
@@ -38,7 +39,7 @@ def create_graph(flow_id: int = 1) -> FlowGraph:
     handler = FlowfileHandler()
     handler.register_flow(
         schemas.FlowSettings(
-            flow_id=flow_id, name="test_flow", path=".", execution_mode="Development"
+            flow_id=flow_id, name="test_flow", path=".", execution_mode="Development", execution_location="local"
         )
     )
     return handler.get_flow(flow_id)
@@ -50,12 +51,12 @@ def add_manual_input(graph: FlowGraph, data: dict, node_id: int = 1):
         flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
     )
     graph.add_node_promise(node_promise)
+
     input_file = input_schema.NodeManualInput(
         flow_id=graph.flow_id,
         node_id=node_id,
-        node_type="manual_input",
         is_setup=True,
-        raw_data=data,
+        raw_data_format=input_schema.RawData.from_pydict(data),
         cache_results=False,
     )
     graph.add_manual_input(input_file)
@@ -119,29 +120,23 @@ class TestApplyRaiseOnMissing:
 
     def test_success_all_columns_present(self):
         """Test success when all required columns are present."""
-        df = pl.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]})
+        engine = FlowDataEngine(pl.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]}))
         fields = [
             input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
         ]
-        current_columns = set(df.columns)
-        expected_columns = {f.name for f in fields}
-
-        result = _apply_raise_on_missing(df, fields, current_columns, expected_columns)
+        result = _apply_raise_on_missing(engine, fields)
         assert result.columns == ["b", "a"]
 
     def test_error_when_columns_missing(self):
         """Test raises ValueError when required columns are missing."""
-        df = pl.DataFrame({"a": [1, 2]})
+        df = FlowDataEngine(pl.DataFrame({"a": [1, 2]}))
         fields = [
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
         ]
-        current_columns = set(df.columns)
-        expected_columns = {f.name for f in fields}
-
         with pytest.raises(ValueError, match="Missing required columns"):
-            _apply_raise_on_missing(df, fields, current_columns, expected_columns)
+            _apply_raise_on_missing(df, fields)
 
 
 class TestApplyAddMissing:
@@ -149,31 +144,28 @@ class TestApplyAddMissing:
 
     def test_add_columns_with_defaults(self):
         """Test adding missing columns with default values."""
-        df = pl.DataFrame({"a": [1, 2]})
+        df = FlowDataEngine({"a": [1, 2]})
         fields = [
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="String", default_value="default"),
             input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value="99"),
         ]
-        current_columns = set(df.columns)
-
-        result = _apply_add_missing(df, fields, current_columns)
+        result = _apply_add_missing(df, fields)
         assert result.columns == ["a", "b", "c"]
-        assert result["b"].to_list() == ["default", "default"]
-        assert result["c"].to_list() == [99, 99]
+        assert result.to_dict()["b"] == ["default", "default"]
+        assert result.to_dict()["c"] == [99, 99]
 
     def test_add_columns_with_null_defaults(self):
         """Test adding missing columns with null defaults when no default specified."""
-        df = pl.DataFrame({"a": [1, 2]})
+        df = FlowDataEngine(pl.LazyFrame({"a": [1, 2]}))
         fields = [
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
         ]
-        current_columns = set(df.columns)
 
-        result = _apply_add_missing(df, fields, current_columns)
+        result = _apply_add_missing(df, fields)
         assert result.columns == ["a", "b"]
-        assert result["b"].to_list() == [None, None]
+        assert result.to_dict()["b"] == [None, None]
 
 
 class TestValidateDataTypes:
@@ -181,7 +173,7 @@ class TestValidateDataTypes:
 
     def test_validation_passes_when_types_match(self):
         """Test validation passes when data types match expected types."""
-        df = pl.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+        df = FlowDataEngine({"a": [1, 2], "b": ["x", "y"]})
         fields = [
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
@@ -192,7 +184,7 @@ class TestValidateDataTypes:
 
     def test_validation_fails_on_type_mismatch(self):
         """Test validation raises ValueError when types don't match."""
-        df = pl.DataFrame({"a": ["not", "int"], "b": [1, 2]})
+        df = FlowDataEngine({"a": ["not", "int"], "b": [1, 2]})
         fields = [
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
@@ -203,7 +195,7 @@ class TestValidateDataTypes:
 
     def test_skip_missing_columns(self):
         """Test validation skips columns not present in dataframe."""
-        df = pl.DataFrame({"a": [1, 2]})
+        df = FlowDataEngine({"a": [1, 2]})
         fields = [
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),  # Not in df
@@ -221,7 +213,7 @@ class TestSelectOnlyMode:
 
     def test_basic_column_selection(self):
         """Test select_only mode keeps only specified columns in order."""
-        df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
+        df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
 
         config = input_schema.OutputFieldConfig(
             enabled=True,
@@ -232,17 +224,14 @@ class TestSelectOnlyMode:
             ],
             validate_data_types=True,
         )
-        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
         engine = FlowDataEngine(raw_data=df)
         result_engine = apply_output_field_config(engine, config)
-        result_engine.to_raw_data()
         # Should only have columns c and a in that order
         assert result_engine.data_frame.columns == ["c", "a"]
         result_engine.assert_equal(FlowDataEngine(
             input_schema.RawData(columns=[input_schema.MinimalFieldInfo(name='c', data_type='Int64'),
                                           input_schema.MinimalFieldInfo(name='a', data_type='Int64')],
                                  data=[[7, 8, 9], [1, 2, 3]])))
-
 
 
     def test_missing_column_silently_skipped(self):
@@ -260,7 +249,7 @@ class TestSelectOnlyMode:
         )
 
         from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
+        engine = FlowDataEngine(df)
         result_engine = apply_output_field_config(engine, config)
 
         # Should only have column a (c is missing and skipped)
@@ -284,15 +273,14 @@ class TestAddMissingMode:
             ],
             validate_data_types=False,
         )
-
         from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
+        engine = FlowDataEngine(df)
         result_engine = apply_output_field_config(engine, config)
 
         assert result_engine.data_frame.columns == ["a", "b", "c"]
-        assert result_engine.data_frame["a"].to_list() == [1, 2, 3]
-        assert result_engine.data_frame["b"].to_list() == ["default", "default", "default"]
-        assert result_engine.data_frame["c"].to_list() == [0, 0, 0]
+        assert result_engine.to_dict()["a"] == [1, 2, 3]
+        assert result_engine.to_dict()["b"] == ["default", "default", "default"]
+        assert result_engine.to_dict()["c"] == [0, 0, 0]
 
     def test_add_missing_with_null_defaults(self):
         """Test add_missing mode adds null columns when default_value is null."""
@@ -309,11 +297,11 @@ class TestAddMissingMode:
         )
 
         from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
+        engine = FlowDataEngine(df)
         result_engine = apply_output_field_config(engine, config)
 
         assert result_engine.data_frame.columns == ["a", "b"]
-        assert result_engine.data_frame["b"].to_list() == [None, None, None]
+        assert result_engine.to_dict()["b"] == [None, None, None]
 
     def test_add_missing_removes_extra_columns(self):
         """Test add_missing mode removes columns not in config."""
@@ -330,12 +318,12 @@ class TestAddMissingMode:
         )
 
         from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
+        engine = FlowDataEngine(df)
         result_engine = apply_output_field_config(engine, config)
 
         # Should only have a and d, not b or c
-        assert result_engine.data_frame.columns == ["a", "d"]
-        assert result_engine.data_frame["d"].to_list() == [99, 99, 99]
+        assert result_engine.columns == ["a", "d"]
+        assert result_engine.to_dict()["d"] == [99, 99, 99]
 
 
 class TestRaiseOnMissingMode:
@@ -343,7 +331,7 @@ class TestRaiseOnMissingMode:
 
     def test_success_when_all_columns_present(self):
         """Test raise_on_missing mode succeeds when all columns present."""
-        df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        engine = FlowDataEngine({"a": [1, 2, 3], "b": [4, 5, 6]})
 
         config = input_schema.OutputFieldConfig(
             enabled=True,
@@ -354,16 +342,13 @@ class TestRaiseOnMissingMode:
             ],
             validate_data_types=False,
         )
-
-        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
         result_engine = apply_output_field_config(engine, config)
 
         assert result_engine.data_frame.columns == ["a", "b"]
 
     def test_error_when_column_missing(self):
         """Test raise_on_missing mode raises error when column missing."""
-        df = pl.DataFrame({"a": [1, 2, 3]})
+        engine = FlowDataEngine({"a": [1, 2, 3]})
 
         config = input_schema.OutputFieldConfig(
             enabled=True,
@@ -374,9 +359,6 @@ class TestRaiseOnMissingMode:
             ],
             validate_data_types=False,
         )
-
-        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
 
         with pytest.raises(ValueError, match="Missing required columns"):
             apply_output_field_config(engine, config)
@@ -387,7 +369,7 @@ class TestDataTypeValidation:
 
     def test_validation_passes_when_types_match(self):
         """Test data type validation passes when types match."""
-        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        engine = FlowDataEngine({"a": [1, 2, 3], "b": ["x", "y", "z"]})
 
         config = input_schema.OutputFieldConfig(
             enabled=True,
@@ -399,15 +381,13 @@ class TestDataTypeValidation:
             validate_data_types=True,
         )
 
-        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
         result_engine = apply_output_field_config(engine, config)
 
         assert result_engine.data_frame.columns == ["a", "b"]
 
     def test_validation_raises_error_on_mismatch(self):
         """Test data type validation raises error when types don't match."""
-        df = pl.DataFrame({"a": ["not", "an", "int"], "b": [1, 2, 3]})
+        engine = FlowDataEngine({"a": ["not", "an", "int"], "b": [1, 2, 3]})
 
         config = input_schema.OutputFieldConfig(
             enabled=True,
@@ -419,15 +399,12 @@ class TestDataTypeValidation:
             validate_data_types=True,
         )
 
-        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
-
         with pytest.raises(ValueError, match="Data type validation failed"):
             apply_output_field_config(engine, config)
 
     def test_validation_skipped_when_disabled(self):
         """Test that validation is skipped when validate_data_types is False."""
-        df = pl.DataFrame({"a": ["not", "an", "int"]})
+        engine = FlowDataEngine({"a": ["not", "an", "int"]})
 
         config = input_schema.OutputFieldConfig(
             enabled=True,
@@ -437,9 +414,6 @@ class TestDataTypeValidation:
             ],
             validate_data_types=False,
         )
-
-        from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
 
         # Should not raise error even though type doesn't match
         result_engine = apply_output_field_config(engine, config)
@@ -452,7 +426,7 @@ class TestFlowIntegration:
     def test_polars_code_node_integration(self):
         """Test output_field_config integration with PolarsCode node."""
         graph = create_graph()
-
+        breakpoint()
         # Add manual input
         data = {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]}
         add_manual_input(graph, data, node_id=1)
@@ -482,9 +456,8 @@ class TestFlowIntegration:
         polars_code = input_schema.NodePolarsCode(
             flow_id=graph.flow_id,
             node_id=2,
-            node_type="polars_code",
             is_setup=True,
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code="df"),
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="output_df = input_df"),
             cache_results=False,
             output_field_config=output_config,
         )
@@ -494,10 +467,10 @@ class TestFlowIntegration:
         run_info = graph.run_graph()
 
         # Check that output has correct columns in correct order
-        output_df = graph.get_node(2).get_resulting_data().data_frame
-        assert output_df.columns == ["y", "x"]
-        assert output_df["y"].to_list() == [4, 5, 6]
-        assert output_df["x"].to_list() == [1, 2, 3]
+        output = graph.get_node(2).get_resulting_data()
+        expected = FlowDataEngine({'y': [4, 5, 6], 'x': [1, 2, 3]})
+        assert expected.columns == ["y", "x"]
+        output.assert_equal(expected)
 
     def test_add_missing_mode_in_flow(self):
         """Test output_field_config add_missing mode in flow."""
@@ -506,7 +479,7 @@ class TestFlowIntegration:
         # Add manual input with only some columns
         data = {"a": [1, 2, 3]}
         add_manual_input(graph, data, node_id=1)
-
+        breakpoint()
         # Add PolarsCode node promise
         polars_code_promise = input_schema.NodePromise(
             flow_id=graph.flow_id, node_id=2, node_type="polars_code"
@@ -533,9 +506,8 @@ class TestFlowIntegration:
         polars_code = input_schema.NodePolarsCode(
             flow_id=graph.flow_id,
             node_id=2,
-            node_type="polars_code",
             is_setup=True,
-            polars_code_input=transform_schema.PolarsCodeInput(polars_code="df"),
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="input_df"),
             cache_results=False,
             output_field_config=output_config,
         )
@@ -545,10 +517,14 @@ class TestFlowIntegration:
         run_info = graph.run_graph()
 
         # Check that missing columns were added with defaults
-        output_df = graph.get_node(2).get_resulting_data().data_frame
-        assert output_df.columns == ["a", "b", "c"]
-        assert output_df["b"].to_list() == ["new", "new", "new"]
-        assert output_df["c"].to_list() == [100, 100, 100]
+        output = graph.get_node(2).get_resulting_data()
+        expected = FlowDataEngine({
+            'a': [1, 2, 3],
+            'b': ['new', 'new', 'new'],
+            'c': [100, 100, 100]
+        })
+        assert output.columns == ["a", "b", "c"]
+        output.assert_equal(expected)
 
 
 if __name__ == "__main__":

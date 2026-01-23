@@ -564,6 +564,16 @@ class RawData(BaseModel):
         columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pylist[0].keys()]
         return cls(columns=columns, data=values)
 
+    @classmethod
+    def from_pydict(cls, pydict: dict[str, list]):
+        """Creates a RawData object from a dictionary of lists."""
+        if len(pydict) == 0:
+            return cls(columns=[], data=[])
+        values = [standardize_col_dtype(column_values) for column_values in pydict.values()]
+        data_types = (pl.DataType.from_python(type(next((v for v in column_values), None))) for column_values in values)
+        columns = [MinimalFieldInfo(name=c, data_type=str(next(data_types))) for c in pydict.keys()]
+        return cls(columns=columns, data=values)
+
     def to_pylist(self) -> list[dict]:
         """Converts the RawData object back into a list of Python dictionaries."""
         return [{c.name: self.data[ci][ri] for ci, c in enumerate(self.columns)} for ri in range(len(self.data[0]))]
