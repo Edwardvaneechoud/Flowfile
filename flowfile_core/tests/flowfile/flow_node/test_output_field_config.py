@@ -15,6 +15,7 @@ Tests cover:
 import polars as pl
 import pytest
 
+from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.output_field_config_applier import (
     _apply_add_missing,
     _apply_raise_on_missing,
@@ -24,13 +25,42 @@ from flowfile_core.flowfile.flow_node.output_field_config_applier import (
     _validate_data_types,
     apply_output_field_config,
 )
-from flowfile_core.schemas import input_schema
+from flowfile_core.flowfile.handler import FlowfileHandler
+from flowfile_core.schemas import input_schema, schemas, transform_schema
 
 
 # =============================================================================
 # Test Fixtures
 # =============================================================================
-# Note: FlowGraph integration test fixtures removed - tests use direct DataFrame/FlowDataEngine testing
+
+
+def create_graph(flow_id: int = 1) -> FlowGraph:
+    """Create a new FlowGraph for testing."""
+    handler = FlowfileHandler()
+    handler.register_flow(
+        schemas.FlowSettings(
+            flow_id=flow_id, name="test_flow", path=".", execution_mode="Development"
+        )
+    )
+    return handler.get_flow(flow_id)
+
+
+def add_manual_input(graph: FlowGraph, data: dict, node_id: int = 1):
+    """Add a manual input node with data."""
+    node_promise = input_schema.NodePromise(
+        flow_id=graph.flow_id, node_id=node_id, node_type="manual_input"
+    )
+    graph.add_node_promise(node_promise)
+    input_file = input_schema.NodeManualInput(
+        flow_id=graph.flow_id,
+        node_id=node_id,
+        node_type="manual_input",
+        is_setup=True,
+        raw_data=data,
+        cache_results=False,
+    )
+    graph.add_manual_input(input_file)
+    return graph
 
 
 # =============================================================================
@@ -463,8 +493,109 @@ class TestDataTypeValidation:
 # =============================================================================
 
 
-# Note: Full flow integration tests disabled - require FlowGraph API updates
-# The apply_output_field_config function is tested via direct FlowDataEngine tests above
+class TestFlowIntegration:
+    """Tests for output_field_config integration with flow nodes."""
+
+    def test_polars_code_node_integration(self):
+        """Test output_field_config integration with PolarsCode node."""
+        graph = create_graph()
+
+        # Add manual input
+        data = {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add PolarsCode node promise
+        polars_code_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_code_promise)
+
+        # Create connection
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # Configure output field config
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="select_only",
+            fields=[
+                input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value=None),
+            ],
+            validate_data_types=False,
+        )
+
+        # Add PolarsCode node with settings
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            node_type="polars_code",
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="df"),
+            cache_results=False,
+            output_field_config=output_config,
+        )
+        graph.add_polars_code(polars_code)
+
+        # Run the flow
+        run_info = graph.run_graph()
+
+        # Check that output has correct columns in correct order
+        output_df = graph.get_node(2).get_resulting_data().data_frame
+        assert output_df.columns == ["y", "x"]
+        assert output_df["y"].to_list() == [4, 5, 6]
+        assert output_df["x"].to_list() == [1, 2, 3]
+
+    def test_add_missing_mode_in_flow(self):
+        """Test output_field_config add_missing mode in flow."""
+        graph = create_graph()
+
+        # Add manual input with only some columns
+        data = {"a": [1, 2, 3]}
+        add_manual_input(graph, data, node_id=1)
+
+        # Add PolarsCode node promise
+        polars_code_promise = input_schema.NodePromise(
+            flow_id=graph.flow_id, node_id=2, node_type="polars_code"
+        )
+        graph.add_node_promise(polars_code_promise)
+
+        # Create connection
+        connection = input_schema.NodeConnection.create_from_simple_input(1, 2)
+        add_connection(graph, connection)
+
+        # Configure output to add missing columns
+        output_config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value="new"),
+                input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value="100"),
+            ],
+            validate_data_types=False,
+        )
+
+        # Add PolarsCode node
+        polars_code = input_schema.NodePolarsCode(
+            flow_id=graph.flow_id,
+            node_id=2,
+            node_type="polars_code",
+            is_setup=True,
+            polars_code_input=transform_schema.PolarsCodeInput(polars_code="df"),
+            cache_results=False,
+            output_field_config=output_config,
+        )
+        graph.add_polars_code(polars_code)
+
+        # Run the flow
+        run_info = graph.run_graph()
+
+        # Check that missing columns were added with defaults
+        output_df = graph.get_node(2).get_resulting_data().data_frame
+        assert output_df.columns == ["a", "b", "c"]
+        assert output_df["b"].to_list() == ["new", "new", "new"]
+        assert output_df["c"].to_list() == [100, 100, 100]
 
 
 if __name__ == "__main__":
