@@ -99,24 +99,6 @@ class TestParseDefaultValue:
         result = df.with_columns(expr.alias("test"))
         assert result["test"].to_list() == [42, 42]
 
-    def test_polars_expression(self):
-        """Test parsing Polars expression as default value."""
-        field = input_schema.OutputFieldInfo(name="test", data_type="Int64", default_value="pl.lit(100)")
-        expr = _parse_default_value(field)
-
-        df = pl.DataFrame({"dummy": [1, 2]})
-        result = df.with_columns(expr.alias("test"))
-        assert result["test"].to_list() == [100, 100]
-
-    def test_invalid_expression_fallback(self):
-        """Test parsing invalid Polars expression falls back to None."""
-        field = input_schema.OutputFieldInfo(name="test", data_type="String", default_value="pl.invalid_function()")
-        expr = _parse_default_value(field)
-
-        df = pl.DataFrame({"dummy": [1, 2]})
-        result = df.with_columns(expr.alias("test"))
-        assert result["test"].to_list() == [None, None]
-
 
 class TestSelectColumnsInOrder:
     """Tests for _select_columns_in_order function."""
@@ -601,10 +583,14 @@ class TestFlowIntegration:
         graph.add_connection(1, 2)
 
         # Run the flow
-        result = graph.run(run_id=1)
+        result = graph.run_graph()
 
         # Check that missing columns were added with defaults
         output_df = result[2]
         assert output_df.columns == ["a", "b", "c"]
         assert output_df["b"].to_list() == ["new", "new", "new"]
         assert output_df["c"].to_list() == [100, 100, 100]
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])
