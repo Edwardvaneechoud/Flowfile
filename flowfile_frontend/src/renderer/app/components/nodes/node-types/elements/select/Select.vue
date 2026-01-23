@@ -1,6 +1,6 @@
 <template>
   <div v-if="dataLoaded" class="listbox-wrapper">
-    <generic-node-settings v-model="nodeSelect">
+    <generic-node-settings v-model="nodeSelect" @request-save="pushNodeData">
       <select-dynamic
         v-model:sortedBy="nodeSelect.sorted_by"
         :select-inputs="nodeSelect.select_input"
@@ -27,7 +27,7 @@ import {
 } from "../../../baseNode/selectComponents/nodeSelectLogic";
 import { NodeSelect } from "../../../baseNode/nodeInput";
 import { CodeLoader } from "vue-content-loader";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
 import { SelectInput } from "../../../baseNode/nodeInput";
 import selectDynamic from "../../../baseNode/selectComponents/selectDynamic.vue";
 import GenericNodeSettings from "../../../baseNode/genericNodeSettings.vue";

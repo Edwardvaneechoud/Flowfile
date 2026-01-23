@@ -1,6 +1,6 @@
 <template>
   <div v-if="dataLoaded && nodeManualInput">
-    <generic-node-settings v-model="nodeManualInput">
+    <generic-node-settings v-model="nodeManualInput" @request-save="saveNodeData">
       <div class="settings-section">
         <!-- Table Controls - Moved to top for better visibility -->
         <div class="controls-section controls-top">
@@ -120,7 +120,8 @@
 
 <script lang="ts" setup>
 import { ref, computed, watch } from "vue";
-import { useNodeStore } from "../../../../../stores/column-store";
+import { useNodeStore } from "../../../../../stores/node-store";
+import { useEditorStore } from "../../../../../stores/editor-store";
 import { createManualInput } from "./manualInputLogic";
 import type {
   NodeManualInput,
@@ -142,6 +143,7 @@ interface Row {
 }
 
 const nodeStore = useNodeStore();
+const editorStore = useEditorStore();
 
 const dataLoaded = ref(false);
 const nodeManualInput = ref<NodeManualInput | null>(null);
@@ -427,13 +429,18 @@ const updateTableFromRawData = () => {
   }
 };
 
-const pushNodeData = async () => {
+const saveNodeData = async () => {
   if (nodeManualInput.value) {
     // Always save in the new format
     nodeManualInput.value.raw_data_format = rawDataFormat.value;
     await nodeStore.updateSettings(nodeManualInput);
   }
-  dataLoaded.value = false;
+};
+
+const pushNodeData = async () => {
+  await saveNodeData();
+  // Trigger drawer close via editor store
+  editorStore.pushNodeData();
 };
 
 // Watchers
