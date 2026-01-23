@@ -303,6 +303,23 @@ class TestAddMissingMode:
         assert result_engine.data_frame.columns == ["a", "b"]
         assert result_engine.to_dict()["b"] == [None, None, None]
 
+    def test_add_missing_with_null_defaults_and_type_validation(self):
+        """Test add_missing mode adds null columns when default_value is null."""
+        engine = FlowDataEngine({"a": [1, 2, 3]})
+        config = input_schema.OutputFieldConfig(
+            enabled=True,
+            validation_mode_behavior="add_missing",
+            fields=[
+                input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
+                input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),
+            ],
+            validate_data_types=True,
+        )
+        result_engine = apply_output_field_config(engine, config)
+
+        assert result_engine.data_frame.columns == ["a", "b"]
+        assert result_engine.to_dict()["b"] == [None, None, None]
+
     def test_add_missing_removes_extra_columns(self):
         """Test add_missing mode removes columns not in config."""
         df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
@@ -426,7 +443,6 @@ class TestFlowIntegration:
     def test_polars_code_node_integration(self):
         """Test output_field_config integration with PolarsCode node."""
         graph = create_graph()
-        breakpoint()
         # Add manual input
         data = {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]}
         add_manual_input(graph, data, node_id=1)
@@ -479,7 +495,6 @@ class TestFlowIntegration:
         # Add manual input with only some columns
         data = {"a": [1, 2, 3]}
         add_manual_input(graph, data, node_id=1)
-        breakpoint()
         # Add PolarsCode node promise
         polars_code_promise = input_schema.NodePromise(
             flow_id=graph.flow_id, node_id=2, node_type="polars_code"
@@ -525,7 +540,6 @@ class TestFlowIntegration:
         })
         assert output.columns == ["a", "b", "c"]
         output.assert_equal(expected)
-
 
 if __name__ == "__main__":
     pytest.main([__file__])

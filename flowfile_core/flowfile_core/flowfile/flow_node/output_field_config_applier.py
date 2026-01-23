@@ -18,9 +18,6 @@ def _parse_default_value(field: OutputFieldInfo) -> pl.Expr:
     Returns:
         Polars expression for the default value cast to the target data type
     """
-    if field.default_value is None:
-        return pl.lit(None)
-
     # Get target Polars dtype from the field's data_type
     target_dtype = cast_str_to_polars_type(field.data_type)
     # Treat as literal value and cast to target type
@@ -152,8 +149,6 @@ def apply_output_field_config(
     # breakpoint()
     try:
         # Get column sets for validation (works for both DataFrame and LazyFrame)
-        current_columns = set(flow_data_engine.columns)
-        expected_columns = {field.name for field in output_field_config.fields}
 
         # Apply validation mode behavior
         mode = output_field_config.validation_mode_behavior

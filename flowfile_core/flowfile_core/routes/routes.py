@@ -365,7 +365,8 @@ def copy_node(node_id_to_copy_from: int, flow_id_to_copy_from: int, node_promise
 
 
 @router.post('/editor/add_node/', tags=['editor'], response_model=OperationResponse)
-def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: int = 0) -> OperationResponse:
+def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int | float = 0,
+             pos_y: int | float = 0) -> OperationResponse | None:
     """Adds a new, unconfigured node (a "promise") to the flow graph.
 
     Args:
@@ -378,6 +379,10 @@ def add_node(flow_id: int, node_id: int, node_type: str, pos_x: int = 0, pos_y: 
     Returns:
         OperationResponse with current history state.
     """
+    if isinstance(pos_x, float):
+        pos_x = int(pos_x)
+    if isinstance(pos_y, float):
+        pos_y = int(pos_y)
     flow = flow_file_handler.get_flow(flow_id)
     logger.info(f'Adding a promise for {node_type}')
     if flow.flow_settings.is_running:

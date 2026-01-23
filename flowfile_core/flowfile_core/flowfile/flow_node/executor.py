@@ -256,7 +256,7 @@ class NodeExecutor:
         self.node._do_execute_full_local(performance_mode)
         if not performance_mode:
             state.mark_successful()
-            if self.node.results.resulting_data:
+            if self.node.results.resulting_data is not None:
                 state.result_schema = self.node.results.resulting_data.schema
 
     def _do_local_with_sampling(
@@ -272,7 +272,7 @@ class NodeExecutor:
         via an external process for the UI preview.
         """
         self.node._do_execute_local_with_sampling(performance_mode, flow_id)
-        if self.node.results.resulting_data:
+        if self.node.results.resulting_data is not None:
             state.result_schema = self.node.results.resulting_data.schema
         if self.node.results.errors is None and not self.node.node_stats.is_canceled:
             state.mark_successful()
@@ -289,7 +289,7 @@ class NodeExecutor:
         Computation is offloaded to an external worker process.
         """
         self.node._do_execute_remote(performance_mode, node_logger)
-        if self.node.results.resulting_data:
+        if self.node.results.resulting_data is not None:
             state.result_schema = self.node.results.resulting_data.schema
             state.mark_successful()
 
