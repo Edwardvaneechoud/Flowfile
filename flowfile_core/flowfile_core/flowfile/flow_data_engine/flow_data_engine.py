@@ -819,6 +819,7 @@ class FlowDataEngine:
         if self.lazy and isinstance(df, pl.DataFrame):
             raise Exception("Cannot set a non-lazy dataframe to a lazy flowfile")
         self._data_frame = df
+        self._schema = None
 
     @staticmethod
     def _create_schema_stats_from_pl_schema(pl_schema: pl.Schema) -> list[dict]:

@@ -95,31 +95,7 @@ def _apply_add_missing(
     return _select_columns_in_order(df, fields)
 
 
-def _apply_select_only(
-    df: pl.DataFrame,
-    fields: list[OutputFieldInfo],
-    current_columns: set[str]
-) -> pl.DataFrame:
-    """Apply select_only validation mode.
-
-    Only selects columns that exist in the dataframe.
-
-    Args:
-        df: Input dataframe
-        fields: List of expected output fields
-        current_columns: Set of current column names
-
-    Returns:
-        DataFrame with only existing columns selected in specified order
-    """
-    columns_to_select = [field.name for field in fields if field.name in current_columns]
-    if not columns_to_select:
-        return df
-
-    return df.select(columns_to_select)
-
-
-def _validate_data_types(df: pl.DataFrame | pl.LazyFrame, fields: list[OutputFieldInfo]) -> None:
+def _validate_data_types(df: FlowDataEngine, fields: list[OutputFieldInfo]) -> None:
     """Validate that dataframe column types match expected types.
 
     Args:
@@ -130,20 +106,18 @@ def _validate_data_types(df: pl.DataFrame | pl.LazyFrame, fields: list[OutputFie
         ValueError: If any data type mismatches are found
     """
     # Get schema (works for both DataFrame and LazyFrame)
-    schema = df.schema
-
+    schema: dict[str, FlowfileColumn] = {column.column_name: column for column in df.schema}
     mismatches = []
     for field in fields:
+
         if field.name not in schema:
             continue
-
         # Use FlowfileColumn infrastructure to convert dtype to string
-        actual_column = FlowfileColumn.create_from_polars_dtype(field.name, schema[field.name])
-        actual_type_str = actual_column.data_type
-
-        if actual_type_str != field.data_type:
+        column = schema.get(field.name)
+        column.get_minimal_field_info()
+        if column.data_type != field.data_type:
             mismatches.append(
-                f"Column '{field.name}': expected {field.data_type}, got {actual_type_str}"
+                f"Column '{field.name}': expected {field.data_type}, got {column.data_type}"
             )
 
     if mismatches:
@@ -170,19 +144,16 @@ def apply_output_field_config(
         ValueError: If raise_on_missing behavior is set and required columns are missing,
                    or if data type validation fails
     """
+    breakpoint()
     if not output_field_config or not output_field_config.enabled:
         return flow_data_engine
 
     if not output_field_config.fields:
         return flow_data_engine
 
-    df = flow_data_engine.data_frame
-    if df is None:
-        return flow_data_engine
-
     try:
         # Get column sets for validation (works for both DataFrame and LazyFrame)
-        current_columns = set(df.columns)
+        current_columns = set(flow_data_engine.columns)
         expected_columns = {field.name for field in output_field_config.fields}
 
         # Apply validation mode behavior
@@ -192,15 +163,12 @@ def apply_output_field_config(
         elif mode == "add_missing":
             df = _apply_add_missing(df, output_field_config.fields, current_columns)
         elif mode == "select_only":
-            df = _apply_select_only(df, output_field_config.fields, current_columns)
-
+            new_flow_engine = flow_data_engine.select_columns(
+                [field.name for field in output_field_config.fields]
+            )
         # Validate data types if enabled
         if output_field_config.validate_data_types:
-            _validate_data_types(df, output_field_config.fields)
-
-        # Update the flow data engine
-        flow_data_engine.data_frame = df
-        flow_data_engine._schema = None  # Force schema recalculation
+            _validate_data_types(new_flow_engine, output_field_config.fields)
 
         logger.info(
             f"Applied output field config: behavior={mode}, "
@@ -212,4 +180,4 @@ def apply_output_field_config(
         logger.error(f"Error applying output field config: {e}")
         raise
 
-    return flow_data_engine
+    return new_flow_engine

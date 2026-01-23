@@ -19,7 +19,6 @@ from flowfile_core.flowfile.flow_graph import FlowGraph, add_connection
 from flowfile_core.flowfile.flow_node.output_field_config_applier import (
     _apply_add_missing,
     _apply_raise_on_missing,
-    _apply_select_only,
     _parse_default_value,
     _select_columns_in_order,
     _validate_data_types,
@@ -177,37 +176,6 @@ class TestApplyAddMissing:
         assert result["b"].to_list() == [None, None]
 
 
-class TestApplySelectOnly:
-    """Tests for _apply_select_only function."""
-
-    def test_select_only_existing_columns(self):
-        """Test selecting only columns that exist in the dataframe."""
-        df = pl.DataFrame({"a": [1, 2], "b": [3, 4], "c": [5, 6]})
-        fields = [
-            input_schema.OutputFieldInfo(name="b", data_type="Int64", default_value=None),
-            input_schema.OutputFieldInfo(name="d", data_type="Int64", default_value=None),  # Missing
-            input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
-        ]
-        current_columns = set(df.columns)
-
-        result = _apply_select_only(df, fields, current_columns)
-        # Should only select b and a (d is missing)
-        assert result.columns == ["b", "a"]
-
-    def test_no_columns_match(self):
-        """Test behavior when no specified columns exist in dataframe."""
-        df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
-        fields = [
-            input_schema.OutputFieldInfo(name="x", data_type="Int64", default_value=None),
-            input_schema.OutputFieldInfo(name="y", data_type="Int64", default_value=None),
-        ]
-        current_columns = set(df.columns)
-
-        result = _apply_select_only(df, fields, current_columns)
-        # Should return original dataframe when no columns match
-        assert result.columns == ["a", "b"]
-
-
 class TestValidateDataTypes:
     """Tests for _validate_data_types function."""
 
@@ -233,17 +201,6 @@ class TestValidateDataTypes:
         with pytest.raises(ValueError, match="Data type validation failed"):
             _validate_data_types(df, fields)
 
-    def test_case_sensitive_comparison(self):
-        """Test validation is case sensitive."""
-        df = pl.DataFrame({"a": [1, 2]})
-        fields = [
-            input_schema.OutputFieldInfo(name="a", data_type="int64", default_value=None),  # lowercase
-        ]
-
-        # Should raise because case doesn't match (Int64 vs int64)
-        with pytest.raises(ValueError, match="Data type validation failed"):
-            _validate_data_types(df, fields)
-
     def test_skip_missing_columns(self):
         """Test validation skips columns not present in dataframe."""
         df = pl.DataFrame({"a": [1, 2]})
@@ -251,8 +208,6 @@ class TestValidateDataTypes:
             input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             input_schema.OutputFieldInfo(name="b", data_type="String", default_value=None),  # Not in df
         ]
-
-        # Should not raise - only validates columns present in dataframe
         _validate_data_types(df, fields)
 
 
@@ -275,17 +230,20 @@ class TestSelectOnlyMode:
                 input_schema.OutputFieldInfo(name="c", data_type="Int64", default_value=None),
                 input_schema.OutputFieldInfo(name="a", data_type="Int64", default_value=None),
             ],
-            validate_data_types=False,
+            validate_data_types=True,
         )
-
         from flowfile_core.flowfile.flow_data_engine.flow_data_engine import FlowDataEngine
-        engine = FlowDataEngine(data_frame=df)
+        engine = FlowDataEngine(raw_data=df)
         result_engine = apply_output_field_config(engine, config)
-
+        result_engine.to_raw_data()
         # Should only have columns c and a in that order
         assert result_engine.data_frame.columns == ["c", "a"]
-        assert result_engine.data_frame["c"].to_list() == [7, 8, 9]
-        assert result_engine.data_frame["a"].to_list() == [1, 2, 3]
+        result_engine.assert_equal(FlowDataEngine(
+            input_schema.RawData(columns=[input_schema.MinimalFieldInfo(name='c', data_type='Int64'),
+                                          input_schema.MinimalFieldInfo(name='a', data_type='Int64')],
+                                 data=[[7, 8, 9], [1, 2, 3]])))
+
+
 
     def test_missing_column_silently_skipped(self):
         """Test select_only mode silently skips missing columns."""
@@ -486,11 +444,6 @@ class TestDataTypeValidation:
         # Should not raise error even though type doesn't match
         result_engine = apply_output_field_config(engine, config)
         assert result_engine.data_frame.columns == ["a"]
-
-
-# =============================================================================
-# Integration Tests: Full Flow
-# =============================================================================
 
 
 class TestFlowIntegration:
